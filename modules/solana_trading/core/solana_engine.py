@@ -1440,16 +1440,42 @@ class SolanaTradingEngine:
                     # Get the decrypted private key for signing (reuse helper)
                     private_key = await self._get_decrypted_private_key()
                     if private_key:
+                        # Wire MB-15 / adaptive priority fee / quote TTL
+                        # config from SolanaConfigManager when available;
+                        # defaults preserve legacy behavior otherwise.
+                        cm = self.config_manager
                         self.jupiter_helper = JupiterHelper(
                             solana_rpc_url=self.primary_rpc,
                             private_key=private_key,
                             priority_fee_lamports=(
-                                self.config_manager.priority_fee_lamports
-                                if self.config_manager else None
+                                cm.priority_fee_lamports if cm else None
+                            ),
+                            adaptive_priority_fee=(
+                                cm.adaptive_priority_fee_enabled if cm else False
+                            ),
+                            adaptive_percentile=(
+                                cm.adaptive_priority_fee_percentile if cm else 75.0
+                            ),
+                            adaptive_min_lamports=(
+                                cm.adaptive_priority_fee_min_lamports if cm else 10_000
+                            ),
+                            adaptive_max_lamports=(
+                                cm.adaptive_priority_fee_max_lamports if cm else 2_000_000
+                            ),
+                            adaptive_ttl_s=(
+                                cm.adaptive_priority_fee_ttl_s if cm else 5.0
+                            ),
+                            quote_max_age_s=(
+                                cm.jupiter_quote_max_age_s if cm else 10.0
                             ),
                         )
                         await self.jupiter_helper.initialize()
-                        logger.info("✅ JupiterHelper initialized for LIVE swap execution")
+                        logger.info(
+                            "✅ JupiterHelper initialized for LIVE swap execution "
+                            "(adaptive_fee=%s, quote_ttl=%.1fs)",
+                            getattr(self.jupiter_helper, 'adaptive_priority_fee', False),
+                            getattr(self.jupiter_helper, 'quote_max_age_s', 10.0),
+                        )
                     else:
                         logger.warning("⚠️ JupiterHelper not available - no private key")
                         self.jupiter_helper = None
@@ -1483,19 +1509,41 @@ class SolanaTradingEngine:
             try:
                 from driftpy.drift_client import DriftClient
 
-                # Initialize DriftHelper for live perpetual trading
-                if not self.dry_run and DRIFT_HELPER_AVAILABLE:
+                # Initialize DriftHelper for live perpetual trading.
+                # MB-15: even in non-dry-run flows the helper enforces a
+                # leverage cap, oracle deviation guard, and funding sanity
+                # gate. We always pass dry_run=self.dry_run so the helper
+                # short-circuits in DRY_RUN even if a caller forgets the
+                # engine-side gate.
+                if DRIFT_HELPER_AVAILABLE:
                     try:
                         # Get decrypted private key for signing
                         private_key = await self._get_decrypted_private_key()
                         if private_key:
+                            cm = self.config_manager
                             self.drift_helper = DriftHelper(
                                 rpc_url=self.primary_rpc,
-                                private_key=private_key
+                                private_key=private_key,
+                                dry_run=self.dry_run,
+                                max_leverage=(
+                                    cm.drift_max_leverage if cm else 3.0
+                                ),
+                                max_abs_funding_rate_annual_pct=(
+                                    cm.drift_max_funding_pct_annual if cm else 50.0
+                                ),
+                                oracle_deviation_max_pct=(
+                                    cm.drift_oracle_deviation_max_pct if cm else 1.0
+                                ),
+                                min_oracle_confidence_bps=(
+                                    cm.drift_min_oracle_conf_bps if cm else 500
+                                ),
                             )
                             initialized = await self.drift_helper.initialize()
                             if initialized:
-                                logger.info("✅ DriftHelper initialized for LIVE perpetual trading")
+                                logger.info(
+                                    "✅ DriftHelper initialized (dry_run=%s, max_lev=%.1fx)",
+                                    self.dry_run, getattr(self.drift_helper, 'max_leverage', 0),
+                                )
                             else:
                                 logger.warning("⚠️ DriftHelper initialization failed")
                                 self.drift_helper = None
@@ -1506,7 +1554,7 @@ class SolanaTradingEngine:
                         logger.warning(f"⚠️ DriftHelper not available: {e}")
                         self.drift_helper = None
                 else:
-                    logger.info("✅ Drift Protocol configured (DRY_RUN mode)")
+                    logger.info("✅ Drift Protocol configured (helper unavailable)")
 
             except ImportError:
                 logger.warning("⚠️ driftpy not installed. Drift trading disabled.")
@@ -1563,13 +1611,18 @@ class SolanaTradingEngine:
             logger.error(f"Error getting wallet balance: {e}")
             return 0.0
 
-    async def _get_token_balance(self, token_mint: str, decimals: int = 6) -> float:
+    async def _get_token_balance(self, token_mint: str, decimals: int = None) -> float:
         """
         Get actual SPL token balance from wallet.
 
         Args:
             token_mint: Token mint address
-            decimals: Token decimals (default 6 for most SPL tokens)
+            decimals: Optional override for token decimals. When None (the
+                preferred path), decimals are read on-chain via
+                ``core.units.get_spl_decimals`` so BONK (5) / WIF (6) /
+                modern launches (9) all size correctly. Hardcoding 6 here
+                was the original MB-06 root cause and caused 10x/1000x
+                close-size errors on memecoins.
 
         Returns:
             Token balance as float, or 0.0 if not found
@@ -1582,6 +1635,17 @@ class SolanaTradingEngine:
             owner_pubkey = Pubkey.from_string(self.wallet_pubkey)
             mint_pubkey = Pubkey.from_string(token_mint)
 
+            # Resolve decimals on-chain when not supplied. Fall back to 6
+            # only if the lookup fails (logged) — never silently default.
+            if decimals is None:
+                try:
+                    decimals = await get_spl_decimals(token_mint)
+                except Exception as exc:
+                    logger.warning(
+                        f"⚠️ get_spl_decimals failed for {token_mint[:10]}: {exc} — falling back to 6"
+                    )
+                    decimals = 6
+
             # Method 1: Get token accounts with Confirmed commitment (faster than Finalized)
             # Finalized takes 6-12s on Solana, Confirmed takes ~0.5s
             try:
@@ -1593,6 +1657,7 @@ class SolanaTradingEngine:
 
                 if response.value:
                     total_balance = 0
+                    parsed_decimals = None
                     for account in response.value:
                         account_data = account.account.data
                         if hasattr(account_data, 'parsed'):
@@ -1600,6 +1665,9 @@ class SolanaTradingEngine:
                             if 'info' in parsed and 'tokenAmount' in parsed['info']:
                                 amount = int(parsed['info']['tokenAmount']['amount'])
                                 total_balance += amount
+                                # Prefer the parsed on-chain decimals when present.
+                                if parsed_decimals is None:
+                                    parsed_decimals = parsed['info']['tokenAmount'].get('decimals')
                         else:
                             import base64
                             if isinstance(account_data, str):
@@ -1611,7 +1679,8 @@ class SolanaTradingEngine:
                                 total_balance += amount
 
                     if total_balance > 0:
-                        return total_balance / (10 ** decimals)
+                        effective_decimals = parsed_decimals if parsed_decimals is not None else decimals
+                        return total_balance / (10 ** effective_decimals)
             except Exception as e:
                 logger.debug(f"Method 1 (get_token_accounts_by_owner) failed: {e}")
 
@@ -2190,11 +2259,24 @@ class SolanaTradingEngine:
             try:
                 token_mint = stuck.token_mint
 
+                # MB-06 fix: emergency-close path previously hardcoded
+                # decimals=6 in both the balance read AND raw-amount
+                # conversion. BONK (5), WIF (6), modern launches (9) all
+                # broke under this — 10x oversell rejected by Jupiter,
+                # 1000x undersell left position open.
+                try:
+                    token_decimals = await get_spl_decimals(token_mint)
+                except Exception as exc:
+                    logger.warning(
+                        f"⚠️ emergency-close: get_spl_decimals failed for {token_mint[:10]}: {exc} — skipping retry"
+                    )
+                    continue
+
                 # Check if position is still in our active tracking
                 # (might have been manually closed or sold externally)
                 if token_mint not in self.active_positions:
                     # Check actual wallet balance
-                    actual_balance = await self._get_token_balance(token_mint, 6)
+                    actual_balance = await self._get_token_balance(token_mint, token_decimals)
                     if actual_balance <= 0:
                         logger.info(f"✅ {stuck.token_symbol} no longer in wallet - removing from stuck list")
                         self.safety_engine.record_close_success(token_mint)
@@ -2214,7 +2296,7 @@ class SolanaTradingEngine:
                 )
 
                 # Get actual token balance
-                actual_balance = await self._get_token_balance(token_mint, 6)
+                actual_balance = await self._get_token_balance(token_mint, token_decimals)
 
                 if actual_balance <= 0:
                     logger.info(f"✅ {stuck.token_symbol} balance is 0 - position already closed")
@@ -2226,7 +2308,7 @@ class SolanaTradingEngine:
                         del self.active_positions[token_mint]
                     continue
 
-                token_amount_raw = int(actual_balance * (10 ** 6))
+                token_amount_raw = int(actual_balance * (10 ** token_decimals))
 
                 logger.info(f"   Selling {actual_balance:.2f} tokens with {close_slippage}bps slippage")
 
@@ -3334,9 +3416,12 @@ class SolanaTradingEngine:
                                 # Increased delays: Solana Finalized commitment takes 6-12s
                                 # Now using Confirmed (~0.5s) but still need time for ATA creation
                                 balance_delays = [3.0, 5.0, 8.0, 12.0]  # 4 attempts, up to 28s total
+                                # MB-06: rely on on-chain decimals (decimals=None → _get_token_balance
+                                # resolves via get_spl_decimals + parsed tokenAmount.decimals). Passing
+                                # 6 here previously misreported BONK/WIF/9-dec launches by 10x/1000x.
                                 for balance_retry, delay in enumerate(balance_delays):
                                     await asyncio.sleep(delay)
-                                    actual_tokens = await self._get_token_balance(token_mint, 6)
+                                    actual_tokens = await self._get_token_balance(token_mint)
                                     if actual_tokens > 0:
                                         logger.info(f"   Balance verified on attempt {balance_retry+1} (after {sum(balance_delays[:balance_retry+1]):.0f}s)")
                                         break
@@ -3758,7 +3843,9 @@ class SolanaTradingEngine:
                 # For LIVE trading, get actual remaining balance to keep tracking accurate
                 if not self.dry_run:
                     try:
-                        remaining_balance = await self._get_token_balance(token_mint, 6)
+                        # MB-06: omit hardcoded decimals; let _get_token_balance
+                        # resolve via parsed tokenAmount.decimals / get_spl_decimals.
+                        remaining_balance = await self._get_token_balance(token_mint)
                         if remaining_balance > 0:
                             position.amount = remaining_balance  # Use actual remaining balance
                             logger.info(f"📊 Updated position tracking: {remaining_balance:.2f} tokens remaining")

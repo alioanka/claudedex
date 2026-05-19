@@ -35,6 +35,23 @@ CONFIG_KEY_MAPPING = {
     'take_profit': ('solana_risk', 'float'),
     'daily_loss_limit': ('solana_risk', 'float'),
     'priority_fee': ('solana_priority', 'int'),
+    # Adaptive priority fee controller (Solana JupiterHelper)
+    'adaptive_priority_fee_enabled': ('solana_priority', 'bool'),
+    'adaptive_priority_fee_percentile': ('solana_priority', 'float'),
+    'adaptive_priority_fee_min_lamports': ('solana_priority', 'int'),
+    'adaptive_priority_fee_max_lamports': ('solana_priority', 'int'),
+    'adaptive_priority_fee_ttl_s': ('solana_priority', 'float'),
+    # Jupiter quote freshness budget (seconds)
+    'jupiter_quote_max_age_s': ('solana_jupiter', 'float'),
+    # ML gate flag (Solana _open_position pump/rug filter) — P1-07
+    'solana_ml_enabled': ('solana_ml', 'bool'),
+    'solana_ml_min_pump_prob': ('solana_ml', 'float'),
+    'solana_ml_max_rug_prob': ('solana_ml', 'float'),
+    # Drift hardening (MB-15)
+    'drift_max_leverage': ('solana_drift', 'float'),
+    'drift_max_funding_pct_annual': ('solana_drift', 'float'),
+    'drift_oracle_deviation_max_pct': ('solana_drift', 'float'),
+    'drift_min_oracle_conf_bps': ('solana_drift', 'int'),
 
     # Jupiter settings
     'jupiter_enabled': ('solana_jupiter', 'bool'),
@@ -97,6 +114,27 @@ class SolanaConfigManager:
         'take_profit': 50.0,
         'daily_loss_limit': 5.0,
         'priority_fee': 1_000_000,
+        # Adaptive priority fee — off by default, falls back to the
+        # static priority_fee structured-dict default in JupiterHelper.
+        'adaptive_priority_fee_enabled': False,
+        'adaptive_priority_fee_percentile': 75.0,
+        'adaptive_priority_fee_min_lamports': 10_000,
+        'adaptive_priority_fee_max_lamports': 2_000_000,
+        'adaptive_priority_fee_ttl_s': 5.0,
+        # Jupiter quote freshness: refetch quotes older than this before
+        # signing (mirrors jupiter_executor.py:528 P1 fix).
+        'jupiter_quote_max_age_s': 10.0,
+        # ML gate (P1-07): off by default — wires pump_predictor /
+        # rug_classifier into _open_position when enabled. Requires the
+        # model files in ml/models/.
+        'solana_ml_enabled': False,
+        'solana_ml_min_pump_prob': 0.55,
+        'solana_ml_max_rug_prob': 0.40,
+        # Drift hardening (MB-15) — applied even when drift_enabled=True.
+        'drift_max_leverage': 3.0,
+        'drift_max_funding_pct_annual': 50.0,
+        'drift_oracle_deviation_max_pct': 1.0,
+        'drift_min_oracle_conf_bps': 500,
 
         # Jupiter
         'jupiter_enabled': True,
@@ -421,6 +459,62 @@ class SolanaConfigManager:
     def priority_fee_lamports(self) -> int:
         """Get priority fee in lamports"""
         return self.get('priority_fee', 1_000_000)
+
+    # --- adaptive priority fee accessors -----------------------------------
+    @property
+    def adaptive_priority_fee_enabled(self) -> bool:
+        return bool(self.get('adaptive_priority_fee_enabled', False))
+
+    @property
+    def adaptive_priority_fee_percentile(self) -> float:
+        return float(self.get('adaptive_priority_fee_percentile', 75.0))
+
+    @property
+    def adaptive_priority_fee_min_lamports(self) -> int:
+        return int(self.get('adaptive_priority_fee_min_lamports', 10_000))
+
+    @property
+    def adaptive_priority_fee_max_lamports(self) -> int:
+        return int(self.get('adaptive_priority_fee_max_lamports', 2_000_000))
+
+    @property
+    def adaptive_priority_fee_ttl_s(self) -> float:
+        return float(self.get('adaptive_priority_fee_ttl_s', 5.0))
+
+    @property
+    def jupiter_quote_max_age_s(self) -> float:
+        return float(self.get('jupiter_quote_max_age_s', 10.0))
+
+    # --- ML gate accessors -------------------------------------------------
+    @property
+    def solana_ml_enabled(self) -> bool:
+        """When True, _open_position runs pump/rug classifiers before entry."""
+        return bool(self.get('solana_ml_enabled', False))
+
+    @property
+    def solana_ml_min_pump_prob(self) -> float:
+        return float(self.get('solana_ml_min_pump_prob', 0.55))
+
+    @property
+    def solana_ml_max_rug_prob(self) -> float:
+        return float(self.get('solana_ml_max_rug_prob', 0.40))
+
+    # --- Drift hardening accessors ----------------------------------------
+    @property
+    def drift_max_leverage(self) -> float:
+        return float(self.get('drift_max_leverage', 3.0))
+
+    @property
+    def drift_max_funding_pct_annual(self) -> float:
+        return float(self.get('drift_max_funding_pct_annual', 50.0))
+
+    @property
+    def drift_oracle_deviation_max_pct(self) -> float:
+        return float(self.get('drift_oracle_deviation_max_pct', 1.0))
+
+    @property
+    def drift_min_oracle_conf_bps(self) -> int:
+        return int(self.get('drift_min_oracle_conf_bps', 500))
 
     @property
     def rpc_url(self) -> str:

@@ -1583,11 +1583,29 @@ class EVMArbitrageEngine:
             profit = weth_returned - amount_owed
             raw_spread = profit / borrow_amount
 
-            # Estimated additional costs (slippage, gas)
-            estimated_costs = 0.005  # 0.5% for slippage and gas
+            # A2-03: replace hardcoded 0.5% cost with chain-aware estimate.
+            #   gas cost (USD)   -> converted to ETH via live ETH price,
+            #                       then divided by borrow_amount (also ETH)
+            #   slippage cost    -> per-chain default (Eth 0.4%, L2 0.5%)
+            #   flash-loan fee   -> already deducted via amount_owed
+            try:
+                eth_price = await self.price_fetcher.get_price('eth')
+                if eth_price and eth_price > 0:
+                    gas_usd = await self._gas_cost_usd_per_tx(eth_price_usd=eth_price)
+                    gas_eth = gas_usd / float(eth_price)
+                    gas_frac = gas_eth / (borrow_amount / 1e18) if borrow_amount > 0 else 0.0
+                else:
+                    gas_frac = 0.0  # Cannot estimate USD-denominated gas; skip
+            except Exception:
+                gas_frac = 0.0
+            slippage_frac = float(self.chain_config.get('default_slippage_pct', 0.005))
+            estimated_costs = gas_frac + slippage_frac
             net_spread = raw_spread - estimated_costs
 
-            if net_spread > self.min_profit_threshold:
+            # A2-06 / enhancement #4: gate by the adaptive threshold so we
+            # raise the bar during gas spikes instead of executing thin trades.
+            effective_threshold = self._adaptive_min_profit_threshold()
+            if net_spread > effective_threshold:
                 self._stats['opportunities_found'] += 1
 
                 # Create unique key for this opportunity
@@ -1630,7 +1648,8 @@ class EVMArbitrageEngine:
                 # and final_output -> weth_returned but missed this log line,
                 # which raised NameError on every real opportunity and silently
                 # killed execution via the outer except.
-                self.logger.info(f"🚨 [{self.chain_name.upper()}] ARBITRAGE OPPORTUNITY [{token_symbol}/{token_out_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (#{current_count + 1} today, {remaining} remaining)")
+                spike_mult = self._gas_spike_multiplier()
+                self.logger.info(f"🚨 [{self.chain_name.upper()}] ARBITRAGE OPPORTUNITY [{token_symbol}/{token_out_symbol}]: Buy on {best_buy_dex}, Sell on {best_sell_dex}. Raw: {raw_spread:.2%}, Net: {net_spread:.2%} (threshold {effective_threshold:.2%}, gas-mult {spike_mult:.2f}x) (#{current_count + 1} today, {remaining} remaining)")
                 self.logger.info(f"   Path: {borrow_amount/out_divisor:.4f} {token_out_symbol} → {tokens_bought/in_divisor:.4f} {token_symbol} → {weth_returned/out_divisor:.4f} {token_out_symbol} (profit: {profit/out_divisor:.6f} {token_out_symbol})")
                 self._stats['opportunities_executed'] += 1
 
@@ -2062,19 +2081,28 @@ class EVMArbitrageEngine:
                 self.logger.warning(f"Cannot log trade - ETH price unavailable")
                 return
 
-            # Realistic cost deductions
-            FLASH_LOAN_FEE_PCT = 0.0005  # 0.05% Aave fee
-            SLIPPAGE_ESTIMATE_PCT = 0.006  # 0.3% x 2 swaps = 0.6%
-            GAS_COST_USD = 15.0  # Estimated gas cost
+            # A2-02 / A2-05: chain-aware cost deductions. Previously the
+            # method used GAS_COST_USD=15 and SLIPPAGE_ESTIMATE_PCT=0.006
+            # regardless of chain - poisoned PnL on both ETH (under-counted)
+            # and L2s (over-counted). Now driven by CHAIN_CONFIGS profile +
+            # live gas oracle.
+            flash_loan_fee_pct = float(self.chain_config.get('flash_loan_fee_pct', 0.0005))
+            slippage_estimate_pct = float(self.chain_config.get('default_slippage_pct', 0.005))
+            try:
+                gas_cost_usd = await self._gas_cost_usd_per_tx(eth_price_usd=eth_price)
+            except Exception:
+                gas_cost_usd = 0.0
 
             # Calculate gross profit
             entry_usd = amount_eth * eth_price
             gross_profit_pct = profit_pct
 
-            # Deduct realistic costs for net profit
-            flash_loan_cost = entry_usd * FLASH_LOAN_FEE_PCT
-            slippage_cost = entry_usd * gross_profit_pct * 0.3  # Assume 30% of spread lost to slippage
-            total_costs = flash_loan_cost + slippage_cost + GAS_COST_USD
+            # Deduct realistic costs for net profit. Slippage is taken as a
+            # fixed percent of notional (not of spread) so larger trades
+            # bear proportionally more slippage cost.
+            flash_loan_cost = entry_usd * flash_loan_fee_pct
+            slippage_cost = entry_usd * slippage_estimate_pct
+            total_costs = flash_loan_cost + slippage_cost + gas_cost_usd
 
             net_profit_usd = (entry_usd * gross_profit_pct) - total_costs
             net_profit_pct = net_profit_usd / entry_usd if entry_usd > 0 else 0
@@ -2086,7 +2114,9 @@ class EVMArbitrageEngine:
 
             self.logger.info(
                 f"💰 [{self.chain_name.upper()}] Arb value [{token_symbol}]: {amount_eth:.4f} ETH @ ${eth_price:.2f} = ${entry_usd:.2f} | "
-                f"Gross: +{gross_profit_pct:.2%} | Costs: ${total_costs:.2f} | Net: ${net_profit_usd:.2f}"
+                f"Gross: +{gross_profit_pct:.2%} | Costs: ${total_costs:.2f} "
+                f"(gas ${gas_cost_usd:.2f} + slip ${slippage_cost:.2f} + fee ${flash_loan_cost:.2f}) | "
+                f"Net: ${net_profit_usd:.2f}"
             )
 
             trade_id = f"arb_{uuid.uuid4().hex[:12]}"
