@@ -4,7 +4,7 @@ Copy-trading leader scorer.
 Pure-function module: takes a list of closed-trade rows for a leader
 wallet and returns a normalised score (0..100) plus the per-component
 metrics that drove it. Persistence is handled by wallet_discovery /
-copy_engine via the copy_leader_scores table (migration 023).
+copy_engine via the copy_leader_scores table (migration 024).
 
 Design notes
 ------------

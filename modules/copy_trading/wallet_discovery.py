@@ -3,7 +3,7 @@ Copy-trading wallet-discovery engine.
 
 Pulls candidate leader wallets from multiple public data sources,
 rate-limits HTTP fetches, scores them via leader_scorer, and caches
-results to the `copy_leader_scores` table (migration 023).
+results to the `copy_leader_scores` table (migration 024).
 
 Operator-flagged broken/missing in Wave-2 — this module is the
 rebuild. It is the **discovery** layer (cast the wide net); the

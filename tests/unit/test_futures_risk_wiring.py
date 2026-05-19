@@ -391,3 +391,102 @@ def test_engine_skip_live_gate_is_present_at_open_position():
     # gate is the if-branch that protects the live call).
     assert "self.exchange_client.open_long" in src
     assert "self.exchange_client.open_short" in src
+
+
+# ---------------------------------------------------------------------------
+# FUT-RM-07: post-fill ISOLATED-margin assertion
+# ---------------------------------------------------------------------------
+
+
+def test_engine_has_isolated_verify_hook_after_fill():
+    """Pin the FUT-RM-07 verifier wiring at the source level. If a future
+    refactor splits _open_position, this guard fails before reaching prod."""
+    src_path = os.path.join(
+        os.path.dirname(__file__), '..', '..',
+        'modules', 'futures_trading', 'core', 'futures_engine.py',
+    )
+    with open(src_path, 'r') as f:
+        src = f.read()
+    # Method exists
+    assert "async def _verify_isolated_or_close" in src
+    # And it's called from _open_position right after a successful fill
+    assert "_verify_isolated_or_close(symbol, side)" in src
+    # Gated by the enforce flag
+    assert "getattr(self, 'enforce_isolated_margin', True)" in src
+
+
+@pytest.mark.asyncio
+async def test_verify_isolated_closes_on_cross_margin():
+    """If the readback returns CROSS, _verify_isolated_or_close must call
+    _close_position with the FUT-RM-07 reason tag."""
+    import sys
+    from unittest.mock import AsyncMock, MagicMock
+    # Stub out aiohttp before importing the engine module
+    if 'aiohttp' not in sys.modules:
+        sys.modules['aiohttp'] = MagicMock()
+    if 'ccxt' not in sys.modules:
+        sys.modules['ccxt'] = MagicMock()
+    if 'ccxt.async_support' not in sys.modules:
+        sys.modules['ccxt.async_support'] = MagicMock()
+    from modules.futures_trading.core.futures_engine import (
+        FuturesTradingEngine, TradeSide,
+    )
+
+    eng = FuturesTradingEngine.__new__(FuturesTradingEngine)
+    eng.exchange = 'binance'
+    eng.enforce_isolated_margin = True
+    # Mock exchange client returns CROSS margin
+    eng.exchange_client = MagicMock()
+    eng.exchange_client.get_position = AsyncMock(return_value={
+        'symbol': 'BTCUSDT',
+        'side': 'LONG',
+        'margin_type': 'CROSS',
+        'mark_price': 50000.0,
+        'entry_price': 50000.0,
+        'size': 0.001,
+    })
+    close_calls = []
+
+    async def fake_close(symbol, reason):
+        close_calls.append((symbol, reason))
+
+    eng._close_position = fake_close
+    await eng._verify_isolated_or_close('BTCUSDT', TradeSide.LONG)
+    assert close_calls == [('BTCUSDT', 'fut_rm_07_cross_margin_detected')]
+
+
+@pytest.mark.asyncio
+async def test_verify_isolated_no_close_when_isolated():
+    """ISOLATED readback must not trigger any close."""
+    import sys
+    from unittest.mock import AsyncMock, MagicMock
+    if 'aiohttp' not in sys.modules:
+        sys.modules['aiohttp'] = MagicMock()
+    if 'ccxt' not in sys.modules:
+        sys.modules['ccxt'] = MagicMock()
+    if 'ccxt.async_support' not in sys.modules:
+        sys.modules['ccxt.async_support'] = MagicMock()
+    from modules.futures_trading.core.futures_engine import (
+        FuturesTradingEngine, TradeSide,
+    )
+
+    eng = FuturesTradingEngine.__new__(FuturesTradingEngine)
+    eng.exchange = 'binance'
+    eng.enforce_isolated_margin = True
+    eng.exchange_client = MagicMock()
+    eng.exchange_client.get_position = AsyncMock(return_value={
+        'symbol': 'BTCUSDT',
+        'side': 'LONG',
+        'margin_type': 'ISOLATED',
+        'mark_price': 50000.0,
+        'entry_price': 50000.0,
+        'size': 0.001,
+    })
+    close_calls = []
+
+    async def fake_close(symbol, reason):
+        close_calls.append((symbol, reason))
+
+    eng._close_position = fake_close
+    await eng._verify_isolated_or_close('BTCUSDT', TradeSide.LONG)
+    assert close_calls == []

@@ -57,12 +57,27 @@ class FuturesPositionConfig(BaseModel):
     max_positions: int = 5
     min_trade_size: float = 10.0
 
+    # FUT-RM-06: ATR-based per-symbol sizing.
+    # When enabled, the engine sizes positions so that an `atr_stop_multiplier`
+    # × ATR move costs `atr_risk_pct` of capital_allocation per trade.
+    # Result: a volatile BTC trade and a quiet ALGO trade risk the same $.
+    # Multiplies cleanly with leverage — notional = (risk_$ / (ATR * stop_mult))
+    #   × price × leverage. Then capped by max_position_usd + min_trade_size.
+    atr_sizing_enabled: bool = False
+    atr_risk_pct: float = 1.0   # % of capital_allocation risked per trade
+    atr_stop_multiplier: float = 1.5  # SL distance in ATR units
+
 
 class FuturesLeverageConfig(BaseModel):
     """Leverage configuration"""
     default_leverage: int = 10
     max_leverage: int = 20
     margin_mode: str = "isolated"  # isolated or cross
+    # FUT-RM-07: defense-in-depth on MB-17. When True, the engine verifies
+    # margin_type=ISOLATED via a position-read AFTER placing the entry
+    # order and immediately closes if a CROSS-margin fill is detected.
+    # No-op in DRY_RUN.
+    enforce_isolated_margin: bool = True
 
 
 class FuturesRiskConfig(BaseModel):
@@ -608,11 +623,16 @@ class FuturesConfigManager:
             'min_position_pct': FuturesConfigType.POSITION,
             'max_position_usd': FuturesConfigType.POSITION,
             'static_position_pct': FuturesConfigType.POSITION,
+            # FUT-RM-06: ATR-based sizing
+            'atr_sizing_enabled': FuturesConfigType.POSITION,
+            'atr_risk_pct': FuturesConfigType.POSITION,
+            'atr_stop_multiplier': FuturesConfigType.POSITION,
             # Leverage settings
             'leverage': FuturesConfigType.LEVERAGE,  # alias for default_leverage
             'default_leverage': FuturesConfigType.LEVERAGE,
             'max_leverage': FuturesConfigType.LEVERAGE,
             'margin_mode': FuturesConfigType.LEVERAGE,
+            'enforce_isolated_margin': FuturesConfigType.LEVERAGE,  # FUT-RM-07
             # Risk settings - SL
             'stop_loss': FuturesConfigType.RISK,  # alias
             'stop_loss_pct': FuturesConfigType.RISK,

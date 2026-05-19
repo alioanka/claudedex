@@ -87,6 +87,12 @@ class TechnicalSignals:
     trend: str = "sideways"  # uptrend, downtrend, sideways
     support_level: float = 0.0
     resistance_level: float = 0.0
+    # FUT-RM-06: Average True Range (14-period). Same price units as the
+    # underlying (quote currency for USDT perps). Zero when there isn't
+    # enough history. Used by _calculate_position_size for risk-parity
+    # sizing across symbols of different volatility.
+    atr: float = 0.0
+    atr_pct: float = 0.0  # atr / last_close (decimal, e.g. 0.025 = 2.5%)
 
     @property
     def overall_signal(self) -> SignalStrength:
@@ -288,10 +294,18 @@ class FuturesTradingEngine:
             self.static_position_pct = getattr(position_config, 'static_position_pct', 15.0)
             self.position_size_usd = position_config.position_size_usd  # Legacy fallback
             self.min_trade_size = getattr(position_config, 'min_trade_size', 10.0)
+            # FUT-RM-06: ATR-based sizing toggles
+            self.atr_sizing_enabled = getattr(position_config, 'atr_sizing_enabled', False)
+            self.atr_risk_pct = getattr(position_config, 'atr_risk_pct', 1.0)
+            self.atr_stop_multiplier = getattr(position_config, 'atr_stop_multiplier', 1.5)
 
             # Leverage settings
             self.leverage = leverage_config.default_leverage
             self.max_leverage = getattr(leverage_config, 'max_leverage', 20)
+            # FUT-RM-07: post-fill ISOLATED-margin verification toggle
+            self.enforce_isolated_margin = getattr(
+                leverage_config, 'enforce_isolated_margin', True
+            )
 
             # Risk settings - SL/TP as price percentages
             self.stop_loss_pct = abs(risk_config.stop_loss_pct)  # Store as positive
@@ -347,6 +361,11 @@ class FuturesTradingEngine:
             self.max_positions = 5
             self.position_size_usd = 100.0
             self.leverage = 10
+            # FUT-RM-06 / FUT-RM-07 fallback defaults
+            self.atr_sizing_enabled = False
+            self.atr_risk_pct = 1.0
+            self.atr_stop_multiplier = 1.5
+            self.enforce_isolated_margin = True
             self.stop_loss_pct = -5.0
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
@@ -1311,6 +1330,22 @@ class FuturesTradingEngine:
             signals.price_change_1h = ((closes[-1] - closes[-2]) / closes[-2]) * 100 if len(closes) >= 2 else 0
             signals.price_change_24h = ((closes[-1] - closes[-24]) / closes[-24]) * 100 if len(closes) >= 24 else 0
 
+            # FUT-RM-06: ATR (14-period) for per-symbol risk-parity sizing.
+            # Simple mean of TRs over the last 14 bars (close enough to
+            # Wilder for sizing — Wilder undershoots SMA by <5% steady-state).
+            atr_period = 14
+            if len(closes) >= atr_period + 1:
+                trs = []
+                for i in range(1, len(closes)):
+                    h = highs[i]
+                    l = lows[i]
+                    pc = closes[i-1]
+                    tr = max(h - l, abs(h - pc), abs(l - pc))
+                    trs.append(tr)
+                signals.atr = sum(trs[-atr_period:]) / atr_period if trs else 0.0
+                last_close = closes[-1]
+                signals.atr_pct = (signals.atr / last_close) if last_close > 0 else 0.0
+
             # Trend detection
             sma_20 = sum(closes[-20:]) / 20
             sma_50 = sum(closes[-50:]) / 50
@@ -1392,8 +1427,38 @@ class FuturesTradingEngine:
 
         Static sizing: Uses fixed percentage of capital
 
+        ATR sizing (FUT-RM-06): Per-symbol risk-parity. The capped dollar
+        risk per trade is held constant; position size scales inversely
+        with ATR. A 5% ATR symbol gets 1/5 the notional of a 1% ATR symbol
+        — same realized $ loss when the price moves stop-multiplier * ATR.
+
         Returns: Position size in USD (notional value before leverage)
         """
+        # FUT-RM-06: ATR-based sizing path (highest priority when enabled
+        # AND we have a usable ATR reading; otherwise fall through to the
+        # existing static / dynamic paths).
+        if (
+            getattr(self, 'atr_sizing_enabled', False)
+            and signals is not None
+            and getattr(signals, 'atr_pct', 0.0) > 0.0
+        ):
+            risk_amount = self.capital_allocation * (self.atr_risk_pct / 100.0)
+            stop_distance_pct = signals.atr_pct * float(self.atr_stop_multiplier)
+            if stop_distance_pct > 0:
+                position_margin = risk_amount / stop_distance_pct
+                notional = position_margin * float(self.leverage)
+                logger.debug(
+                    f"ATR sizing: risk=${risk_amount:.2f} "
+                    f"ATR%={signals.atr_pct*100:.3f} stopMult={self.atr_stop_multiplier} "
+                    f"-> margin=${position_margin:.2f} × {self.leverage}x "
+                    f"= ${notional:.2f}"
+                )
+                if notional > self.max_position_usd:
+                    notional = self.max_position_usd
+                    logger.debug(f"ATR sizing capped at ${self.max_position_usd:.2f}")
+                return notional
+            logger.debug("ATR sizing skipped: stop_distance_pct=0; falling through")
+
         if not self.dynamic_position_sizing:
             # Static position sizing: Capital × Position%
             # Example: $300 × 15% = $45 margin
@@ -1828,6 +1893,15 @@ class FuturesTradingEngine:
                     if order.get('average'):
                         position.entry_price = float(order['average'])
 
+                    # FUT-RM-07: defense-in-depth on MB-17. set_margin_type
+                    # is called inside open_long/open_short, but a stale
+                    # account-level setting or a Bybit 110026/110043
+                    # idempotency false-positive could land us with a
+                    # CROSS-margin fill. Verify by re-reading the position
+                    # immediately and close on mismatch.
+                    if getattr(self, 'enforce_isolated_margin', True):
+                        await self._verify_isolated_or_close(symbol, side)
+
                 except Exception as e:
                     logger.error(f"❌ Order execution failed: {e}")
                     return
@@ -2081,6 +2155,74 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.debug(f"funding rate fetch failed for {symbol}: {e}")
             return None
+
+    async def _verify_isolated_or_close(self, symbol: str, side: TradeSide) -> None:
+        """FUT-RM-07: defense-in-depth on MB-17.
+
+        Re-reads the position from the exchange right after a fill and
+        confirms margin_type == ISOLATED. If the readback shows CROSS
+        (stale account-level setting, prior session leak, or a
+        110026/110043 false-positive from Bybit's "idempotency" branch)
+        we immediately close the position to bound risk to one trade's
+        margin requirement instead of the whole account.
+
+        No-op when:
+          - executor lacks get_position (cannot verify; logs warning)
+          - DRY_RUN (no real fill)
+          - margin_type reads as None (unknown — fail-open, log)
+
+        Bounded to ~1s of extra latency per entry: a single REST read.
+        """
+        try:
+            executor = self.exchange_client
+            if executor is None or not hasattr(executor, 'get_position'):
+                logger.warning(
+                    f"FUT-RM-07: executor has no get_position(); skipping isolated verify for {symbol}"
+                )
+                return
+            pos = await executor.get_position(symbol)
+            if not pos:
+                # No position came back — fill failed silently or fully closed.
+                # Don't open a second order, just log.
+                logger.warning(
+                    f"FUT-RM-07: get_position returned empty for {symbol} immediately "
+                    f"after fill — fill may have failed; verify externally"
+                )
+                return
+            # Normalize so we have margin_type regardless of source.
+            try:
+                from modules.futures_trading.exchanges import normalize_position
+                src = getattr(self, 'exchange', '') or ''
+                normalized = normalize_position(pos, src) or pos
+            except Exception:
+                normalized = pos
+            margin_type = (
+                normalized.get('margin_type')
+                if isinstance(normalized, dict) else None
+            )
+            if margin_type is None:
+                logger.info(
+                    f"FUT-RM-07: margin_type unavailable for {symbol}; "
+                    f"skipping enforcement (fail-open)"
+                )
+                return
+            if str(margin_type).upper() != 'ISOLATED':
+                logger.error(
+                    f"🚨 FUT-RM-07: {symbol} fill landed with margin_type="
+                    f"{margin_type!r} but ISOLATED is required. Closing immediately."
+                )
+                # Best-effort close — same path the SL/TP uses.
+                try:
+                    await self._close_position(symbol, "fut_rm_07_cross_margin_detected")
+                except Exception as close_err:
+                    logger.error(
+                        f"FUT-RM-07: emergency close after CROSS detect failed for "
+                        f"{symbol}: {close_err}. Operator MUST intervene."
+                    )
+            else:
+                logger.debug(f"FUT-RM-07: {symbol} margin_type verified ISOLATED")
+        except Exception as e:
+            logger.warning(f"FUT-RM-07 verify errored for {symbol}: {e}")
 
     async def close_all_positions(self):
         """Close all open positions"""

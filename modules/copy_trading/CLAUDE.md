@@ -2,7 +2,7 @@
 ## What it does
 Mirrors on-chain trades from configured leader wallets across EVM chains and Solana. Watches for new tx hashes, decodes swap legs, and replays them at operator-capped size.
 
-**Wave-2 (2026-05-19) — quant rebuild.** Discovery layer rebuilt from scratch (operator-flagged broken). New `wallet_discovery.py` + `leader_scorer.py` modules + `copy_leader_scores` table (migration 023). Engine now wires Kelly-fraction sizing per leader (feature-flagged off) and emits structured replay-decision diagnostics at every gate.
+**Wave-2 (2026-05-19) — quant rebuild.** Discovery layer rebuilt from scratch (operator-flagged broken). New `wallet_discovery.py` + `leader_scorer.py` modules + `copy_leader_scores` table (migration 024). Engine now wires Kelly-fraction sizing per leader (feature-flagged off) and emits structured replay-decision diagnostics at every gate.
 ## Entry point
 `modules/copy_trading/main_copy.py` — launched as a subprocess by `main.py` when `COPY_MODULE_ENABLED=true`. Engine: `modules/copy_trading/copy_engine.py` (combined leader-watcher + `CopyTradeExecutor`). Discovery + scoring: `wallet_discovery.py` + `leader_scorer.py` (called from the dashboard and `scripts/refresh_copy_leaders.py`).
 ## Key config (DB-backed via `ConfigManager`; leader list persisted in DB)
