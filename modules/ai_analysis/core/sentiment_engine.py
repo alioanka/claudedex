@@ -973,10 +973,66 @@ class SentimentEngine:
                         })
                     )
 
+                # A6 E2: open-row in ai_confidence_calibration. realised_*
+                # columns are filled at close. Best-effort; never blocks the
+                # trade open path.
+                await self._write_calibration_open(trade_id, score)
+
             logger.info(f"✅ AI Trade {'Simulated' if self.dry_run else 'Executed'}: {action_type} {symbol} @ ${entry_price:,.2f}")
 
         except Exception as e:
             logger.error(f"Failed to execute AI trade: {e}")
+
+    async def _write_calibration_open(self, trade_id: str, score: float) -> None:
+        """A6 E2: persist predicted (score, confidence, quorum-flag) at trade
+        open. Best-effort; missing table or write failure is logged at DEBUG
+        and never bubbles up — the live trade path must not depend on the
+        calibration store."""
+        if not self.db_pool:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO ai_confidence_calibration (
+                        trade_id, provider, model,
+                        predicted_score, predicted_confidence,
+                        quorum_required
+                    ) VALUES ($1, $2, $3, $4, $5, $6)
+                    ON CONFLICT (trade_id) DO NOTHING
+                    """,
+                    trade_id,
+                    self.ai_provider,
+                    None,
+                    float(score),
+                    float(abs(score)),
+                    bool(self.quorum_required),
+                )
+        except Exception as e:
+            logger.debug(f"calibration: open-row write failed (non-fatal): {e}")
+
+    async def _write_calibration_close(
+        self, trade_id: str, pnl_pct: float
+    ) -> None:
+        """A6 E2: backfill realised PnL + won-flag at close. Best-effort."""
+        if not self.db_pool or not trade_id:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE ai_confidence_calibration
+                    SET realized_pnl_pct = $1,
+                        realized_won     = $2,
+                        closed_at        = NOW()
+                    WHERE trade_id = $3
+                    """,
+                    float(pnl_pct),
+                    bool(pnl_pct > 0),
+                    trade_id,
+                )
+        except Exception as e:
+            logger.debug(f"calibration: close-row update failed (non-fatal): {e}")
 
     async def _load_active_positions(self):
         """Load active AI positions from database"""
@@ -1128,6 +1184,9 @@ class SentimentEngine:
                             result.get('order_id'),
                             trade_id
                         )
+
+                # A6 E2: backfill realised outcome for calibration analysis.
+                await self._write_calibration_close(trade_id, pnl_pct)
 
                 # Remove from active positions
                 del self.active_positions[symbol]
