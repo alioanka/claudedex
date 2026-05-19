@@ -255,6 +255,12 @@
                             <input type="number" class="form-control" id="opportunity_cooldown" min="1" max="120" value="30">
                             <div class="form-text">Wait time before re-executing same opportunity.</div>
                         </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Hourly Gas Budget (USD)</label>
+                            <input type="number" class="form-control" id="gas_budget_usd_per_hour" min="1" max="1000" step="1" value="50">
+                            <div class="form-text">A2-07: rolling per-engine cap on USD spent on gas in any rolling 1-hour window. New executions are refused once exceeded.</div>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -1204,6 +1210,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
                 document.getElementById('max_daily_trades').value = s.max_daily_trades || 5;
                 document.getElementById('scan_interval').value = s.scan_interval || 2;
                 document.getElementById('opportunity_cooldown').value = s.opportunity_cooldown || 30;
+                document.getElementById('gas_budget_usd_per_hour').value = s.gas_budget_usd_per_hour || 50;
 
                 // Chains
                 document.getElementById('ethereum_enabled').checked = s.ethereum_enabled !== false;
@@ -1274,6 +1281,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
             max_daily_trades: parseInt(document.getElementById('max_daily_trades').value),
             scan_interval: parseInt(document.getElementById('scan_interval').value),
             opportunity_cooldown: parseInt(document.getElementById('opportunity_cooldown').value),
+            gas_budget_usd_per_hour: parseFloat(document.getElementById('gas_budget_usd_per_hour').value),
 
             // Chains
             ethereum_enabled: document.getElementById('ethereum_enabled').checked,

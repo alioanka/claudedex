@@ -74,4 +74,35 @@ Operator brief explicitly asks for an hourly gas-budget tracker. Priority P2.
    `FLASH_LOAN_RECEIVER_CONTRACT_*`.
 
 ## Fix log
-(filled after each commit)
+
+| Commit | What | Files |
+|---|---|---|
+| `9e6a7d1` | A2-01: NameError in spatial-arb opportunity log (live trades were silently dropped) | `arbitrage_engine.py`, report seed |
+| `744ee48` | A2-06 + per-chain cost-profile foundation: UI knob honored; CHAIN_CONFIGS extended with `flash_loan_gas_limit`, `fallback_gas_gwei`, `default_slippage_pct`, `flash_loan_fee_pct` | `arbitrage_engine.py` |
+| `4adcd29` | Cost helpers: `_gas_cost_usd_per_tx` / `_gas_spike_multiplier` / `_adaptive_min_profit_threshold` / `_gas_budget_check_and_charge` | `arbitrage_engine.py` |
+| `8cf0143` | A2-02 / A2-03 / A2-05: chain-aware gate + PnL costs replace magic numbers (0.005, $15, 0.006) | `arbitrage_engine.py` |
+| `89175d4` | A2-04 + A2-07: receiver address via secrets_manager + hourly gas-budget gate | `arbitrage_engine.py` |
+| _next_ | Dashboard knob + CLAUDE.md + report finalize | `settings_arbitrage.html`, `CLAUDE.md`, this file |
+
+## Verification matrix (post-wave)
+
+| Risk surface | Pre-wave | Post-wave |
+|---|---|---|
+| Live spatial trade broadcast | 100% silent drop (A2-01 NameError) | Path executes; opportunity log shows direction, threshold, gas-mult |
+| Pre-execution net-spread filter | Constant 0.5% gas+slip across all chains | `gas_usd / borrow_eth + chain_default_slippage`; threshold adapts to gas spikes |
+| Persisted PnL row | $15 false gas + 30%-of-spread fake slippage | Live `_gas_cost_usd_per_tx` + chain `default_slippage_pct` × notional |
+| FLASH_LOAN_RECEIVER address | `os.getenv` only | `_get_decrypted_key` -> secrets_manager (DB + Fernet) -> env fallback |
+| Cross-module risk gate | Pre-execute call wired (P1-06) | Unchanged — verified still active on EVM / Solana / Triangular paths |
+| Runaway gas spend | Bounded only by wallet ETH balance | Hourly USD budget (`gas_budget_usd_per_hour`, default $50) |
+| Dashboard `min_profit_spread` knob | Silently ignored — engine used 0.3% constant | Honored; baseline for adaptive curve |
+| Triangular path | Gated by MB-05 atomic-receiver guard | Unchanged (per operator brief) |
+
+## Items deferred (out of wave-2 scope)
+
+- Triangular atomic-receiver contract deploy (operator approval required).
+- Per-DEX realized-slippage learning to replace the static `default_slippage_pct` (needs ~7 days of `arbitrage_trades` rows to be statistically sound — start collecting now that the PnL row is honest).
+- Direct integration with `monitoring/dashboard` to surface `_gas_spend_usd_hour` live tile.
+
+## Final state
+All P0/P1 wave-2 items closed. Triangular and Solana engines unchanged this wave. Spatial engine production-ready pending operator LIVE flip + a final smoke on each chain.
+
