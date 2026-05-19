@@ -859,8 +859,8 @@ class MEVProtectionLayer(BaseExecutor):
                 logger.error(f"Unsupported chain: {order.chain}")
                 return False
                 
-            # Check Web3 connection
-            if not self.w3 or not self.w3.isConnected():
+            # Check Web3 connection (web3 v6 dropped camelCase isConnected)
+            if not self.w3 or not self.w3.is_connected():
                 logger.error("Web3 not connected")
                 return False
                 

@@ -15,7 +15,13 @@ import logging
 
 from web3 import Web3
 from web3.contract import Contract
-from web3.middleware import geth_poa_middleware
+# web3.py renamed the PoA middleware: <6 = geth_poa_middleware,
+# 6.x = ExtraDataToPOAMiddleware. Import whichever is present so the
+# executor still initializes BSC/Polygon connections under either version.
+try:
+    from web3.middleware import ExtraDataToPOAMiddleware as _POA_MIDDLEWARE  # web3 >= 6
+except ImportError:  # pragma: no cover - legacy web3 fallback
+    from web3.middleware import geth_poa_middleware as _POA_MIDDLEWARE
 from eth_account import Account
 from eth_abi import encode_abi
 
@@ -133,7 +139,7 @@ class DirectDEXExecutor(BaseExecutor):
 
                     # Add middleware for PoA chains
                     if chain in [Chain.BSC, Chain.POLYGON]:
-                        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+                        w3.middleware_onion.inject(_POA_MIDDLEWARE, layer=0)
 
                     if w3.is_connected():
                         self.w3_connections[chain] = w3
@@ -165,7 +171,7 @@ class DirectDEXExecutor(BaseExecutor):
                     abi = UNISWAP_V2_ABI
                     
                 contract = w3.eth.contract(
-                    address=Web3.toChecksumAddress(router_address),
+                    address=Web3.to_checksum_address(router_address),
                     abi=abi
                 )
                 
@@ -462,7 +468,7 @@ class DirectDEXExecutor(BaseExecutor):
             ]
             
             token = w3.eth.contract(
-                address=Web3.toChecksumAddress(token_address),
+                address=Web3.to_checksum_address(token_address),
                 abi=erc20_abi
             )
             
@@ -908,8 +914,8 @@ class DirectDEXExecutor(BaseExecutor):
             if cache_key in self.route_cache:
                 return self.route_cache[cache_key]
                 
-            token_in = Web3.toChecksumAddress(token_in)
-            token_out = Web3.toChecksumAddress(token_out)
+            token_in = Web3.to_checksum_address(token_in)
+            token_out = Web3.to_checksum_address(token_out)
             
             # Direct path
             direct_path = [token_in, token_out]
@@ -917,7 +923,7 @@ class DirectDEXExecutor(BaseExecutor):
             # Multi-hop paths through common bases
             multi_hop_paths = []
             for base in self.common_bases.get(chain, []):
-                base = Web3.toChecksumAddress(base)
+                base = Web3.to_checksum_address(base)
                 if base != token_in and base != token_out:
                     # Try token_in -> base -> token_out
                     multi_hop_paths.append([token_in, base, token_out])
@@ -925,7 +931,7 @@ class DirectDEXExecutor(BaseExecutor):
                     # For 3 hops, try additional base
                     if self.max_hops >= 3:
                         for base2 in self.common_bases.get(chain, []):
-                            base2 = Web3.toChecksumAddress(base2)
+                            base2 = Web3.to_checksum_address(base2)
                             if base2 != base and base2 != token_in and base2 != token_out:
                                 multi_hop_paths.append([token_in, base, base2, token_out])
                                 
@@ -1006,11 +1012,11 @@ class DirectDEXExecutor(BaseExecutor):
                 return False
             
             # Check token addresses
-            if not Web3.isAddress(order.token_in):
+            if not Web3.is_address(order.token_in):
                 logger.error(f"Invalid token_in address: {order.token_in}")
                 return False
                 
-            if not Web3.isAddress(order.token_out):
+            if not Web3.is_address(order.token_out):
                 logger.error(f"Invalid token_out address: {order.token_out}")
                 return False
             
