@@ -1214,6 +1214,247 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "a confidence-calibration model."
         ),
     },
+
+    # ════════════════════════════════════════════════════════════════════
+    # Wave-2 T1 catalog additions: DEX / ARBITRAGE / SOLANA / SNIPER
+    # coverage for the commits enumerated in PM_PLAN "T1 / T2 brief".
+    # ════════════════════════════════════════════════════════════════════
+
+    # ── DEX (A1 wave-2: f7d7941, e872121, 23d860d, 48d5f20,
+    #        162f711, a40f69a, 869eed3) ─────────────────────────────────
+    {
+        "id": "script_dex_decimals_unit_tests",
+        "title": "Script: DEX decimals + route-quality regression tests (869eed3)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": [
+            "python", "-m", "pytest",
+            "tests/unit/test_dex_decimals.py", "-v", "--tb=short", "-x",
+        ],
+        "cmd_preview": "pytest tests/unit/test_dex_decimals.py -v",
+        "timeout_s": 120,
+        "description": (
+            "Pins MB-01 (decimals on input + output legs for USDC/WBTC/"
+            "WETH) and the route-quality scoring regressions (prefers "
+            "lower gas + lower price-impact). Failure = direct_dex "
+            "decimals fix or _score_quote ranker regressed."
+        ),
+    },
+    {
+        "id": "script_dex_web3_v6_imports",
+        "title": "Script: DEX web3 v6 API drift import smoke (48d5f20)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/dex_web3_v6_smoke.sh"],
+        "cmd_preview": "bash scripts/dex_web3_v6_smoke.sh",
+        "timeout_s": 30,
+        "description": (
+            "Imports trading.executors.direct_dex + mev_protection and "
+            "asserts the v6 snake_case Web3 helpers + ExtraDataToPOAMiddleware "
+            "import path resolve. Failure = web3>=6 install drift or a "
+            "regression of the toChecksumAddress/PoA fallback shim."
+        ),
+    },
+    {
+        "id": "script_dex_mev_unbound_check",
+        "title": "Script: DEX mev_protection bundle_id default (e872121)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/dex_mev_unbound_check.sh"],
+        "cmd_preview": "bash scripts/dex_mev_unbound_check.sh",
+        "timeout_s": 15,
+        "description": (
+            "Source-grep: verifies trading/executors/mev_protection.py "
+            "declares bundle_id=None before the if/else branches so the "
+            "low-risk ADVANCED path can't UnboundLocalError. Also "
+            "asserts Flashbots-on-ETH gating string is present."
+        ),
+    },
+    {
+        "id": "db_dex_recent_trades_24h",
+        "title": "DB: DEX trades last 24h (decimals + scoring sanity)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT chain, dex_used, status, COUNT(*) AS n, "
+            "  ROUND(AVG(slippage)::numeric, 5) AS avg_slippage, "
+            "  ROUND(AVG(gas_used)::numeric, 0) AS avg_gas "
+            "FROM trades "
+            "WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "GROUP BY chain, dex_used, status "
+            "ORDER BY chain, dex_used, status"
+        ),
+        "cmd_preview": (
+            "SELECT chain,dex_used,status,COUNT(*),AVG(slippage),AVG(gas_used) FROM trades"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Per-chain DEX trade flow + average slippage / gas. After "
+            "f7d7941 the slippage column should always be populated "
+            "(self.max_slippage init fix). avg_gas wildly off chain "
+            "ceiling indicates the per-chain gwei cap (162f711) is "
+            "misconfigured."
+        ),
+    },
+    {
+        "id": "db_dex_settings_keys",
+        "title": "DB: DEX settings (max_slippage + gas + mev)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE config_type LIKE 'dex%' "
+            "  AND key IN ("
+            "    'max_slippage','max_slippage_bps',"
+            "    'max_gas_price','max_gas_price_gwei',"
+            "    'mev_protection','flashbots_enabled'"
+            "  ) "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE config_type LIKE 'dex%' AND key IN slip/gas/mev"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Wave-2 DEX wiring: confirms max_slippage (f7d7941), gas "
+            "ceiling (162f711) and MEV toggle (e872121) are seeded. "
+            "Missing rows = DirectDEXExecutor falls back to defaults "
+            "(0.5% slippage, per-chain gwei map, Flashbots-ETH-only)."
+        ),
+    },
+    {
+        "id": "db_dex_open_positions",
+        "title": "DB: DEX open positions (status='open')",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT chain, dex_used, COUNT(*) AS open_n, "
+            "  ROUND(SUM(amount_in)::numeric, 4) AS total_in, "
+            "  MIN(entry_timestamp) AS oldest, "
+            "  MAX(entry_timestamp) AS newest "
+            "FROM trades WHERE status = 'open' "
+            "GROUP BY chain, dex_used ORDER BY chain, dex_used"
+        ),
+        "cmd_preview": (
+            "SELECT chain,dex_used,COUNT(*),SUM(amount_in) FROM trades WHERE status='open'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Snapshot of currently-held DEX positions. amount_in being "
+            "honest (post-23d860d decimals fix) is the key invariant — "
+            "a USDC position must report units of USDC, not 10^12× more."
+        ),
+    },
+
+    # ════════════════════════════════════════════════════════════════════
+    # Wave-2 T2 catalog additions: FUTURES / AI / COPY_TRADING coverage
+    # for the commits enumerated in PM_PLAN "T1 / T2 brief" section.
+    # ════════════════════════════════════════════════════════════════════
+
+    # ── FUTURES (A5 wave-2: FUT-RM-01..07) ───────────────────────────────
+    {
+        "id": "db_futures_leverage_caps",
+        "title": "DB: FUTURES leverage + position caps (FUT-RM-01)",
+        "category": "db",
+        "kind": "db_query",
+        # The b1b8df9 fix patched only the dashboard wrapper; FUT-RM-01
+        # propagates futures_max_leverage / max_positions through to the
+        # main_futures.py subprocess. This probe confirms the DB rows
+        # exist — otherwise FuturesRiskManager silently falls back to
+        # max_leverage=3 on next subprocess restart.
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ('futures_max_leverage','max_positions',"
+            "'capital_allocation','default_leverage') "
+            "  AND config_type LIKE 'futures%' "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN ('futures_max_leverage','max_positions',…)"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "FUT-RM-01 wiring sanity: every key main_futures.py merges "
+            "into risk_cfg before constructing FuturesRiskManager. "
+            "Missing rows = engine falls back to hard-coded defaults "
+            "(leverage=3x, positions=3) regardless of dashboard setting."
+        ),
+    },
+    {
+        "id": "db_futures_funding_gate",
+        "title": "DB: FUTURES funding-rate gate config (FUT-RM-05)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ('skip_long_funding_bps','skip_short_funding_bps') "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN ('skip_long_funding_bps','skip_short_funding_bps')"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "FUT-RM-05 directional funding gate. Default 5 bps ≈ 55% "
+            "APR ceiling for longs. Missing rows mean the engine falls "
+            "back to the dataclass default."
+        ),
+    },
+    {
+        "id": "db_futures_atr_sizing",
+        "title": "DB: FUTURES ATR sizing toggles (FUT-RM-06)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ('atr_sizing_enabled','atr_risk_pct',"
+            "'atr_stop_multiplier') "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN ('atr_sizing_enabled','atr_risk_pct',…)"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "FUT-RM-06 ATR-based per-symbol sizing. Opt-in (default "
+            "off). When enabled, _calculate_position_size routes to "
+            "the ATR branch so a 5% ATR symbol gets ~1/5 the notional "
+            "of a 1% ATR symbol."
+        ),
+    },
+    {
+        "id": "db_futures_isolated_enforce",
+        "title": "DB: FUTURES isolated-margin enforcement (FUT-RM-07)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key = 'enforce_isolated_margin' "
+            "ORDER BY config_type"
+        ),
+        "cmd_preview": "SELECT … WHERE key='enforce_isolated_margin'",
+        "timeout_s": 10,
+        "description": (
+            "FUT-RM-07 defence-in-depth: after fill, _verify_isolated_"
+            "or_close() reads back the position and emergency-closes "
+            "on margin_type != ISOLATED. Default True."
+        ),
+    },
+    {
+        "id": "api_settings_futures_post_wave2",
+        "title": "API: GET /api/settings/futures (wave-2 keys roundtrip)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "settings/futures",
+        "cmd_preview": "GET /api/settings/futures | grep funding/atr/enforce",
+        "timeout_s": 15,
+        "description": (
+            "Wave-2 settings page must expose skip_long_funding_bps, "
+            "atr_sizing_enabled, atr_risk_pct, enforce_isolated_margin. "
+            "200 + non-empty JSON confirms the GET handler routes those "
+            "keys through FuturesConfigManager.get_*."
+        ),
+    },
 ]
 
 
