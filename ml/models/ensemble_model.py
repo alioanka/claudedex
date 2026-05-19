@@ -169,7 +169,32 @@ class EnsemblePredictor:
         model_dir = config.get("model_dir", "models/")
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        # AI-Q-07: per-token LSTM rolling buffer. OFF by default. When
+        # disabled, predict() preserves the legacy (1, 1, F) inference
+        # shape (effectively a single-bar LSTM call — degenerate but
+        # backward-compatible with already-deployed pipelines). When
+        # enabled, _predict_from_features maintains a deque per
+        # (token, chain) of the last `lstm_sequence_length` feature
+        # vectors and feeds the LSTM a real (1, T, F) tensor.
+        self.lstm_rolling_buffer_enabled = bool(
+            config.get('lstm_rolling_buffer_enabled', False)
+        )
+        # 20 matches the LSTM training seq_len in pump_predictor.py.
+        self.lstm_sequence_length = int(
+            config.get('lstm_sequence_length', 20)
+        )
+        # Per-token feature buffer keyed by (token, chain). Each entry is
+        # a list of numpy arrays of shape (F,). When length >= seq_len,
+        # we slice the trailing seq_len rows. Memory bound is
+        # buffer_max_tokens * seq_len * F * 4 bytes — at default
+        # (4096, 20, 95) ~= 30MB, capped via LRU eviction.
+        self._lstm_feature_buffer: dict = {}
+        self._lstm_buffer_max_tokens = int(
+            config.get('lstm_buffer_max_tokens', 4096)
+        )
+        self._lstm_buffer_order: list = []  # LRU eviction order
+
         # Initialize models
         self.models = {
             'xgboost_rug': None,
@@ -561,9 +586,13 @@ class EnsemblePredictor:
             await collector.initialize()
             token_data = await collector.get_token_info(token, chain)
             
-            # Extract features and get prediction
+            # Extract features and get prediction. cache_key feeds the
+            # AI-Q-07 per-token LSTM rolling buffer; harmless when the
+            # toggle is off.
             features = self.extract_features(token_data)
-            result = await self._predict_from_features(features)
+            result = await self._predict_from_features(
+                features, cache_key=f"{chain}:{token}"
+            )
             
             # Return API-compliant format
             return {
@@ -596,8 +625,65 @@ class EnsemblePredictor:
                 'error': str(e)
             }
 
+    # ------------------------------------------------------------------
+    # AI-Q-07: LSTM rolling buffer helpers
+    # ------------------------------------------------------------------
+    def _lstm_push_features(self, cache_key: str,
+                            features_scaled: np.ndarray) -> np.ndarray:
+        """Append a single feature row to the per-token rolling buffer.
+
+        Returns the trailing-window slice of shape (T, F) where
+        T == min(buffer_len, self.lstm_sequence_length). Buffer is
+        evicted on LRU once it exceeds `self._lstm_buffer_max_tokens`.
+        """
+        seq_len = max(1, int(self.lstm_sequence_length))
+        # Always store the most recent row first; the LSTM consumes
+        # the oldest -> newest slice we hand back.
+        row = features_scaled.reshape(-1)
+        buf = self._lstm_feature_buffer.get(cache_key)
+        if buf is None:
+            buf = []
+            self._lstm_feature_buffer[cache_key] = buf
+            self._lstm_buffer_order.append(cache_key)
+            # LRU evict.
+            while (
+                len(self._lstm_buffer_order) > self._lstm_buffer_max_tokens
+            ):
+                oldest = self._lstm_buffer_order.pop(0)
+                self._lstm_feature_buffer.pop(oldest, None)
+        else:
+            # Promote on access for LRU recency.
+            try:
+                self._lstm_buffer_order.remove(cache_key)
+            except ValueError:
+                pass
+            self._lstm_buffer_order.append(cache_key)
+        buf.append(row)
+        # Trim to seq_len.
+        if len(buf) > seq_len:
+            del buf[: len(buf) - seq_len]
+        return np.asarray(buf, dtype=np.float32)
+
+    def _lstm_build_input(self, window: np.ndarray) -> 'torch.Tensor':
+        """Pad or pass-through window to shape (1, T, F) for the LSTM.
+
+        Pads with the earliest row (edge-pad) when buffer is shorter than
+        seq_len. Edge-pad avoids zero-injection which produces an
+        artificial post-launch trend artifact for fresh tokens.
+        """
+        seq_len = max(1, int(self.lstm_sequence_length))
+        if window.ndim == 1:
+            window = window.reshape(1, -1)
+        cur, feat_dim = window.shape
+        if cur < seq_len:
+            pad_rows = np.tile(window[0:1, :], (seq_len - cur, 1))
+            window = np.concatenate([pad_rows, window], axis=0)
+        return torch.from_numpy(window).float().unsqueeze(0)  # (1, T, F)
+
     # Rename existing predict method to _predict_from_features:
-    async def _predict_from_features(self, features: np.ndarray) -> PredictionResult:
+    async def _predict_from_features(self, features: np.ndarray,
+                                     cache_key: Optional[str] = None,
+                                     ) -> PredictionResult:
         """
         Internal method for making predictions from feature array
         (This is the current predict method, just renamed)
@@ -656,10 +742,30 @@ class EnsemblePredictor:
                 predictions['gradient_boosting_rug'] = 0.5
                 
             # Neural network predictions
+            # AI-Q-07: when the rolling buffer is enabled AND we have a
+            # cache_key, feed real (1, seq_len, F) inputs to LSTM and
+            # Transformer. Both nets were trained on multi-step
+            # sequences; the legacy (1, 1, F) shape made their hidden
+            # state degenerate (1-step unroll) and silently emitted
+            # noise. Backward-compat path (no key OR toggle off) keeps
+            # the old shape.
+            use_seq = (
+                self.lstm_rolling_buffer_enabled and cache_key is not None
+            )
+            if use_seq:
+                window = self._lstm_push_features(cache_key, features_scaled)
+                seq_input = self._lstm_build_input(window)
+            else:
+                seq_input = None
+
             if self.models['lstm'] is not None:
                 with torch.no_grad():
-                    lstm_input = torch.FloatTensor(features_scaled).unsqueeze(0)
-                    lstm_output = self.models['lstm'](lstm_input)
+                    lstm_in = (
+                        seq_input
+                        if seq_input is not None
+                        else torch.FloatTensor(features_scaled).unsqueeze(0)
+                    )
+                    lstm_output = self.models['lstm'](lstm_in)
                     predictions['lstm_pump'] = lstm_output[0][0].item()
                     predictions['lstm_rug'] = lstm_output[0][1].item()
                     predictions['lstm_return'] = lstm_output[0][2].item()
@@ -667,11 +773,15 @@ class EnsemblePredictor:
                 predictions['lstm_pump'] = 0.5
                 predictions['lstm_rug'] = 0.5
                 predictions['lstm_return'] = 0.0
-                
+
             if self.models['transformer'] is not None:
                 with torch.no_grad():
-                    trans_input = torch.FloatTensor(features_scaled).unsqueeze(0)
-                    trans_output = self.models['transformer'](trans_input)
+                    trans_in = (
+                        seq_input
+                        if seq_input is not None
+                        else torch.FloatTensor(features_scaled).unsqueeze(0)
+                    )
+                    trans_output = self.models['transformer'](trans_in)
                     predictions['transformer_pump'] = trans_output[0][0].item()
                     predictions['transformer_rug'] = trans_output[0][1].item()
                     predictions['transformer_return'] = trans_output[0][2].item()
