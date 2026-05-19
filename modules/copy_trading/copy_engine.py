@@ -676,6 +676,14 @@ class CopyTradingEngine(BaseModule):
         self.kelly_probation_fraction = 0.05
         self.kelly_staleness_days = 7
 
+        # Wave-3 (CT-W3-01): slippage-decay tracker. Records
+        # (leader_fill_price, our_fill_price, delta_ms) per mirrored
+        # trade into copy_slippage_observations (migration 026).
+        # Default ON because it's a side-channel write -- failure is
+        # fail-soft, never breaks the trade pipeline. Operator can
+        # disable via config_settings.copytrading_config.slippage_tracking_enabled.
+        self.slippage_tracking_enabled = True
+
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
 
@@ -873,6 +881,12 @@ class CopyTradingEngine(BaseModule):
                             )
                         except (TypeError, ValueError):
                             pass
+                    elif key == 'slippage_tracking_enabled':
+                        # Wave-3 CT-W3-01: default ON; operator can
+                        # disable to skip the side-channel write.
+                        self.slippage_tracking_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
 
                 if targets_loaded != self.targets:
                     self.targets = targets_loaded
@@ -1194,6 +1208,52 @@ class CopyTradingEngine(BaseModule):
             pass
         return float(max(0.0, min(0.25, float(kelly))))
 
+    async def _record_slippage_observation(
+        self,
+        *,
+        chain: str,
+        leader_wallet: str,
+        token_address: str,
+        side: str,
+        leader_tx_hash: Optional[str],
+        our_tx_hash: Optional[str],
+        leader_fill_price_usd: Optional[float],
+        our_fill_price_usd: Optional[float],
+        leader_fill_ts: Optional[datetime],
+        our_fill_ts: Optional[datetime],
+        notes: Optional[Dict] = None,
+    ) -> None:
+        """Wave-3 CT-W3-01 slippage-decay recorder. Fail-soft -- never
+        raises. Skipped silently when the operator disables tracking or
+        the db_pool is unavailable. Called from _log_copy_trade so it
+        sees the same leader / our-fill snapshot."""
+        if not getattr(self, "slippage_tracking_enabled", True):
+            return
+        if not self.db_pool:
+            return
+        try:
+            from modules.copy_trading.slippage_tracker import (
+                SlippageObservation, persist_observation,
+            )
+            obs = SlippageObservation(
+                chain=chain,
+                leader_wallet=leader_wallet or "unknown",
+                token_address=token_address or "unknown",
+                side=side,
+                leader_tx_hash=leader_tx_hash,
+                our_tx_hash=our_tx_hash,
+                leader_fill_price_usd=leader_fill_price_usd,
+                our_fill_price_usd=our_fill_price_usd,
+                leader_fill_ts=leader_fill_ts,
+                our_fill_ts=our_fill_ts,
+                is_simulated=bool(self.dry_run),
+                notes=notes,
+            )
+            await persist_observation(self.db_pool, obs)
+        except Exception as e:
+            # Fail-soft: tracker errors must never break a mirrored trade.
+            logger.debug(f"_record_slippage_observation failed: {e}")
+
     async def _analyze_and_copy_evm(self, tx) -> bool:
         """Analyze EVM transaction and execute copy if it's a swap"""
         try:
@@ -1381,7 +1441,21 @@ class CopyTradingEngine(BaseModule):
                     reason='success',
                     extra={'side': side, 'copy_wei': int(copy_amount)},
                 )
-                await self._log_copy_trade(chain_name, tx_hash, result, source_wallet, side=side, token_address=token_address)
+                # Wave-3: leader fill timestamp from Etherscan tx
+                # (`timeStamp` = unix epoch seconds). Threaded through to
+                # the slippage tracker so delta_ms can be computed.
+                leader_ts = None
+                try:
+                    ts_raw = source_tx.get('timeStamp')
+                    if ts_raw is not None:
+                        leader_ts = datetime.utcfromtimestamp(int(ts_raw))
+                except Exception:
+                    leader_ts = None
+                await self._log_copy_trade(
+                    chain_name, tx_hash, result, source_wallet,
+                    side=side, token_address=token_address,
+                    leader_fill_ts=leader_ts,
+                )
             else:
                 logger.error(f"❌ EVM Copy Trade Failed: {result.get('error')}")
                 self._log_replay_decision(
@@ -1676,8 +1750,21 @@ class CopyTradingEngine(BaseModule):
                     extra={'side': side, 'token': token_mint[:16]},
                 )
 
+                # Wave-3: leader fill timestamp from Solana RPC
+                # (tx_data['blockTime'] = unix epoch seconds at top level).
+                leader_ts = None
+                try:
+                    bt = tx_data.get('blockTime') if tx_data else None
+                    if bt is not None:
+                        leader_ts = datetime.utcfromtimestamp(int(bt))
+                except Exception:
+                    leader_ts = None
                 # Log to database with proper side (BUY or SELL)
-                await self._log_copy_trade('solana', signature, result, wallet, side=side, token_address=token_mint)
+                await self._log_copy_trade(
+                    'solana', signature, result, wallet,
+                    side=side, token_address=token_mint,
+                    leader_fill_ts=leader_ts,
+                )
             else:
                 logger.error(f"❌ Solana Copy Trade Failed: {result.get('error')}")
                 err = result.get('error', 'unknown')
@@ -1692,8 +1779,22 @@ class CopyTradingEngine(BaseModule):
         except Exception as e:
             logger.error(f"Error executing Solana copy trade: {e}")
 
-    async def _log_copy_trade(self, chain: str, source_tx: str, result: Dict, source_wallet: str = None, side: str = 'buy', token_address: str = None):
-        """Log copy trade to database with P&L calculation for sells"""
+    async def _log_copy_trade(
+        self,
+        chain: str,
+        source_tx: str,
+        result: Dict,
+        source_wallet: str = None,
+        side: str = 'buy',
+        token_address: str = None,
+        leader_fill_ts: Optional[datetime] = None,
+    ):
+        """Log copy trade to database with P&L calculation for sells.
+
+        Wave-3: `leader_fill_ts` is the leader's on-chain fill time
+        (EVM `timeStamp`, Solana `blockTime`). Threaded through so the
+        slippage tracker can compute `delta_ms = our_fill - leader_fill`.
+        """
         if not self.db_pool:
             return
 
@@ -1797,6 +1898,37 @@ class CopyTradingEngine(BaseModule):
                 # Update wallet stats if source_wallet provided
                 if source_wallet and result.get('success'):
                     await self._update_wallet_stats(conn, source_wallet)
+
+            # Wave-3 CT-W3-01: record slippage observation (fail-soft).
+            # leader_fill_price == our_fill_price == native_price is a
+            # best-effort proxy when both fills are within seconds; the
+            # operationally interesting metric here is delta_ms. When a
+            # caller passes a token-level USD spot from a finer source
+            # (e.g. Jupiter quote), this hook can be extended without
+            # touching the trade pipeline.
+            if result.get('success'):
+                try:
+                    await self._record_slippage_observation(
+                        chain=chain,
+                        leader_wallet=source_wallet or 'unknown',
+                        token_address=token_addr,
+                        side=side,
+                        leader_tx_hash=source_tx,
+                        our_tx_hash=result.get('tx_hash'),
+                        leader_fill_price_usd=float(native_price)
+                            if native_price else None,
+                        our_fill_price_usd=float(native_price)
+                            if native_price else None,
+                        leader_fill_ts=leader_fill_ts,
+                        our_fill_ts=now,
+                        notes={
+                            'amount_native': float(amount_native or 0),
+                            'usd_value': float(usd_value or 0),
+                            'dry_run': bool(self.dry_run),
+                        },
+                    )
+                except Exception:
+                    pass
 
         except Exception as e:
             logger.error(f"Error logging copy trade: {e}")

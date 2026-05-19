@@ -1117,6 +1117,14 @@ class DashboardEndpoints:
             '/api/copytrading/leaders/refresh',
             require_auth(require_admin(self.api_refresh_copytrading_leaders)),
         )
+        # Wave-3 CT-W3-01: rolling per-leader slippage stats from
+        # copy_slippage_observations (migration 026). Single-leader
+        # mode (?leader=<wallet>) returns scalar median bps + delta_ms;
+        # no-leader mode returns the per-leader leaderboard for the
+        # discovery-page slippage chart.
+        self.app.router.add_get(
+            '/api/copytrading/slippage', self.api_get_copytrading_slippage,
+        )
 
         # AI Analysis Module Pages
         self.app.router.add_get('/ai/dashboard', self._ai_dashboard)
@@ -6741,6 +6749,9 @@ class DashboardEndpoints:
             'trailing_stop_enabled': 'futures_risk', 'trailing_stop': 'futures_risk',
             'trailing_stop_distance': 'futures_risk', 'trailing_distance': 'futures_risk',
             'max_consecutive_losses': 'futures_risk',
+            # FUT-RM-10 (Wave 3) auto-deleverage controls
+            'auto_deleverage_enabled': 'futures_risk',
+            'auto_deleverage_cooldown_seconds': 'futures_risk',
             'allowed_pairs': 'futures_pairs', 'both_directions': 'futures_pairs',
             'preferred_direction': 'futures_pairs',
             'rsi_oversold': 'futures_strategy', 'rsi_overbought': 'futures_strategy',
@@ -10434,6 +10445,44 @@ class DashboardEndpoints:
             })
         except Exception as e:
             logger.error(f"api_refresh_copytrading_leaders failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_get_copytrading_slippage(self, request):
+        """Wave-3 CT-W3-01: rolling per-leader slippage stats.
+
+        Query params:
+          leader: optional leader wallet (single-leader scalar mode)
+          chain:  optional chain filter
+          window_days: integer, default 7 (clamped 1..90)
+          limit: max leaderboard rows in multi-leader mode (default 100)
+        """
+        try:
+            leader = request.query.get('leader') or None
+            chain = request.query.get('chain') or None
+            try:
+                window_days = max(1, min(90, int(request.query.get('window_days', '7'))))
+            except ValueError:
+                window_days = 7
+            try:
+                limit = max(1, min(500, int(request.query.get('limit', '100'))))
+            except ValueError:
+                limit = 100
+
+            if not (self.db and self.db.pool):
+                return web.json_response({
+                    'success': False, 'error': 'database unavailable',
+                }, status=503)
+
+            from modules.copy_trading.slippage_tracker import get_rolling_slippage
+            payload = await get_rolling_slippage(
+                self.db.pool,
+                leader_wallet=leader, chain=chain,
+                window_days=window_days, limit=limit,
+            )
+            payload['success'] = True
+            return web.json_response(payload)
+        except Exception as e:
+            logger.error(f"api_get_copytrading_slippage failed: {e}", exc_info=True)
             return web.json_response({'success': False, 'error': str(e)}, status=500)
 
     async def api_copytrading_wallet_remove(self, request):
