@@ -1113,6 +1113,56 @@ class EVMArbitrageEngine:
         """
         return self._min_profit_threshold_base * self._gas_spike_multiplier()
 
+    async def _persist_runtime_stats(self) -> None:
+        """
+        Wave-3: snapshot the in-process gas-budget tracker (and a few
+        adjacent counters) to arbitrage_runtime_stats so the standalone
+        dashboard can render the /arbitrage/gas-spend tile without
+        cross-process IPC. Single row per chain; UPSERT keyed by chain.
+        Fail-soft - never blocks the trading loop.
+        """
+        if not self.db_pool:
+            return
+        try:
+            snapshot = {
+                'gas_spend_usd_hour': float(self._gas_spend_usd_hour),
+                'gas_budget_usd_per_hour': float(self._gas_budget_usd_per_hour),
+                'gas_budget_ratio': (
+                    self._gas_spend_usd_hour / self._gas_budget_usd_per_hour
+                    if self._gas_budget_usd_per_hour > 0 else 0.0
+                ),
+                'gas_window_start': self._gas_spend_window_start.isoformat(),
+                'gas_window_age_s': (
+                    datetime.now() - self._gas_spend_window_start
+                ).total_seconds(),
+                'gas_spike_multiplier': self._gas_spike_multiplier(),
+                'min_profit_threshold_effective': self._adaptive_min_profit_threshold(),
+                'min_profit_threshold_base': float(self._min_profit_threshold_base),
+                'chain_id': self.chain_id,
+                'chain_name': self.chain_name,
+                'realized_slip_keys': len(self._realized_slip_cache),
+                'realized_slip_trusted_keys': sum(
+                    1 for v in self._realized_slip_cache.values()
+                    if v[2] >= self._realized_slip_min_samples
+                ),
+                'opportunities_found': int(self._stats.get('opportunities_found', 0)),
+                'opportunities_executed': int(self._stats.get('opportunities_executed', 0)),
+                'scans': int(self._stats.get('scans', 0)),
+            }
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO arbitrage_runtime_stats (chain, updated_at, stats)
+                    VALUES ($1, NOW(), $2::jsonb)
+                    ON CONFLICT (chain) DO UPDATE
+                    SET updated_at = NOW(), stats = EXCLUDED.stats
+                    """,
+                    self.chain_name, json.dumps(snapshot, default=str),
+                )
+        except Exception as e:
+            # Pure observability; never block trading.
+            self.logger.debug(f"_persist_runtime_stats failed (non-fatal): {e}")
+
     # -----------------------------------------------------------------
     # Wave-3: per-(chain, dex_pair, pair_symbol) realized-slippage learning.
     # Replaces static CHAIN_CONFIGS[*]['default_slippage_pct'] once we have
@@ -1540,6 +1590,9 @@ class EVMArbitrageEngine:
             # slippage cache. TTL-gated inside the method (no-op when fresh),
             # so a 5-min cadence here is safe.
             await self._refresh_realized_slippage()
+            # Wave-3: snapshot runtime stats (gas-spend / budget / spike mult /
+            # realized-slip cache size) for the dashboard tile. Fail-soft.
+            await self._persist_runtime_stats()
 
             # Log best spread seen (even if negative)
             if self._best_spread_seen > -999.0:  # -999 is initial value, means no spreads checked

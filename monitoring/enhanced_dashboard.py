@@ -713,6 +713,9 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/arbitrage/trading/status', self.api_arbitrage_trading_status)
         self.app.router.add_post('/api/arbitrage/trading/unblock', self.api_arbitrage_trading_unblock)
         self.app.router.add_post('/api/arbitrage/reconcile', self.api_reconcile_arbitrage_trades)
+        # Wave-3: per-chain hourly gas-spend tile (reads
+        # arbitrage_runtime_stats persisted by EVMArbitrageEngine).
+        self.app.router.add_get('/api/arbitrage/gas-spend', self.api_get_arbitrage_gas_spend)
 
         # API - Copy Trading Module
         self.app.router.add_get('/api/copytrading/stats', self.api_get_copytrading_stats)
@@ -9814,6 +9817,77 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting arbitrage stats: {e}")
             return web.json_response({'success': False, 'error': str(e), 'stats': stats})
+
+    async def api_get_arbitrage_gas_spend(self, request):
+        """
+        Wave-3: per-chain hourly gas-spend tile. Reads the JSONB snapshots
+        in arbitrage_runtime_stats persisted by EVMArbitrageEngine._persist_runtime_stats.
+        One row per chain (ethereum / arbitrum / base etc.) - returns all
+        of them plus a roll-up so the dashboard widget can render a single
+        ratio bar at the top.
+        """
+        result = {
+            'success': True,
+            'chains': {},
+            'total_spend_usd': 0.0,
+            'total_budget_usd': 0.0,
+            'overall_ratio': 0.0,
+            'stale': True,
+            'max_age_s': None,
+        }
+        try:
+            if not self.db:
+                return web.json_response(result)
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT chain, updated_at, stats,
+                           EXTRACT(EPOCH FROM (NOW() - updated_at)) AS age_s
+                    FROM arbitrage_runtime_stats
+                    """
+                )
+            max_age = None
+            for row in rows:
+                stats = row['stats'] or {}
+                if isinstance(stats, str):
+                    try:
+                        import json as _json
+                        stats = _json.loads(stats)
+                    except Exception:
+                        stats = {}
+                age_s = float(row['age_s'] or 0.0)
+                spend = float(stats.get('gas_spend_usd_hour') or 0.0)
+                budget = float(stats.get('gas_budget_usd_per_hour') or 0.0)
+                ratio = (spend / budget) if budget > 0 else 0.0
+                result['chains'][row['chain']] = {
+                    'spend_usd': spend,
+                    'budget_usd': budget,
+                    'ratio': ratio,
+                    'window_age_s': float(stats.get('gas_window_age_s') or 0.0),
+                    'gas_spike_multiplier': float(stats.get('gas_spike_multiplier') or 1.0),
+                    'min_profit_threshold_effective': float(
+                        stats.get('min_profit_threshold_effective') or 0.0
+                    ),
+                    'realized_slip_trusted_keys': int(
+                        stats.get('realized_slip_trusted_keys') or 0
+                    ),
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None,
+                    'age_s': age_s,
+                }
+                result['total_spend_usd'] += spend
+                result['total_budget_usd'] += budget
+                if max_age is None or age_s > max_age:
+                    max_age = age_s
+            if result['total_budget_usd'] > 0:
+                result['overall_ratio'] = result['total_spend_usd'] / result['total_budget_usd']
+            result['max_age_s'] = max_age
+            # Stale if no chain has reported in the last 10 min (engines
+            # snapshot every 5 min by default).
+            result['stale'] = (max_age is None) or (max_age > 600)
+            return web.json_response(result)
+        except Exception as e:
+            logger.error(f"Error getting arbitrage gas-spend: {e}")
+            return web.json_response({'success': False, 'error': str(e), **result})
 
     async def api_get_arbitrage_positions(self, request):
         """Get Arbitrage open positions from dedicated arbitrage_positions table"""

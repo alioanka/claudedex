@@ -376,6 +376,14 @@
             <div class="stat-value" id="stat-status">--</div>
             <div class="stat-change" id="stat-mode">DRY RUN</div>
         </div>
+
+        <!-- Wave-3: hourly gas-spend tile. Backed by /api/arbitrage/gas-spend
+             (reads arbitrage_runtime_stats persisted by the engine). -->
+        <div class="stat-card" id="gas-spend-card" title="Hourly gas-spend across all arbitrage chains. Engine refuses new flash-loan execution once budget is exceeded.">
+            <div class="stat-label">Gas Spend (1h)</div>
+            <div class="stat-value" id="stat-gas-spend">$0.00</div>
+            <div class="stat-change" id="stat-gas-budget">Cap: $0.00 / 0%</div>
+        </div>
     </div>
 
     <!-- Multi-Chain Stats -->
@@ -611,10 +619,52 @@ async function loadArbitrageData() {
             }
         }
 
+        // Wave-3: hourly gas-spend tile (per-chain, rolled up across engines).
+        try {
+            const gsResp = await fetch('/api/arbitrage/gas-spend');
+            if (gsResp.ok) {
+                const gs = await gsResp.json();
+                updateGasSpendTile(gs);
+            }
+        } catch (err) {
+            console.debug('gas-spend fetch failed:', err);
+        }
+
         // Load trading status
         await loadTradingStatus();
     } catch (error) {
         console.error('Error loading arbitrage data:', error);
+    }
+}
+
+function updateGasSpendTile(gs) {
+    const spendEl = document.getElementById('stat-gas-spend');
+    const budgetEl = document.getElementById('stat-gas-budget');
+    const cardEl = document.getElementById('gas-spend-card');
+    if (!spendEl || !budgetEl) return;
+    const spend = gs.total_spend_usd || 0;
+    const budget = gs.total_budget_usd || 0;
+    const ratio = gs.overall_ratio || 0;
+    spendEl.textContent = `$${spend.toFixed(2)}`;
+    // Color codes: green <50%, amber 50-85%, red >85% (engine refuses
+    // execution at 100%). Stale (>10 min no snapshot) = grey.
+    let color = '#10b981';
+    if (gs.stale) color = '#94a3b8';
+    else if (ratio >= 0.85) color = '#ef4444';
+    else if (ratio >= 0.50) color = '#f59e0b';
+    spendEl.style.color = color;
+    const pct = (ratio * 100).toFixed(0);
+    budgetEl.textContent = `Cap: $${budget.toFixed(2)} / ${pct}%`;
+    if (cardEl) {
+        const chains = Object.keys(gs.chains || {});
+        const detail = chains.length
+            ? chains.map(c => {
+                const r = gs.chains[c];
+                return `${c}: $${(r.spend_usd || 0).toFixed(2)} / $${(r.budget_usd || 0).toFixed(2)}`;
+            }).join(' | ')
+            : 'no engine snapshots yet';
+        const stale = gs.stale ? ' [STALE]' : '';
+        cardEl.title = `Per-chain hourly gas spend${stale}\n${detail}`;
     }
 }
 
