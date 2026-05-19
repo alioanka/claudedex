@@ -276,6 +276,104 @@ def test_funding_gate_fail_open_on_missing_rate():
     assert 'unavailable' in res['reason']
 
 
+# ---------------------------------------------------------------------------
+# FUT-RM-06: ATR-based per-symbol sizing
+# ---------------------------------------------------------------------------
+
+
+class _SizingEngineStub:
+    """Tiny stand-in for FuturesTradingEngine so we can call the pure
+    _calculate_position_size method without standing up ccxt + db."""
+
+    # Bind the real implementation as an unbound method
+    from modules.futures_trading.core.futures_engine import FuturesTradingEngine
+    _calculate_position_size = FuturesTradingEngine._calculate_position_size
+
+    def __init__(self, **overrides):
+        defaults = dict(
+            atr_sizing_enabled=True,
+            atr_risk_pct=1.0,
+            atr_stop_multiplier=1.5,
+            capital_allocation=1000.0,
+            leverage=10,
+            max_position_usd=5000.0,
+            dynamic_position_sizing=False,
+            static_position_pct=15.0,
+            min_position_pct=5.0,
+            max_position_pct=20.0,
+        )
+        defaults.update(overrides)
+        for k, v in defaults.items():
+            setattr(self, k, v)
+
+
+def _signals(atr_pct: float):
+    s = SimpleNamespace()
+    s.atr = 0.0  # not consumed by sizing
+    s.atr_pct = atr_pct
+    return s
+
+
+def test_atr_sizing_higher_volatility_gets_smaller_notional():
+    """Risk parity: a 5% ATR symbol must size strictly smaller than a 1%
+    ATR symbol when risk_pct + leverage are equal. This is the whole point."""
+    # Generous max_position_usd cap so neither side gets clipped — we're
+    # testing the math, not the cap.
+    eng = _SizingEngineStub(max_position_usd=10**9)
+    notional_quiet = eng._calculate_position_size(_signals(0.01))   # 1%
+    notional_vol = eng._calculate_position_size(_signals(0.05))     # 5%
+    assert notional_quiet > notional_vol
+    ratio = notional_quiet / max(notional_vol, 1e-9)
+    assert 4.9 < ratio < 5.1, f"expected ~5x ratio, got {ratio:.3f}"
+
+
+def test_atr_sizing_constant_dollar_risk():
+    """A stop hit at atr_stop_multiplier × ATR should cost exactly
+    atr_risk_pct of capital_allocation, regardless of which symbol."""
+    eng = _SizingEngineStub(
+        atr_risk_pct=1.0, atr_stop_multiplier=1.5,
+        capital_allocation=1000.0, leverage=1, max_position_usd=10**9,
+    )
+    # With leverage=1 the notional equals the margin, so dollar loss at
+    # stop = notional * stop_distance_pct = risk_amount = $10.
+    for atr_pct in (0.005, 0.01, 0.02, 0.05):
+        notional = eng._calculate_position_size(_signals(atr_pct))
+        stop_distance_pct = atr_pct * 1.5
+        dollar_loss_at_stop = notional * stop_distance_pct
+        assert dollar_loss_at_stop == pytest.approx(10.0, rel=1e-6), (
+            f"atr_pct={atr_pct} -> notional={notional:.4f} stop={stop_distance_pct:.4f} "
+            f"loss=${dollar_loss_at_stop:.4f}"
+        )
+
+
+def test_atr_sizing_falls_through_when_atr_zero():
+    """When ATR is unavailable (early in the OHLCV stream) we must NOT
+    explode and we must fall back to the existing static path."""
+    eng = _SizingEngineStub(atr_sizing_enabled=True)
+    # ATR=0 -> path falls through to static sizing
+    notional = eng._calculate_position_size(_signals(0.0))
+    # Static: 1000 * 15% * 10 = 1500
+    assert notional == pytest.approx(1500.0)
+
+
+def test_atr_sizing_disabled_uses_static_path():
+    eng = _SizingEngineStub(atr_sizing_enabled=False)
+    notional = eng._calculate_position_size(_signals(0.02))
+    # Still static: 1000 * 15% * 10 = 1500
+    assert notional == pytest.approx(1500.0)
+
+
+def test_atr_sizing_caps_at_max_position_usd():
+    """Defense vs ATR collapse / illiquid symbol — sizing must never exceed
+    max_position_usd even if ATR returns a tiny number."""
+    eng = _SizingEngineStub(
+        atr_risk_pct=5.0, atr_stop_multiplier=0.5,
+        capital_allocation=10000.0, leverage=20, max_position_usd=500.0,
+    )
+    notional = eng._calculate_position_size(_signals(0.001))  # 0.1% ATR
+    assert notional == pytest.approx(500.0)
+
+
 def test_engine_skip_live_gate_is_present_at_open_position():
     """Static guard: assert the should_skip_live() gate is still in place
     around the entry-order branch. If a refactor removes it, the dry-run
