@@ -38,6 +38,30 @@ UNISWAP_V2_ABI = json.loads('[{"inputs":[{"internalType":"uint256","name":"amoun
 
 UNISWAP_V3_ABI = json.loads('[{"inputs":[{"components":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMinimum","type":"uint256"}],"internalType":"struct ISwapRouter.ExactInputParams","name":"params","type":"tuple"}],"name":"exactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"payable","type":"function"}]')
 
+# Uniswap V3 QuoterV2 — `quoteExactInputSingle` returns (amountOut,
+# sqrtPriceX96After, initializedTicksCrossed, gasEstimate). Single-hop
+# only — multi-hop quoting uses `quoteExactInput(bytes path, uint256
+# amountIn)` which we keep as a fallback. SushiSwap V3 / PancakeSwap V3
+# use the same ABI (they are Uniswap forks).
+UNISWAP_V3_QUOTER_V2_ABI = json.loads('[{"inputs":[{"components":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"internalType":"struct IQuoterV2.QuoteExactInputSingleParams","name":"params","type":"tuple"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceX96After","type":"uint160"},{"internalType":"uint32","name":"initializedTicksCrossed","type":"uint32"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160[]","name":"sqrtPriceX96AfterList","type":"uint160[]"},{"internalType":"uint32[]","name":"initializedTicksCrossedList","type":"uint32[]"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]')
+
+# Canonical Uniswap V3 QuoterV2 addresses per chain. Override via
+# `config['v3_quoter_addresses'][chain]` to point at a fork quoter
+# (e.g. SushiSwap V3, PancakeSwap V3) when needed.
+UNISWAP_V3_QUOTER_V2_ADDRESSES: Dict[str, str] = {
+    'ethereum': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'polygon': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'arbitrum': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'base': '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+    'optimism': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'bsc': '0x78D78E420Da98ad378D7799bE8f4AF69033EB077',
+}
+
+# Uniswap V3 standard fee tiers (in 1/100ths of a bp): 100 = 0.01%,
+# 500 = 0.05% (stables), 3000 = 0.3% (most pairs), 10000 = 1% (exotics).
+UNISWAP_V3_FEE_TIERS: Tuple[int, ...] = (100, 500, 3000, 10000)
+
+
 @dataclass
 class DEXQuote:
     """Quote from direct DEX query"""
@@ -864,16 +888,118 @@ class DirectDEXExecutor(BaseExecutor):
 
         return min(int(gas_price), max_gas)
         
+    def _get_v3_quoter(self, chain: str) -> Optional[Contract]:
+        """Return a (cached) QuoterV2 contract for `chain`, or None.
+
+        Cache populated lazily on first use per chain so the hot quote
+        path doesn't pay the contract-instantiation cost every call.
+        """
+        chain_l = (chain or '').lower()
+        cache = getattr(self, '_v3_quoter_cache', None)
+        if cache is None:
+            cache = {}
+            self._v3_quoter_cache = cache
+        if chain_l in cache:
+            return cache[chain_l]
+        w3 = self.w3_connections.get(chain) or self.w3_connections.get(chain_l)
+        if not w3:
+            cache[chain_l] = None
+            return None
+        overrides = self.config.get('v3_quoter_addresses', {}) or {}
+        addr = overrides.get(chain_l) or UNISWAP_V3_QUOTER_V2_ADDRESSES.get(chain_l)
+        if not addr:
+            cache[chain_l] = None
+            return None
+        quoter = w3.eth.contract(
+            address=Web3.to_checksum_address(addr),
+            abi=UNISWAP_V3_QUOTER_V2_ABI,
+        )
+        cache[chain_l] = quoter
+        return quoter
+
     async def _quote_v3(
         self,
         contract: Contract,
         path: List[str],
-        amount: int
+        amount: int,
+        chain: Optional[str] = None,
     ) -> int:
-        """Get quote from Uniswap V3"""
-        # Would use quoter contract
-        # Simplified simulation
-        return int(amount * 0.997)  # Assume 0.3% fee
+        """Get a real Uniswap V3 quote via QuoterV2.
+
+        Picks the best `amountOut` across fee tiers {100, 500, 3000,
+        10000} for single-hop pairs. For multi-hop falls back to
+        `quoteExactInput(bytes,uint256)` with a 3000-bps fee between
+        every hop — iterating per-hop fee combinations explodes
+        combinatorially. Returns 0 when no fee tier has a pool, so
+        downstream best-quote ranking treats V3 as "no liquidity"
+        rather than silently scoring with the legacy `amount * 0.997`
+        placeholder.
+
+        `chain` is optional for backwards compatibility; if not given,
+        we try to infer from `contract.w3.eth.chain_id`.
+        """
+        try:
+            chain_l = (chain or '').lower()
+            if not chain_l:
+                try:
+                    cid = contract.w3.eth.chain_id
+                    from utils.constants import Chain
+                    for c in Chain:
+                        if int(c) == int(cid):
+                            chain_l = c.name.lower()
+                            break
+                except Exception:
+                    chain_l = ''
+            quoter = self._get_v3_quoter(chain_l) if chain_l else None
+            if quoter is None:
+                logger.debug(
+                    "V3 quoter unavailable for chain=%s; returning 0", chain_l
+                )
+                return 0
+
+            loop = asyncio.get_event_loop()
+            token_in = Web3.to_checksum_address(path[0])
+            token_out = Web3.to_checksum_address(path[-1])
+
+            if len(path) == 2:
+                best = 0
+                for fee in UNISWAP_V3_FEE_TIERS:
+                    params = (token_in, token_out, int(amount), int(fee), 0)
+                    try:
+                        out_tuple = await loop.run_in_executor(
+                            None,
+                            lambda f=fee, p=params: quoter.functions.quoteExactInputSingle(p).call(),
+                        )
+                        amount_out = int(out_tuple[0]) if out_tuple else 0
+                        if amount_out > best:
+                            best = amount_out
+                    except Exception as fee_err:
+                        # Pool does not exist at this fee tier — common
+                        logger.debug(
+                            "V3 quote miss fee=%s pair=%s/%s: %s",
+                            fee, token_in[:8], token_out[:8], fee_err
+                        )
+                        continue
+                return best
+
+            # Multi-hop fallback: bytes path with 3000-bps between hops
+            encoded = b''
+            for i, tok in enumerate(path):
+                encoded += bytes.fromhex(Web3.to_checksum_address(tok)[2:])
+                if i < len(path) - 1:
+                    encoded += (3000).to_bytes(3, 'big')
+            try:
+                out_tuple = await loop.run_in_executor(
+                    None,
+                    lambda: quoter.functions.quoteExactInput(encoded, int(amount)).call(),
+                )
+                return int(out_tuple[0]) if out_tuple else 0
+            except Exception as multi_err:
+                logger.debug("V3 multi-hop quote failed: %s", multi_err)
+                return 0
+        except Exception as e:
+            logger.debug("V3 quoter error: %s", e)
+            return 0
         
     async def cleanup(self) -> None:
         """Cleanup resources"""
@@ -910,11 +1036,12 @@ class DirectDEXExecutor(BaseExecutor):
             amount_wei = ether_to_wei(amount)
             
             if 'v3' in dex_name.lower():
-                # Uniswap V3 quoter logic
+                # Uniswap V3 quoter logic — real QuoterV2 binding now
                 amount_out = await self._quote_v3(
                     contract,
                     path,
-                    amount_wei
+                    amount_wei,
+                    chain,
                 )
             else:
                 # Uniswap V2 style
@@ -1042,8 +1169,8 @@ class DirectDEXExecutor(BaseExecutor):
             contract = self.dex_contracts[chain][dex]
             
             if 'v3' in dex.lower():
-                # V3 simulation
-                return await self._quote_v3(contract, path, amount)
+                # V3 simulation — route through real QuoterV2
+                return await self._quote_v3(contract, path, amount, chain)
             else:
                 # V2 simulation
                 amounts = contract.functions.getAmountsOut(amount, path).call()

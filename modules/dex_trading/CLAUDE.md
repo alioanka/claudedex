@@ -30,7 +30,11 @@ AMBER → GREEN candidate (pending production verification). MB-01 (decimals —
 - P1: Flashbots ADVANCED-tier gate now requires `chain ∈ {ethereum, eth, mainnet}` — silently falls through to private-mempool routing on BSC/Polygon/Arb/Base (Flashbots relay does not service those chains).
 - Enhancement: `get_best_quote` ranks by `_score_quote = amount_out * (1 - impact) - gas_cost_native`, not raw headline output. Routes to the DEX with the best NET fill.
 - Enhancement: `tests/unit/test_dex_decimals.py` — 5 regression tests for MB-01 (USDC 6 dec, WBTC 8 dec, WETH 18 dec sanity) + scoring (prefers lower gas, prefers lower impact).
+## Wave-3 hardening (campaign `claude/create-expert-agents-JFSF5`)
+- `_quote_v3` real Uniswap V3 QuoterV2 binding (was `int(amount * 0.997)` placeholder). Iterates fee tiers {100, 500, 3000, 10000} for single-hop, falls back to `quoteExactInput(bytes,uint256)` for multi-hop. QuoterV2 addresses seeded per chain (ETH/POLY/ARB/BASE/OP/BSC), overridable via `config['v3_quoter_addresses']`. Returns 0 (not the placeholder) when no pool exists — so route ranking treats V3 as "no liquidity" instead of silently winning. Tests: `tests/unit/test_dex_quoter_v3.py`.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
 - Wave-2 campaign report: `docs/agents/reports/DEX_CAMPAIGN.md`.
+- Wave-3 campaign report: `docs/agents/reports/DEX_WAVE3.md`.
 - Canonical engine API: `docs/engines.md`.
