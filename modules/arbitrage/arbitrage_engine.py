@@ -398,6 +398,14 @@ CHAIN_CONFIGS = {
         'min_gas_eth': 0.015,  # ~$30-50 for flash loan tx
         'flash_loan_env_key': 'FLASH_LOAN_RECEIVER_CONTRACT_ETH',
         'flash_loan_env_fallback': 'FLASH_LOAN_RECEIVER_CONTRACT',  # Backwards compat
+        # A2-02/A2-03/A2-05: per-chain cost profile used by pre-execution gate
+        # and persisted PnL accounting. Falls back to these constants only when
+        # the live gas oracle is unreachable.
+        'is_l2': False,
+        'flash_loan_gas_limit': 450_000,
+        'fallback_gas_gwei': 30,           # Reasonable Ethereum baseline
+        'default_slippage_pct': 0.004,     # ~0.4% (0.2% per swap leg x 2)
+        'flash_loan_fee_pct': 0.0005,      # Aave V3 fee
     },
     42161: {  # Arbitrum One
         'name': 'arbitrum',
@@ -410,6 +418,11 @@ CHAIN_CONFIGS = {
         'min_gas_eth': 0.0005,  # ~$1 for flash loan tx (95% cheaper!)
         'flash_loan_env_key': 'FLASH_LOAN_RECEIVER_CONTRACT_ARB',
         'flash_loan_env_fallback': None,
+        'is_l2': True,
+        'flash_loan_gas_limit': 1_200_000,  # ARB nitro charges effective gas higher
+        'fallback_gas_gwei': 0.1,
+        'default_slippage_pct': 0.005,      # L2 V2 pools shallower -> ~0.5%
+        'flash_loan_fee_pct': 0.0005,
     },
     8453: {  # Base
         'name': 'base',
@@ -422,6 +435,11 @@ CHAIN_CONFIGS = {
         'min_gas_eth': 0.0003,  # ~$0.50 for flash loan tx (even cheaper than Arbitrum!)
         'flash_loan_env_key': 'FLASH_LOAN_RECEIVER_CONTRACT_BASE',
         'flash_loan_env_fallback': None,
+        'is_l2': True,
+        'flash_loan_gas_limit': 800_000,
+        'fallback_gas_gwei': 0.05,
+        'default_slippage_pct': 0.005,
+        'flash_loan_fee_pct': 0.0005,
     },
 }
 
@@ -891,7 +909,23 @@ class EVMArbitrageEngine:
         # Settings
         # IMPORTANT: Real DEX arbitrage opportunities are typically 0.1-0.5%
         # After costs (~0.55%): flash loan 0.05% + slippage ~0.5% = need ~0.6% raw spread
-        self.min_profit_threshold = 0.003  # 0.3% minimum NET profit (after costs)
+        # A2-06: honor the dashboard "Base Profit Threshold (%)" knob
+        # (settings_arbitrage.html -> min_profit_spread). Was previously a
+        # hard constant; UI changes were silently ignored.
+        try:
+            cfg_min = config.get('min_profit_spread')
+            if cfg_min is None:
+                cfg_min = config.get('min_profit_threshold')
+            if cfg_min is None:
+                self.min_profit_threshold = 0.003
+            else:
+                # Accept either fraction (0.003) or percent (0.3 / 0.5) input
+                cfg_val = float(cfg_min)
+                self.min_profit_threshold = cfg_val / 100.0 if cfg_val >= 0.05 else cfg_val
+        except Exception:
+            self.min_profit_threshold = 0.003
+        # Persist baseline for the adaptive curve (enhancement #4).
+        self._min_profit_threshold_base = self.min_profit_threshold
         self.use_flash_loans = True
         self.use_flashbots = True
 
@@ -939,6 +973,21 @@ class EVMArbitrageEngine:
         # Set minimum to 0.015 ETH to allow execution when gas is reasonable
         self._min_gas_eth: float = 0.015
         self._low_gas_warning_shown = False
+
+        # A2-02/A2-03/A2-05: per-chain cost profile + live-gas cache.
+        # Live gas is sampled at most once per second to keep RPC quota down.
+        self._gas_cost_usd_cache: Optional[float] = None
+        self._gas_cost_usd_cache_at: Optional[datetime] = None
+        self._gas_cost_cache_ttl_s: int = 1
+        # Rolling per-hour gas spend tracker (A2-07 / enhancement #3).
+        self._gas_spend_usd_hour: float = 0.0
+        self._gas_spend_window_start: datetime = datetime.now()
+        # Default hourly budget can be overridden from DB config.
+        self._gas_budget_usd_per_hour: float = float(config.get('gas_budget_usd_per_hour', 50.0))
+        # Adaptive min-profit curve (enhancement #4): track recent gas spikes
+        # vs baseline; raises the min-profit-bps threshold when gas is volatile.
+        self._gas_spike_samples: List[Tuple[datetime, float]] = []  # (ts, gwei)
+        self._gas_spike_window_s: int = 600  # 10-minute look-back
 
         # Dynamic liquidity blacklist - pairs that consistently fail
         # Format: {pair_key: (fail_count, last_fail_time)}
