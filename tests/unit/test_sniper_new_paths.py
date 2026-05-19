@@ -273,6 +273,194 @@ def test_jupiter_quote_math_consistent_with_executor_decimals():
 
 
 # ---------------------------------------------------------------------------
+# Wave-3: Pyth Hermes feed resolution + fallback chain
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_pyth_feed_map_known_blue_chips_resolve():
+    """SOL/USDC/USDT/ETH/BONK all have feed-ids; pump.fun mints return None."""
+    from modules.sniper.core.pyth_feed_ids import get_pyth_feed_id
+
+    sol = 'So11111111111111111111111111111111111111112'
+    usdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+    bonk = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'
+    pumpfun_fake = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'  # not mapped
+
+    assert get_pyth_feed_id(sol) is not None
+    assert get_pyth_feed_id(usdc) is not None
+    assert get_pyth_feed_id(bonk) is not None
+    assert get_pyth_feed_id(pumpfun_fake) is None
+    assert get_pyth_feed_id(None) is None
+    assert get_pyth_feed_id('') is None
+
+
+@pytest.mark.unit
+def test_pyth_feed_ids_are_well_formed_hex():
+    """Every feed-id must be 0x + 64 hex chars (32-byte identifier)."""
+    from modules.sniper.core.pyth_feed_ids import SOLANA_MINT_TO_PYTH_FEED_ID
+    for mint, fid in SOLANA_MINT_TO_PYTH_FEED_ID.items():
+        assert fid.startswith('0x'), f"{mint}: feed-id missing 0x prefix"
+        hex_part = fid[2:]
+        assert len(hex_part) == 64, f"{mint}: feed-id wrong length {len(hex_part)}"
+        int(hex_part, 16)  # raises if non-hex
+
+
+@pytest.mark.unit
+def test_pyth_parse_price_handles_hermes_v2_shape():
+    """The _parse_price helper turns Hermes v2 'parsed[0].price' into USD."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    data = {
+        'parsed': [
+            {'id': 'abc', 'price': {'price': '12345678', 'expo': -8}},
+        ]
+    }
+    # 12345678 * 10^-8 = 0.12345678
+    assert PythFeedClient._parse_price(data) == pytest.approx(0.12345678, rel=1e-9)
+
+
+@pytest.mark.unit
+def test_pyth_parse_price_returns_none_on_bad_shapes():
+    """Malformed payloads must return None without raising."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    assert PythFeedClient._parse_price(None) is None
+    assert PythFeedClient._parse_price({}) is None
+    assert PythFeedClient._parse_price({'parsed': []}) is None
+    assert PythFeedClient._parse_price({'parsed': [{}]}) is None
+    assert PythFeedClient._parse_price({'parsed': [{'price': {}}]}) is None
+    # garbage values
+    bad = {'parsed': [{'price': {'price': 'NaN', 'expo': 'lol'}}]}
+    assert PythFeedClient._parse_price(bad) is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_client_get_price_none_on_empty_feed_id():
+    """No feed-id -> immediate None, no HTTP call."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    c = PythFeedClient()
+    assert await c.get_price(None) is None
+    assert await c.get_price('') is None
+    # No counters mutated either
+    assert c.fetches == 0 and c.fetch_errors == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_client_cache_serves_within_ttl():
+    """Pre-populated cache entry returns without HTTP; hits counter bumps."""
+    from datetime import datetime
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    c = PythFeedClient()
+    c._cache['0xabc'] = (1.23, datetime.now())
+    price = await c.get_price('0xabc')
+    assert price == 1.23
+    assert c.hits == 1
+    assert c.fetches == 0  # no HTTP issued
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_via_pyth_helper_unmapped_returns_zero(monkeypatch):
+    """_get_token_price_via_pyth returns 0 for unmapped (pump.fun) mints
+    without making any HTTP call — the cheapest fall-through path."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+    eng = SniperEngine({}, None, None)
+
+    # Force the singleton to fail loudly if called — proves we don't reach it
+    from modules.sniper.core import pyth_feed
+    async def boom(*a, **kw):
+        raise AssertionError("pyth_client.get_price should not be called for unmapped mint")
+    monkeypatch.setattr(pyth_feed.pyth_client, 'get_price', boom)
+
+    pumpfun_fake = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
+    price = await eng._get_token_price_via_pyth(pumpfun_fake)
+    assert price == 0
+    assert eng._stats.get('pyth_fallback_hits', 0) == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_via_pyth_helper_mapped_mint_uses_singleton(monkeypatch):
+    """For a mapped mint, helper calls pyth_client.get_price and bumps the
+    pyth_fallback_hits counter on success."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+    eng = SniperEngine({}, None, None)
+
+    captured = {'feed_id': None}
+
+    async def fake_get_price(feed_id):
+        captured['feed_id'] = feed_id
+        return 187.42
+
+    from modules.sniper.core import pyth_feed
+    monkeypatch.setattr(pyth_feed.pyth_client, 'get_price', fake_get_price)
+
+    sol_mint = 'So11111111111111111111111111111111111111112'
+    price = await eng._get_token_price_via_pyth(sol_mint)
+    assert price == pytest.approx(187.42)
+    assert captured['feed_id'] is not None
+    assert captured['feed_id'].startswith('0x')
+    assert eng._stats.get('pyth_fallback_hits', 0) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_feature_flag_off_skips_pyth_step(monkeypatch):
+    """When sniper_pyth_feeds_enabled=False, _get_token_price must not
+    even probe Pyth; it falls straight to Jupiter Price v2.
+    We monkey-patch the Pyth helper to raise so any call would fail the
+    test, then short-circuit the Jupiter HTTP layer with a stub.
+    """
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+    eng = SniperEngine({}, None, None)
+    eng.sniper_pyth_feeds_enabled = False  # flag off
+
+    async def boom_pyth(*a, **kw):
+        raise AssertionError("Pyth must not be called when flag is off")
+    eng._get_token_price_via_pyth = boom_pyth
+
+    # Short-circuit subsequent steps too — return 0 to verify no exception
+    # is raised by bypassing Pyth.
+    async def zero_jq(*a, **kw):
+        return 0
+    async def zero_be(*a, **kw):
+        return 0
+    eng._get_token_price_via_jupiter_quote = zero_jq
+    eng._get_token_price_via_birdeye = zero_be
+
+    # Force the aiohttp Jupiter Price v2 call to short-circuit via cache.
+    # Use a non-mapped mint so even if Pyth helper WAS called, the no-op
+    # path would return 0 — but we asserted it must not be called.
+    eng._mint_price_cache['BONKxxxx'] = (0.0, __import__('datetime').datetime.now())
+
+    # Call should not raise.
+    price = await eng._get_token_price('BONKxxxx', 'solana')
+    # Cached 0 returns 0; just ensure no exception path was hit.
+    assert price == 0
+
+
+@pytest.mark.unit
+def test_pyth_client_stats_shape():
+    """stats() must return the dict shape the dashboard expects."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    c = PythFeedClient()
+    stats = c.stats()
+    assert set(stats.keys()) == {
+        'pyth_cache_hits',
+        'pyth_fetches',
+        'pyth_fetch_errors',
+        'pyth_rate_limited',
+        'pyth_cache_size',
+    }
+    assert all(isinstance(v, int) for v in stats.values())
+
+
+# ---------------------------------------------------------------------------
 # EVM block-time cache (added in dd8bb51)
 # ---------------------------------------------------------------------------
 @pytest.mark.unit
