@@ -204,6 +204,54 @@ async def test_active_positions_cap_allows_when_below(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# R4: Honeypot quorum decision (TokenSafetyChecker._quorum_honeypot_decision)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_quorum_both_none_returns_clear_no_note():
+    """Both sources unreachable: caller's safety_check_error path
+    handles cooldown — quorum returns (False, None)."""
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    assert T._quorum_honeypot_decision(None, None) == (False, None)
+
+
+@pytest.mark.unit
+def test_quorum_single_source_trusted():
+    """One source reachable: trust its verdict with a note."""
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    is_hp, note = T._quorum_honeypot_decision(True, None)
+    assert is_hp is True and 'one-source' in note and 'GoPlus' in note
+    is_hp, note = T._quorum_honeypot_decision(None, True)
+    assert is_hp is True and 'one-source' in note and 'Honeypot.is' in note
+    # Single-source clean
+    is_hp, note = T._quorum_honeypot_decision(False, None)
+    assert is_hp is False and 'one-source' in note
+
+
+@pytest.mark.unit
+def test_quorum_both_agree_honeypot():
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    is_hp, note = T._quorum_honeypot_decision(True, True)
+    assert is_hp is True and 'both sources agree' in note
+
+
+@pytest.mark.unit
+def test_quorum_both_agree_clean():
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    assert T._quorum_honeypot_decision(False, False) == (False, None)
+
+
+@pytest.mark.unit
+def test_quorum_disagree_fails_safe():
+    """Disagreement always trips fail-safe (treat as honeypot) — false-
+    positive cheaper than trusting the wrong 'clear' verdict."""
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    is_hp, note = T._quorum_honeypot_decision(True, False)
+    assert is_hp is True and 'disagree' in note
+    is_hp, note = T._quorum_honeypot_decision(False, True)
+    assert is_hp is True and 'disagree' in note
+
+
+# ---------------------------------------------------------------------------
 # Jupiter quote USD-derivation
 # ---------------------------------------------------------------------------
 @pytest.mark.unit

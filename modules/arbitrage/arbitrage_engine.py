@@ -1012,6 +1012,107 @@ class EVMArbitrageEngine:
         """Inject a core.risk_manager.RiskManager. P1-06 will add validate_trade calls."""
         self.risk_manager = risk_manager
 
+    # -----------------------------------------------------------------
+    # A2-02 / A2-03 / A2-05 / A2-07: cost helpers + gas-budget tracker.
+    # All consumers read these (no more 0.005 / $15 / 0.006 magic numbers).
+    # -----------------------------------------------------------------
+    def _current_gas_gwei(self) -> float:
+        """Live gas price in gwei with chain-specific fallback. Best-effort."""
+        try:
+            if self.w3 is not None:
+                return float(self.w3.eth.gas_price) / 1e9
+        except Exception:
+            pass
+        return float(self.chain_config.get('fallback_gas_gwei', 30))
+
+    def _record_gas_sample(self, gwei: float) -> None:
+        """Track recent gas prices for the adaptive min-profit curve."""
+        now = datetime.now()
+        self._gas_spike_samples.append((now, gwei))
+        cutoff = now.timestamp() - self._gas_spike_window_s
+        self._gas_spike_samples = [s for s in self._gas_spike_samples if s[0].timestamp() >= cutoff]
+
+    def _gas_spike_multiplier(self) -> float:
+        """
+        Returns 1.0 in calm gas, up to 2.5 during sustained spikes.
+        Spike = current gwei > 1.5 * 10-min median.
+        """
+        if len(self._gas_spike_samples) < 5:
+            return 1.0
+        samples = sorted(s[1] for s in self._gas_spike_samples)
+        median = samples[len(samples) // 2]
+        if median <= 0:
+            return 1.0
+        latest = self._gas_spike_samples[-1][1]
+        ratio = latest / median
+        if ratio <= 1.2:
+            return 1.0
+        if ratio >= 3.0:
+            return 2.5
+        # Linear ramp 1.2 -> 3.0  ==>  1.0 -> 2.5
+        return 1.0 + (ratio - 1.2) * (1.5 / 1.8)
+
+    async def _gas_cost_usd_per_tx(self, eth_price_usd: Optional[float] = None) -> float:
+        """
+        Estimate full flash-loan-arb tx gas cost in USD using the chain
+        profile and (optionally) a live ETH/USD price. Cached for 1s.
+        Falls back to chain `fallback_gas_gwei` when w3 is unavailable.
+        """
+        now = datetime.now()
+        if (
+            self._gas_cost_usd_cache is not None
+            and self._gas_cost_usd_cache_at is not None
+            and (now - self._gas_cost_usd_cache_at).total_seconds() < self._gas_cost_cache_ttl_s
+        ):
+            return self._gas_cost_usd_cache
+
+        gas_limit = int(self.chain_config.get('flash_loan_gas_limit', 450_000))
+        gwei = self._current_gas_gwei()
+        self._record_gas_sample(gwei)
+        gas_cost_eth = (gwei * 1e9 * gas_limit) / 1e18
+
+        if eth_price_usd is None:
+            try:
+                eth_price_usd = await self.price_fetcher.get_price('eth')
+            except Exception:
+                eth_price_usd = None
+        # Conservative ETH price fallback if oracle unreachable; we do NOT
+        # use a hardcoded $-price for PnL accounting (that path returns
+        # early when oracle is down), but for the gas gate $2000 keeps us
+        # erring on the side of skipping marginal trades.
+        if not eth_price_usd or eth_price_usd <= 0:
+            eth_price_usd = 2000.0
+
+        usd = gas_cost_eth * float(eth_price_usd)
+        self._gas_cost_usd_cache = usd
+        self._gas_cost_usd_cache_at = now
+        return usd
+
+    def _gas_budget_check_and_charge(self, usd_cost: float) -> Tuple[bool, str]:
+        """
+        Hourly gas-budget gate. Returns (allowed, reason). Rolling window.
+        """
+        now = datetime.now()
+        if (now - self._gas_spend_window_start).total_seconds() >= 3600:
+            self._gas_spend_window_start = now
+            self._gas_spend_usd_hour = 0.0
+        projected = self._gas_spend_usd_hour + usd_cost
+        if projected > self._gas_budget_usd_per_hour:
+            return False, (
+                f"hourly gas budget ${self._gas_budget_usd_per_hour:.2f} would be "
+                f"exceeded (${self._gas_spend_usd_hour:.2f} spent + ${usd_cost:.2f} new)"
+            )
+        self._gas_spend_usd_hour = projected
+        return True, "ok"
+
+    def _adaptive_min_profit_threshold(self) -> float:
+        """
+        Adaptive min_profit_bps curve (enhancement #4). Multiplies the
+        operator-configured baseline by the gas-spike multiplier so we
+        raise the bar when gas is volatile.
+        """
+        return self._min_profit_threshold_base * self._gas_spike_multiplier()
+
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
         Get decrypted private key from secrets manager or environment.
