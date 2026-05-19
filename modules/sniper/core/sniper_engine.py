@@ -622,6 +622,7 @@ class SniperEngine:
                 'capped_rejections': 0,
                 'safety_check_errors': self._stats.get('safety_check_errors', 0),
                 'jupiter_quote_fallback_hits': self._stats.get('jupiter_quote_fallback_hits', 0),
+                'birdeye_fallback_hits': self._stats.get('birdeye_fallback_hits', 0),
                 'last_capped_log': now,
                 'last_stats_log': now
             }
@@ -1026,10 +1027,21 @@ class SniperEngine:
     async def _get_token_price(self, token_address: str, chain: str) -> float:
         """Get current token price (simplified).
 
-        Solana path: Jupiter Price v2 first (indexed, fast, may be empty
-        for fresh Pump.fun mints) → Jupiter /quote fallback (live route
-        data, works as soon as a pool exists). Cache hit serves both
-        sources to bound RPS during the monitor loop.
+        R5: Solana price-feed redundancy. Try Jupiter Price v2 → Jupiter
+        /quote → Birdeye /defi/price. If any source returns >0, cache
+        and return; otherwise return 0 so the monitor loop hits the
+        synthetic-close path (DRY_RUN) or its existing failure handling.
+
+        Birdeye is rate-limited (1 req/s on free tier) but the 15s
+        per-mint cache absorbs all monitor-tick repetition for a single
+        position. The bigger profitability lever is avoiding the
+        "Jupiter brown-out → every active position synthetic-closed"
+        cascade we'd otherwise hit.
+
+        Pyth is not used for fresh memecoins — most Pump.fun launches
+        have no Pyth feed-id, so the call would always 404. A future
+        enhancement can wire Pyth for the small set of blue-chip mints
+        held by the sniper (rare in practice).
         """
         try:
             cached = self._mint_price_cache.get(token_address)
@@ -1060,6 +1072,14 @@ class SniperEngine:
                 if quote_price > 0:
                     self._mint_price_cache[token_address] = (quote_price, datetime.now())
                     return quote_price
+
+                # 3) Birdeye fallback — independent of Jupiter so a
+                # Jupiter brown-out doesn't synthetically-close every
+                # active position simultaneously.
+                bird_price = await self._get_token_price_via_birdeye(token_address)
+                if bird_price > 0:
+                    self._mint_price_cache[token_address] = (bird_price, datetime.now())
+                    return bird_price
             else:
                 # For EVM, use DexScreener or similar
                 url = f"https://api.dexscreener.com/latest/dex/tokens/{token_address}"
@@ -1123,6 +1143,43 @@ class SniperEngine:
         except Exception as e:
             logger.debug(f"Jupiter quote fallback error for {token_address}: {e}")
             return 0
+
+    async def _get_token_price_via_birdeye(self, token_address: str) -> float:
+        """R5: Birdeye /defi/price tertiary fallback for Solana mints.
+
+        Independent of Jupiter. Free tier requires no API key for the
+        public price endpoint but applies a soft ~1 req/s rate limit
+        — bounded by the 15s per-mint cache in _get_token_price.
+
+        Returns price in USD per whole token, or 0 on any failure.
+        """
+        try:
+            import aiohttp
+            url = f"https://public-api.birdeye.so/defi/price?address={token_address}"
+            headers = {'X-Chain': 'solana', 'accept': 'application/json'}
+            try:
+                from security.secrets_manager import secrets
+                api_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False)
+            except Exception:
+                api_key = None
+            if api_key:
+                headers['X-API-KEY'] = api_key
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=5) as response:
+                    if response.status != 200:
+                        return 0
+                    data = await response.json()
+                    # Birdeye response shape: {success: bool, data: {value: float}}
+                    inner = (data.get('data') or {}) if isinstance(data, dict) else {}
+                    price = float(inner.get('value') or 0)
+                    if price > 0:
+                        self._stats['birdeye_fallback_hits'] = (
+                            self._stats.get('birdeye_fallback_hits', 0) + 1
+                        )
+                        return price
+        except Exception as e:
+            logger.debug(f"Birdeye fallback error for {token_address}: {e}")
+        return 0
 
     async def _exit_position(self, data: Dict, reason: str):
         """Exit a position (sell tokens)"""
