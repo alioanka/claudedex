@@ -183,46 +183,55 @@ class MEVProtectionLayer(BaseExecutor):
         try:
             protection_methods = []
             protected_tx = transaction.copy()
-            
+            bundle_id: Optional[str] = None  # default; only set if Flashbots bundle is created
+
             # Analyze MEV risk
             risk_score = await self._analyze_mev_risk(order, transaction)
-            
+
             # Apply protection based on level and risk
             if self.protection_level >= MEVProtectionLevel.BASIC:
                 protected_tx = self._apply_gas_randomization(protected_tx)
                 protection_methods.append('gas_randomization')
-                
+
             if self.protection_level >= MEVProtectionLevel.STANDARD:
                 protected_tx = await self._apply_time_delays(protected_tx)
                 protection_methods.append('time_delays')
-                
+
                 if risk_score > 0.5:
                     protected_tx = await self._apply_dynamic_routing(protected_tx)
                     protection_methods.append('dynamic_routing')
-                    
+
             if self.protection_level >= MEVProtectionLevel.ADVANCED:
-                if self.flashbots_enabled and risk_score > 0.3:
+                # Flashbots is only sensible on Ethereum mainnet. On other chains
+                # downgrade to private-mempool routing so we don't sign + ship a
+                # bundle to a relay that doesn't service that chain.
+                chain = (getattr(order, 'chain', '') or '').lower()
+                if (
+                    self.flashbots_enabled
+                    and risk_score > 0.3
+                    and chain in ('', 'ethereum', 'eth', 'mainnet')
+                ):
                     bundle_id = await self._create_flashbots_bundle(protected_tx)
                     protection_methods.append('flashbots')
                 else:
                     protected_tx = await self._route_private_mempool(protected_tx)
                     protection_methods.append('private_mempool')
-                    
+
             if self.protection_level == MEVProtectionLevel.MAXIMUM:
                 if self.use_decoys:
                     await self._send_decoy_transactions(order)
                     protection_methods.append('decoy_transactions')
-                    
+
                 protected_tx = await self._apply_commit_reveal(protected_tx)
                 protection_methods.append('commit_reveal')
-                
+
             # Calculate estimated savings
             estimated_savings = await self._estimate_mev_savings(
                 transaction,
                 protected_tx,
                 risk_score
             )
-            
+
             # Create protected transaction record
             protected = ProtectedTransaction(
                 original_tx=transaction,
