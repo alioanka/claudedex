@@ -731,6 +731,9 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
         self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
         self.app.router.add_get('/api/ai/logs', self.api_get_ai_logs)
+        # A6 E2: confidence-calibration reliability diagram + Brier score.
+        # Source: ai_confidence_calibration (migration 023).
+        self.app.router.add_get('/api/ai/calibration', self.api_get_ai_calibration)
 
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
@@ -12276,6 +12279,94 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting AI logs: {e}")
             return web.json_response({'success': False, 'error': str(e), 'logs': []})
+
+    async def api_get_ai_calibration(self, request):
+        """A6 E2: confidence-calibration reliability bins + Brier score.
+
+        Reads ai_confidence_calibration (migration 023) where realised_won
+        IS NOT NULL, bins predicted_confidence in 0.1 steps, and returns
+        (bin_lo, bin_hi, count, mean_predicted, mean_observed_win_rate).
+        Brier is mean( (predicted_confidence - realised_won)^2 ).
+
+        Empty / table-absent / DB-down all yield success=true with empty
+        bins and brier=null, so the dashboard widget can render a "no
+        data" panel without an error toast.
+        """
+        bins = []
+        brier = None
+        sample_count = 0
+        try:
+            if not self.db:
+                return web.json_response({
+                    'success': True, 'bins': [], 'brier': None,
+                    'sample_count': 0, 'note': 'no db_pool',
+                })
+            async with self.db.pool.acquire() as conn:
+                table_exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'ai_confidence_calibration'
+                    )
+                """)
+                if not table_exists:
+                    return web.json_response({
+                        'success': True, 'bins': [], 'brier': None,
+                        'sample_count': 0,
+                        'note': 'run migration 023_add_ai_confidence_calibration',
+                    })
+                rows = await conn.fetch("""
+                    SELECT
+                        FLOOR(LEAST(predicted_confidence, 0.999) * 10)::INT AS bin_idx,
+                        COUNT(*)                              AS n,
+                        AVG(predicted_confidence)             AS mean_predicted,
+                        AVG(CASE WHEN realized_won THEN 1.0 ELSE 0.0 END) AS mean_observed
+                    FROM ai_confidence_calibration
+                    WHERE realized_won IS NOT NULL
+                      AND predicted_confidence IS NOT NULL
+                      AND created_at >= NOW() - INTERVAL '90 days'
+                    GROUP BY bin_idx
+                    ORDER BY bin_idx
+                """)
+                for r in rows:
+                    bi = int(r['bin_idx'] or 0)
+                    bins.append({
+                        'bin_lo': bi / 10.0,
+                        'bin_hi': (bi + 1) / 10.0,
+                        'count': int(r['n']),
+                        'mean_predicted': float(r['mean_predicted'] or 0.0),
+                        'mean_observed': float(r['mean_observed'] or 0.0),
+                    })
+                brier_row = await conn.fetchrow("""
+                    SELECT
+                        AVG(
+                            POWER(
+                                predicted_confidence
+                                - CASE WHEN realized_won THEN 1.0 ELSE 0.0 END,
+                                2
+                            )
+                        ) AS brier,
+                        COUNT(*) AS n
+                    FROM ai_confidence_calibration
+                    WHERE realized_won IS NOT NULL
+                      AND predicted_confidence IS NOT NULL
+                      AND created_at >= NOW() - INTERVAL '90 days'
+                """)
+                if brier_row and brier_row['brier'] is not None:
+                    brier = float(brier_row['brier'])
+                if brier_row:
+                    sample_count = int(brier_row['n'] or 0)
+            return web.json_response({
+                'success': True,
+                'bins': bins,
+                'brier': brier,
+                'sample_count': sample_count,
+            })
+        except Exception as e:
+            logger.error(f"Error in /api/ai/calibration: {e}")
+            return web.json_response({
+                'success': False, 'error': str(e),
+                'bins': [], 'brier': None, 'sample_count': 0,
+            })
 
     # ==================== FULL DASHBOARD HANDLERS ====================
 
