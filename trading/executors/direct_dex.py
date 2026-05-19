@@ -569,16 +569,20 @@ class DirectDEXExecutor(BaseExecutor):
             w3 = self.w3_connections[order.chain]
             contract = self.dex_contracts[order.chain][quote.dex.value]
 
-            # Calculate minimum output with slippage.
-            # MB-01 fix: previously *10**18 hardcoded - wrong for USDC/USDT (6),
-            # WBTC (8), etc. Use the actual output-token decimals via core.units.
+            # Calculate input + minimum output in *raw* on-chain units.
+            # MB-01 (both legs): previously ether_to_wei(...) hardcoded 10**18
+            # which silently overstates input/output by 10**12 for USDC/USDT
+            # (6 dec) and 10**10 for WBTC (8 dec). Use the actual ERC-20
+            # decimals() via core.units cached per (chain, address).
             from core.units import to_raw_evm
             output_token = order.token_out or (quote.path[-1] if quote.path else None)
-            if not output_token:
-                raise ValueError("Cannot determine output token for min_amount_out")
+            input_token = order.token_in or (quote.path[0] if quote.path else None)
+            if not output_token or not input_token:
+                raise ValueError("Cannot determine input/output token for swap encoding")
             slippage = float(order.slippage or self.max_slippage)
             human_min_out = Decimal(str(quote.amount_out)) * (Decimal(1) - Decimal(str(slippage)))
             min_amount_out = await to_raw_evm(order.chain, output_token, human_min_out)
+            amount_in_raw = await to_raw_evm(order.chain, input_token, Decimal(str(order.amount)))
 
             # Deadline (20 minutes from now)
             deadline = int((datetime.now() + timedelta(minutes=20)).timestamp())
@@ -602,14 +606,14 @@ class DirectDEXExecutor(BaseExecutor):
                     self._encode_v3_path(quote.path),  # bytes path
                     Web3.to_checksum_address(order.recipient or order.wallet_address),  # address recipient
                     deadline,  # uint256 deadline
-                    ether_to_wei(order.amount),  # uint256 amountIn
+                    amount_in_raw,  # uint256 amountIn (decimals-correct)
                     min_amount_out  # uint256 amountOutMinimum
                 )
                 tx = contract.functions.exactInput(params).build_transaction(tx_params)
             else:
                 # Uniswap V2 style swap
                 tx = contract.functions.swapExactTokensForTokens(
-                    ether_to_wei(order.amount),
+                    amount_in_raw,
                     min_amount_out,
                     quote.path,
                     Web3.to_checksum_address(order.recipient or order.wallet_address),
