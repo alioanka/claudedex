@@ -231,9 +231,11 @@ class CopyTradeExecutor:
         self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY')
         self.evm_wallet = secrets.get('WALLET_ADDRESS') or os.getenv('WALLET_ADDRESS')
 
-        # Load Web3 provider
+        # Load Web3 provider. RPCProvider is already imported module-level
+        # at line 27; re-importing here would shadow it as a local var and
+        # break the earlier `await RPCProvider.get_rpc('SOLANA_RPC')` call
+        # at line 219 with UnboundLocalError.
         try:
-            from config.rpc_provider import RPCProvider
             self.web3_provider = RPCProvider.get_rpc_sync('ETHEREUM_RPC')
         except Exception:
             pass
@@ -625,14 +627,16 @@ class CopyTradingEngine(BaseModule):
         self.config_dict = config  # raw dict retained for legacy reads
         self.targets = []  # Initialize empty, load from DB
 
-        # Use Pool Engine with secrets manager fallback (NOT os.getenv directly)
+        # Use Pool Engine with secrets manager fallback (NOT os.getenv directly).
+        # RPCProvider is already imported at module level (line 27); a local
+        # re-import would shadow it as a local and break other RPCProvider
+        # uses in this method.
         from security.secrets_manager import secrets
         try:
-            from config.rpc_provider import RPCProvider
             self.etherscan_api_key = RPCProvider.get_api_sync('ETHERSCAN_API') or secrets.get('ETHERSCAN_API_KEY')
             self.solana_rpc_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or secrets.get('SOLANA_RPC_URL')
             self.helius_api_key = RPCProvider.get_api_sync('HELIUS_API') or secrets.get('HELIUS_API_KEY')
-        except ImportError:
+        except Exception:
             self.etherscan_api_key = secrets.get('ETHERSCAN_API_KEY')
             self.solana_rpc_url = secrets.get('SOLANA_RPC_URL')
             self.helius_api_key = secrets.get('HELIUS_API_KEY')
@@ -920,7 +924,6 @@ class CopyTradingEngine(BaseModule):
                         if resp.status == 429:
                             logger.warning(f"⚠️ Etherscan rate limited on {chain_name} - backing off")
                             try:
-                                from config.rpc_provider import RPCProvider
                                 await RPCProvider.report_rate_limit('ETHERSCAN_API', 'etherscan.io', 300)
                             except Exception:
                                 pass
@@ -985,7 +988,6 @@ class CopyTradingEngine(BaseModule):
                         if resp.status == 429:
                             logger.warning("⚠️ Solana RPC rate limited - backing off")
                             try:
-                                from config.rpc_provider import RPCProvider
                                 await RPCProvider.report_rate_limit('SOLANA_RPC', self.solana_rpc_url, 300)
                                 # Try to get a new RPC endpoint
                                 new_url = await RPCProvider.get_rpc('SOLANA_RPC')

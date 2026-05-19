@@ -417,6 +417,7 @@ class DashboardEndpoints:
         # Last-known cached value beats the 200 fallback if we have one
         return self._sol_usd_cache if self._sol_usd_cache > 0 else 200.0
 
+    @staticmethod
     def _serialize_decimals(obj):
         """Convert Decimal objects to float for JSON serialization"""
         if isinstance(obj, dict):
