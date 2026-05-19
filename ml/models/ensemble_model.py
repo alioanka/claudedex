@@ -543,14 +543,79 @@ class EnsemblePredictor:
 
     # Replace the current predict() method (around line 565) with this fixed version:
 
+    async def predict_decoupled(
+        self,
+        token: str,
+        chain: str,
+        features: Any,
+    ) -> Dict:
+        """AI-Q-08: prediction path that does NOT fetch token data.
+
+        `features` may be either:
+          * a numpy array of pre-extracted features (preferred — caller
+            already ran `extract_features(token_data)` or built the row
+            from its own feature store), or
+          * a dict matching the same schema `extract_features` consumes
+            (price_data / volume_data / liquidity_data / ...), in which
+            case the conversion happens locally.
+
+        This is the recommended call site for hot paths. The legacy
+        `predict(token, chain)` still works but synchronously hits
+        DexScreener inside the inference loop, adding 200-500ms latency
+        + a single point of failure and importing a data-collector
+        module name across what is supposed to be a pure-ML boundary.
+
+        OFF by default in callers: existing call sites continue to use
+        `predict()`. Migration plan is documented in
+        docs/agents/reports/AI_quant.md (AI-Q-08).
+        """
+        try:
+            if isinstance(features, dict):
+                feat_arr = self.extract_features(features)
+            else:
+                feat_arr = np.asarray(features, dtype=np.float32)
+            result = await self._predict_from_features(
+                feat_arr, cache_key=f"{chain}:{token}"
+            )
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': result.pump_probability,
+                'rug_probability': result.rug_probability,
+                'expected_return': result.expected_return,
+                'confidence': result.confidence,
+                'time_to_pump': result.time_to_pump,
+                'risk_adjusted_score': result.risk_adjusted_score,
+                'model_agreements': result.model_agreements,
+                'feature_importance': result.feature_importance,
+                'timestamp': result.prediction_timestamp.isoformat(),
+                'source': 'decoupled',
+            }
+        except Exception as e:
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': 0.5,
+                'rug_probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.1,
+                'time_to_pump': None,
+                'risk_adjusted_score': 0.0,
+                'model_agreements': {},
+                'feature_importance': {},
+                'timestamp': datetime.now().isoformat(),
+                'source': 'decoupled',
+                'error': str(e),
+            }
+
     async def predict(self, token: str, chain: str) -> Dict:
         """
         Predict pump/rug probability for a token (API-compliant signature)
-        
+
         Args:
             token: Token address
             chain: Blockchain network
-            
+
         Returns:
             Dictionary with prediction results
         """
