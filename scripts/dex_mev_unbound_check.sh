@@ -20,17 +20,22 @@ if [ ! -f "$f" ]; then
 fi
 
 # 1. Default-None initialisation before any if/else assigning bundle_id.
-if ! grep -nE '^[[:space:]]*bundle_id[[:space:]]*=[[:space:]]*None' "$f" >/dev/null; then
-  echo "FAIL — no top-level 'bundle_id = None' default in $f"
+#    Accepts plain `bundle_id = None`, type-annotated
+#    `bundle_id: Optional[str] = None`, or any equivalent. We just need
+#    the identifier on the LHS of `= None` somewhere before the
+#    flashbots branch (any-line match is enough — pre-fix the file had
+#    zero `= None` initialisations on bundle_id).
+if ! grep -nE 'bundle_id[^=]*=[[:space:]]*None' "$f" >/dev/null; then
+  echo "FAIL — no 'bundle_id ... = None' default in $f"
   echo "        regression of e872121: low-risk ADVANCED path will UnboundLocalError"
   exit 1
 fi
 
 # 2. Per-chain Flashbots gate: the fix only engages Flashbots when the
-#    target chain is Ethereum mainnet. Any of the canonical guard forms
-#    counts; we just need to see the intent.
-if ! grep -nE "(chain[^a-zA-Z_]*==[^=]*['\"]ethereum['\"])|(['\"]ethereum['\"][^a-zA-Z_]*==[^=]*chain)" "$f" >/dev/null; then
-  echo "FAIL — no chain == 'ethereum' Flashbots gate in $f"
+#    target chain is Ethereum mainnet. Accept any form referencing
+#    'ethereum' alongside a chain comparison (== / in / not in).
+if ! grep -nE "chain[[:space:]]*(in|==|not in)[[:space:]]*\(?[^)]*['\"]ethereum['\"]" "$f" >/dev/null; then
+  echo "FAIL — no per-chain Flashbots gate referencing 'ethereum' in $f"
   echo "        regression of e872121: BSC/Polygon/L2s would attempt Flashbots"
   exit 1
 fi

@@ -21,11 +21,15 @@ if [ ! -f "$f" ]; then
 fi
 
 # Stale identifiers that must NOT reappear in the spatial-arb path.
-# tokens_bought / weth_returned replaced them in 9e6a7d1.
+# tokens_bought / weth_returned replaced them in 9e6a7d1. We tolerate
+# the named identifier inside a comment (-> after #) — only flag a
+# code-level appearance (assignment / call / reference).
 for name in forward_output final_output; do
-  if grep -nE "[^A-Za-z0-9_]${name}[^A-Za-z0-9_]" "$f" >/dev/null; then
-    echo "FAIL — stale identifier '${name}' present in $f"
-    grep -nE "[^A-Za-z0-9_]${name}[^A-Za-z0-9_]" "$f" | head -5
+  hits=$(grep -nE "[^A-Za-z0-9_]${name}[^A-Za-z0-9_]" "$f" \
+         | grep -vE '^[[:space:]]*[0-9]+:[[:space:]]*#') || true
+  if [ -n "$hits" ]; then
+    echo "FAIL — stale identifier '${name}' present in $f (non-comment use):"
+    echo "$hits" | head -5
     exit 1
   fi
 done
