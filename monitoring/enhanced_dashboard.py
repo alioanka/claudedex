@@ -131,6 +131,13 @@ class DashboardEndpoints:
         self._sol_usd_cache: float = 0.0
         self._sol_usd_cached_at: datetime = datetime.min
 
+        # Per-mint Jupiter price cache (token_address → (price_usd, fetched_at)).
+        # Used to populate live unrealized_pnl on open copy_trading positions
+        # so the operator sees real PnL instead of $0.00. 30s TTL keeps the
+        # Jupiter call rate well under the public-tier limit even when the
+        # operator hammers refresh.
+        self._token_price_cache: Dict[str, tuple] = {}
+
         # Authentication
         self.auth_service = None
         self.auth_enabled = False
@@ -416,6 +423,90 @@ class DashboardEndpoints:
             logger.debug(f"_get_sol_usd_price fallback to 200.0: {e}")
         # Last-known cached value beats the 200 fallback if we have one
         return self._sol_usd_cache if self._sol_usd_cache > 0 else 200.0
+
+    async def _get_token_prices_usd(self, mints: list, ttl_s: int = 30) -> dict:
+        """Batch-fetch USD prices for a set of token mints via Jupiter
+        Price v3. Returns {mint: price_usd_float}. Cached per-mint with
+        30s TTL — repeated dashboard refreshes don't hammer Jupiter.
+        Network failures return cached values (or 0.0 for never-seen mints).
+
+        Used by api_get_copytrading_positions to compute live unrealized
+        PnL for OPEN copy positions. Without this, the dashboard reported
+        $0.00 PnL on every open position because current_price always
+        equalled entry_price.
+        """
+        if not mints:
+            return {}
+        now_ts = datetime.now()
+        unique = list({m for m in mints if isinstance(m, str) and m})
+
+        # Filter to mints whose cached row is stale.
+        need_fetch = []
+        out: dict = {}
+        for m in unique:
+            cached = self._token_price_cache.get(m)
+            if cached and (now_ts - cached[1]).total_seconds() < ttl_s:
+                out[m] = float(cached[0])
+            else:
+                need_fetch.append(m)
+
+        if not need_fetch:
+            return out
+
+        # Jupiter Price v3 accepts comma-separated mints up to ~100 per call.
+        # Chunk defensively at 50 to stay well under URL/limit caps.
+        try:
+            import aiohttp
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                for i in range(0, len(need_fetch), 50):
+                    chunk = need_fetch[i:i+50]
+                    url = f"https://api.jup.ag/price/v3?ids={','.join(chunk)}"
+                    try:
+                        async with session.get(url) as resp:
+                            if resp.status != 200:
+                                logger.debug(f"jupiter price v3 returned {resp.status}")
+                                continue
+                            data = await resp.json()
+                    except Exception as e:
+                        logger.debug(f"jupiter price fetch chunk failed: {e}")
+                        continue
+                    # v3 shape: {"<mint>": {"usdPrice": "1.2345", ...}, ...}
+                    # Legacy v2 shape: {"data": {"<mint>": {"price": ...}}}
+                    payload = data.get('data') if isinstance(data, dict) and 'data' in data else data
+                    if not isinstance(payload, dict):
+                        continue
+                    for mint in chunk:
+                        row = payload.get(mint) if isinstance(payload, dict) else None
+                        if not isinstance(row, dict):
+                            continue
+                        # Try several known key shapes
+                        price_str = (
+                            row.get('usdPrice')
+                            or row.get('price')
+                            or row.get('usd')
+                            or 0
+                        )
+                        try:
+                            price = float(price_str)
+                        except (TypeError, ValueError):
+                            price = 0.0
+                        if price > 0:
+                            self._token_price_cache[mint] = (price, now_ts)
+                            out[mint] = price
+        except Exception as e:
+            logger.debug(f"_get_token_prices_usd failed: {e}")
+
+        # Any mint we couldn't fetch but had a stale cache for — return
+        # the stale value rather than 0; better stale than zero.
+        for m in need_fetch:
+            if m not in out:
+                cached = self._token_price_cache.get(m)
+                if cached:
+                    out[m] = float(cached[0])
+                else:
+                    out[m] = 0.0
+        return out
 
     @staticmethod
     def _serialize_decimals(obj):
@@ -11261,6 +11352,37 @@ class DashboardEndpoints:
                             'note': 'Entry price shows SOL price at trade time. Use Birdeye link for real-time token price.'
                         })
 
+            # Live PnL: fetch current Jupiter prices for every Solana
+            # token in the positions list, then recompute unrealized_pnl
+            # on each. Without this every open position reads $0.00 PnL
+            # because the engine writes entry_price into current_price.
+            solana_mints = [
+                p['token_address'] for p in positions
+                if p.get('chain', '').lower() == 'solana' and p.get('token_address')
+            ]
+            if solana_mints:
+                try:
+                    prices = await self._get_token_prices_usd(solana_mints)
+                    for p in positions:
+                        if p.get('chain', '').lower() != 'solana':
+                            continue
+                        mint = p.get('token_address')
+                        live_price = float(prices.get(mint) or 0)
+                        if live_price <= 0:
+                            continue
+                        entry_price = float(p.get('entry_price') or 0)
+                        qty = float(p.get('quantity') or 0)
+                        entry_usd = float(p.get('entry_usd') or 0)
+                        p['current_price'] = live_price
+                        if entry_price > 0 and qty > 0:
+                            pnl = (live_price - entry_price) * qty
+                            p['unrealized_pnl'] = pnl
+                            p['profit_loss'] = pnl
+                            if entry_usd > 0:
+                                p['unrealized_pnl_pct'] = (pnl / entry_usd) * 100.0
+                except Exception as e:
+                    logger.debug(f"live-PnL price enrichment failed: {e}")
+
             return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
         except Exception as e:
             logger.error(f"Error getting copytrading positions: {e}")
@@ -11666,6 +11788,25 @@ class DashboardEndpoints:
                     if wallets:
                         data_source = 'birdeye_api'
                         logger.info(f"Discovered {len(wallets)} wallets via Birdeye API")
+
+                # If both upstream APIs are unavailable or returned 0,
+                # fall back to the operator's own configured target_wallets
+                # + active wallets from copytrading_trades. This guarantees
+                # the discovery page is never empty as long as the operator
+                # has configured at least one wallet OR the engine has copied
+                # at least one trade. Same data wallet_discovery uses on
+                # /copytrading/leaders.
+                if not wallets:
+                    try:
+                        wallets = await self._discover_wallets_local_fallback(max_results)
+                        if wallets:
+                            data_source = 'operator_targets+onchain'
+                            logger.info(
+                                f"Discovered {len(wallets)} wallets via "
+                                f"local fallback (target_wallets + copytrading_trades)"
+                            )
+                    except Exception as e:
+                        logger.warning(f"local-fallback discovery failed: {e}")
 
                 # If still no wallets, return helpful message
                 if not wallets:
@@ -12130,6 +12271,111 @@ class DashboardEndpoints:
             traceback.print_exc()
 
         return wallets
+
+    async def _discover_wallets_local_fallback(self, max_results: int) -> list:
+        """Always-available discovery source — combines:
+          1. config_settings.copytrading_config.target_wallets (operator-
+             configured wallets — already vouched for)
+          2. copytrading_trades active source_wallets (the engine is
+             actively mirroring these — by definition worth tracking)
+
+        Returns rows in the same shape as the Helius/Birdeye paths so
+        the dashboard UI doesn't need a special case.
+        """
+        if not (self.db and self.db.pool):
+            return []
+
+        from datetime import datetime
+
+        wallets: list = []
+        seen: set = set()
+        try:
+            async with self.db.pool.acquire() as conn:
+                # (1) Operator-configured targets
+                raw = await conn.fetchval(
+                    "SELECT value FROM config_settings "
+                    "WHERE config_type='copytrading_config' "
+                    "  AND key='target_wallets'"
+                )
+                if raw:
+                    import json as _json
+                    try:
+                        target_wallets = _json.loads(raw) if isinstance(raw, str) else raw
+                    except Exception:
+                        target_wallets = []
+                    if isinstance(target_wallets, list):
+                        for w in target_wallets:
+                            if not isinstance(w, str) or not w.strip():
+                                continue
+                            s = w.strip()
+                            # Strip '@chain' suffix; this discovery page is solana-only
+                            addr = s.split('@')[0] if '@' in s else s
+                            if addr in seen:
+                                continue
+                            # Solana only on /copytrading/discovery; skip EVM
+                            if addr.startswith('0x'):
+                                continue
+                            seen.add(addr)
+                            wallets.append({
+                                'address': addr,
+                                'score': 60.0,
+                                'win_rate': 0.0,
+                                'total_trades': 0,
+                                'total_pnl': 0,
+                                'avg_trade_size': 0,
+                                'last_active': 'configured',
+                                'category': 'operator_targets',
+                                'verified': True,
+                                'data_source': 'operator_configured',
+                                'note': 'Configured by operator in /copytrading/settings target_wallets.',
+                            })
+
+                # (2) Active source_wallets from copytrading_trades
+                rows = await conn.fetch(
+                    """
+                    SELECT source_wallet, chain,
+                           COUNT(*) AS n,
+                           COUNT(*) FILTER (WHERE status='open') AS n_open,
+                           COALESCE(SUM(profit_loss) FILTER (WHERE profit_loss IS NOT NULL), 0) AS pnl,
+                           MAX(COALESCE(exit_timestamp, entry_timestamp)) AS last_ts
+                    FROM copytrading_trades
+                    WHERE COALESCE(exit_timestamp, entry_timestamp) > NOW() - INTERVAL '60 days'
+                      AND source_wallet IS NOT NULL
+                    GROUP BY source_wallet, chain
+                    ORDER BY COUNT(*) DESC, SUM(profit_loss) DESC NULLS LAST
+                    LIMIT $1
+                    """,
+                    max(max_results, 10),
+                )
+                for r in rows:
+                    addr = (r['source_wallet'] or '').strip()
+                    if not addr or addr in seen:
+                        continue
+                    # Solana-only page
+                    if addr.startswith('0x'):
+                        continue
+                    seen.add(addr)
+                    last_ts = r['last_ts']
+                    wallets.append({
+                        'address': addr,
+                        'score': 75.0 if r['n_open'] > 0 else 50.0,
+                        'win_rate': 0.0,  # only meaningful when trades have closed
+                        'total_trades': int(r['n']),
+                        'total_pnl': float(r['pnl'] or 0),
+                        'avg_trade_size': 0,
+                        'last_active': last_ts.strftime('%Y-%m-%d') if isinstance(last_ts, datetime) else 'recently',
+                        'category': 'onchain_active',
+                        'verified': True,
+                        'data_source': 'copytrading_trades',
+                        'note': f"{int(r['n'])} trades mirrored (60d), {int(r['n_open'])} still open.",
+                    })
+        except Exception as e:
+            logger.error(f"local-fallback DB query failed: {e}")
+            return wallets
+
+        # Sort: operator-configured first, then by score
+        wallets.sort(key=lambda w: (0 if w['category'] == 'operator_targets' else 1, -w['score']))
+        return wallets[:max_results]
 
     def _get_curated_trader_wallets(self, search_type: str, min_win_rate: float,
                                      min_trades: int, min_pnl: float, max_results: int) -> list:
