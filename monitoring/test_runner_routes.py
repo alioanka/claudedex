@@ -2086,7 +2086,7 @@ TEST_CATALOG: List[Dict[str, Any]] = [
     },
     {
         "id": "api_copytrading_leaders_refresh",
-        "title": "API: POST /api/copytrading/leaders/refresh (admin probe)",
+        "title": "API: POST /api/copytrading/leaders/refresh — route exists (expect 405)",
         "category": "api",
         "kind": "probe",
         # Probe kind is GET-only in this catalog, so we use the GET form
