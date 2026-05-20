@@ -195,6 +195,23 @@ class EnsemblePredictor:
         )
         self._lstm_buffer_order: list = []  # LRU eviction order
 
+        # AI-Q-05: calibrated booster wrap (inference side). OFF by default
+        # — operator flips `ai_calibrated_predictions_enabled` AFTER a
+        # calibration training run has produced `calibrated_<name>.pkl`
+        # files in `model_dir` (the trainer side AI-Q-06 in
+        # ml/training/auto_trainer.py also writes the legacy
+        # `<name>_calibrated.joblib` shape, which this loader accepts).
+        # When the flag is on, `_predict_from_features` consults the
+        # wrappers via `calibrated_predict_proba` in place of the raw
+        # booster's `predict_proba`. Base model files stay intact so
+        # toggling is a config-only round-trip (no retrain required).
+        self.calibrated_predictions_enabled = bool(
+            config.get('ai_calibrated_predictions_enabled', False)
+        )
+        # name -> fitted CalibratedClassifierCV (populated lazily in
+        # load_models when the flag is on AND a matching sidecar exists).
+        self.calibrated_models: dict = {}
+
         # Initialize models
         self.models = {
             'xgboost_rug': None,
@@ -312,12 +329,143 @@ class EnsemblePredictor:
             if features_path.exists():
                 with open(features_path, 'r') as f:
                     self.feature_names = json.load(f)
-                    
+
+            # AI-Q-05: load calibrated wrappers IF the flag is on. See
+            # `_load_calibrated_models` for the filename-pattern fallback.
+            if self.calibrated_predictions_enabled:
+                self._load_calibrated_models()
+
         except Exception as e:
             print(f"Error loading models: {e}")
             # Initialize with default models if loading fails
             self._initialize_default_models()
-            
+
+    # Eligible model names for AI-Q-05 calibration. Class-level so the
+    # loader / persist helper / inference path stay in sync.
+    _CALIBRATABLE_MODELS = (
+        'xgboost_rug', 'xgboost_pump',
+        'lightgbm_rug', 'lightgbm_pump',
+        'random_forest', 'gradient_boosting',
+    )
+    # Sidecar filename patterns. Loader tries each in order.
+    # `calibrated_<name>.pkl` is the deliverable wording;
+    # `<name>_calibrated.{pkl,joblib}` matches AutoMLTrainer (AI-Q-06).
+    _CAL_FILENAME_PATTERNS = (
+        'calibrated_{name}.pkl',
+        '{name}_calibrated.pkl',
+        '{name}_calibrated.joblib',
+    )
+
+    def _load_calibrated_models(self) -> None:
+        """AI-Q-05: load any calibrated-booster sidecars off disk.
+
+        Only the 6 tree-based base models are eligible — LSTM +
+        Transformer outputs already pass through sigmoid in forward(),
+        and IsolationForest emits an anomaly score, not a probability;
+        wrapping these would double-calibrate or miscalibrate them.
+        """
+        for name in self._CALIBRATABLE_MODELS:
+            for pattern in self._CAL_FILENAME_PATTERNS:
+                path = self.model_dir / pattern.format(name=name)
+                if path.exists():
+                    try:
+                        self.calibrated_models[name] = joblib.load(path)
+                        break
+                    except Exception as e:
+                        print(
+                            f"AI-Q-05: failed to load {path.name}: {e} "
+                            f"(falling back to raw {name})"
+                        )
+
+    def calibrated_predict_proba(
+        self, name: str, features_scaled: np.ndarray
+    ) -> float:
+        """AI-Q-05: per-model proba helper.
+
+        Returns the positive-class probability from the calibrated
+        wrapper when the flag is on AND the wrapper is loaded for
+        `name`; otherwise falls through to the raw model's
+        `predict_proba`. Caller must hold a valid scaled (1, F) array.
+        Returns 0.5 if nothing is available — same neutral default the
+        legacy code path already used for a missing model.
+        """
+        if (
+            self.calibrated_predictions_enabled
+            and name in self.calibrated_models
+        ):
+            try:
+                proba = self.calibrated_models[name].predict_proba(
+                    features_scaled
+                )[0]
+                if len(proba) > 1:
+                    return float(proba[1])
+                return 0.5
+            except Exception:
+                # Don't crash the inference loop because a calibration
+                # artifact got corrupted; fall through to raw model.
+                pass
+        raw = self.models.get(name)
+        if raw is None:
+            return 0.5
+        try:
+            proba = raw.predict_proba(features_scaled)[0]
+            if len(proba) > 1:
+                return float(proba[1])
+            return 0.5
+        except Exception:
+            return 0.5
+
+    def fit_and_persist_calibration(
+        self,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        *,
+        method: str = 'sigmoid',
+        save_pkl: bool = True,
+    ) -> Dict[str, str]:
+        """AI-Q-05: fit `CalibratedClassifierCV(cv='prefit')` over each
+        loaded base classifier using a HELD-OUT validation split.
+
+        IMPORTANT: caller MUST pass a held-out set the base model has
+        never seen, otherwise calibration is fit on in-sample data and
+        the reported improvement will be optimistic. Use a forward-time
+        slice from `ai_feature_store` (rows newer than the training
+        window) — see `scripts/retrain_models.py` for the canonical
+        feature-store walk-forward split.
+
+        Persists each wrapper as `calibrated_<name>.pkl` (the deliverable
+        naming) alongside the base model. Returns {name: saved_path}.
+        Models not loaded are skipped.
+        """
+        from sklearn.calibration import CalibratedClassifierCV
+        if method not in ('sigmoid', 'isotonic'):
+            method = 'sigmoid'
+        saved: Dict[str, str] = {}
+        # Scale once — calibrator sees the same transformed features as
+        # the live predict path.
+        X_scaled = self.scaler.transform(X_val)
+        for name in self._CALIBRATABLE_MODELS:
+            base = self.models.get(name)
+            if base is None:
+                continue
+            try:
+                wrapper = CalibratedClassifierCV(
+                    base, method=method, cv='prefit'
+                )
+                wrapper.fit(X_scaled, y_val)
+            except Exception as e:
+                print(f"AI-Q-05: fit failed for {name}: {e}")
+                continue
+            self.calibrated_models[name] = wrapper
+            if save_pkl:
+                path = self.model_dir / f"calibrated_{name}.pkl"
+                try:
+                    joblib.dump(wrapper, path)
+                    saved[name] = str(path)
+                except Exception as e:
+                    print(f"AI-Q-05: persist failed for {name}: {e}")
+        return saved
+
     def _create_xgboost_model(self) -> xgb.XGBClassifier:
         """Create XGBoost model with optimized parameters"""
         return xgb.XGBClassifier(
