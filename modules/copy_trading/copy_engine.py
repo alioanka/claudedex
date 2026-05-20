@@ -697,6 +697,15 @@ class CopyTradingEngine(BaseModule):
         self.probation_loss_pct_threshold = 25.0   # absolute %; trigger on PnL < -25%
         self.probation_days = 7
 
+        # Wave-4 (CT-Q-12): cross-module exposure cap. Per-token open
+        # USD across DEX + SNIPER + SOLANA + COPY + AI. When the
+        # intended buy would push the per-token total above
+        # `cross_module_exposure_cap_usd`, the BUY is refused. Default
+        # ON because the operator explicitly flagged this as desirable
+        # (the 5-module fanout is otherwise un-bounded per-token).
+        self.cross_module_exposure_check_enabled = True
+        self.cross_module_exposure_cap_usd = 5000.0
+
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
 
@@ -935,6 +944,26 @@ class CopyTradingEngine(BaseModule):
                             # Min 1 day so an accidental 0 doesn't lift
                             # probation on the same tick it was set.
                             self.probation_days = max(1.0, min(365.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key in (
+                        'cross_module_exposure_check_enabled',
+                        'copy_cross_module_exposure_check_enabled',
+                    ):
+                        # Wave-4 CT-Q-12.
+                        self.cross_module_exposure_check_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key in (
+                        'cross_module_exposure_cap_usd',
+                        'copy_cross_module_exposure_cap_usd',
+                    ):
+                        try:
+                            v = float(val) if val else 5000.0
+                            # Clamp to a sane band -- 0 disables, but
+                            # we cap the upper end at 10M USD to prevent
+                            # a fat-finger from neutralising the gate.
+                            self.cross_module_exposure_cap_usd = max(0.0, min(1e7, v))
                         except (TypeError, ValueError):
                             pass
 
@@ -1359,6 +1388,50 @@ class CopyTradingEngine(BaseModule):
             logger.debug(f"_maybe_set_probation failed (fail-soft): {e}")
             return False
 
+    async def _check_cross_module_exposure(
+        self,
+        *,
+        chain: str,
+        token_address: str,
+        intended_buy_usd: float,
+    ) -> tuple:
+        """Wave-4 CT-Q-12 cross-module exposure gate.
+
+        Returns (allow, existing_exposure_usd, breakdown). `allow` is
+        False iff (existing + intended) > cap. Fail-soft: any error
+        returns (True, 0.0, {}) -- the per-module caps remain in place
+        as the safety net so we never block trading on a gate failure.
+
+        The breakdown is only computed when we're about to refuse, to
+        keep the success path cheap (single SUM per module instead of
+        two queries per module).
+        """
+        if not getattr(self, "cross_module_exposure_check_enabled", True):
+            return (True, 0.0, {})
+        if not self.db_pool or not chain or not token_address:
+            return (True, 0.0, {})
+        cap = float(getattr(self, "cross_module_exposure_cap_usd", 5000.0))
+        if cap <= 0:
+            return (True, 0.0, {})
+        try:
+            from modules.copy_trading.exposure_aggregator import (
+                get_exposure_usd, get_exposure_breakdown_usd,
+            )
+            existing = await get_exposure_usd(chain, token_address, self.db_pool)
+            projected = float(existing or 0.0) + float(max(0.0, intended_buy_usd))
+            if projected <= cap:
+                return (True, float(existing or 0.0), {})
+            # Over cap -- pay the cost of a per-module breakdown so the
+            # operator can see in the replay log WHICH module is holding
+            # the bulk of the existing exposure.
+            breakdown = await get_exposure_breakdown_usd(
+                chain, token_address, self.db_pool,
+            )
+            return (False, float(existing or 0.0), breakdown)
+        except Exception as e:
+            logger.debug(f"_check_cross_module_exposure failed (fail-soft): {e}")
+            return (True, 0.0, {})
+
     async def _record_slippage_observation(
         self,
         *,
@@ -1574,6 +1647,30 @@ class CopyTradingEngine(BaseModule):
                         tx_hash=tx_hash, decision='skipped',
                         reason='probation',
                         extra={'probation_reason': prob_reason[:64]},
+                    )
+                    return
+
+                # Wave-4 CT-Q-12 cross-module exposure cap. Sums per-token
+                # open USD across DEX/SNIPER/SOLANA/COPY/AI; refuses if
+                # existing + intended_buy > cap. intended_buy USD is
+                # already known (we sized in USD before converting to wei).
+                intended_usd = float(copy_amount) / 1e18 * float(eth_price)
+                allow, existing_usd, breakdown = await self._check_cross_module_exposure(
+                    chain=chain_name,
+                    token_address=token_address,
+                    intended_buy_usd=intended_usd,
+                )
+                if not allow:
+                    self._log_replay_decision(
+                        chain=chain_name, wallet=source_tx.get('from', ''),
+                        tx_hash=tx_hash, decision='skipped',
+                        reason='cross_module_cap',
+                        extra={
+                            'existing_usd': round(existing_usd, 2),
+                            'intended_usd': round(intended_usd, 2),
+                            'cap_usd': float(self.cross_module_exposure_cap_usd),
+                            'breakdown': {k: round(v, 2) for k, v in breakdown.items()},
+                        },
                     )
                     return
 
@@ -1882,6 +1979,29 @@ class CopyTradingEngine(BaseModule):
                         extra={'probation_reason': prob_reason[:64]},
                     )
                     return
+
+                # Wave-4 CT-Q-12 cross-module exposure cap. Same shape
+                # as the EVM path. intended_buy USD = lamports / 1e9 *
+                # sol_price (mirrors the dashboard convention).
+                intended_usd = float(copy_lamports) / 1e9 * float(sol_price)
+                allow, existing_usd, breakdown = await self._check_cross_module_exposure(
+                    chain='solana',
+                    token_address=token_mint,
+                    intended_buy_usd=intended_usd,
+                )
+                if not allow:
+                    self._log_replay_decision(
+                        chain='solana', wallet=wallet, tx_hash=signature,
+                        decision='skipped', reason='cross_module_cap',
+                        extra={
+                            'existing_usd': round(existing_usd, 2),
+                            'intended_usd': round(intended_usd, 2),
+                            'cap_usd': float(self.cross_module_exposure_cap_usd),
+                            'breakdown': {k: round(v, 2) for k, v in breakdown.items()},
+                        },
+                    )
+                    return
+
                 # Global open-position cap — only gates BUYs because
                 # SELLs close existing exposure and should never be
                 # blocked by the cap.
