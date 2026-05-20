@@ -100,14 +100,32 @@ class MEVProtectionLayer(BaseExecutor):
             config.get('protection_level', 'ADVANCED').upper()
         ]
         
-        # Flashbots configuration
+        # Flashbots configuration (Ethereum mainnet only)
         self.flashbots_enabled = config.get('flashbots_enabled', True)
         self.flashbots_relay = config.get(
             'flashbots_relay',
             'https://relay.flashbots.net'
         )
         self.flashbots_signer = None
-        
+
+        # bloXroute BSC private-tx relay (Wave-4). Flashbots does not
+        # service BSC — bloXroute's BDN does, via the `blxr_private_tx`
+        # JSON-RPC method on https://api.blxrbdn.com. Auth header is
+        # operator-provisioned (Cloud-API key); without it we fall
+        # through to the public-mempool send path.
+        self.bloxroute_enabled = config.get('bloxroute_enabled', False)
+        self.bloxroute_bsc_endpoint = config.get(
+            'bloxroute_bsc_endpoint',
+            'https://api.blxrbdn.com'
+        )
+        # Header value is "Authorization: <CLOUD_API_KEY>". Read from
+        # config first (operator may wire encrypted secret), then env.
+        import os as _os
+        self.bloxroute_auth_header = (
+            config.get('bloxroute_auth_header')
+            or _os.environ.get('BLOXROUTE_AUTH_HEADER')
+        )
+
         # Private mempool providers
         self.private_pools = config.get('private_pools', [
             'https://api.bloxroute.com',
@@ -213,6 +231,23 @@ class MEVProtectionLayer(BaseExecutor):
                 ):
                     bundle_id = await self._create_flashbots_bundle(protected_tx)
                     protection_methods.append('flashbots')
+                elif (
+                    chain == 'bsc'
+                    and self.bloxroute_enabled
+                    and risk_score > 0.3
+                ):
+                    # Wave-4: bloXroute BDN private-tx on BSC. Returns
+                    # the same tx dict (annotated with relay metadata)
+                    # on success, or None when the auth header is
+                    # missing — in which case we fall through to the
+                    # generic private-mempool path so the tx still ships.
+                    bx_tx = await self._attempt_bloxroute_bsc(protected_tx)
+                    if bx_tx is not None:
+                        protected_tx = bx_tx
+                        protection_methods.append('bloxroute_bsc')
+                    else:
+                        protected_tx = await self._route_private_mempool(protected_tx)
+                        protection_methods.append('private_mempool')
                 else:
                     protected_tx = await self._route_private_mempool(protected_tx)
                     protection_methods.append('private_mempool')
@@ -413,6 +448,92 @@ class MEVProtectionLayer(BaseExecutor):
         signed = self.flashbots_signer.sign_message(signable)
         return signed.signature.hex()
         
+    async def _attempt_bloxroute_bsc(self, transaction: Dict) -> Optional[Dict]:
+        """Submit a BSC tx through bloXroute's BDN private-tx relay.
+
+        bloXroute exposes `blxr_private_tx` over JSON-RPC at
+        `https://api.blxrbdn.com`. Auth is "Authorization: <KEY>" — the
+        Cloud-API key the operator provisions in the BDN dashboard.
+
+        Behaviour:
+          - No auth header  -> return None (caller falls back to public)
+          - Network/HTTP error -> return None (caller falls back)
+          - Success -> return the tx dict annotated with bloXroute
+            metadata (`bloxroute_tx_hash`, `bloxroute_endpoint`).
+
+        Returns None deliberately so callers cannot conflate a relay
+        miss with a successful private send. Gated upstream by
+        `chain == 'bsc' and config.get('bloxroute_enabled', False)`.
+        """
+        try:
+            if not self.bloxroute_auth_header:
+                logger.warning(
+                    "bloXroute BSC requested but BLOXROUTE_AUTH_HEADER "
+                    "not configured; falling back to public mempool"
+                )
+                return None
+
+            # Sign and serialise. bloXroute expects the raw hex of a
+            # signed RLP-encoded tx in `transaction` param.
+            pk = transaction.get('private_key')
+            if not pk:
+                logger.error("bloXroute BSC: no private_key in tx dict")
+                return None
+            signed = self.w3.eth.account.sign_transaction(
+                {k: v for k, v in transaction.items() if k != 'private_key'},
+                private_key=pk,
+            )
+            raw_hex = signed.rawTransaction.hex()
+            if not raw_hex.startswith('0x'):
+                raw_hex = '0x' + raw_hex
+
+            payload = {
+                'jsonrpc': '2.0',
+                'id': 1,
+                'method': 'blxr_private_tx',
+                'params': {'transaction': raw_hex[2:]},  # bloXroute wants no 0x
+            }
+            headers = {
+                'Authorization': self.bloxroute_auth_header,
+                'Content-Type': 'application/json',
+            }
+
+            if not self.session:
+                logger.error("bloXroute BSC: HTTP session not initialized")
+                return None
+
+            async with self.session.post(
+                self.bloxroute_bsc_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(
+                        "bloXroute BSC submit failed http=%s body=%s",
+                        resp.status, body[:200],
+                    )
+                    return None
+                data = await resp.json()
+                if 'error' in data:
+                    logger.error("bloXroute BSC RPC error: %s", data['error'])
+                    return None
+                tx_hash = (data.get('result') or {}).get('txHash') if isinstance(data.get('result'), dict) else data.get('result')
+
+            annotated = dict(transaction)
+            annotated['bloxroute_tx_hash'] = tx_hash
+            annotated['bloxroute_endpoint'] = self.bloxroute_bsc_endpoint
+            logger.info("bloXroute BSC private-tx submitted: %s", tx_hash)
+            return annotated
+
+        except asyncio.TimeoutError:
+            logger.error("bloXroute BSC submit timed out")
+            return None
+        except Exception as e:
+            logger.error("bloXroute BSC submit error: %s", e)
+            return None
+
     async def _route_private_mempool(self, transaction: Dict) -> Dict:
         """Route through private mempool"""
         try:
