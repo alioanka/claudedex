@@ -87,6 +87,13 @@ try:
 except ImportError:
     JUPITER_HELPER_AVAILABLE = False
 
+# Wave-4: shared Jito MEV-bundle client (opt-in routing).
+try:
+    from trading.chains.solana.jito_bundle import JitoClient
+    JITO_CLIENT_AVAILABLE = True
+except ImportError:
+    JITO_CLIENT_AVAILABLE = False
+
 # Import SafetyEngine for honeypot detection and close retry logic
 try:
     from modules.solana_trading.core.safety_engine import (
@@ -1146,6 +1153,14 @@ class SolanaTradingEngine:
         self.jupiter_helper: Optional['JupiterHelper'] = None
         self.drift_helper: Optional['DriftHelper'] = None
 
+        # Wave-4: Jito MEV-bundle client. Lazy-init only when the
+        # `solana_jito_bundle_enabled` flag is True at engine startup; off
+        # by default. On bundle rejection the engine falls back to the
+        # vanilla JupiterHelper.execute_swap path.
+        self.jito: Optional['JitoClient'] = None
+        self.jito_enabled: bool = False
+        self.jito_tip_lamports: int = 50_000
+
         # Risk metrics
         self.risk_metrics = RiskMetrics(
             daily_loss_limit_sol=self.max_daily_loss_sol
@@ -1485,6 +1500,34 @@ class SolanaTradingEngine:
                             getattr(self.jupiter_helper, 'adaptive_priority_fee', False),
                             getattr(self.jupiter_helper, 'quote_max_age_s', 10.0),
                         )
+
+                        # Wave-4: optional Jito bundle path. Only init when
+                        # explicitly enabled AND a JupiterHelper signing
+                        # keypair landed. Failure to init is non-fatal --
+                        # engine continues with vanilla Jupiter.
+                        try:
+                            jito_flag = bool(getattr(cm, 'solana_jito_bundle_enabled', False))
+                        except Exception:
+                            jito_flag = False
+                        if jito_flag and JITO_CLIENT_AVAILABLE and getattr(self.jupiter_helper, 'keypair', None):
+                            try:
+                                self.jito = JitoClient()
+                                await self.jito.initialize(keypair=self.jupiter_helper.keypair)
+                                self.jito_enabled = True
+                                self.jito_tip_lamports = int(
+                                    getattr(cm, 'solana_jito_tip_lamports', 50_000)
+                                )
+                                logger.info(
+                                    "🛡️ Jito bundle path ENABLED (tip=%d lamports, endpoint=%s)",
+                                    self.jito_tip_lamports,
+                                    getattr(self.jito, 'primary_endpoint', '?'),
+                                )
+                            except Exception as je:
+                                logger.warning(f"⚠️ Jito bundle init failed, falling back to vanilla Jupiter: {je}")
+                                self.jito = None
+                                self.jito_enabled = False
+                        elif jito_flag and not JITO_CLIENT_AVAILABLE:
+                            logger.warning("⚠️ solana_jito_bundle_enabled=True but JitoClient import failed")
                     else:
                         logger.warning("⚠️ JupiterHelper not available - no private key")
                         self.jupiter_helper = None
