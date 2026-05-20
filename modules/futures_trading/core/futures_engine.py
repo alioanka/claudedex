@@ -306,6 +306,12 @@ class FuturesTradingEngine:
             self.enforce_isolated_margin = getattr(
                 leverage_config, 'enforce_isolated_margin', True
             )
+            # FUT-RM-07b (Wave 4): emit a high-priority Telegram alert when
+            # the FUT-RM-07 path fires an emergency-close. Fail-soft if
+            # Telegram is not configured (just logs).
+            self.telegram_emergency_close_enabled = getattr(
+                leverage_config, 'telegram_emergency_close_enabled', True
+            )
 
             # Risk settings - SL/TP as price percentages
             self.stop_loss_pct = abs(risk_config.stop_loss_pct)  # Store as positive
@@ -373,6 +379,7 @@ class FuturesTradingEngine:
             self.atr_risk_pct = 1.0
             self.atr_stop_multiplier = 1.5
             self.enforce_isolated_margin = True
+            self.telegram_emergency_close_enabled = True
             self.stop_loss_pct = -5.0
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
@@ -2382,14 +2389,48 @@ class FuturesTradingEngine:
                     f"🚨 FUT-RM-07: {symbol} fill landed with margin_type="
                     f"{margin_type!r} but ISOLATED is required. Closing immediately."
                 )
+                # Capture position size BEFORE the close so the alert payload
+                # carries the actual notional that breached.
+                breach_size = None
+                try:
+                    raw_size = (
+                        normalized.get('contracts')
+                        or normalized.get('size')
+                        or normalized.get('positionAmt')
+                        or normalized.get('qty')
+                        if isinstance(normalized, dict) else None
+                    )
+                    breach_size = float(raw_size) if raw_size is not None else None
+                except (TypeError, ValueError):
+                    breach_size = None
+                close_ok = True
+                close_err_msg = None
                 # Best-effort close — same path the SL/TP uses.
                 try:
                     await self._close_position(symbol, "fut_rm_07_cross_margin_detected")
                 except Exception as close_err:
+                    close_ok = False
+                    close_err_msg = str(close_err)
                     logger.error(
                         f"FUT-RM-07: emergency close after CROSS detect failed for "
                         f"{symbol}: {close_err}. Operator MUST intervene."
                     )
+                # FUT-RM-07b: high-priority Telegram alert. Fail-soft.
+                if getattr(self, 'telegram_emergency_close_enabled', True):
+                    try:
+                        await self._notify_fut_rm_07_emergency_close(
+                            symbol=symbol,
+                            side=side,
+                            actual_margin=str(margin_type),
+                            position_size=breach_size,
+                            close_ok=close_ok,
+                            close_error=close_err_msg,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"FUT-RM-07b: Telegram alert dispatch failed "
+                            f"(non-fatal) for {symbol}: {notify_err}"
+                        )
             else:
                 logger.debug(f"FUT-RM-07: {symbol} margin_type verified ISOLATED")
         except Exception as e:
