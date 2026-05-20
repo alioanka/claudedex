@@ -2436,6 +2436,75 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.warning(f"FUT-RM-07 verify errored for {symbol}: {e}")
 
+    async def _notify_fut_rm_07_emergency_close(
+        self,
+        symbol: str,
+        side: 'TradeSide',
+        actual_margin: str,
+        position_size: Optional[float],
+        close_ok: bool,
+        close_error: Optional[str],
+    ) -> None:
+        """FUT-RM-07b (Wave 4): high-priority Telegram alert when the
+        FUT-RM-07 verify path detects a CROSS-margin fill and fires the
+        emergency-close. Reaches the shared TelegramBotController
+        singleton (initialized by main_futures.py at startup). Fail-soft
+        on every path — never raises into the caller.
+        """
+        # Lazy import — telegram_bot has its own optional aiohttp dep and
+        # we don't want futures_engine import-time coupling.
+        try:
+            from monitoring.telegram_bot import get_telegram_controller
+        except Exception as imp_err:
+            logger.info(
+                f"FUT-RM-07b: telegram_bot import unavailable ({imp_err}); "
+                f"skipping alert for {symbol}"
+            )
+            return
+        controller = get_telegram_controller()
+        # Treat missing bot_token/chat_id as "Telegram not configured" —
+        # log a warning and continue; do NOT block the emergency flow.
+        if not getattr(controller, 'bot_token', None) or not getattr(
+            controller, 'chat_id', None
+        ):
+            logger.warning(
+                f"FUT-RM-07b: Telegram not configured "
+                f"(no bot_token/chat_id) — emergency-close alert for "
+                f"{symbol} ({actual_margin}) only logged, not pushed."
+            )
+            return
+        side_str = getattr(side, 'value', str(side)).upper()
+        size_str = (
+            f"{position_size:.6f}"
+            if isinstance(position_size, (int, float))
+            else "unknown"
+        )
+        close_status = (
+            "CLOSED"
+            if close_ok
+            else f"CLOSE FAILED: {close_error}"
+        )
+        ts = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+        msg = (
+            f"FUT-RM-07 EMERGENCY CLOSE\n"
+            f"Symbol: {symbol}\n"
+            f"Side: {side_str}\n"
+            f"Margin (intended -> actual): ISOLATED -> {actual_margin}\n"
+            f"Position size: {size_str}\n"
+            f"Exchange: {getattr(self, 'exchange', 'unknown')}\n"
+            f"Status: {close_status}\n"
+            f"Timestamp: {ts}\n"
+            f"Operator action: verify the position is flat and "
+            f"investigate the CROSS-margin slip."
+        )
+        try:
+            await controller.notify(msg, priority="critical")
+        except Exception as notify_err:
+            logger.warning(
+                f"FUT-RM-07b: controller.notify() failed (non-fatal) "
+                f"for {symbol}: {notify_err}"
+            )
+
     async def close_all_positions(self):
         """Close all open positions"""
         logger.info("Closing all positions...")
