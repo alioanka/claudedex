@@ -684,6 +684,19 @@ class CopyTradingEngine(BaseModule):
         # disable via config_settings.copytrading_config.slippage_tracking_enabled.
         self.slippage_tracking_enabled = True
 
+        # Wave-4 (CT-Q-09): per-leader probation gate. Consults the
+        # `on_probation` + `probation_until` columns on copy_leader_scores
+        # (migration 026) and refuses BUYs from leaders that are benched.
+        # SELLs are NEVER gated -- they only reduce exposure. Probation
+        # is set automatically when (a) a leader's composite score drops
+        # below `probation_score_threshold` OR (b) a mirrored trade
+        # closes worse than `-probation_loss_pct_threshold` percent.
+        # All tunables reloaded from `copytrading_config`. Default ON.
+        self.probation_gate_enabled = True
+        self.probation_score_threshold = 30.0
+        self.probation_loss_pct_threshold = 25.0   # absolute %; trigger on PnL < -25%
+        self.probation_days = 7
+
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
 
@@ -895,6 +908,35 @@ class CopyTradingEngine(BaseModule):
                         self.slippage_tracking_enabled = str(val).strip().lower() in (
                             '1', 'true', 'yes', 'on',
                         )
+                    elif key in ('probation_gate_enabled', 'copy_probation_gate_enabled'):
+                        # Wave-4 CT-Q-09. Accept both the bare key and the
+                        # `copy_`-prefixed alias seeded in migration 030.
+                        self.probation_gate_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key in ('probation_score_threshold', 'copy_probation_score_threshold'):
+                        try:
+                            v = float(val) if val else 30.0
+                            # Clamp to the score domain (0..100).
+                            self.probation_score_threshold = max(0.0, min(100.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key in ('probation_loss_pct_threshold', 'copy_probation_loss_pct_threshold'):
+                        try:
+                            v = float(val) if val else 25.0
+                            # Always positive (we trigger on PnL < -v%).
+                            # Cap at 95 so a fat-finger can't disable the gate.
+                            self.probation_loss_pct_threshold = max(0.0, min(95.0, abs(v)))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key in ('probation_days', 'copy_probation_days'):
+                        try:
+                            v = float(val) if val else 7.0
+                            # Min 1 day so an accidental 0 doesn't lift
+                            # probation on the same tick it was set.
+                            self.probation_days = max(1.0, min(365.0, v))
+                        except (TypeError, ValueError):
+                            pass
 
                 if targets_loaded != self.targets:
                     self.targets = targets_loaded
@@ -1216,6 +1258,107 @@ class CopyTradingEngine(BaseModule):
             pass
         return float(max(0.0, min(0.25, float(kelly))))
 
+    async def _is_leader_on_probation(self, chain: str, wallet: str) -> tuple:
+        """Wave-4 CT-Q-09 probation gate.
+
+        Returns (on_probation_active, reason) where on_probation_active is
+        True iff the leader's score row has `on_probation = TRUE` AND
+        `probation_until > NOW()`. Re-entry is automatic on expiry: a
+        stale `probation_until` value is treated as "not on probation"
+        without needing the row to be cleared (cheap & idempotent).
+
+        Fail-soft: any DB error, or the gate being globally disabled,
+        returns (False, ''). We NEVER block a BUY because the gate
+        itself failed -- the cap / risk-manager / position-cap gates
+        remain in place as a safety net.
+        """
+        if not getattr(self, "probation_gate_enabled", True):
+            return (False, '')
+        if not self.db_pool or not chain or not wallet:
+            return (False, '')
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    """
+                    SELECT on_probation, probation_until, probation_reason
+                    FROM copy_leader_scores
+                    WHERE chain = $1
+                      AND lower(wallet_address) = lower($2)
+                    LIMIT 1
+                    """,
+                    chain, wallet,
+                )
+        except Exception as e:
+            logger.debug(f"_is_leader_on_probation DB lookup failed: {e}")
+            return (False, '')
+        if not row or not row["on_probation"]:
+            return (False, '')
+        until = row["probation_until"]
+        if until is None:
+            return (False, '')
+        try:
+            from datetime import datetime as _dt, timezone as _tz
+            now_utc = _dt.now(_tz.utc)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=_tz.utc)
+            if until <= now_utc:
+                return (False, '')  # expired -> auto re-entry
+        except Exception:
+            return (False, '')
+        return (True, str(row["probation_reason"] or 'benched'))
+
+    async def _maybe_set_probation(
+        self,
+        *,
+        chain: str,
+        wallet: str,
+        reason: str,
+        days: Optional[float] = None,
+    ) -> bool:
+        """UPSERT the probation columns on copy_leader_scores. Called
+        from the closing leg of a losing mirrored trade and from the
+        leader-scorer when a score drops below threshold.
+
+        Idempotent: re-calling extends `probation_until` only if the
+        new expiry is later than the existing one (so the longest
+        cooldown wins). Fail-soft: returns False on any DB error.
+        """
+        if not self.db_pool or not chain or not wallet:
+            return False
+        d = float(days if days is not None else getattr(self, "probation_days", 7.0))
+        d = max(1.0, min(365.0, d))
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO copy_leader_scores (
+                        chain, wallet_address, source,
+                        on_probation, probation_until, probation_reason,
+                        probation_set_at, last_scored_at, discovered_at
+                    )
+                    VALUES ($1, lower($2), 'auto_probation',
+                            TRUE, NOW() + ($3 || ' days')::INTERVAL,
+                            $4, NOW(), NOW(), NOW())
+                    ON CONFLICT (chain, wallet_address) DO UPDATE
+                       SET on_probation     = TRUE,
+                           probation_until  = GREATEST(
+                               COALESCE(copy_leader_scores.probation_until, NOW()),
+                               NOW() + ($3 || ' days')::INTERVAL
+                           ),
+                           probation_reason = EXCLUDED.probation_reason,
+                           probation_set_at = NOW()
+                    """,
+                    chain, wallet, str(int(d)), reason[:120],
+                )
+            logger.warning(
+                f"[copy] leader {wallet[:10]}... on {chain} placed on probation "
+                f"for {int(d)}d (reason={reason})"
+            )
+            return True
+        except Exception as e:
+            logger.debug(f"_maybe_set_probation failed (fail-soft): {e}")
+            return False
+
     async def _record_slippage_observation(
         self,
         *,
@@ -1417,6 +1560,22 @@ class CopyTradingEngine(BaseModule):
                 return
 
             logger.info(f"👯 Detected {side.upper()} trade for token {token_address[:20]}...")
+
+            # Wave-4 CT-Q-09 probation gate. SELLs always allowed --
+            # they reduce exposure -- but BUYs from a benched leader
+            # are refused until `probation_until` expires.
+            if is_buy:
+                on_prob, prob_reason = await self._is_leader_on_probation(
+                    chain_name, source_tx.get('from', ''),
+                )
+                if on_prob:
+                    self._log_replay_decision(
+                        chain=chain_name, wallet=source_tx.get('from', ''),
+                        tx_hash=tx_hash, decision='skipped',
+                        reason='probation',
+                        extra={'probation_reason': prob_reason[:64]},
+                    )
+                    return
 
             # Global open-position cap; bounded SQL count so a fanout
             # of leaders can't blow past the operator's exposure budget.
@@ -1710,6 +1869,19 @@ class CopyTradingEngine(BaseModule):
             copy_lamports = int(min(usd_cap / sol_price, 0.1) * 1e9)
 
             if is_buy:
+                # Wave-4 CT-Q-09 probation gate. SELLs are NEVER gated
+                # (they only close exposure); only BUYs from a benched
+                # leader are refused until `probation_until` expires.
+                on_prob, prob_reason = await self._is_leader_on_probation(
+                    'solana', wallet,
+                )
+                if on_prob:
+                    self._log_replay_decision(
+                        chain='solana', wallet=wallet, tx_hash=signature,
+                        decision='skipped', reason='probation',
+                        extra={'probation_reason': prob_reason[:64]},
+                    )
+                    return
                 # Global open-position cap — only gates BUYs because
                 # SELLs close existing exposure and should never be
                 # blocked by the cap.
