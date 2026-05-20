@@ -964,6 +964,11 @@ class DashboardEndpoints:
         # rows with metadata.quorum_outcome (written by SentimentEngine
         # _persist_quorum_outcome on every cycle that ran a quorum call).
         self.app.router.add_get('/api/ai/quorum-metrics', self.api_get_ai_quorum_metrics)
+        # Wave-5: "why no trades?" diagnostic. Joins recent sentiment_logs
+        # + ai_trades + the [ai-skip] ledger tailed from
+        # logs/ai_analysis/ai.log so the operator can see exactly which
+        # gate ate each signal. Read-only.
+        self.app.router.add_get('/api/ai/diagnostics', self.api_get_ai_diagnostics)
 
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
@@ -10295,6 +10300,115 @@ class DashboardEndpoints:
             return web.json_response(result)
         except Exception as e:
             logger.error(f"Error getting arbitrage gas-spend: {e}")
+            return web.json_response({'success': False, 'error': str(e), **result})
+
+    async def api_get_arbitrage_diagnostics(self, request):
+        """
+        Wave-5 "Why no trades?" diagnostics. Returns per-chain:
+          - last 20 rejected opportunities (reason, pair, dexs, bps, gas)
+          - per-reason counters
+          - cost profile (effective + base min-profit threshold, gas-spike mult,
+            hourly gas spend + budget)
+          - chain liveness (age of the last runtime snapshot)
+          - last 10 trades from arbitrage_trades for quick "last fired" answer
+
+        Same data source as /api/arbitrage/gas-spend (arbitrage_runtime_stats
+        JSONB rows) so there is no IPC channel back into the engine subprocess.
+        Stale rows (>10 min) flagged with `stale=true` so the dashboard can
+        warn "engine appears dead".
+        """
+        result = {
+            'success': True,
+            'chains': {},
+            'stale': True,
+            'max_age_s': None,
+            'last_trades': [],
+        }
+        try:
+            if not self.db:
+                return web.json_response(result)
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT chain, updated_at, stats,
+                           EXTRACT(EPOCH FROM (NOW() - updated_at)) AS age_s
+                    FROM arbitrage_runtime_stats
+                    """
+                )
+                trade_rows = await conn.fetch(
+                    """
+                    SELECT chain, buy_dex, sell_dex, token_address,
+                           spread_pct, profit_loss, entry_timestamp
+                    FROM arbitrage_trades
+                    ORDER BY entry_timestamp DESC
+                    LIMIT 10
+                    """
+                )
+            max_age = None
+            for row in rows:
+                stats = row['stats'] or {}
+                if isinstance(stats, str):
+                    import json as _json
+                    try:
+                        stats = _json.loads(stats)
+                    except Exception:
+                        stats = {}
+                age_s = float(row['age_s'] or 0.0)
+                result['chains'][row['chain']] = {
+                    'updated_at': (
+                        row['updated_at'].isoformat() if row['updated_at'] else None
+                    ),
+                    'age_s': age_s,
+                    'cost_profile': {
+                        'min_profit_threshold_base': float(
+                            stats.get('min_profit_threshold_base') or 0.0
+                        ),
+                        'min_profit_threshold_effective': float(
+                            stats.get('min_profit_threshold_effective') or 0.0
+                        ),
+                        'gas_spike_multiplier': float(
+                            stats.get('gas_spike_multiplier') or 1.0
+                        ),
+                        'gas_spend_usd_hour': float(
+                            stats.get('gas_spend_usd_hour') or 0.0
+                        ),
+                        'gas_budget_usd_per_hour': float(
+                            stats.get('gas_budget_usd_per_hour') or 0.0
+                        ),
+                        'gas_budget_ratio': float(
+                            stats.get('gas_budget_ratio') or 0.0
+                        ),
+                    },
+                    'counters': {
+                        'scans': int(stats.get('scans') or 0),
+                        'opportunities_found': int(stats.get('opportunities_found') or 0),
+                        'opportunities_executed': int(
+                            stats.get('opportunities_executed') or 0
+                        ),
+                    },
+                    'near_miss_counters': stats.get('near_miss_counters') or {},
+                    'near_misses': stats.get('near_misses') or [],
+                }
+                if max_age is None or age_s > max_age:
+                    max_age = age_s
+            result['max_age_s'] = max_age
+            result['stale'] = (max_age is None) or (max_age > 600)
+            for tr in trade_rows:
+                result['last_trades'].append({
+                    'chain': tr['chain'],
+                    'buy_dex': tr['buy_dex'],
+                    'sell_dex': tr['sell_dex'],
+                    'token_address': tr['token_address'],
+                    'spread_pct': float(tr['spread_pct'] or 0),
+                    'profit_loss': float(tr['profit_loss'] or 0),
+                    'entry_timestamp': (
+                        tr['entry_timestamp'].isoformat()
+                        if tr['entry_timestamp'] else None
+                    ),
+                })
+            return web.json_response(result)
+        except Exception as e:
+            logger.error(f"Error getting arbitrage diagnostics: {e}")
             return web.json_response({'success': False, 'error': str(e), **result})
 
     async def api_get_arbitrage_positions(self, request):
