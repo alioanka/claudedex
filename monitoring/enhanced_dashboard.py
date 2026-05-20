@@ -13592,6 +13592,217 @@ class DashboardEndpoints:
                 'overall': empty['overall'], 'buckets': [], 'sample_outcomes': [],
             })
 
+    async def api_get_ai_diagnostics(self, request):
+        """Wave-5: "why no trades?" snapshot for the AI module.
+
+        Answers the operator question "why did 50 signals produce 0 trades?"
+        without needing to ssh into the box and grep the engine log.
+
+        Pieces:
+          - signals_generated  : sentiment_logs rows in the lookback window
+          - trades_opened      : ai_trades.entry_timestamp in same window
+          - action_rate        : trades_opened / max(1, signals_generated)
+          - buy_signals        : sentiment_logs score >=  threshold
+          - sell_signals       : sentiment_logs score <= -threshold
+          - hold_signals       : in (-threshold, +threshold)
+          - signals_rejected_by_reason : Counter parsed from the
+            `[ai-skip] reason=<gate>` lines in logs/ai_analysis/ai.log
+            (tails the last ~512 KB; bounded — no full-file scan)
+          - recent_skips       : last 20 parsed skip events
+          - effective_config   : redacted snapshot from config_settings
+            (no API keys, no DB DSN)
+
+        Query: ?hours=24 (default 24, capped at 168 = 7d).
+        Read-only. Empty / DB-down / log-missing all return success=true
+        with zeroed structures so the widget renders cleanly.
+        """
+        try:
+            hours = int(request.query.get('hours', '24'))
+        except (TypeError, ValueError):
+            hours = 24
+        hours = max(1, min(168, hours))
+
+        # Defaults — match api_get_ai_settings field shape so the JS panel
+        # can render before the DB / log fetch resolves.
+        effective_config = {
+            'ai_provider': 'openai',
+            'direct_trading': False,
+            'dry_run': True,
+            'confidence_threshold': 0.5,
+            'trade_amount_usd': 50.0,
+            'take_profit_pct': 5.0,
+            'stop_loss_pct': 3.0,
+            'max_hold_hours': 24,
+            'max_positions': 1,
+            'quorum_required': False,
+            'quorum_max_disagreement': 0.4,
+            'bandit_enabled': False,
+            'openai_key_configured': bool(os.getenv('OPENAI_API_KEY')),
+            'claude_key_configured': bool(os.getenv('ANTHROPIC_API_KEY')),
+        }
+        signals_generated = 0
+        trades_opened = 0
+        buy_signals = 0
+        sell_signals = 0
+        hold_signals = 0
+        active_positions = 0
+        latest_sentiment = None
+
+        if self.db:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    cfg_rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings WHERE config_type = 'ai_config'"
+                    )
+                    for row in cfg_rows:
+                        key = row['key']; val = row['value']
+                        if key in effective_config:
+                            if isinstance(effective_config[key], bool):
+                                effective_config[key] = (val or '').lower() in ('true', '1', 'yes')
+                            elif isinstance(effective_config[key], float):
+                                try:
+                                    f = float(val)
+                                    # confidence_threshold special-case: dashboard
+                                    # stores as percent (50-100), engine wants 0-1.
+                                    if key == 'confidence_threshold' and f > 1:
+                                        f = f / 100.0
+                                    effective_config[key] = f
+                                except (TypeError, ValueError):
+                                    pass
+                            elif isinstance(effective_config[key], int):
+                                try:
+                                    effective_config[key] = int(float(val))
+                                except (TypeError, ValueError):
+                                    pass
+                            else:
+                                effective_config[key] = val
+
+                    threshold = float(effective_config.get('confidence_threshold', 0.5))
+
+                    srow = await conn.fetchrow(
+                        f"""
+                        SELECT
+                            COUNT(*) AS total,
+                            COUNT(*) FILTER (WHERE score >=  $1) AS buy,
+                            COUNT(*) FILTER (WHERE score <= -$1) AS sell
+                        FROM sentiment_logs
+                        WHERE timestamp >= NOW() - INTERVAL '{hours} hours'
+                        """,
+                        threshold,
+                    )
+                    if srow:
+                        signals_generated = int(srow['total'] or 0)
+                        buy_signals = int(srow['buy'] or 0)
+                        sell_signals = int(srow['sell'] or 0)
+                        hold_signals = max(0, signals_generated - buy_signals - sell_signals)
+
+                    trades_opened = int(await conn.fetchval(
+                        f"""
+                        SELECT COUNT(*) FROM ai_trades
+                        WHERE entry_timestamp >= NOW() - INTERVAL '{hours} hours'
+                        """
+                    ) or 0)
+                    active_positions = int(await conn.fetchval(
+                        "SELECT COUNT(*) FROM ai_trades WHERE status = 'open'"
+                    ) or 0)
+                    latest = await conn.fetchrow(
+                        "SELECT score, timestamp FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1"
+                    )
+                    if latest:
+                        latest_sentiment = {
+                            'score': float(latest['score']),
+                            'timestamp': latest['timestamp'].isoformat() if latest['timestamp'] else None,
+                        }
+            except Exception as e:
+                logger.warning(f"/api/ai/diagnostics db read failed: {e}")
+
+        # Tail the engine log for [ai-skip] lines. Bounded read so a 1 GB
+        # log doesn't OOM the dashboard.
+        import re as _re_local
+        skip_counter = {}
+        recent_skips = []
+        log_path = '/home/user/claudedex/logs/ai_analysis/ai.log'
+        try:
+            if os.path.exists(log_path):
+                with open(log_path, 'rb') as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    # ~512KB tail covers many hours of skip lines.
+                    f.seek(max(0, size - 524288))
+                    tail = f.read().decode('utf-8', errors='replace')
+                lines = tail.splitlines()
+                for line in lines[-4000:]:
+                    if '[ai-skip]' not in line:
+                        continue
+                    try:
+                        m = _re_local.search(r'\[ai-skip\]\s+reason=(\S+)', line)
+                        if not m:
+                            continue
+                        reason = m.group(1)
+                        skip_counter[reason] = skip_counter.get(reason, 0) + 1
+                        conf_m = _re_local.search(r'conf=([-+]?\d*\.?\d+)', line)
+                        sent_m = _re_local.search(r'sentiment=([-+]?\d*\.?\d+)', line)
+                        ts_m = _re_local.match(r'^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})', line)
+                        recent_skips.append({
+                            'timestamp': ts_m.group(1) if ts_m else None,
+                            'reason': reason,
+                            'conf': float(conf_m.group(1)) if conf_m else None,
+                            'sentiment': float(sent_m.group(1)) if sent_m else None,
+                            'raw': line.strip()[-300:],
+                        })
+                    except Exception:
+                        continue
+                recent_skips = recent_skips[-20:]
+        except Exception as e:
+            logger.debug(f"/api/ai/diagnostics log tail failed: {e}")
+
+        action_rate = (trades_opened / signals_generated) if signals_generated else 0.0
+
+        # Operator-facing "likely cause" hint — single-line summary that
+        # collapses the most common config mistakes into actionable text.
+        hint = None
+        if not effective_config['direct_trading']:
+            hint = (
+                "direct_trading is OFF — signals are generated but never "
+                "executed. Enable it on /ai/settings to trade automatically."
+            )
+        elif signals_generated > 0 and buy_signals == 0 and sell_signals > 0:
+            hint = (
+                f"Sentiment is heavily bearish ({sell_signals} sell / 0 buy "
+                f"in {hours}h). If you only execute long-side, you'll see "
+                f"zero trades. Check confidence_threshold ({effective_config['confidence_threshold']:.2f}) "
+                f"and consider lowering it to capture moderate signals."
+            )
+        elif signals_generated > 0 and (buy_signals + sell_signals) == 0:
+            hint = (
+                f"All {signals_generated} signals fell below confidence_threshold "
+                f"({effective_config['confidence_threshold']:.2f}). Lower it on "
+                f"/ai/settings or wait for stronger market sentiment."
+            )
+        elif active_positions >= int(effective_config.get('max_positions', 1)):
+            hint = (
+                f"max_positions ({effective_config.get('max_positions', 1)}) "
+                f"already reached ({active_positions} open) — engine refuses "
+                f"new entries until a position closes."
+            )
+
+        return web.json_response({
+            'success': True,
+            'hours': hours,
+            'signals_generated': signals_generated,
+            'trades_opened': trades_opened,
+            'action_rate': round(action_rate, 4),
+            'buy_signals': buy_signals,
+            'sell_signals': sell_signals,
+            'hold_signals': hold_signals,
+            'active_positions': active_positions,
+            'latest_sentiment': latest_sentiment,
+            'signals_rejected_by_reason': skip_counter,
+            'recent_skips': recent_skips,
+            'effective_config': effective_config,
+            'hint': hint,
+        })
+
     # ==================== FULL DASHBOARD HANDLERS ====================
 
     async def full_dashboard_page(self, request):
