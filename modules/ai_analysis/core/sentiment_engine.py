@@ -299,6 +299,11 @@ class SentimentEngine:
         self.quorum_required = False
         self.quorum_max_disagreement = 0.4
         self.quorum_min_abs_score = 0.0  # 0 => skip the min-abs check; trade gate is still confidence_threshold
+        # A6 W4: per-cycle quorum outcome (set by _quorum_sentiment, consumed
+        # by the run loop). Persisted to ai_feature_store.metadata.quorum_outcome
+        # so the dashboard widget can chart agreement-rate over time without
+        # round-tripping the live engine. None means "no quorum call this cycle".
+        self._last_quorum_outcome: Optional[Dict] = None
 
         # Prompt-template bandit (A6 E3). Disabled by default. When enabled,
         # _call_llm_provider picks one of PINNED_TEMPLATES per cycle and

@@ -705,6 +705,43 @@
         </div>
     </div>
 
+    <!-- FUT-RM-09b (Wave 4): Per-symbol 24h forward funding-cost forecast -->
+    <div class="section-card">
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-binoculars"></i>
+                Funding Forecast (next <span id="funding-forecast-window">24</span>h)
+            </div>
+            <div id="funding-forecast-total" style="font-weight:600;">
+                Total: $0.00
+            </div>
+        </div>
+        <div class="setting-description" style="margin-bottom:10px;">
+            Projects the most recent per-interval funding rate forward across
+            the funding-interval cadence (Binance/Bybit USDT perps = 8h, so
+            24h = 3 intervals). Positive = cost to the book.
+        </div>
+        <div class="table-responsive">
+            <table class="position-table" id="funding-forecast-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Notional ($)</th>
+                        <th>Per Interval ($)</th>
+                        <th>24h Forecast ($)</th>
+                        <th>Implied APR</th>
+                    </tr>
+                </thead>
+                <tbody id="fundingForecastBody">
+                    <tr><td colspan="6" style="text-align:center;opacity:0.6;">
+                        No active funding snapshots yet.
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Active Positions -->
     <div class="section-card">
         <div class="section-header">
@@ -875,6 +912,52 @@ async function loadFundingCost() {
         fundingCostChart.update();
     } catch (e) {
         console.debug('Could not load funding-cost chart:', e);
+    }
+}
+
+// FUT-RM-09b: Per-symbol 24h forward funding-cost forecast
+async function loadFundingForecast() {
+    try {
+        const resp = await fetch('/api/futures/funding-forecast?window_hours=24');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success) return;
+        const body = document.getElementById('fundingForecastBody');
+        const totalEl = document.getElementById('funding-forecast-total');
+        const windowEl = document.getElementById('funding-forecast-window');
+        if (windowEl) windowEl.textContent = String(data.window_hours || 24);
+        const total = Number(data.total_forecast_usd || 0);
+        if (totalEl) {
+            const sign = total >= 0 ? '' : '-';
+            totalEl.textContent = 'Total: ' + sign + '$' + Math.abs(total).toFixed(2);
+            totalEl.style.color = total > 0 ? '#dc2626' : (total < 0 ? '#10b981' : '');
+        }
+        if (!body) return;
+        if (!data.rows || data.rows.length === 0) {
+            body.innerHTML = '<tr><td colspan="6" style="text-align:center;opacity:0.6;">No active funding snapshots yet.</td></tr>';
+            return;
+        }
+        const fmt = (v, d) => {
+            const n = Number(v || 0);
+            const s = n >= 0 ? '' : '-';
+            return s + '$' + Math.abs(n).toFixed(d == null ? 2 : d);
+        };
+        const rowsHtml = data.rows.map(r => {
+            const fc = Number(r.forecast_24h_usd || 0);
+            const apr = Number(r.implied_apr_pct || 0);
+            const fcColor = fc > 0 ? '#dc2626' : (fc < 0 ? '#10b981' : '');
+            return '<tr>' +
+                '<td><b>' + r.symbol + '</b></td>' +
+                '<td>' + r.side + '</td>' +
+                '<td>' + fmt(r.notional_usd) + '</td>' +
+                '<td>' + fmt(r.per_interval_usd, 4) + '</td>' +
+                '<td style="color:' + fcColor + ';font-weight:600;">' + fmt(fc) + '</td>' +
+                '<td>' + apr.toFixed(2) + '%</td>' +
+                '</tr>';
+        }).join('');
+        body.innerHTML = rowsHtml;
+    } catch (e) {
+        console.debug('Could not load funding-forecast widget:', e);
     }
 }
 
