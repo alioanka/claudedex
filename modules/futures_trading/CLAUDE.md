@@ -67,6 +67,69 @@ AMBER → GREEN candidate (pending production verification). MB-16 (init order),
 - `142250b` FUT-RM-09b endpoint: `GET /api/futures/funding-forecast`
 - `b805626` FUT-RM-09b widget: per-symbol funding-cost forecast panel
 - `7b2da32` Minor dashboard widget refinement
+
+## Wave-5 changes (campaign 2026-05-20)
+
+Triggered by operator post-mortem of 4 trades / 25% win rate / -$14.99
+realized: 3 SL hits on AAVE/FIL/NEAR shorts (-20% each on 10x), 1 TP1
+hit on SOL long (+18%). Audit confirmed two structural causes:
+(a) static 2% SL is too tight for 4%-ATR alts at 10x, and
+(b) the +4 signal_score bar can clear on a single strong indicator.
+
+- **FUT-RM-15** — multi-indicator confluence gate. New
+  `FuturesStrategyConfig.min_signal_confluence_count` (default 2).
+  `_scan_opportunities` now requires N of 4 directional indicators
+  {RSI, MACD, Bollinger, EMA} to agree with the entry side in addition
+  to the signed `min_signal_score`. Volume excluded (confirmer only).
+  Rejection logged; `min_signal_confluence_count=0` disables.
+
+- **FUT-RM-16** — ATR-scaled SL/TP per symbol. New
+  `FuturesRiskConfig.atr_dynamic_sl_tp_enabled` (default True),
+  `atr_sl_multiplier` (1.5), `atr_sl_min_pct` (1.5), `atr_tp_rr_ratio`
+  (2.0). `_open_position` computes
+  `SL = max(atr_sl_min_pct, atr_sl_multiplier × ATR%)` and rescales
+  TP1..TP4 so `TP1 = atr_tp_rr_ratio × SL`. Per-position
+  `metadata['dynamic_sl_pct']` is stashed and honored by
+  `_check_exit_conditions` so the per-symbol SL is used even after
+  the engine restores its static settings for the next entry.
+
+- **FUT-RM-17** — per-symbol consecutive-loss cool-off.
+  `FuturesRiskManager` now tracks per-symbol consecutive losses and
+  arms a cool-off after `post_loss_cooloff_threshold` (default 2)
+  losses on the same pair, refusing new entries on that symbol for
+  `post_loss_cooloff_minutes` (default 240 = 4h). Surfaced on
+  `FuturesRiskConfig` for settings-page editing. Engine calls
+  `should_skip_for_cooloff()` early in `_open_position` and
+  `update_on_trade_close(pnl, symbol=...)` in `_close_position`. A
+  winning trade clears the cool-off and resets the counter; expiry
+  also resets the counter so a single loss after recovery does NOT
+  immediately re-arm.
+
+- **FUT-RM-18** — default leverage 10x → 5x. Migration 031 lowers the
+  DB-seeded `futures_leverage.default_leverage` from 10 to 5 (only when
+  the value is still the legacy 10 — operator customisations survive).
+  Pydantic default, env default, and engine fallback all lowered to 5x.
+  `max_leverage` stays 20x; FUT-RM-08 per-symbol override table still
+  wins for pairs the operator wants pinned higher (e.g. BTC/USDT at 10x).
+
+## Configuration cheat-sheet (Wave-5 additions)
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `futures_min_signal_confluence_count` | int | 2 | Require N of {RSI, MACD, BB, EMA} to agree before entry. 0 = disabled. |
+| `futures_atr_dynamic_sl_tp_enabled` | bool | true | ATR-scaled SL/TP per symbol. False = revert to static. |
+| `futures_atr_sl_multiplier` | float | 1.5 | SL = max(atr_sl_min_pct, mult × ATR%). |
+| `futures_atr_sl_min_pct` | float | 1.5 | Floor on SL distance (price %). |
+| `futures_atr_tp_rr_ratio` | float | 2.0 | TP1 = ratio × SL distance. |
+| `futures_post_loss_cooloff_threshold` | int | 2 | Per-symbol consecutive-loss count that arms cool-off. |
+| `futures_post_loss_cooloff_minutes` | int | 240 | Cool-off duration in minutes (240 = 4h). |
+| `futures_default_leverage` | int | 5 | Lowered from 10 — see migration 031. |
+
+### Wave-5 commits (this branch)
+- `e3af3eb` FUT-RM-15: multi-indicator confluence gate (min 2 of 4)
+- `8e79b08` FUT-RM-16: ATR-scaled SL/TP per symbol
+- `69862c1` FUT-RM-17: per-symbol consecutive-loss cool-off
+- `ac7a57b` FUT-RM-17: surface cool-off knobs in FuturesRiskConfig
+- `57a6a2c` FUT-RM-18: lower default leverage from 10x to 5x
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.

@@ -29,7 +29,13 @@ Spatial (cross-DEX) and triangular EVM arbitrage with flash-loan funding (Aave V
 AMBER → GREEN candidate (spatial; pending production verification).
 Closed pre-wave: MB-03 (DAI typo), MB-04 (one-legged broadcast), MB-05 (triangular gated), secrets_manager wiring (`b20f56a`), pool_engine sweep (`a21ec41`).
 Closed wave-2: **A2-01** (NameError crash in opportunity log path — every live trade was silently dropped), **A2-02 / A2-03 / A2-05** (hardcoded gas/slippage replaced with per-chain live profile), **A2-04** (receiver address via secrets_manager), **A2-06** (dashboard min-profit knob now honored), **A2-07** (hourly gas-budget tracker).
+Closed wave-5: **near-miss observability** (`d2e1019` engine, `012887a` API, `4fd9b33` UI) — every rejected opportunity now emits a structured `[arb-skip] reason=<gate> profit_bps=<n>` log line + gets pushed into a rolling 50-deep deque persisted to `arbitrage_runtime_stats.near_misses` so the dashboard "Why no trades?" panel can render cross-process. Reasons covered: `raw_spread_negative` (sampled 1:120), `min_profit` (sampled 1:40), `daily_cap`, `cooldown`, `gas_budget`, `risk_manager`, `risk_manager_error`. Same commit fixed a latent dashboard-startup crash where `/api/arbitrage/diagnostics` was registered without a handler.
 Triangular path remains entry-disabled by atomic-receiver guard — explicit scope cut pending contract deploy, not a defect.
+
+## Diagnostic surfaces
+- `/api/arbitrage/diagnostics` — per-chain cost profile, scan/found/executed counters, last 20 near-misses, last 10 fired trades, snapshot liveness (>10 min = `stale=true`).
+- `/arbitrage/dashboard` "Why no trades?" collapsible panel — header carries top rejection reason + STALE flag without expanding; expanded view shows per-chain cards + color-coded near-miss table.
+- Engine log grep: `grep '\[arb-skip\]' logs/arbitrage/arbitrage.log` returns one structured line per rejected opportunity.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/ARBITRAGE_*.md` (smartcontract / quant / analyst).
 - Wave-2 audit: `docs/agents/reports/ARBITRAGE_CAMPAIGN.md`.
