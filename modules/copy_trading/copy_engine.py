@@ -775,6 +775,14 @@ class CopyTradingEngine(BaseModule):
                     sol_copied = await self._monitor_solana_wallets()
                     self._stats['sol_copies'] += sol_copied
 
+                # Operator manual-close requests via flag-file IPC.
+                # Dashboard's POST /api/copytrading/positions/<id>/close
+                # writes logs/.close_copy_<trade_id>; we honor it here.
+                try:
+                    await self._process_close_flag_files()
+                except Exception as e:
+                    logger.error(f"close-flag processor failed: {e}")
+
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
 
@@ -1998,6 +2006,72 @@ class CopyTradingEngine(BaseModule):
         return contract.functions.balanceOf(
             Web3.to_checksum_address(self.executor.evm_wallet)
         ).call()
+
+    async def _process_close_flag_files(self) -> None:
+        """Pick up logs/.close_copy_<trade_id> files dropped by the
+        dashboard's manual-close endpoint and execute the swap. After a
+        successful (or terminally-failed) attempt the flag file is
+        deleted so we don't retry forever. Cross-subprocess IPC pattern
+        mirrors logs/.killswitch.
+        """
+        from pathlib import Path
+        log_dir = Path('logs')
+        if not log_dir.is_dir():
+            return
+        for flag in log_dir.glob('.close_copy_*'):
+            trade_id = flag.name[len('.close_copy_'):]
+            if not trade_id:
+                try:
+                    flag.unlink()
+                except Exception:
+                    pass
+                continue
+            position = None
+            if self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        row = await conn.fetchrow(
+                            "SELECT trade_id, chain, token_address, amount "
+                            "FROM copytrading_positions "
+                            "WHERE trade_id = $1 AND status IN ('open','closing')",
+                            trade_id,
+                        )
+                        if row:
+                            position = dict(row)
+                except Exception as e:
+                    logger.error(f"close-flag DB lookup failed for {trade_id}: {e}")
+            if not position:
+                logger.warning(f"close-flag {trade_id} found but no open position; deleting flag")
+                try:
+                    flag.unlink()
+                except Exception:
+                    pass
+                continue
+            result = await self.close_position(position)
+            ok = bool(result and result.get('success'))
+            logger.info(
+                f"manual close {trade_id}: success={ok} "
+                f"tx={result.get('tx_hash') if result else None} "
+                f"note={result.get('note') if result else None}"
+            )
+            # On success mark the position closed in DB so the UI reflects
+            # the change immediately (engine's own SELL audit may also
+            # do this on the next tick, but we don't want a race).
+            if ok and self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        await conn.execute(
+                            "UPDATE copytrading_positions "
+                            "SET status='closed', closed_at=NOW(), updated_at=NOW() "
+                            "WHERE trade_id = $1",
+                            trade_id,
+                        )
+                except Exception as e:
+                    logger.error(f"close-flag DB update failed for {trade_id}: {e}")
+            try:
+                flag.unlink()
+            except Exception:
+                pass
 
     async def close_position(self, position) -> Dict:
         """Best-effort close. Routes via the executor based on position['chain'].

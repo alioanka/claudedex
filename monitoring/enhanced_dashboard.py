@@ -720,6 +720,14 @@ class DashboardEndpoints:
         # API - Copy Trading Module
         self.app.router.add_get('/api/copytrading/stats', self.api_get_copytrading_stats)
         self.app.router.add_get('/api/copytrading/positions', self.api_get_copytrading_positions)
+        # Manual-close request — writes a flag file the copy_engine subprocess
+        # picks up on its next reconcile tick. Admin-only because closing a
+        # position swaps the position back to SOL/native and is capital-
+        # impacting even in DRY_RUN (PnL audit row gets written).
+        self.app.router.add_post(
+            '/api/copytrading/positions/{trade_id}/close',
+            require_auth(require_admin(self.api_close_copytrading_position)),
+        )
         self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
         self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
         self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
@@ -11085,6 +11093,65 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting copytrading stats: {e}")
             return web.json_response({'success': False, 'error': str(e), 'stats': stats})
+
+    async def api_close_copytrading_position(self, request):
+        """Operator-triggered manual close of a single copy_trading position.
+
+        Cross-subprocess IPC via flag file: writes
+        logs/.close_copy_<trade_id> which the copy_engine subprocess
+        polls on its reconcile tick (same pattern as logs/.killswitch).
+        Returns immediately; actual swap-back-to-SOL happens within the
+        next ~10s tick. Idempotent — re-writing the same flag is a no-op.
+
+        Also updates copytrading_positions.status to 'closing' so the
+        UI badge flips immediately and the row doesn't get re-selected
+        for a second close attempt.
+        """
+        trade_id = request.match_info.get('trade_id', '').strip()
+        if not trade_id:
+            return web.json_response(
+                {'success': False, 'error': 'trade_id required'}, status=400
+            )
+
+        # Sanitize — only [a-zA-Z0-9_-] so we can't traverse the FS via
+        # the flag-file path.
+        safe = ''.join(c for c in trade_id if c.isalnum() or c in '_-')
+        if not safe or safe != trade_id:
+            return web.json_response(
+                {'success': False, 'error': 'invalid trade_id format'},
+                status=400,
+            )
+
+        from pathlib import Path
+        flag_path = Path('logs') / f'.close_copy_{safe}'
+        try:
+            flag_path.parent.mkdir(parents=True, exist_ok=True)
+            flag_path.write_text('1', encoding='utf-8')
+        except Exception as e:
+            return web.json_response(
+                {'success': False, 'error': f'flag write failed: {e}'},
+                status=500,
+            )
+
+        # Best-effort UI flip — does not block on engine success.
+        if self.db and self.db.pool:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE copytrading_positions "
+                        "SET status='closing', updated_at=NOW() "
+                        "WHERE trade_id = $1 AND status='open'",
+                        safe,
+                    )
+            except Exception:
+                pass  # status flip is cosmetic; flag file is authoritative
+
+        return web.json_response({
+            'success': True,
+            'trade_id': safe,
+            'flag': str(flag_path),
+            'note': 'close request queued; engine will execute on next reconcile tick (~10s)',
+        })
 
     async def api_get_copytrading_positions(self, request):
         """Get Copy Trading open positions
