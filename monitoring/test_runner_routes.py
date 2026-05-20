@@ -2199,10 +2199,52 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "artefacts on disk; flipping the flag has no effect."
         ),
     },
-    # NOTE: 3 wave-4 AI script-grep catalog entries land in a follow-up
-    # commit (script_ai_calibrated_helper_present /
-    # script_ai_quorum_persist_present / script_ai_quorum_widget_present)
-    # alongside the bash helpers they invoke.
+    {
+        "id": "script_ai_calibrated_helper_present",
+        "title": "Script: AI calibrated_predict_proba helper presence (16b7dab/a6c3a89)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/ai_calibrated_helper_check.sh"],
+        "cmd_preview": "bash scripts/ai_calibrated_helper_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Source-grep: asserts ml/models/ensemble_model.py declares "
+            "`calibrated_predict_proba` + `_load_calibrated_models`, "
+            "calls the wrapper from the predict path, AND references "
+            "`ai_calibrated_predictions_enabled`. Refactors that drop "
+            "any of these silently regress AI-Q-05 to the raw booster."
+        ),
+    },
+    {
+        "id": "script_ai_quorum_persist_present",
+        "title": "Script: AI _persist_quorum_outcome helper presence (c7e4a27)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/ai_quorum_persist_check.sh"],
+        "cmd_preview": "bash scripts/ai_quorum_persist_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Source-grep: asserts sentiment_engine.py declares "
+            "`_persist_quorum_outcome` + `_record_quorum_outcome` AND "
+            "awaits the persist helper from the engine tick. Catches "
+            "regressions that would leave ai_feature_store empty and "
+            "blank out the /api/ai/quorum-metrics chart."
+        ),
+    },
+    {
+        "id": "script_ai_quorum_widget_present",
+        "title": "Script: AI quorum-metrics widget URL presence (50bd9c3)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/ai_quorum_widget_check.sh"],
+        "cmd_preview": "bash scripts/ai_quorum_widget_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Grep test for the /api/ai/quorum-metrics URL on "
+            "dashboard/templates/dashboard_ai.html. Confirms the "
+            "agreement-rate chart still polls the wave-4 endpoint."
+        ),
+    },
 
     # ── COPY_TRADING (A7 wave-2: operator-priority quant rebuild) ────────
     # Wallet-discovery + leader-scorer + Kelly sizing is the headline
