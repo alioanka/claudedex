@@ -1148,6 +1148,11 @@ class EVMArbitrageEngine:
                 'opportunities_found': int(self._stats.get('opportunities_found', 0)),
                 'opportunities_executed': int(self._stats.get('opportunities_executed', 0)),
                 'scans': int(self._stats.get('scans', 0)),
+                # Wave-5: ship last 20 rejected opportunities + per-reason
+                # counters so the dashboard "Why no trades?" panel can render
+                # without an IPC channel back into the engine subprocess.
+                'near_misses': self.get_near_misses(limit=20),
+                'near_miss_counters': dict(self._near_miss_counters),
             }
             async with self.db_pool.acquire() as conn:
                 await conn.execute(
@@ -1830,6 +1835,7 @@ class EVMArbitrageEngine:
             # A2-06 / enhancement #4: gate by the adaptive threshold so we
             # raise the bar during gas spikes instead of executing thin trades.
             effective_threshold = self._adaptive_min_profit_threshold()
+            pair_label = f"{token_symbol}/{token_out_symbol}"
             if net_spread > effective_threshold:
                 self._stats['opportunities_found'] += 1
 
@@ -1847,12 +1853,28 @@ class EVMArbitrageEngine:
                 # Check daily execution limit per pair
                 current_count = self._pair_execution_count.get(opp_key, 0)
                 if current_count >= self._max_executions_per_pair_per_day:
+                    self._record_near_miss(
+                        'daily_cap',
+                        pair=pair_label,
+                        buy_dex=best_buy_dex, sell_dex=best_sell_dex,
+                        profit_bps=round(net_spread * 10_000, 2),
+                        threshold_bps=round(effective_threshold * 10_000, 2),
+                        detail=f"cap={self._max_executions_per_pair_per_day}",
+                    )
                     return True  # Silently skip - already hit daily limit
 
                 # Check cooldown - don't spam same opportunity
                 if self._last_opportunity_key == opp_key and self._last_opportunity_time:
                     elapsed = (now - self._last_opportunity_time).total_seconds()
                     if elapsed < self._opportunity_cooldown:
+                        self._record_near_miss(
+                            'cooldown',
+                            pair=pair_label,
+                            buy_dex=best_buy_dex, sell_dex=best_sell_dex,
+                            profit_bps=round(net_spread * 10_000, 2),
+                            threshold_bps=round(effective_threshold * 10_000, 2),
+                            detail=f"elapsed={elapsed:.0f}s/{self._opportunity_cooldown}s",
+                        )
                         return True  # Same opportunity within cooldown
 
                 # New opportunity or cooldown expired - log and execute
@@ -1890,6 +1912,19 @@ class EVMArbitrageEngine:
                     token_symbol=token_symbol
                 )
                 return True
+            # Net spread is positive but BELOW the effective gate. This is
+            # the single most-common reason no trades fire on a busy chain
+            # with thin spreads; log every Nth so we don't spam.
+            if self._total_pairs_scanned % 40 == 1:
+                gas_usd_now = self._gas_cost_usd_cache or 0.0
+                self._record_near_miss(
+                    'min_profit',
+                    pair=pair_label,
+                    buy_dex=best_buy_dex, sell_dex=best_sell_dex,
+                    profit_bps=round(net_spread * 10_000, 2),
+                    threshold_bps=round(effective_threshold * 10_000, 2),
+                    gas_usd=round(gas_usd_now, 4),
+                )
             return False
 
         except Exception as e:
@@ -2001,9 +2036,19 @@ class EVMArbitrageEngine:
                 allowed, reason = await self.risk_manager.validate_trade(token_in, amount)
             except Exception as e:
                 self.logger.warning(f"validate_trade raised: {e}; refusing execute")
+                self._record_near_miss(
+                    'risk_manager_error',
+                    pair=token_symbol, buy_dex=buy_dex, sell_dex=sell_dex,
+                    detail=str(e)[:120],
+                )
                 return
             if not allowed:
                 self.logger.warning(f"⛔ Risk manager rejected EVM arb {token_in[:10]}: {reason}")
+                self._record_near_miss(
+                    'risk_manager',
+                    pair=token_symbol, buy_dex=buy_dex, sell_dex=sell_dex,
+                    detail=str(reason)[:120],
+                )
                 return
 
         # A2-07 / enhancement #3: hourly gas-budget tracker. Refuse new
@@ -2017,6 +2062,15 @@ class EVMArbitrageEngine:
         allowed_budget, reason = self._gas_budget_check_and_charge(projected_gas_usd)
         if not allowed_budget:
             self.logger.warning(f"⛔ Gas budget gate: {reason}; skipping execution")
+            self._record_near_miss(
+                'gas_budget',
+                pair=token_symbol, buy_dex=buy_dex, sell_dex=sell_dex,
+                gas_usd=round(projected_gas_usd, 4),
+                detail=(
+                    f"spend=${self._gas_spend_usd_hour:.2f}/"
+                    f"${self._gas_budget_usd_per_hour:.2f}"
+                ),
+            )
             return
 
         try:
