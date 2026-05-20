@@ -2036,6 +2036,27 @@ class CopyTradingEngine(BaseModule):
                         pnl_emoji = "📈" if profit_loss >= 0 else "📉"
                         logger.info(f"{pnl_emoji} Position CLOSED: P&L ${profit_loss:.2f} ({profit_loss_pct:.1f}%) for {token_addr[:16]}...")
                         logger.debug(f"💾 Updated trade {open_trade['trade_id']} to closed status")
+
+                        # Wave-4 CT-Q-09 probation trigger. If this
+                        # close was a "mirrored trade goes >X% negative"
+                        # event, bench the leader for `probation_days`.
+                        # We compare against the absolute threshold and
+                        # only trigger on the loss side (positive pct =
+                        # profit, no action).
+                        try:
+                            loss_thr = float(getattr(self, "probation_loss_pct_threshold", 25.0))
+                            if (
+                                source_wallet
+                                and profit_loss_pct is not None
+                                and float(profit_loss_pct) <= -abs(loss_thr)
+                            ):
+                                await self._maybe_set_probation(
+                                    chain=chain,
+                                    wallet=source_wallet,
+                                    reason=f"loss_{float(profit_loss_pct):.1f}pct",
+                                )
+                        except Exception as e:
+                            logger.debug(f"probation-trigger eval failed: {e}")
                     else:
                         # No matching open position - log as a standalone sell
                         logger.info(f"⚠️ No matching open position found for {token_addr[:16]}... - logging as standalone sell")
