@@ -74,6 +74,20 @@ class FuturesRiskManager:
         self.consecutive_losses = 0
         self.total_realized_pnl = 0.0
 
+        # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off.
+        # After N consecutive losses on the same symbol, refuse new entries
+        # on that symbol for `post_loss_cooloff_minutes` minutes. Tracks
+        # symbol -> int (consecutive losses) and symbol -> datetime
+        # (cool-off expiry; absent means no cool-off in effect).
+        self.post_loss_cooloff_minutes = int(
+            config.get('post_loss_cooloff_minutes', 240) or 0
+        )
+        self.post_loss_cooloff_threshold = int(
+            config.get('post_loss_cooloff_threshold', 2) or 0
+        )
+        self.per_symbol_consec_losses: Dict[str, int] = {}
+        self.per_symbol_cooloff_until: Dict[str, datetime] = {}
+
     @staticmethod
     def _normalize_symbol(sym: str) -> str:
         """Canonical form for override lookup: uppercase, no slash, no spaces."""
@@ -414,12 +428,13 @@ class FuturesRiskManager:
             self.logger.error(f"Error calculating position size: {e}")
             return 0.0
 
-    def update_on_trade_close(self, pnl: float):
+    def update_on_trade_close(self, pnl: float, symbol: Optional[str] = None):
         """
         Update risk state after trade closes
 
         Args:
             pnl: Trade profit/loss
+            symbol: trading symbol (enables per-symbol cool-off tracking)
         """
         try:
             self.total_realized_pnl += pnl
@@ -436,8 +451,73 @@ class FuturesRiskManager:
                     f"⚠️ {self.consecutive_losses} consecutive losses in futures"
                 )
 
+            # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off.
+            if symbol:
+                norm = self._normalize_symbol(symbol)
+                if pnl < 0:
+                    self.per_symbol_consec_losses[norm] = (
+                        self.per_symbol_consec_losses.get(norm, 0) + 1
+                    )
+                    threshold = self.post_loss_cooloff_threshold
+                    if (
+                        threshold > 0
+                        and self.per_symbol_consec_losses[norm] >= threshold
+                        and self.post_loss_cooloff_minutes > 0
+                    ):
+                        from datetime import timedelta
+                        until = datetime.now() + timedelta(
+                            minutes=self.post_loss_cooloff_minutes
+                        )
+                        self.per_symbol_cooloff_until[norm] = until
+                        self.logger.warning(
+                            f"🛑 FUT-RM-17 cool-off armed for {symbol}: "
+                            f"{self.per_symbol_consec_losses[norm]} consecutive "
+                            f"losses; refusing entries until {until.isoformat()}"
+                        )
+                else:
+                    # Win resets per-symbol loss streak and clears cool-off.
+                    if norm in self.per_symbol_consec_losses:
+                        self.per_symbol_consec_losses[norm] = 0
+                    if norm in self.per_symbol_cooloff_until:
+                        del self.per_symbol_cooloff_until[norm]
+
         except Exception as e:
             self.logger.error(f"Error updating trade close: {e}")
+
+    def should_skip_for_cooloff(self, symbol: str) -> Dict:
+        """FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off gate.
+
+        Returns dict {skip: bool, reason: str, expires_at: Optional[str]}.
+        Fail-open on any error so a validator bug never silently blocks
+        every trade.
+        """
+        try:
+            if self.post_loss_cooloff_minutes <= 0:
+                return {'skip': False, 'reason': 'cooloff disabled'}
+            norm = self._normalize_symbol(symbol)
+            until = self.per_symbol_cooloff_until.get(norm)
+            if until is None:
+                return {'skip': False, 'reason': 'no cooloff'}
+            now = datetime.now()
+            if now >= until:
+                # Cool-off expired — clear it and reset the per-symbol counter
+                # so the symbol gets a fresh start without immediately re-arming
+                # on the next loss.
+                del self.per_symbol_cooloff_until[norm]
+                self.per_symbol_consec_losses[norm] = 0
+                return {'skip': False, 'reason': 'cooloff expired'}
+            remaining_min = int((until - now).total_seconds() / 60)
+            return {
+                'skip': True,
+                'reason': (
+                    f'{self.per_symbol_consec_losses.get(norm, 0)} consecutive '
+                    f'losses; cool-off ~{remaining_min} min remaining'
+                ),
+                'expires_at': until.isoformat(),
+            }
+        except Exception as e:
+            self.logger.warning(f"should_skip_for_cooloff errored: {e}")
+            return {'skip': False, 'reason': f'gate error: {e}'}
 
     def get_adjusted_leverage(
         self,

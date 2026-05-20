@@ -1918,6 +1918,22 @@ class FuturesTradingEngine:
             else:
                 tp_str = f"${take_profit_price:.2f}"
 
+            # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off.
+            # Cheap pre-validator skip; fails open on missing method or error.
+            if self.risk_manager is not None and hasattr(
+                self.risk_manager, 'should_skip_for_cooloff'
+            ):
+                try:
+                    cgate = self.risk_manager.should_skip_for_cooloff(symbol)
+                    if cgate.get('skip'):
+                        logger.warning(
+                            f"⏭️  FUT-RM-17 cool-off refused entry for {symbol}: "
+                            f"{cgate.get('reason')}"
+                        )
+                        return
+                except Exception as e:
+                    logger.debug(f"cooloff gate non-fatal error for {symbol}: {e}")
+
             # FUT-RM-05: funding-rate directional gate. Cheap, runs before
             # the heavier validator. None rate -> gate fails open.
             if self.risk_manager is not None and hasattr(
@@ -2175,6 +2191,16 @@ class FuturesTradingEngine:
             else:
                 self.losing_trades += 1
                 self.risk_metrics.consecutive_losses += 1
+
+            # FUT-RM-17 (Wave 5): notify risk manager so per-symbol cool-off
+            # arms after N consecutive losses on this pair. Best-effort.
+            if self.risk_manager is not None and hasattr(
+                self.risk_manager, 'update_on_trade_close'
+            ):
+                try:
+                    self.risk_manager.update_on_trade_close(net_pnl, symbol=symbol)
+                except Exception as e:
+                    logger.debug(f"risk_manager.update_on_trade_close failed: {e}")
 
             # Remove from active positions
             del self.active_positions[symbol]
