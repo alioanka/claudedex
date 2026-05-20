@@ -70,7 +70,11 @@ class FuturesPositionConfig(BaseModel):
 
 class FuturesLeverageConfig(BaseModel):
     """Leverage configuration"""
-    default_leverage: int = 10
+    # FUT-RM-18 (Wave 5): lowered from 10x to 5x. 10x left too little room
+    # before the static 2% SL triggered. Migration 031 lowers the seeded
+    # DB value to match. max_leverage stays 20x for opt-in per-trade
+    # aggression via the per-symbol override table (FUT-RM-08).
+    default_leverage: int = 5
     max_leverage: int = 20
     margin_mode: str = "isolated"  # isolated or cross
     # FUT-RM-07: defense-in-depth on MB-17. When True, the engine verifies

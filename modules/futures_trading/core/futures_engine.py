@@ -389,7 +389,8 @@ class FuturesTradingEngine:
             self.testnet = True
             self.max_positions = 5
             self.position_size_usd = 100.0
-            self.leverage = 10
+            # FUT-RM-18 (Wave 5): default lowered from 10x to 5x; see migration 031.
+            self.leverage = 5
             # FUT-RM-06 / FUT-RM-07 fallback defaults
             self.atr_sizing_enabled = False
             self.atr_risk_pct = 1.0
