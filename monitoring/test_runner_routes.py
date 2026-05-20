@@ -630,19 +630,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "arbitrage data after Agent 2's fix (commit 3cb544b)."
         ),
     },
-    {
-        "id": "api_full_dashboard_modules",
-        "title": "API: /api/modules (Module Overview source)",
-        "category": "api",
-        "kind": "probe",
-        "endpoint": "modules?include_disabled=true",
-        "cmd_preview": "GET /api/modules?include_disabled=true",
-        "timeout_s": 15,
-        "description": (
-            "Source for /full-dashboard's Module Overview. env-flag "
-            "should be the single source of truth (FAILURE A — Agent 2)."
-        ),
-    },
+    # api_full_dashboard_modules removed — identical response to
+    # api_modules above (just adds include_disabled which is a no-op for
+    # the operator since every module is currently enabled). Was emitting
+    # ~250 lines per Run-All click for no extra signal.
 
     # ── Phase 3: per-module DRY_RUN coverage ──────────────────────────
     # One DB probe + one API probe per module so the operator can see
@@ -784,20 +775,9 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "operator watches this row to see real fills land."
         ),
     },
-    {
-        "id": "api_module_dry_run_overview",
-        "title": "API: /api/modules effective_dry_run roundup",
-        "category": "api",
-        "kind": "probe",
-        "endpoint": "modules",
-        "cmd_preview": "GET /api/modules | .data.modules[*].effective_dry_run",
-        "timeout_s": 15,
-        "description": (
-            "Confirms each module reports an effective_dry_run boolean "
-            "in the /api/modules response. If any module is missing the "
-            "field, the dashboard UI can't show its DRY/LIVE chip."
-        ),
-    },
+    # api_module_dry_run_overview removed — third copy of /api/modules.
+    # The effective_dry_run field is already visible in the api_modules
+    # probe response (every module row carries it). Was 3× duplication.
 
     # ── Phase 3 D: orchestrator_ai readiness probes ─────────────────
     {
@@ -859,11 +839,15 @@ TEST_CATALOG: List[Dict[str, Any]] = [
     },
     {
         "id": "api_orch_history",
-        "title": "API: /api/orchestrator/history?hours=72",
+        "title": "API: /api/orchestrator/history?hours=3",
         "category": "api",
         "kind": "probe",
-        "endpoint": "orchestrator/history?hours=72",
-        "cmd_preview": "GET /api/orchestrator/history?hours=72",
+        # Default window dropped 72h → 3h. With 5-min tick cadence and
+        # 7 modules, 72h emits ~6000 rows / ~10K log lines per probe run.
+        # 3h is enough to confirm the orchestrator is alive and emitting,
+        # and keeps the test_runner log size sane.
+        "endpoint": "orchestrator/history?hours=3",
+        "cmd_preview": "GET /api/orchestrator/history?hours=3",
         "timeout_s": 15,
         "description": (
             "Per-module score timeseries for the last 72h. Grouped by "
@@ -1460,21 +1444,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "Slippage cost should track entry_usd × default_slippage_pct."
         ),
     },
-    {
-        "id": "api_arb_settings_get",
-        "title": "API: GET /api/arbitrage/settings (min_profit_spread surface)",
-        "category": "api",
-        "kind": "probe",
-        "endpoint": "arbitrage/settings",
-        "cmd_preview": "GET /api/arbitrage/settings | grep min_profit_spread",
-        "timeout_s": 15,
-        "description": (
-            "Source for /arbitrage/settings page. After 744ee48 the "
-            "engine reads min_profit_spread (UI knob); response must "
-            "include the key. 200 + non-empty JSON confirms the GET "
-            "handler routes the wave-2 cost knobs back to the page."
-        ),
-    },
+    # api_arb_settings_get removed — duplicate of api_settings_arbitrage_get
+    # earlier in this file. The min_profit_spread key is already visible
+    # in that response (line 36 of the body). Was emitting ~120 lines of
+    # identical settings JSON.
     {
         "id": "script_arb_nameerror_regression",
         "title": "Script: ARBITRAGE spatial-arb NameError grep (9e6a7d1)",
@@ -1755,21 +1728,9 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "quorum gate. Healthy mix = both sources up."
         ),
     },
-    {
-        "id": "api_sniper_timing_per_chain",
-        "title": "API: /api/sniper/timing (per-chain latency widget source) (5a0a3e9)",
-        "category": "api",
-        "kind": "probe",
-        "endpoint": "sniper/timing",
-        "cmd_preview": "GET /api/sniper/timing | per-chain p50/p95",
-        "timeout_s": 30,
-        "description": (
-            "Source for the per-chain listener-health widget added by "
-            "5a0a3e9 in performance_sniper.html. 200 + non-empty "
-            "`paths` keyed by detection_path is the contract; "
-            "front-end widget joins to chain via sniper_trades."
-        ),
-    },
+    # api_sniper_timing_per_chain removed — same endpoint as
+    # api_sniper_timing earlier; the per-chain GROUP BY is delivered
+    # client-side from the same data, so two probes hit identical bytes.
     {
         "id": "script_sniper_listener_widget_present",
         "title": "Script: SNIPER per-chain widget HTML presence (5a0a3e9)",
@@ -1880,21 +1841,11 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "on margin_type != ISOLATED. Default True."
         ),
     },
-    {
-        "id": "api_settings_futures_post_wave2",
-        "title": "API: GET /api/settings/futures (wave-2 keys roundtrip)",
-        "category": "api",
-        "kind": "probe",
-        "endpoint": "settings/futures",
-        "cmd_preview": "GET /api/settings/futures | grep funding/atr/enforce",
-        "timeout_s": 15,
-        "description": (
-            "Wave-2 settings page must expose skip_long_funding_bps, "
-            "atr_sizing_enabled, atr_risk_pct, enforce_isolated_margin. "
-            "200 + non-empty JSON confirms the GET handler routes those "
-            "keys through FuturesConfigManager.get_*."
-        ),
-    },
+    # api_settings_futures_post_wave2 removed — duplicate of
+    # api_settings_futures_get earlier. Wave-2 keys (skip_long_funding_bps,
+    # atr_sizing_enabled, atr_risk_pct, enforce_isolated_margin) are
+    # already visible in that probe's response. Was 60 lines of identical
+    # JSON.
 
     # ── AI (A6 wave-2: E1 quorum / E2 calibration / E3 bandit) ───────────
     {
