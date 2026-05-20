@@ -78,6 +78,12 @@ class FuturesLeverageConfig(BaseModel):
     # order and immediately closes if a CROSS-margin fill is detected.
     # No-op in DRY_RUN.
     enforce_isolated_margin: bool = True
+    # FUT-RM-07b (Wave 4): high-priority Telegram alert on the
+    # FUT-RM-07 emergency-close path. Default True so an operator
+    # always learns when a CROSS-margin fill slipped through the
+    # MB-17 set_margin_type call and got force-closed. Fail-soft:
+    # if Telegram is not configured the engine just logs.
+    telegram_emergency_close_enabled: bool = True
     # FUT-RM-08 (Wave 3): per-symbol leverage cap overrides. Operator may
     # want different caps per pair (e.g. max 5x on PEPE/USDT but 10x on
     # BTC/USDT). When the validator runs, override > global max_leverage.
@@ -655,6 +661,7 @@ class FuturesConfigManager:
             'max_leverage': FuturesConfigType.LEVERAGE,
             'margin_mode': FuturesConfigType.LEVERAGE,
             'enforce_isolated_margin': FuturesConfigType.LEVERAGE,  # FUT-RM-07
+            'telegram_emergency_close_enabled': FuturesConfigType.LEVERAGE,  # FUT-RM-07b
             'max_leverage_overrides': FuturesConfigType.LEVERAGE,   # FUT-RM-08
             # Risk settings - SL
             'stop_loss': FuturesConfigType.RISK,  # alias
