@@ -437,6 +437,52 @@
         </div>
     </div>
 
+    <!-- Wave-5: "Why no trades?" diagnostic panel. Reads /api/arbitrage/diagnostics
+         which surfaces per-chain near-misses (rejected opportunities), cost
+         profile, gas-spend, and engine liveness (>10 min snapshot = STALE).
+         Collapsible because most operators only open it when they suspect the
+         engine has stalled. -->
+    <div class="section-card">
+        <div class="section-header" style="cursor:pointer;" onclick="toggleDiagPanel()">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-stethoscope"></i>
+                Why no trades?
+                <span id="diag-summary" style="font-size:0.8rem;font-weight:normal;color:var(--text-secondary);margin-left:12px;"></span>
+            </div>
+            <span><i id="diag-toggle-icon" class="fas fa-chevron-down"></i></span>
+        </div>
+        <div id="diagPanelBody" style="display:none;margin-top:12px;">
+            <div id="diag-stale-banner" style="display:none;padding:10px 14px;border-radius:6px;background:rgba(239,68,68,0.15);color:#ef4444;margin-bottom:12px;font-weight:600;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span id="diag-stale-text">Engine snapshot is stale - the arbitrage subprocess may have crashed.</span>
+            </div>
+            <div id="diag-chains-grid"></div>
+            <div style="margin-top:16px;">
+                <h6 style="color:var(--text-secondary);margin-bottom:8px;">Last 20 rejected opportunities</h6>
+                <div id="diag-nearmiss-empty" class="text-muted" style="text-align:center;padding:14px;">
+                    No near-misses recorded yet (engine has not written a runtime snapshot).
+                </div>
+                <div class="table-wrapper" id="diag-nearmiss-wrapper" style="display:none;">
+                    <table class="trade-table" style="font-size:0.85rem;">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Chain</th>
+                                <th>Reason</th>
+                                <th>Pair</th>
+                                <th>Route</th>
+                                <th>Profit bps</th>
+                                <th>Threshold bps</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody id="diag-nearmiss-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- P&L Chart -->
     <div class="section-card">
         <div class="section-title">
@@ -630,6 +676,17 @@ async function loadArbitrageData() {
             console.debug('gas-spend fetch failed:', err);
         }
 
+        // Wave-5: "Why no trades?" diagnostics (collapsible panel).
+        try {
+            const dgResp = await fetch('/api/arbitrage/diagnostics');
+            if (dgResp.ok) {
+                const dg = await dgResp.json();
+                updateDiagPanel(dg);
+            }
+        } catch (err) {
+            console.debug('diagnostics fetch failed:', err);
+        }
+
         // Load trading status
         await loadTradingStatus();
     } catch (error) {
@@ -665,6 +722,126 @@ function updateGasSpendTile(gs) {
             : 'no engine snapshots yet';
         const stale = gs.stale ? ' [STALE]' : '';
         cardEl.title = `Per-chain hourly gas spend${stale}\n${detail}`;
+    }
+}
+
+// Wave-5: "Why no trades?" panel — render the diagnostics payload.
+function toggleDiagPanel() {
+    const body = document.getElementById('diagPanelBody');
+    const icon = document.getElementById('diag-toggle-icon');
+    if (!body) return;
+    const show = body.style.display === 'none';
+    body.style.display = show ? 'block' : 'none';
+    if (icon) {
+        icon.className = show ? 'fas fa-chevron-up' : 'fas fa-chevron-down';
+    }
+}
+
+function updateDiagPanel(dg) {
+    if (!dg) return;
+    const summaryEl = document.getElementById('diag-summary');
+    const staleBanner = document.getElementById('diag-stale-banner');
+    const staleText = document.getElementById('diag-stale-text');
+    const grid = document.getElementById('diag-chains-grid');
+    const emptyEl = document.getElementById('diag-nearmiss-empty');
+    const wrapEl = document.getElementById('diag-nearmiss-wrapper');
+    const bodyEl = document.getElementById('diag-nearmiss-body');
+    if (!grid || !bodyEl) return;
+
+    // Roll up all near-misses across chains, newest first.
+    const allMisses = [];
+    const chains = dg.chains || {};
+    const chainKeys = Object.keys(chains);
+    chainKeys.forEach(c => {
+        (chains[c].near_misses || []).forEach(m => allMisses.push(m));
+    });
+    allMisses.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+    // Summary line in the collapsed header so operator sees status at a glance.
+    let topReason = '';
+    let topCount = 0;
+    chainKeys.forEach(c => {
+        const cnts = chains[c].near_miss_counters || {};
+        Object.entries(cnts).forEach(([k, v]) => {
+            if (v > topCount) { topCount = v; topReason = k; }
+        });
+    });
+    if (summaryEl) {
+        const stale = dg.stale ? ' [STALE]' : '';
+        if (allMisses.length === 0 && chainKeys.length === 0) {
+            summaryEl.textContent = `(no snapshot yet)${stale}`;
+        } else {
+            const reason = topReason ? `top reason: ${topReason} (${topCount}x)` : 'no rejections';
+            summaryEl.textContent = `(${reason})${stale}`;
+        }
+    }
+
+    // Stale-engine banner (>10 min since last engine snapshot).
+    if (staleBanner) {
+        if (dg.stale) {
+            const ageMin = dg.max_age_s ? (dg.max_age_s / 60).toFixed(1) : '?';
+            staleText.textContent =
+                `Engine snapshot is stale (age ${ageMin}m). The arbitrage subprocess may have crashed — check logs/arbitrage/arbitrage_errors.log.`;
+            staleBanner.style.display = 'block';
+        } else {
+            staleBanner.style.display = 'none';
+        }
+    }
+
+    // Per-chain cost-profile / counters cards.
+    let html = '<div class="status-grid">';
+    chainKeys.forEach(c => {
+        const cp = chains[c].cost_profile || {};
+        const cnt = chains[c].counters || {};
+        const baseBps = ((cp.min_profit_threshold_base || 0) * 10000).toFixed(1);
+        const effBps = ((cp.min_profit_threshold_effective || 0) * 10000).toFixed(1);
+        const spike = (cp.gas_spike_multiplier || 1).toFixed(2);
+        const spent = (cp.gas_spend_usd_hour || 0).toFixed(2);
+        const budget = (cp.gas_budget_usd_per_hour || 0).toFixed(2);
+        const ratio = ((cp.gas_budget_ratio || 0) * 100).toFixed(0);
+        const age = chains[c].age_s ? `${chains[c].age_s.toFixed(0)}s ago` : '?';
+        html += `
+        <div class="status-item">
+            <div class="status-item-label">${c.toUpperCase()} <span style="color:var(--text-secondary);font-size:0.75rem;">(updated ${age})</span></div>
+            <div style="font-size:0.85rem;line-height:1.6;">
+                Min profit: <b>${effBps} bps</b> (base ${baseBps}, spike ${spike}x)<br>
+                Gas (1h): <b>$${spent}</b> / $${budget} (${ratio}%)<br>
+                Scans: ${cnt.scans || 0} | Found: ${cnt.opportunities_found || 0} | Executed: ${cnt.opportunities_executed || 0}
+            </div>
+        </div>`;
+    });
+    html += '</div>';
+    grid.innerHTML = html || '<div class="text-muted">No engine snapshots yet.</div>';
+
+    // Near-misses table (last 20 across chains).
+    if (allMisses.length === 0) {
+        emptyEl.style.display = 'block';
+        wrapEl.style.display = 'none';
+    } else {
+        emptyEl.style.display = 'none';
+        wrapEl.style.display = 'block';
+        const reasonColor = (r) => {
+            if (r === 'gas_budget') return '#ef4444';
+            if (r === 'risk_manager' || r === 'risk_manager_error') return '#ef4444';
+            if (r === 'min_profit') return '#f59e0b';
+            if (r === 'cooldown' || r === 'daily_cap') return '#3b82f6';
+            return '#94a3b8';
+        };
+        bodyEl.innerHTML = allMisses.slice(0, 20).map(m => {
+            const t = m.ts ? new Date(m.ts).toLocaleTimeString() : '';
+            const route = (m.buy_dex || m.sell_dex) ? `${m.buy_dex || '?'} → ${m.sell_dex || '?'}` : '';
+            const escape = (s) => String(s == null ? '' : s).replace(/</g, '&lt;');
+            return `<tr>
+                <td>${escape(t)}</td>
+                <td>${escape(m.chain || '')}</td>
+                <td><span style="color:${reasonColor(m.reason)};font-weight:600;">${escape(m.reason || '')}</span></td>
+                <td>${escape(m.pair || '')}</td>
+                <td>${escape(route)}</td>
+                <td>${m.profit_bps != null ? Number(m.profit_bps).toFixed(1) : ''}</td>
+                <td>${m.threshold_bps != null ? Number(m.threshold_bps).toFixed(1) : ''}</td>
+                <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(m.detail || '')}">${escape(m.detail || '')}</td>
+            </tr>`;
+        }).join('');
     }
 }
 
