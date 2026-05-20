@@ -39,6 +39,34 @@ AMBER → GREEN candidate (pending production verification). MB-16 (init order),
 | `futures_atr_risk_pct` | float | 1.0 | % of `capital_allocation` risked per trade when ATR sizing is on. |
 | `futures_atr_stop_multiplier` | float | 1.5 | Stop distance in ATR units (used by the sizing math). |
 | `futures_enforce_isolated_margin` | bool | true | Post-fill ISOLATED-margin verify + emergency-close on mismatch. |
+| `futures_telegram_emergency_close_enabled` | bool | true | High-priority Telegram alert on every FUT-RM-07 emergency-close. Fail-soft when Telegram is not configured. |
+
+## Wave-4 changes (campaign 2026-05-20)
+- **FUT-RM-07b** — `_notify_fut_rm_07_emergency_close()` (futures_engine.py)
+  fires a `priority="critical"` Telegram payload (symbol / side /
+  intended-vs-actual margin / position size / timestamp / close status)
+  via the shared `monitoring.telegram_bot.get_telegram_controller()`
+  singleton whenever the FUT-RM-07 verify path detects a CROSS-margin
+  fill. Lazy import keeps the engine import-time clean. Gated by
+  `FuturesLeverageConfig.telegram_emergency_close_enabled` (default True);
+  fail-soft if Telegram is not configured (logs warning, never blocks
+  the emergency-close itself).
+- **FUT-RM-09b** — new dashboard widget on `dashboard_futures.html` next
+  to the FUT-RM-09 hourly chart: per-symbol 24h forward funding-cost
+  forecast. Backed by `GET /api/futures/funding-forecast` in
+  `enhanced_dashboard.py` which reads the latest snapshot row per
+  (symbol, side) from `futures_funding_payments` (migration 029) and
+  projects `predicted_usd × intervals_per_window` (default 3 intervals
+  of 8h = 24h on Binance/Bybit USDT perps). Returns per-row implied APR.
+  Sign convention matches the table: positive = cost to the book.
+
+### Wave-4 commits (this branch)
+- `34e6c95` FUT-RM-07b stub: emergency-close Telegram-alert flag plumbing (engine side)
+- `68b20fb` Wave-4 stub commit including `FuturesLeverageConfig.telegram_emergency_close_enabled` default
+- `6f66608` FUT-RM-07b: wire Telegram alert dispatcher for emergency close
+- `142250b` FUT-RM-09b endpoint: `GET /api/futures/funding-forecast`
+- `b805626` FUT-RM-09b widget: per-symbol funding-cost forecast panel
+- `7b2da32` Minor dashboard widget refinement
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.
