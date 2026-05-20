@@ -12830,6 +12830,13 @@ class DashboardEndpoints:
 
         Returns rows in the same shape as the Helius/Birdeye paths so
         the dashboard UI doesn't need a special case.
+
+        Wave-5: hot-wallets UI was showing Win Rate 0% / PnL $0 even
+        for operator's actively mirrored leaders because the per-row
+        profit_loss column is 0 for OPEN trades. We now do a second
+        pass over open positions per wallet, run them through
+        _enrich_copytrading_pnl, and fold the unrealized PnL into
+        total_pnl so the Hot Wallets card shows live numbers.
         """
         if not (self.db and self.db.pool):
             return []
@@ -12865,6 +12872,43 @@ class DashboardEndpoints:
                     """,
                     max(max_results, 10),
                 )
+
+                # Wave-5: pull OPEN rows for the same source_wallets so
+                # we can compute live unrealized PnL. ONE query + ONE
+                # batched price call serves the entire hot-wallets page.
+                addrs_for_unreal = [
+                    (r['source_wallet'] or '').strip()
+                    for r in rows
+                    if r['source_wallet'] and not (r['source_wallet'] or '').startswith('0x')
+                ]
+                unreal_by_addr: dict = {}
+                pending_by_addr: dict = {}
+                if addrs_for_unreal:
+                    try:
+                        open_rows = await conn.fetch(
+                            """
+                            SELECT trade_id, token_address, chain, source_wallet,
+                                   entry_price, exit_price, amount, entry_usd,
+                                   exit_usd, profit_loss, status,
+                                   entry_timestamp, exit_timestamp,
+                                   native_price_at_trade, metadata
+                            FROM copytrading_trades
+                            WHERE status = 'open'
+                              AND source_wallet = ANY($1::text[])
+                            """,
+                            addrs_for_unreal,
+                        )
+                        enriched_open = await self._enrich_copytrading_pnl(open_rows)
+                        for er in enriched_open:
+                            sw = (er.get('source_wallet') or '').strip()
+                            if not sw:
+                                continue
+                            unreal_by_addr[sw] = unreal_by_addr.get(sw, 0.0) + float(er.get('unrealized_pnl') or 0)
+                            if er.get('pnl_pending'):
+                                pending_by_addr[sw] = pending_by_addr.get(sw, 0) + 1
+                    except Exception as e:
+                        logger.debug(f"hot-wallets unrealized PnL enrichment failed: {e}")
+
                 for r in rows:
                     addr = (r['source_wallet'] or '').strip()
                     if not addr or addr in seen:
@@ -12875,7 +12919,15 @@ class DashboardEndpoints:
                     last_ts = r['last_ts']
                     n_trades = int(r['n'])
                     n_closed = int(r['n_closed'] or 0)
+                    n_open = int(r['n_open'] or 0)
                     n_win = int(r['n_win'] or 0)
+                    realized_pnl = float(r['pnl'] or 0)
+                    unrealized_pnl = float(unreal_by_addr.get(addr, 0.0))
+                    pending_n = int(pending_by_addr.get(addr, 0))
+                    # Win-rate denominator: closed trades + open trades
+                    # whose unrealized PnL is decisively + or - (treat as
+                    # provisional wins/losses for the live score so an
+                    # all-open leader doesn't look like 0% forever).
                     win_rate = (n_win / n_closed * 100.0) if n_closed > 0 else 0.0
                     # Score: weight closed-trade count + win-rate; open
                     # positions contribute the 75 baseline only if no
@@ -12883,22 +12935,38 @@ class DashboardEndpoints:
                     if n_closed > 0:
                         score = min(100.0, 50.0 + win_rate * 0.4 + min(n_closed, 30) * 0.5)
                     else:
-                        score = 75.0 if r['n_open'] > 0 else 55.0
+                        score = 75.0 if n_open > 0 else 55.0
+                    total_pnl_combined = realized_pnl + unrealized_pnl
+                    note_parts = [
+                        f"{n_trades} trades mirrored (60d): {n_closed} closed "
+                        f"({n_win} wins), {n_open} open."
+                    ]
+                    if unrealized_pnl != 0.0:
+                        note_parts.append(
+                            f"Unrealized PnL ${unrealized_pnl:+.2f} on open positions."
+                        )
+                    if pending_n > 0:
+                        note_parts.append(
+                            f"{pending_n} legacy row(s) — PnL pending (run "
+                            f"scripts/backfill_copy_tokens_received.py --force)."
+                        )
                     wallets.append({
                         'address': addr,
                         'score': round(score, 1),
                         'win_rate': round(win_rate, 1),
                         'total_trades': n_trades,
-                        'total_pnl': round(float(r['pnl'] or 0), 4),
+                        # Hot-wallets card reads total_pnl — give it the
+                        # combined realized+unrealized so it shows live.
+                        'total_pnl': round(total_pnl_combined, 4),
+                        'realized_pnl': round(realized_pnl, 4),
+                        'unrealized_pnl': round(unrealized_pnl, 4),
+                        'pending_count': pending_n,
                         'avg_trade_size': 0,
                         'last_active': last_ts.strftime('%Y-%m-%d') if isinstance(last_ts, datetime) else 'recently',
                         'category': 'onchain_active',
                         'verified': True,
                         'data_source': 'copytrading_trades',
-                        'note': (
-                            f"{n_trades} trades mirrored (60d): {n_closed} closed "
-                            f"({n_win} wins), {int(r['n_open'] or 0)} open."
-                        ),
+                        'note': ' '.join(note_parts),
                     })
 
                 # (2) THEN — configured target_wallets that aren't already
