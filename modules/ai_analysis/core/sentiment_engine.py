@@ -11,6 +11,7 @@ Features:
 import asyncio
 import logging
 import re
+from collections import Counter, deque
 from typing import Dict, List, Optional
 import json
 from datetime import datetime, timedelta
@@ -323,6 +324,18 @@ class SentimentEngine:
         self._symbol_cooldowns: Dict[str, datetime] = {}
         self._cooldown_duration = timedelta(hours=1)  # 1-hour cooldown after closing a position
 
+        # Wave-5: "why no trades?" diagnostic counters. Every signal that's
+        # generated but does NOT result in an opened position routes through
+        # _record_skip(reason, score, sentiment) below so the operator can
+        # answer the "50 signals, 0 trades" question without grepping logs.
+        # Mirrors the ARB-equivalent skip-reason ledger; surfaced via
+        # /api/ai/diagnostics + dashboard "Why no trades?" panel.
+        self._signals_generated = 0
+        self._signals_acted_on = 0
+        self._skip_reasons: Counter = Counter()
+        # Bounded deque so a long-running engine doesn't grow unbounded.
+        self._recent_skips: deque = deque(maxlen=20)
+
     async def initialize(self):
         logger.info("🧠 Initializing Sentiment Engine (ENHANCED)...")
 
@@ -580,16 +593,43 @@ class SentimentEngine:
                     score_abs = abs(sentiment_score)
                     meets_threshold = score_abs >= self.confidence_threshold
 
+                    # Wave-5: every sentiment cycle that produced a non-zero
+                    # score counts as a "signal generated" for diagnostics.
+                    # Zero-score cycles (LLM error path, empty headlines)
+                    # are NOT counted — they're rejections before the gate.
+                    if sentiment_score != 0.0:
+                        self._signals_generated += 1
+                    else:
+                        self._record_skip(
+                            'zero_sentiment',
+                            score=sentiment_score,
+                            sentiment=sentiment_score,
+                            extra={'threshold': f"{self.confidence_threshold:.2f}"},
+                        )
+
                     trade_fired_this_cycle = False
                     if self.direct_trading and meets_threshold:
                         logger.info(f"🤖 Trade conditions met: direct_trading=ON, score={sentiment_score:.2f} >= threshold={self.confidence_threshold}")
                         await self._execute_trade(sentiment_score)
                         trades_executed += 1
                         trade_fired_this_cycle = True
+                        self._signals_acted_on += 1
                     elif not self.direct_trading:
-                        logger.info(f"ℹ️ Trade skipped: direct_trading=OFF (enable in AI Settings to trade automatically)")
+                        # #1 cause of "50 signals, 0 trades" — the operator
+                        # never flipped direct_trading=ON in /ai/settings.
+                        self._record_skip(
+                            'direct_trading_off',
+                            score=sentiment_score,
+                            sentiment=sentiment_score,
+                            extra={'threshold': f"{self.confidence_threshold:.2f}"},
+                        )
                     elif not meets_threshold:
-                        logger.info(f"ℹ️ Trade skipped: score {score_abs:.2f} < threshold {self.confidence_threshold} (signal not strong enough)")
+                        self._record_skip(
+                            'confidence_below_threshold',
+                            score=sentiment_score,
+                            sentiment=sentiment_score,
+                            extra={'threshold': f"{self.confidence_threshold:.2f}"},
+                        )
 
                     # A6 W4: persist the quorum decision (if one ran this
                     # cycle) AFTER trade evaluation so trade_fired reflects
@@ -613,6 +653,82 @@ class SentimentEngine:
             await position_task
         except asyncio.CancelledError:
             pass
+
+    def _record_skip(
+        self,
+        reason: str,
+        *,
+        score: float = 0.0,
+        sentiment: Optional[float] = None,
+        symbol: Optional[str] = None,
+        extra: Optional[Dict] = None,
+    ) -> None:
+        """Wave-5: log + tally a single skipped-signal event.
+
+        `reason` is a short enum-like string (e.g. `direct_trading_off`,
+        `confidence_below_threshold`, `position_exists`, `cooldown_active`,
+        `risk_rejected`). The exact value flows into both `_skip_reasons`
+        (Counter for /api/ai/diagnostics) and a structured log line that the
+        operator can grep with `[ai-skip] reason=`. The format intentionally
+        mirrors the ARB-equivalent ledger so dashboards can reuse the parser.
+        """
+        self._skip_reasons[reason] += 1
+        rec = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'reason': reason,
+            'score': float(score),
+            'sentiment': float(sentiment) if sentiment is not None else float(score),
+            'symbol': symbol,
+            'extra': extra or {},
+        }
+        self._recent_skips.append(rec)
+        # Single-line, fixed-key format so log-parsers / grep -P 'reason=\w+' work.
+        sent_str = f"{rec['sentiment']:+.2f}"
+        sym_str = f" symbol={symbol}" if symbol else ""
+        extra_str = ""
+        if extra:
+            extra_str = " " + " ".join(f"{k}={v}" for k, v in extra.items())
+        logger.info(
+            f"[ai-skip] reason={reason} conf={abs(rec['score']):.2f} "
+            f"sentiment={sent_str}{sym_str}{extra_str}"
+        )
+
+    def get_diagnostics(self) -> Dict:
+        """Wave-5: snapshot of the why-no-trades counters + effective config.
+
+        Returned dict is consumed by `/api/ai/diagnostics` (built in
+        monitoring/enhanced_dashboard.py). Only safe-to-expose config knobs
+        are surfaced — no API keys, no DB DSN.
+        """
+        try:
+            denom = max(1, self._signals_generated)
+            act_rate = self._signals_acted_on / denom
+        except Exception:
+            act_rate = 0.0
+        return {
+            'signals_generated': int(self._signals_generated),
+            'signals_acted_on': int(self._signals_acted_on),
+            'action_rate': round(float(act_rate), 4),
+            'signals_rejected_by_reason': dict(self._skip_reasons),
+            'recent_skips': list(self._recent_skips),
+            'effective_config': {
+                'ai_provider': self.ai_provider,
+                'direct_trading': bool(self.direct_trading),
+                'dry_run': bool(self.dry_run),
+                'confidence_threshold': float(self.confidence_threshold),
+                'trade_amount_usd': float(self.trade_amount_usd),
+                'take_profit_pct': float(self.take_profit_pct),
+                'stop_loss_pct': float(self.stop_loss_pct),
+                'max_hold_hours': int(self.max_hold_hours),
+                'quorum_required': bool(self.quorum_required),
+                'quorum_max_disagreement': float(self.quorum_max_disagreement),
+                'bandit_enabled': bool(self.bandit_enabled),
+                'openai_key_loaded': bool(self.openai_api_key),
+                'claude_key_loaded': bool(self.anthropic_api_key),
+                'active_positions': len(self.active_positions),
+                'cooldown_symbols': list(self._symbol_cooldowns.keys()),
+            },
+        }
 
     def _sanitize_headline(self, raw) -> Optional[str]:
         """MB-21: scrub a single headline before it can reach the LLM prompt.
@@ -1064,7 +1180,9 @@ class SentimentEngine:
 
         # Check if we already have a position in this symbol
         if symbol in self.active_positions:
-            logger.info(f"⚠️ Already have position in {symbol}, skipping new entry")
+            self._record_skip(
+                'position_exists', score=score, sentiment=score, symbol=symbol,
+            )
             return
 
         # Check cooldown (prevent rapid re-entry after closing a position)
@@ -1072,7 +1190,10 @@ class SentimentEngine:
             cooldown_expires = self._symbol_cooldowns[symbol]
             if datetime.now() < cooldown_expires:
                 remaining = (cooldown_expires - datetime.now()).total_seconds() / 60
-                logger.info(f"⏳ {symbol} in cooldown ({remaining:.0f} min remaining), skipping")
+                self._record_skip(
+                    'cooldown_active', score=score, sentiment=score, symbol=symbol,
+                    extra={'remaining_min': f"{remaining:.0f}"},
+                )
                 return
             else:
                 # Cooldown expired, remove from tracking
@@ -1089,7 +1210,21 @@ class SentimentEngine:
             )
 
             if not result.get('success'):
-                logger.error(f"Trade execution failed: {result.get('error')}")
+                err = str(result.get('error', 'unknown'))
+                # Wave-5: surface executor-side rejection (risk-manager,
+                # missing creds, exchange error) in the diagnostic ledger so
+                # the operator doesn't have to cross-reference engine logs.
+                if 'risk_manager' in err.lower() or 'risk' in err.lower():
+                    reason = 'risk_rejected'
+                elif 'credential' in err.lower() or 'exchange' in err.lower():
+                    reason = 'exchange_unavailable'
+                else:
+                    reason = 'execution_failed'
+                self._record_skip(
+                    reason, score=score, sentiment=score, symbol=symbol,
+                    extra={'err': err[:120]},
+                )
+                logger.error(f"Trade execution failed: {err}")
                 return
 
             entry_price = result.get('price', 0)
