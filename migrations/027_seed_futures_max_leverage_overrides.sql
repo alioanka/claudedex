@@ -8,8 +8,14 @@
 --
 -- Idempotent: ON CONFLICT DO NOTHING. Existing operator overrides survive
 -- a re-run.
+--
+-- Schema note: config_settings has (config_type, key, value, value_type,
+-- description, is_editable, requires_restart). It does NOT have is_sensitive
+-- (sensitive values live in the separate sensitive_configs table). Earlier
+-- draft of this migration referenced is_sensitive and failed with
+-- UndefinedColumnError on a fresh DB.
 
-INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, is_sensitive)
+INSERT INTO config_settings (config_type, key, value, value_type, description, is_editable, requires_restart)
 VALUES
     ('futures_leverage', 'max_leverage_overrides', '{}', 'json',
      'Per-symbol leverage cap overrides (JSON map). Wins over max_leverage. '
