@@ -2716,6 +2716,148 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "to vanilla Jupiter swaps with no MEV protection."
         ),
     },
+
+    # ── Wave-5 diagnostic endpoints (W5-ARB / W5-AI 'Why no trades?' panels) ─
+    # Both endpoints surface skip-reason ledgers + current config; PM_FINAL_W5
+    # flagged the missing probes as a Wave-6 carry-over — closed here instead.
+    {
+        "id": "api_arb_diagnostics",
+        "title": "API: GET /api/arbitrage/diagnostics — Why no trades? (W5 012887a)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "arbitrage/diagnostics",
+        "cmd_preview": "GET /api/arbitrage/diagnostics | .near_misses + .cost_profile",
+        "timeout_s": 15,
+        "tags": ["new", "must"],
+        "description": (
+            "Wave-5 ARB diagnostic surface. Returns per-chain cost profile, "
+            "near-miss counters by reason, last 20 rejected opportunities, "
+            "last 10 trades, gas-spend snapshot, and a stale flag when the "
+            "engine hasn't written a runtime-stats row in >10 min. Use this "
+            "before assuming the engine is dead: empty trade list + healthy "
+            "near-miss counters means the engine is alive but every "
+            "opportunity is below profit threshold."
+        ),
+    },
+    {
+        "id": "api_ai_diagnostics",
+        "title": "API: GET /api/ai/diagnostics — Why no trades? (W5 71988d2)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "ai/diagnostics",
+        "cmd_preview": "GET /api/ai/diagnostics | .skip_reasons + .effective_config",
+        "timeout_s": 15,
+        "tags": ["new", "must"],
+        "description": (
+            "Wave-5 AI diagnostic surface. Returns signal/trade counts, skip "
+            "reasons grouped by enum (direct_trading_off / confidence_below "
+            "/ quorum_disagree / position_cap / risk_gate / cooldown), the "
+            "redacted effective config (confidence_threshold, max_positions, "
+            "quorum_required, direct_trading), and a 512KB-bounded log tail. "
+            "ROOT-CAUSE TOOL: operator saw '50 signals 0 trades'; this "
+            "endpoint immediately reveals direct_trading=false as the gate."
+        ),
+    },
+    {
+        "id": "db_arb_near_miss_counters",
+        "title": "DB: ARB near-miss counters (W5 d2e1019)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT chain, "
+            "  jsonb_pretty(stats->'near_miss_counters') AS counters, "
+            "  jsonb_array_length(COALESCE(stats->'near_misses', '[]'::jsonb)) AS recent_n, "
+            "  EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age_seconds "
+            "FROM arbitrage_runtime_stats "
+            "ORDER BY chain"
+        ),
+        "cmd_preview": (
+            "near_miss_counters JSONB + last-update age from arbitrage_runtime_stats"
+        ),
+        "timeout_s": 10,
+        "tags": ["new", "must"],
+        "description": (
+            "Per-chain breakdown of why arb opportunities were rejected "
+            "(daily_cap / cooldown / gas_budget / risk_manager / "
+            "raw_spread_negative / min_profit). age_seconds > 600 = the "
+            "arbitrage subprocess hasn't snapshotted recently (likely dead "
+            "or paused). Companion to /api/arbitrage/diagnostics."
+        ),
+    },
+    {
+        "id": "db_copy_unrealized_pnl_open",
+        "title": "DB: COPY open positions w/ tokens_received (W5 6fe0a36)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT trade_id, source_wallet, "
+            "  token_address, "
+            "  entry_usd, "
+            "  ROUND(entry_price::numeric, 6) AS entry_price_usd_per_token, "
+            "  ROUND(amount::numeric, 4) AS tokens, "
+            "  CASE WHEN metadata::jsonb ? 'tokens_received' THEN 'yes' ELSE 'no — legacy' END AS has_tokens_received, "
+            "  CASE WHEN COALESCE((metadata::jsonb->>'tokens_received_approx')::bool, FALSE) "
+            "       THEN 'backfilled (approx)' ELSE 'native' END AS source "
+            "FROM copytrading_trades "
+            "WHERE status = 'open' AND chain = 'solana' "
+            "ORDER BY entry_timestamp DESC LIMIT 25"
+        ),
+        "cmd_preview": "Open Solana COPY rows: entry_price + tokens + has_tokens_received",
+        "timeout_s": 10,
+        "tags": ["new", "must", "p0"],
+        "description": (
+            "After 6fe0a36 + backfill_copy_tokens_received.py --force, "
+            "every OPEN Solana row should have has_tokens_received='yes' "
+            "and entry_price_usd_per_token <<< 1.0 for memecoins (or "
+            "≈ 1.0 for USDC). If entry_price still shows 80-200 (SOL "
+            "range), the operator hasn't run the backfill yet."
+        ),
+    },
+    {
+        "id": "db_futures_default_leverage_post_mig031",
+        "title": "DB: FUTURES default leverage (post mig 031 — should be 5x)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value "
+            "FROM config_settings "
+            "WHERE config_type = 'futures_leverage' "
+            "  AND key IN ('default_leverage', 'max_leverage') "
+            "ORDER BY key"
+        ),
+        "cmd_preview": "futures_leverage.default_leverage + max_leverage after mig 031",
+        "timeout_s": 10,
+        "tags": ["new", "p0"],
+        "description": (
+            "Migration 031 (Wave-5 FUT-RM-18) lowered default_leverage "
+            "from 10 to 5. If default_leverage still reads 10, the "
+            "migration didn't apply (re-pull and check trading-bot logs)."
+        ),
+    },
+    {
+        "id": "db_futures_atr_dynamic_flag",
+        "title": "DB: FUTURES ATR dynamic SL/TP flag (W5 FUT-RM-16)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ("
+            "  'futures_atr_dynamic_sl_tp_enabled', "
+            "  'futures_min_signal_confluence_count', "
+            "  'futures_post_loss_cooloff_minutes' "
+            ") ORDER BY key"
+        ),
+        "cmd_preview": "Wave-5 FUTURES risk knobs (ATR / confluence / cool-off)",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Verifies Wave-5 risk-tightening knobs are present: ATR-scaled "
+            "SL/TP (default true), confluence count (default 2), post-loss "
+            "cool-off minutes (default 240 = 4h). Missing rows = engine "
+            "falls back to module defaults (which are the same values, so "
+            "missing is non-fatal — just means operator hasn't tuned)."
+        ),
+    },
 ]
 
 
