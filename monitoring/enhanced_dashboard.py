@@ -11293,7 +11293,7 @@ class DashboardEndpoints:
                             trade_id, token_address, chain, source_wallet, side,
                             entry_price, exit_price, amount, entry_usd, exit_usd,
                             profit_loss, profit_loss_pct, status, entry_timestamp,
-                            native_price_at_trade
+                            native_price_at_trade, metadata
                         FROM copytrading_trades
                         WHERE status = 'open'
                         ORDER BY entry_timestamp DESC
@@ -11345,6 +11345,9 @@ class DashboardEndpoints:
                             'profit_loss': unrealized_pnl,
                             'status': 'open',
                             'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            # Expose metadata so the live-PnL enricher can read
+                            # tokens_received (new field; engine fix companion).
+                            'metadata': row['metadata'],
                             # Add clickable links for token analysis
                             'birdeye_url': birdeye_url,
                             'solscan_url': solscan_url,
@@ -11352,34 +11355,65 @@ class DashboardEndpoints:
                             'note': 'Entry price shows SOL price at trade time. Use Birdeye link for real-time token price.'
                         })
 
-            # Live PnL: fetch current Jupiter prices for every Solana
-            # token in the positions list, then recompute unrealized_pnl
-            # on each. Without this every open position reads $0.00 PnL
-            # because the engine writes entry_price into current_price.
-            solana_mints = [
-                p['token_address'] for p in positions
+            # Live PnL — only meaningful when we know the actual token
+            # quantity (NOT the SOL amount the engine spent). The schema
+            # bug: copytrading_trades.entry_price = native_price (SOL/USD)
+            # at trade time, copytrading_trades.amount = SOL amount (e.g.
+            # 0.1 SOL), NOT the count of tokens received. Computing PnL
+            # as (current_price - entry_price) * amount on this layout
+            # silently produces 'token went from $84 to $0.00 → -100%'
+            # garbage. We only enrich when the engine has stashed the
+            # actual token count under metadata.tokens_received (new
+            # field — engine fix shipped separately). For positions
+            # missing that field we leave PnL untouched and surface a
+            # clear note instead of misleading numbers.
+            solana_positions = [
+                p for p in positions
                 if p.get('chain', '').lower() == 'solana' and p.get('token_address')
             ]
-            if solana_mints:
+            need_prices = []
+            for p in solana_positions:
+                meta = p.get('metadata') or {}
+                if isinstance(meta, str):
+                    try:
+                        import json as _json
+                        meta = _json.loads(meta)
+                    except Exception:
+                        meta = {}
+                tokens_received = meta.get('tokens_received') if isinstance(meta, dict) else None
+                if tokens_received and float(tokens_received) > 0:
+                    p['_tokens_received'] = float(tokens_received)
+                    need_prices.append(p['token_address'])
+                else:
+                    # Honest fallback — don't fabricate PnL.
+                    p['unrealized_pnl'] = 0.0
+                    p['unrealized_pnl_pct'] = 0.0
+                    p['profit_loss'] = 0.0
+                    p['note'] = (
+                        'Live PnL pending: engine has not stashed tokens_received '
+                        'in metadata for this position (pre-fix trades). Will populate '
+                        'on the next swap.'
+                    )
+
+            if need_prices:
                 try:
-                    prices = await self._get_token_prices_usd(solana_mints)
-                    for p in positions:
-                        if p.get('chain', '').lower() != 'solana':
+                    prices = await self._get_token_prices_usd(need_prices)
+                    for p in solana_positions:
+                        tokens = p.pop('_tokens_received', None)
+                        if not tokens:
                             continue
                         mint = p.get('token_address')
                         live_price = float(prices.get(mint) or 0)
                         if live_price <= 0:
                             continue
-                        entry_price = float(p.get('entry_price') or 0)
-                        qty = float(p.get('quantity') or 0)
                         entry_usd = float(p.get('entry_usd') or 0)
+                        current_value = live_price * tokens
+                        pnl = current_value - entry_usd
                         p['current_price'] = live_price
-                        if entry_price > 0 and qty > 0:
-                            pnl = (live_price - entry_price) * qty
-                            p['unrealized_pnl'] = pnl
-                            p['profit_loss'] = pnl
-                            if entry_usd > 0:
-                                p['unrealized_pnl_pct'] = (pnl / entry_usd) * 100.0
+                        p['unrealized_pnl'] = pnl
+                        p['profit_loss'] = pnl
+                        if entry_usd > 0:
+                            p['unrealized_pnl_pct'] = (pnl / entry_usd) * 100.0
                 except Exception as e:
                     logger.debug(f"live-PnL price enrichment failed: {e}")
 
@@ -12291,7 +12325,70 @@ class DashboardEndpoints:
         seen: set = set()
         try:
             async with self.db.pool.acquire() as conn:
-                # (1) Operator-configured targets
+                # (1) FIRST — active source_wallets from copytrading_trades.
+                # Operator complaint: wallets with actual trades were being
+                # shadowed by the configured-targets pass (same address, but
+                # category='operator_targets' with score=60 and trades=0).
+                # Process real-stat rows FIRST so they win the seen-dedupe.
+                rows = await conn.fetch(
+                    """
+                    SELECT source_wallet, chain,
+                           COUNT(*) AS n,
+                           COUNT(*) FILTER (WHERE status='open') AS n_open,
+                           COUNT(*) FILTER (WHERE status='closed') AS n_closed,
+                           COUNT(*) FILTER (
+                               WHERE status='closed' AND profit_loss > 0
+                           ) AS n_win,
+                           COALESCE(SUM(profit_loss) FILTER (WHERE profit_loss IS NOT NULL), 0) AS pnl,
+                           MAX(COALESCE(exit_timestamp, entry_timestamp)) AS last_ts
+                    FROM copytrading_trades
+                    WHERE COALESCE(exit_timestamp, entry_timestamp) > NOW() - INTERVAL '60 days'
+                      AND source_wallet IS NOT NULL
+                    GROUP BY source_wallet, chain
+                    ORDER BY COUNT(*) DESC, SUM(profit_loss) DESC NULLS LAST
+                    LIMIT $1
+                    """,
+                    max(max_results, 10),
+                )
+                for r in rows:
+                    addr = (r['source_wallet'] or '').strip()
+                    if not addr or addr in seen:
+                        continue
+                    if addr.startswith('0x'):
+                        continue  # Solana-only page
+                    seen.add(addr)
+                    last_ts = r['last_ts']
+                    n_trades = int(r['n'])
+                    n_closed = int(r['n_closed'] or 0)
+                    n_win = int(r['n_win'] or 0)
+                    win_rate = (n_win / n_closed * 100.0) if n_closed > 0 else 0.0
+                    # Score: weight closed-trade count + win-rate; open
+                    # positions contribute the 75 baseline only if no
+                    # closed history yet.
+                    if n_closed > 0:
+                        score = min(100.0, 50.0 + win_rate * 0.4 + min(n_closed, 30) * 0.5)
+                    else:
+                        score = 75.0 if r['n_open'] > 0 else 55.0
+                    wallets.append({
+                        'address': addr,
+                        'score': round(score, 1),
+                        'win_rate': round(win_rate, 1),
+                        'total_trades': n_trades,
+                        'total_pnl': round(float(r['pnl'] or 0), 4),
+                        'avg_trade_size': 0,
+                        'last_active': last_ts.strftime('%Y-%m-%d') if isinstance(last_ts, datetime) else 'recently',
+                        'category': 'onchain_active',
+                        'verified': True,
+                        'data_source': 'copytrading_trades',
+                        'note': (
+                            f"{n_trades} trades mirrored (60d): {n_closed} closed "
+                            f"({n_win} wins), {int(r['n_open'] or 0)} open."
+                        ),
+                    })
+
+                # (2) THEN — configured target_wallets that aren't already
+                # present from (1). These are operator-vouched-for but have
+                # no mirror history yet.
                 raw = await conn.fetchval(
                     "SELECT value FROM config_settings "
                     "WHERE config_type='copytrading_config' "
@@ -12308,12 +12405,8 @@ class DashboardEndpoints:
                             if not isinstance(w, str) or not w.strip():
                                 continue
                             s = w.strip()
-                            # Strip '@chain' suffix; this discovery page is solana-only
                             addr = s.split('@')[0] if '@' in s else s
-                            if addr in seen:
-                                continue
-                            # Solana only on /copytrading/discovery; skip EVM
-                            if addr.startswith('0x'):
+                            if addr in seen or addr.startswith('0x'):
                                 continue
                             seen.add(addr)
                             wallets.append({
@@ -12327,48 +12420,11 @@ class DashboardEndpoints:
                                 'category': 'operator_targets',
                                 'verified': True,
                                 'data_source': 'operator_configured',
-                                'note': 'Configured by operator in /copytrading/settings target_wallets.',
+                                'note': (
+                                    'Configured by operator in /copytrading/settings '
+                                    'target_wallets — no mirror history yet.'
+                                ),
                             })
-
-                # (2) Active source_wallets from copytrading_trades
-                rows = await conn.fetch(
-                    """
-                    SELECT source_wallet, chain,
-                           COUNT(*) AS n,
-                           COUNT(*) FILTER (WHERE status='open') AS n_open,
-                           COALESCE(SUM(profit_loss) FILTER (WHERE profit_loss IS NOT NULL), 0) AS pnl,
-                           MAX(COALESCE(exit_timestamp, entry_timestamp)) AS last_ts
-                    FROM copytrading_trades
-                    WHERE COALESCE(exit_timestamp, entry_timestamp) > NOW() - INTERVAL '60 days'
-                      AND source_wallet IS NOT NULL
-                    GROUP BY source_wallet, chain
-                    ORDER BY COUNT(*) DESC, SUM(profit_loss) DESC NULLS LAST
-                    LIMIT $1
-                    """,
-                    max(max_results, 10),
-                )
-                for r in rows:
-                    addr = (r['source_wallet'] or '').strip()
-                    if not addr or addr in seen:
-                        continue
-                    # Solana-only page
-                    if addr.startswith('0x'):
-                        continue
-                    seen.add(addr)
-                    last_ts = r['last_ts']
-                    wallets.append({
-                        'address': addr,
-                        'score': 75.0 if r['n_open'] > 0 else 50.0,
-                        'win_rate': 0.0,  # only meaningful when trades have closed
-                        'total_trades': int(r['n']),
-                        'total_pnl': float(r['pnl'] or 0),
-                        'avg_trade_size': 0,
-                        'last_active': last_ts.strftime('%Y-%m-%d') if isinstance(last_ts, datetime) else 'recently',
-                        'category': 'onchain_active',
-                        'verified': True,
-                        'data_source': 'copytrading_trades',
-                        'note': f"{int(r['n'])} trades mirrored (60d), {int(r['n_open'])} still open.",
-                    })
         except Exception as e:
             logger.error(f"local-fallback DB query failed: {e}")
             return wallets

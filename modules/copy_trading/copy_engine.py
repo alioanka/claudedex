@@ -1884,7 +1884,24 @@ class CopyTradingEngine(BaseModule):
                             json.dumps({'dry_run': self.dry_run, 'no_matching_buy': True})
                         )
                 else:
-                    # BUY: Record new open position
+                    # BUY: Record new open position.
+                    # Stash tokens_received (human-readable token count) into
+                    # metadata so the dashboard can compute correct live PnL.
+                    # Without this, copytrading_trades.amount is the SOL amount
+                    # (not the token count) and the dashboard cannot derive
+                    # current_value = live_price × tokens. Fail-soft: if
+                    # the helper can't fetch the price, omit the field.
+                    tokens_received = None
+                    try:
+                        if chain == 'solana' and usd_value and usd_value > 0:
+                            tokens_received = await self._estimate_tokens_received(
+                                token_addr, float(usd_value)
+                            )
+                    except Exception as e:
+                        logger.debug(f"_estimate_tokens_received failed: {e}")
+                    meta = {'dry_run': self.dry_run}
+                    if tokens_received and tokens_received > 0:
+                        meta['tokens_received'] = tokens_received
                     await conn.execute("""
                         INSERT INTO copytrading_trades (
                             trade_id, token_address, chain, source_wallet, source_tx,
@@ -1899,7 +1916,7 @@ class CopyTradingEngine(BaseModule):
                         usd_value, 0.0, 0.0, 0.0,
                         'open' if result.get('success') else 'failed', self.dry_run, now,
                         result.get('tx_hash'), native_price,
-                        json.dumps({'dry_run': self.dry_run})
+                        json.dumps(meta)
                     )
                     logger.debug(f"💾 Logged BUY to copytrading_trades: {trade_id}")
 
@@ -2006,6 +2023,45 @@ class CopyTradingEngine(BaseModule):
         return contract.functions.balanceOf(
             Web3.to_checksum_address(self.executor.evm_wallet)
         ).call()
+
+    async def _estimate_tokens_received(self, mint: str, usd_spent: float) -> Optional[float]:
+        """Estimate the human-readable token count bought for `usd_spent`
+        USD on Solana. Used to populate metadata.tokens_received on BUY
+        so the dashboard can show correct live PnL.
+
+        Reads the token's current USD price from Jupiter Price v3
+        (free tier), divides usd_spent by that price. Returns None on
+        any failure — caller treats None as "skip the field".
+        """
+        if not mint or usd_spent <= 0:
+            return None
+        try:
+            import aiohttp
+            timeout = aiohttp.ClientTimeout(total=5)
+            url = f"https://api.jup.ag/price/v3?ids={mint}"
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+        except Exception:
+            return None
+        # v3 shape: {<mint>: {"usdPrice": "...", ...}}; legacy v2:
+        # {"data": {<mint>: {"price": ...}}}
+        payload = data.get('data') if isinstance(data, dict) and 'data' in data else data
+        if not isinstance(payload, dict):
+            return None
+        row = payload.get(mint)
+        if not isinstance(row, dict):
+            return None
+        price_raw = row.get('usdPrice') or row.get('price') or row.get('usd') or 0
+        try:
+            price = float(price_raw)
+        except (TypeError, ValueError):
+            return None
+        if price <= 0:
+            return None
+        return usd_spent / price
 
     async def _process_close_flag_files(self) -> None:
         """Pick up logs/.close_copy_<trade_id> files dropped by the
