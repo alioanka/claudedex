@@ -2088,6 +2088,122 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         ),
     },
 
+    # ════════════════════════════════════════════════════════════════════
+    # Wave-4 T2 catalog additions: AI coverage for AI-Q-05 (calibrated
+    # booster inference wrap) + quorum-metrics observability.
+    # Commits: 16b7dab / a6c3a89 / c7e4a27 / 50bd9c3 / 68b20fb.
+    # ════════════════════════════════════════════════════════════════════
+    {
+        "id": "api_ai_quorum_metrics",
+        "title": "API: GET /api/ai/quorum-metrics?hours=24 (wave-4 50bd9c3)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "ai/quorum-metrics?hours=24",
+        "cmd_preview": "GET /api/ai/quorum-metrics?hours=24",
+        "timeout_s": 15,
+        "description": (
+            "Multi-provider quorum agreement metrics for the dashboard "
+            "agreement-rate chart. Reads ai_feature_store rows whose "
+            "metadata.quorum_outcome is populated. Empty payload = "
+            "quorum_required=false OR the engine has not run since "
+            "wave-4 (no rows yet)."
+        ),
+    },
+    {
+        "id": "db_ai_quorum_outcomes",
+        "title": "DB: ai_feature_store quorum_outcome rows (c7e4a27)",
+        "category": "db",
+        "kind": "db_query",
+        # _persist_quorum_outcome writes one row per tick into
+        # ai_feature_store with metadata.quorum_outcome set to one of
+        # the documented labels (agree / disagree / collapsed / no_vote).
+        # This probe surfaces the per-outcome distribution over the
+        # last 24h — the same window the /api/ai/quorum-metrics
+        # endpoint defaults to.
+        "sql": (
+            "SELECT "
+            "  COALESCE(metadata->>'quorum_outcome', 'unknown') AS outcome, "
+            "  COUNT(*) AS n, "
+            "  MAX(timestamp) AS most_recent "
+            "FROM ai_feature_store "
+            "WHERE metadata->>'quorum_outcome' IS NOT NULL "
+            "  AND timestamp > NOW() - INTERVAL '24 hours' "
+            "GROUP BY outcome "
+            "ORDER BY n DESC"
+        ),
+        "cmd_preview": (
+            "GROUP BY metadata->>'quorum_outcome' FROM ai_feature_store, 24h"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Distribution of quorum-vote outcomes (agree / disagree / "
+            "collapsed / no_vote) for the last 24h. Source of the "
+            "dashboard agreement-rate chart. Empty = quorum_required "
+            "is false OR no LLM tick has run since wave-4 deployed."
+        ),
+    },
+    {
+        "id": "db_ai_calibrated_predictions_flag",
+        "title": "DB: AI ai_calibrated_predictions_enabled flag (AI-Q-05)",
+        "category": "db",
+        "kind": "db_query",
+        # Default-OFF flag operator flips after AI-Q-06 trainer has
+        # produced calibrated_*.pkl sidecars. Row absent = engine reads
+        # the EnsemblePredictor config default (False).
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key = 'ai_calibrated_predictions_enabled' "
+            "  AND config_type IN ('ai_config','ai_analysis','ml_config') "
+            "ORDER BY config_type"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key='ai_calibrated_predictions_enabled'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "AI-Q-05 calibrated booster inference gate. Default FALSE — "
+            "EnsemblePredictor base scores unchanged. Set to true once "
+            "the operator has run the AI-Q-06 trainer and confirmed "
+            "calibrated_<name>.pkl artefacts are present in the "
+            "models directory (db_ai_calibrated_model_artefacts probe)."
+        ),
+    },
+    {
+        "id": "db_ai_calibrated_model_artefacts",
+        "title": "DB: AI calibrated booster artefacts on disk (AI-Q-05)",
+        "category": "db",
+        "kind": "db_query",
+        # `pg_ls_dir` works inside the trading-postgres container even
+        # though we run the probe from the dashboard process — we read
+        # via asyncpg, which only sees what the DB process can see. The
+        # /app/models directory is the canonical container-side path
+        # (matches Dockerfile.dashboard + main bind-mount).
+        # Empty = AI-Q-06 trainer never ran OR the bind-mount points
+        # elsewhere; either way the flag has nothing to consume.
+        "sql": (
+            "SELECT name FROM pg_ls_dir('/app/models') AS name "
+            "WHERE name LIKE 'calibrated_%.pkl' "
+            "   OR name LIKE '%_calibrated.pkl' "
+            "   OR name LIKE '%_calibrated.joblib' "
+            "ORDER BY name"
+        ),
+        "cmd_preview": (
+            "SELECT FROM pg_ls_dir('/app/models') WHERE name LIKE 'calibrated_%.pkl'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Lists calibrated booster sidecars the EnsemblePredictor "
+            "loader expects. Names match either deliverable form "
+            "(calibrated_<name>.pkl) or the AI-Q-06 trainer form "
+            "(<name>_calibrated.{pkl,joblib}). Empty = no calibration "
+            "artefacts on disk; flipping the flag has no effect."
+        ),
+    },
+    # NOTE: 3 wave-4 AI script-grep catalog entries land in a follow-up
+    # commit (script_ai_calibrated_helper_present /
+    # script_ai_quorum_persist_present / script_ai_quorum_widget_present)
+    # alongside the bash helpers they invoke.
+
     # ── COPY_TRADING (A7 wave-2: operator-priority quant rebuild) ────────
     # Wallet-discovery + leader-scorer + Kelly sizing is the headline
     # feature this wave. Catalog gives the operator one-button checks
@@ -2472,6 +2588,88 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "chain rows = the chunked V3 impact probe returns None "
             "and the max_price_impact_bps refusal gate silently "
             "no-ops on that chain."
+        ),
+    },
+
+    # ── SOLANA (A3 wave-4: d6a4a8c Jito wiring, 3edd27e warmup) ────────
+    {
+        "id": "db_solana_jito_flag",
+        "title": "DB: SOLANA Jito-bundle enable + tip config (d6a4a8c)",
+        "category": "db",
+        "kind": "db_query",
+        # Two rows under config_type='solana_jupiter' (see
+        # modules/solana_trading/config/solana_config_manager.py
+        # CONFIG_KEY_MAPPING). Flag default False, tip default
+        # 50_000 lamports (~$0.01 @ SOL=$200 -- documented competitive
+        # floor per Jito ops doc; arbitrage's 10k default lands less
+        # reliably during peak hours). Empty = engine falls back to
+        # dataclass defaults (still safe; flag stays off).
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ("
+            "  'solana_jito_bundle_enabled',"
+            "  'solana_jito_tip_lamports'"
+            ") "
+            "ORDER BY key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN ('solana_jito_bundle_enabled',"
+            "'solana_jito_tip_lamports')"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Jito bundle path config. Defaults: enabled=false, "
+            "tip=50000 lamports. When flipped on, engine submits "
+            "signed Jupiter swap + tip via JitoClient.send_bundle "
+            "and falls back to vanilla execute_swap on rejection / "
+            "rate-limit / timeout. Watch logs/solana_trading/ for "
+            "SEND / LANDED / REJECTED / SKIPPED / fell-back lines."
+        ),
+    },
+    {
+        "id": "db_solana_pump_predictor_flag",
+        "title": "DB: SOLANA pump-predictor enable flag (3edd27e)",
+        "category": "db",
+        "kind": "db_query",
+        # Wave-4 pump-predictor warmup pre-fills the per-token
+        # TokenPriceBuffer at engine startup so the gate has 60 mins
+        # of history from minute 0. The gate itself stays opt-in via
+        # this flag (default False). When operator flips it on, the
+        # gate works immediately instead of dropping every entry for
+        # 30 min waiting for the buffer to fill.
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key = 'solana_pump_predictor_enabled' "
+            "ORDER BY config_type"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key='solana_pump_predictor_enabled'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Pump-predictor gate flag. Default false. Setting true "
+            "activates the warmup-prefilled price buffer as a "
+            "rug/pump filter on entries. Empty result = engine reads "
+            "config_manager default (false). Companion to the "
+            "warmup pre-fetch which seeds 60x 1m Birdeye bars when "
+            "BIRDEYE_API_KEY is present, else 1 Jupiter spot bar."
+        ),
+    },
+    {
+        "id": "script_solana_jito_helper_present",
+        "title": "Script: SOLANA _execute_swap_via_jito helper presence (d6a4a8c)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/solana_jito_helper_check.sh"],
+        "cmd_preview": "bash scripts/solana_jito_helper_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Source-grep: asserts modules/solana_trading/core/"
+            "solana_engine.py defines _execute_swap_via_jito() AND "
+            "_open_position calls it AND JitoClient is imported. "
+            "Catches a regression that quietly turns "
+            "solana_jito_bundle_enabled=True into a no-op fall-back "
+            "to vanilla Jupiter swaps with no MEV protection."
         ),
     },
 ]
