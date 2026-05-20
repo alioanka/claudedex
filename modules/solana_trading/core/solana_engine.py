@@ -61,7 +61,7 @@ httpx.AsyncClient = _CompatAsyncClient
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from enum import Enum
@@ -1240,6 +1240,15 @@ class SolanaTradingEngine:
             # Reconcile open positions against on-chain SPL balances (MB-09)
             await self._reconcile_positions_on_startup()
 
+            # Wave-4: pre-fetch 60 1m bars per active token so the
+            # pump-predictor gate has history immediately on restart
+            # instead of waiting ~30min for the live poll loop to fill
+            # the buffer. Tolerant of every failure -- never blocks startup.
+            try:
+                await self._warmup_price_buffer()
+            except Exception as wu_err:
+                logger.warning(f"price-buffer warmup failed (non-fatal): {wu_err}")
+
             # Initialize SafetyEngine for all strategies (slippage, circuit breaker, etc.)
             try:
                 from modules.solana_trading.core.safety_engine import SafetyEngine, SafetyConfig
@@ -2080,6 +2089,130 @@ class SolanaTradingEngine:
                 )
         except Exception as e:
             logger.warning(f"Failed to remove position {token_mint}: {e}")
+
+    async def _warmup_price_buffer(self) -> None:
+        """Wave-4: pre-fill the per-token price buffer at engine startup.
+
+        Default poll cadence appends one price per scan loop, so the
+        pump-predictor (sequence_length=20, buffer maxlen=60) needs
+        ~30min of uptime before its gate has anything to score. This
+        warmup fetches the last hour of 1m bars per active token from
+        Birdeye (when BIRDEYE_API_KEY is configured) and seeds the
+        buffer in one shot. If no Birdeye key is configured we seed a
+        single current-price bar via the existing JupiterClient stack
+        so the buffer is at least non-empty.
+
+        Behaviour-preserving on its own — the predictor gate is itself
+        opt-in via `solana_pump_predictor_enabled` (default False).
+        Skips per-token when the buffer is already full.
+        """
+        try:
+            tokens = list(self.config_manager.jupiter_tokens) if self.config_manager else []
+        except Exception as e:
+            logger.debug(f"warmup: could not read jupiter_tokens: {e}")
+            tokens = []
+        # Also warm any positions reconciled from DB.
+        for mint in list(self.active_positions.keys()):
+            sym = self.active_positions[mint].token_symbol or mint[:6]
+            if not any(m == mint for _, m in tokens):
+                tokens.append((sym, mint))
+
+        if not tokens:
+            logger.info("📊 price-buffer warmup: no active tokens to seed")
+            return
+
+        try:
+            from security.secrets_manager import secrets
+            birdeye_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False) or os.getenv('BIRDEYE_API_KEY')
+        except Exception:
+            birdeye_key = os.getenv('BIRDEYE_API_KEY')
+
+        target = self.price_buffer.maxlen  # 60
+        seeded = 0
+        skipped_full = 0
+        spot_fallback = 0
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as session:
+            for symbol, mint in tokens:
+                if self.price_buffer.size(mint) >= target:
+                    skipped_full += 1
+                    continue
+                bars = []
+                if birdeye_key:
+                    bars = await self._birdeye_history(session, mint, birdeye_key, target)
+                if bars:
+                    for ts, price in bars:
+                        self.price_buffer.append(mint, price, ts=ts)
+                    seeded += 1
+                    logger.info(
+                        "📊 price-buffer warmup: seeded %s (%s) with %d bars",
+                        symbol, mint[:8], len(bars),
+                    )
+                else:
+                    # No history available — seed with current spot so
+                    # the buffer is at least non-empty; the predictor
+                    # will still need to accumulate to sequence_length.
+                    try:
+                        price = await self._get_token_price(mint)
+                        if price and price > 0:
+                            self.price_buffer.append(mint, float(price))
+                            spot_fallback += 1
+                    except Exception:
+                        pass
+
+        logger.info(
+            "📊 price-buffer warmup done: %d seeded, %d already full, %d spot-only (no BIRDEYE_API_KEY history)",
+            seeded, skipped_full, spot_fallback,
+        )
+
+    async def _birdeye_history(
+        self,
+        session: aiohttp.ClientSession,
+        mint: str,
+        api_key: str,
+        target_bars: int,
+    ) -> List[Tuple[float, float]]:
+        """Fetch the last `target_bars` 1m bars from Birdeye history_price.
+
+        Returns a list of (ts_seconds, price_usd) tuples, oldest first.
+        Returns [] on any failure so the caller falls back to spot seed.
+        """
+        try:
+            import time as _time
+            now = int(_time.time())
+            time_from = now - (target_bars + 5) * 60  # small headroom
+            url = "https://public-api.birdeye.so/defi/history_price"
+            params = {
+                'address': mint,
+                'address_type': 'token',
+                'type': '1m',
+                'time_from': str(time_from),
+                'time_to': str(now),
+            }
+            headers = {
+                'accept': 'application/json',
+                'x-chain': 'solana',
+                'X-API-KEY': api_key,
+            }
+            async with session.get(url, params=params, headers=headers, timeout=10) as resp:
+                if resp.status != 200:
+                    logger.debug(f"Birdeye history {resp.status} for {mint[:8]}")
+                    return []
+                data = await resp.json()
+                items = (data.get('data') or {}).get('items') or []
+                out = []
+                for it in items[-target_bars:]:
+                    ts = float(it.get('unixTime', 0))
+                    price = float(it.get('value', 0))
+                    if ts > 0 and price > 0:
+                        out.append((ts, price))
+                return out
+        except asyncio.TimeoutError:
+            logger.debug(f"Birdeye history timeout for {mint[:8]}")
+        except Exception as e:
+            logger.debug(f"Birdeye history error for {mint[:8]}: {e}")
+        return []
 
     async def _reconcile_positions_on_startup(self) -> None:
         """Cross-reference DB open positions with on-chain SPL balances.
