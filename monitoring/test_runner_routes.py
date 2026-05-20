@@ -30,7 +30,9 @@ GET  /api/test-runner/tests
           "kind": "bash",              # one of: bash | probe | db_query
           "cmd_preview": "bash scripts/preflight.sh",
           "timeout_s": 300,
-          "description": "..."         # short tooltip text
+          "description": "...",        # short tooltip text
+          "tags": ["must"]             # optional; allowed values:
+                                        #   must, new, p0, flaky, expected-empty
         },
         ...
       ]
@@ -2717,10 +2719,162 @@ TEST_CATALOG: List[Dict[str, Any]] = [
 ]
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Tag system — operator-facing badges. Tags are computed centrally
+# (NOT inlined into each catalog dict) so the 121-entry catalog stays
+# diff-reviewable and a single edit here re-tags the whole set.
+#
+# Allowed values (matched by frontend pill colors):
+#   must            — sanity / cap-seed / dry-run probes the operator
+#                     should run on every deploy. Red pill.
+#   new             — Wave-3 + Wave-4 additions. Green pill so the
+#                     operator can spot recent coverage at a glance.
+#   p0              — migration-present probes (023/024/029/030);
+#                     orange pill — a 0-row response means a missing
+#                     migration, which silently breaks an engine path.
+#   flaky           — known-intermittent; yellow pill so the operator
+#                     can deprioritize a single red without alarm.
+#   expected-empty  — probes that ROUTINELY return 0 rows in DRY_RUN
+#                     mode (e.g. live PnL splits, allocator proposals).
+#                     Grey pill so an empty result is NOT misread as
+#                     a regression.
+#
+# When adding a new test:
+#   1. Append the dict to TEST_CATALOG as before.
+#   2. If it deserves any tag(s), add an entry below. Untagged entries
+#      simply render without pills.
+# ─────────────────────────────────────────────────────────────────────
+ALLOWED_TAGS = frozenset({"must", "new", "p0", "flaky", "expected-empty"})
+
+# Sanity scripts — single-purpose source-greps the operator should run
+# on every deploy. Failure = a regression in the named commit's fix.
+_MUST_SANITY_SCRIPTS = {
+    "script_dex_web3_v6_imports",
+    "script_dex_mev_unbound_check",
+    "script_arb_nameerror_regression",
+    "script_sniper_listener_widget_present",
+}
+
+# Per-module DRY_RUN GET probes — every engine MUST report dry_run
+# explicitly so the operator can see at a glance which modules will
+# place real orders on next subprocess restart.
+_MUST_DRY_RUN_PROBES = {
+    "api_dry_run_arbitrage", "api_dry_run_sniper", "api_dry_run_copytrading",
+    "api_dry_run_ai", "api_dry_run_futures", "api_dry_run_solana",
+    "api_dry_run_dex",
+}
+
+# Cap / safety-toggle seed probes — confirm the engines have the
+# config rows they need to enforce per-module caps. Missing rows mean
+# the engine silently falls back to dataclass defaults (still safe but
+# the dashboard knobs become no-ops).
+_MUST_CAP_SEED_PROBES = {
+    "db_seeded_caps",
+    "db_migration_seeds",
+    "db_breaker_thresholds",
+    "db_futures_leverage_caps",
+    "db_copy_probation_thresholds",
+}
+
+# Migration-present probes — surface whether migrations 023/024/029/030
+# have been applied. A 0-row response = engine path is silently broken.
+_P0_MIGRATION_PROBES = {
+    "db_ai_calibration_table",          # mig 023
+    "db_copy_leader_scores_table",      # mig 024
+    "db_futures_funding_payments_recent",  # mig 029
+    "db_copy_probation_thresholds",     # mig 030 (also tagged must)
+}
+
+# Wave-3 + Wave-4 catalog additions — auto-flagged via commit-hash
+# grep below + explicit Wave-4 section IDs. Operator wanted a visual
+# badge for recent additions so they don't have to memorize which
+# entries are "new" since the c9adaa8 close-out.
+_NEW_WAVE34_COMMIT_HASHES = frozenset({
+    "115cb35", "142250b", "16b7dab", "34e6c95", "3edd27e", "50bd9c3",
+    "68b20fb", "6f66608", "6f96075", "a6c3a89", "b805626", "c7e4a27",
+    "d6a4a8c",
+})
+
+# Explicit Wave-4 entries (under the "Wave-4 …" section headers) whose
+# descriptions don't happen to mention one of the W3/W4 commit hashes.
+# Listed by id so the frontend can still render the green pill.
+_NEW_EXPLICIT_IDS = {
+    "api_futures_funding_forecast",
+    "db_futures_telegram_alert_flag",
+    "db_ai_calibrated_predictions_flag",
+    "db_ai_calibrated_model_artefacts",
+    "db_copy_probation_thresholds",
+    "db_copy_probation_state",
+    "db_copy_exposure_breakdown",
+    "db_copy_cross_module_cap",
+}
+
+# Probes that return 0 rows in DRY_RUN mode by design — tagging avoids
+# the operator interpreting an empty result as a regression.
+_EXPECTED_EMPTY_IDS = {
+    "orchestrator_train_report",
+    "orchestrator_train_save",
+    "db_breaker_active_events",
+    "api_breaker_active",
+    "db_alloc_current",
+    "api_alloc_current",
+    "api_alloc_pending",
+    "db_copy_probation_state",
+    "api_orch_pending_recs",
+    "db_orch_recs_summary",
+    "db_orch_training_data",
+    "db_ai_calibration_sample",
+    "db_ai_bandit_state",
+    "db_ai_quorum_outcomes",
+    "api_ai_quorum_metrics",
+    "db_copy_leader_scores_post_refresh",
+    "db_ai_calibrated_model_artefacts",
+}
+
+
+def _compute_tags(entry: Dict[str, Any]) -> List[str]:
+    """Compute the visible tag list for a single catalog entry.
+
+    Source-of-truth lookup tables above; this function just unions them.
+    Result is sorted + deduped + filtered to ALLOWED_TAGS so a typo
+    can't ship a mystery pill to the frontend.
+    """
+    import re as _re
+    eid = entry["id"]
+    tags: set = set()
+    if eid in _MUST_SANITY_SCRIPTS or eid in _MUST_DRY_RUN_PROBES \
+            or eid in _MUST_CAP_SEED_PROBES:
+        tags.add("must")
+    if eid in _P0_MIGRATION_PROBES:
+        tags.add("p0")
+    if eid in _EXPECTED_EMPTY_IDS:
+        tags.add("expected-empty")
+    if eid in _NEW_EXPLICIT_IDS:
+        tags.add("new")
+    else:
+        # Commit-hash grep across the description / title / preview blob
+        # so future Wave-N additions auto-light-up the moment their
+        # commit hash lands in _NEW_WAVE34_COMMIT_HASHES.
+        blob = " ".join((
+            entry.get("description", "") or "",
+            entry.get("title", "") or "",
+            entry.get("cmd_preview", "") or "",
+        ))
+        for h in _re.findall(r"\b[0-9a-f]{7,8}\b", blob):
+            if h in _NEW_WAVE34_COMMIT_HASHES:
+                tags.add("new")
+                break
+    # Allow per-entry override via optional "tags" field (additive).
+    for t in entry.get("tags", []) or []:
+        tags.add(t)
+    return sorted(t for t in tags if t in ALLOWED_TAGS)
+
+
 def _public_catalog_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
     """Strip executor-internal fields (cmd/sql/endpoint) before sending
     the catalog to the client. The client only needs id/title/preview
-    to render a button — it never needs the raw command."""
+    to render a button — it never needs the raw command. Tags are
+    computed via _compute_tags so the operator sees pill badges."""
     return {
         "id": entry["id"],
         "title": entry["title"],
@@ -2729,6 +2883,7 @@ def _public_catalog_entry(entry: Dict[str, Any]) -> Dict[str, Any]:
         "cmd_preview": entry["cmd_preview"],
         "timeout_s": entry["timeout_s"],
         "description": entry.get("description", ""),
+        "tags": _compute_tags(entry),
     }
 
 
