@@ -439,7 +439,7 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "SELECT username, is_active, failed_login_attempts, "
             "  CASE WHEN failed_login_attempts >= 5 "
             "       THEN 'LOCKED' ELSE 'ok' END AS status, "
-            "  last_login_at, updated_at "
+            "  last_login, updated_at "
             "FROM users WHERE username = 'admin'"
         ),
         "cmd_preview": (
@@ -1276,16 +1276,21 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "category": "db",
         "kind": "db_query",
         "sql": (
-            "SELECT chain, dex_used, status, COUNT(*) AS n, "
+            # trades schema has no 'dex_used' column (data/storage/database.py
+            # line 235); the executor stashes the routed DEX inside metadata.
+            "SELECT chain, "
+            "  COALESCE(metadata->>'dex', strategy) AS dex_used, "
+            "  status, COUNT(*) AS n, "
             "  ROUND(AVG(slippage)::numeric, 5) AS avg_slippage, "
-            "  ROUND(AVG(gas_used)::numeric, 0) AS avg_gas "
+            "  ROUND(AVG(gas_fee)::numeric, 8) AS avg_gas_fee "
             "FROM trades "
             "WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
             "GROUP BY chain, dex_used, status "
             "ORDER BY chain, dex_used, status"
         ),
         "cmd_preview": (
-            "SELECT chain,dex_used,status,COUNT(*),AVG(slippage),AVG(gas_used) FROM trades"
+            "trades last 24h: chain, metadata.dex, status, COUNT, "
+            "AVG(slippage), AVG(gas_fee)"
         ),
         "timeout_s": 15,
         "description": (
@@ -1328,15 +1333,19 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         "category": "db",
         "kind": "db_query",
         "sql": (
-            "SELECT chain, dex_used, COUNT(*) AS open_n, "
-            "  ROUND(SUM(amount_in)::numeric, 4) AS total_in, "
+            # trades has no 'dex_used' or 'amount_in' — use metadata.dex
+            # and the canonical 'amount' column.
+            "SELECT chain, "
+            "  COALESCE(metadata->>'dex', strategy) AS dex_used, "
+            "  COUNT(*) AS open_n, "
+            "  ROUND(SUM(amount)::numeric, 4) AS total_amount, "
             "  MIN(entry_timestamp) AS oldest, "
             "  MAX(entry_timestamp) AS newest "
             "FROM trades WHERE status = 'open' "
             "GROUP BY chain, dex_used ORDER BY chain, dex_used"
         ),
         "cmd_preview": (
-            "SELECT chain,dex_used,COUNT(*),SUM(amount_in) FROM trades WHERE status='open'"
+            "Open trades: chain, metadata.dex, COUNT, SUM(amount), oldest/newest"
         ),
         "timeout_s": 10,
         "description": (
@@ -1384,22 +1393,30 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         # plaintext value — just whether the encrypted row exists per
         # chain so the operator can confirm the migration ran.
         "sql": (
-            "SELECT key_name, "
+            # config_sensitive uses column 'key' (not key_name) per
+            # migration 002. secure_credentials (migration 012) is the
+            # newer table with key_name. ARB receivers can live in either
+            # — UNION so this probe lights up regardless of which path
+            # the operator chose.
+            "SELECT key AS key_name, "
             "  CASE WHEN encrypted_value IS NOT NULL "
             "       AND length(encrypted_value) > 0 "
             "       THEN 'present' ELSE 'missing' END AS status, "
             "  updated_at "
             "FROM config_sensitive "
-            "WHERE key_name IN ("
-            "  'FLASH_LOAN_RECEIVER_CONTRACT',"
-            "  'FLASH_LOAN_RECEIVER_CONTRACT_ETH',"
-            "  'FLASH_LOAN_RECEIVER_CONTRACT_ARB',"
-            "  'FLASH_LOAN_RECEIVER_CONTRACT_BASE'"
-            ") "
+            "WHERE key LIKE 'FLASH_LOAN_RECEIVER%' "
+            "UNION ALL "
+            "SELECT key_name, "
+            "  CASE WHEN encrypted_value IS NOT NULL "
+            "       AND length(encrypted_value) > 0 "
+            "       THEN 'present' ELSE 'missing' END AS status, "
+            "  updated_at "
+            "FROM secure_credentials "
+            "WHERE key_name LIKE 'FLASH_LOAN_RECEIVER%' "
             "ORDER BY key_name"
         ),
         "cmd_preview": (
-            "SELECT key_name,status FROM config_sensitive WHERE key_name LIKE 'FLASH_LOAN_RECEIVER%'"
+            "config_sensitive.key + secure_credentials.key_name LIKE 'FLASH_LOAN_RECEIVER%'"
         ),
         "timeout_s": 10,
         "description": (
@@ -1420,16 +1437,20 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         # vary by chain (ETH > ARB > BASE) instead of every row being
         # exactly 15.0.
         "sql": (
+            # arbitrage_trades schema has no gas_cost_usd / slippage_cost_usd
+            # columns (migration 009) — the 8cf0143 fix writes the cost
+            # breakdown into the metadata JSONB. Read it back.
             "SELECT chain, status, COUNT(*) AS n, "
-            "  ROUND(AVG(NULLIF(gas_cost_usd, 0))::numeric, 4) AS avg_gas_usd, "
-            "  ROUND(AVG(NULLIF(slippage_cost_usd, 0))::numeric, 4) AS avg_slip_usd, "
+            "  ROUND(AVG(NULLIF((metadata->>'gas_cost_usd')::numeric, 0))::numeric, 4) AS avg_gas_usd, "
+            "  ROUND(AVG(NULLIF((metadata->>'slippage_cost_usd')::numeric, 0))::numeric, 4) AS avg_slip_usd, "
             "  ROUND(SUM(profit_loss)::numeric, 4) AS sum_pnl "
             "FROM arbitrage_trades "
             "WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
             "GROUP BY chain, status ORDER BY chain, status"
         ),
         "cmd_preview": (
-            "GROUP-BY chain,status on arbitrage_trades, 24h, AVG gas_cost"
+            "Per-chain ARB roll-up — gas / slippage / PnL last 24h "
+            "(costs read from metadata JSONB)"
         ),
         "timeout_s": 15,
         "description": (
@@ -1564,7 +1585,9 @@ TEST_CATALOG: List[Dict[str, Any]] = [
         # close-side qty looks orders-of-magnitude off would have
         # caught fire pre-fix.
         "sql": (
-            "SELECT status, "
+            # solana_trades is closed-only by schema (migration 008) — no
+            # 'status' column. Group by strategy + is_simulated instead.
+            "SELECT strategy, is_simulated, "
             "  COUNT(*) AS n, "
             "  ROUND(AVG(amount_sol)::numeric, 4) AS avg_amount_sol, "
             "  ROUND(AVG(pnl_usd)::numeric, 4) AS avg_pnl_usd, "
@@ -1572,10 +1595,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "  MAX(entry_time) AS newest "
             "FROM solana_trades "
             "WHERE entry_time > NOW() - INTERVAL '24 hours' "
-            "GROUP BY status ORDER BY status"
+            "GROUP BY strategy, is_simulated ORDER BY strategy, is_simulated"
         ),
         "cmd_preview": (
-            "GROUP-BY status on solana_trades, 24h, AVG amount_sol + pnl_usd"
+            "GROUP-BY strategy,is_simulated on solana_trades, 24h"
         ),
         "timeout_s": 15,
         "description": (
@@ -1981,10 +2004,10 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "  feature_vector->'bandit_v1'->>'template' AS template, "
             "  COUNT(*) AS selections, "
             "  ROUND(AVG((feature_vector->'bandit_v1'->>'reward')::numeric)::numeric, 4) AS avg_reward, "
-            "  MAX(written_at) AS last_used "
+            "  MAX(timestamp) AS last_used "
             "FROM ai_feature_store "
             "WHERE feature_vector->'bandit_v1'->>'template' IS NOT NULL "
-            "  AND written_at > NOW() - INTERVAL '14 days' "
+            "  AND timestamp > NOW() - INTERVAL '14 days' "
             "GROUP BY template "
             "ORDER BY selections DESC"
         ),
