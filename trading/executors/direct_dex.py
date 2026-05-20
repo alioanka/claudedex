@@ -646,17 +646,28 @@ class DirectDEXExecutor(BaseExecutor):
             # Deadline (20 minutes from now)
             deadline = int((datetime.now() + timedelta(minutes=20)).timestamp())
 
-            # Get optimal gas price
-            gas_price = await self._get_optimal_gas_price(order.chain)
-
-            # Common transaction parameters
-            tx_params = {
+            # Common transaction parameters — start with non-gas fields
+            tx_params: Dict[str, Any] = {
                 'from': Web3.to_checksum_address(order.wallet_address),
                 'gas': int(quote.gas_estimate * self.gas_buffer),
-                'gasPrice': gas_price,
                 'nonce': await self._get_next_nonce(order.chain),
-                'chainId': w3.eth.chain_id
+                'chainId': w3.eth.chain_id,
             }
+
+            # EIP-1559 (Type-2) where supported; legacy gasPrice elsewhere.
+            # Type-2 is strictly cheaper in expectation because it bids
+            # only the tip needed for next-block inclusion (vs `gasPrice`
+            # which the node bumps to current base). BSC stays legacy
+            # because validators don't accept Type-2.
+            fees_1559 = None
+            if self._chain_supports_1559(order.chain):
+                fees_1559 = await self._get_eip1559_fees(order.chain)
+            if fees_1559:
+                tx_params['type'] = 2
+                tx_params['maxFeePerGas'] = fees_1559['maxFeePerGas']
+                tx_params['maxPriorityFeePerGas'] = fees_1559['maxPriorityFeePerGas']
+            else:
+                tx_params['gasPrice'] = await self._get_optimal_gas_price(order.chain)
 
             # Build transaction based on DEX type
             if 'v3' in quote.dex.value.lower():
@@ -851,12 +862,116 @@ class DirectDEXExecutor(BaseExecutor):
         'optimism': 5,
     }
 
+    # EIP-1559 support per chain. BSC still requires legacy Type-0 (PoA
+    # validators do not accept Type-2 even though the RPC accepts it);
+    # everywhere else we want Type-2 because it bids only what's needed
+    # vs `gasPrice` which the node bumps to current base. Default-off
+    # for unknown chains — caller can opt in via config.
+    _CHAIN_SUPPORTS_1559: Dict[str, bool] = {
+        'ethereum': True,
+        'polygon': True,    # Polygon supports 1559 since EIP-1559 hardfork
+        'arbitrum': True,
+        'base': True,
+        'optimism': True,
+        'bsc': False,       # PoA — legacy Type-0 still required
+    }
+
     def _resolve_chain_max_gwei(self, chain: str) -> int:
         overrides = self.config.get('chain_max_gas_gwei', {}) or {}
         chain_l = (chain or '').lower()
         if chain_l in overrides:
             return int(overrides[chain_l])
         return self._CHAIN_MAX_GWEI_DEFAULTS.get(chain_l, int(self.max_gas_price))
+
+    def _chain_supports_1559(self, chain: str) -> bool:
+        """Return True iff the chain accepts EIP-1559 Type-2 txs.
+
+        Operator can override via config['chain_supports_1559'][chain].
+        """
+        overrides = self.config.get('chain_supports_1559', {}) or {}
+        chain_l = (chain or '').lower()
+        if chain_l in overrides:
+            return bool(overrides[chain_l])
+        return self._CHAIN_SUPPORTS_1559.get(chain_l, False)
+
+    async def _get_eip1559_fees(self, chain: str) -> Optional[Dict[str, int]]:
+        """Compute (maxPriorityFeePerGas, maxFeePerGas) in wei via
+        eth_feeHistory; fall back to w3.eth.max_priority_fee.
+
+        Returns dict with both keys, or None if 1559 unsupported / fetch
+        fails (caller should fall back to legacy gasPrice).
+
+        Strategy: pull the last 5 blocks of base-fee + tip distributions,
+        use the median 50th-percentile priority tip across recent blocks
+        as our tip bid, then maxFee = next-block predicted base * 2 +
+        tip (the 2x base headroom is the Uniswap/MetaMask convention to
+        survive base-fee spikes during the 12s wait).
+
+        Both values are clamped at the per-chain gwei ceiling so a
+        spiked tip never breaches our kill-switch.
+        """
+        w3 = self.w3_connections.get(chain) or self.w3_connections.get(chain.lower())
+        if not w3:
+            return None
+        loop = asyncio.get_event_loop()
+        try:
+            # eth_feeHistory(blocks, newest, reward_percentiles)
+            hist = await loop.run_in_executor(
+                None,
+                lambda: w3.eth.fee_history(5, 'latest', [50]),
+            )
+            base_fees = list(hist.get('baseFeePerGas', []))
+            rewards = list(hist.get('reward', []))
+            if not base_fees:
+                raise ValueError("fee_history missing baseFeePerGas")
+
+            # Median of 50th-percentile tips across the 5-block window
+            tips_p50 = [int(r[0]) for r in rewards if r]
+            if tips_p50:
+                tips_sorted = sorted(tips_p50)
+                tip = tips_sorted[len(tips_sorted) // 2]
+            else:
+                tip = await loop.run_in_executor(
+                    None, lambda: int(w3.eth.max_priority_fee)
+                )
+
+            # baseFeePerGas[-1] is the predicted next-block base
+            next_base = int(base_fees[-1])
+            max_fee = next_base * 2 + tip
+
+            # Clamp at per-chain ceiling — randomization/clamp in MEV
+            # layer also applies but enforce here too so the bid we
+            # build is already legal.
+            max_gwei = self._resolve_chain_max_gwei(chain)
+            ceil_wei = int(max_gwei) * 10 ** 9
+            if max_fee > ceil_wei:
+                max_fee = ceil_wei
+            if tip > ceil_wei:
+                tip = ceil_wei
+
+            return {
+                'maxPriorityFeePerGas': int(tip),
+                'maxFeePerGas': int(max_fee),
+            }
+        except Exception as e:
+            logger.debug("eth_feeHistory failed on %s (%s); falling back to max_priority_fee", chain, e)
+            try:
+                tip = await loop.run_in_executor(
+                    None, lambda: int(w3.eth.max_priority_fee)
+                )
+                base = await loop.run_in_executor(
+                    None, lambda: int(w3.eth.gas_price)
+                )
+                max_fee = base * 2 + tip
+                max_gwei = self._resolve_chain_max_gwei(chain)
+                ceil_wei = int(max_gwei) * 10 ** 9
+                return {
+                    'maxPriorityFeePerGas': min(int(tip), ceil_wei),
+                    'maxFeePerGas': min(int(max_fee), ceil_wei),
+                }
+            except Exception as fallback_err:
+                logger.debug("EIP-1559 fee fetch fully failed on %s: %s", chain, fallback_err)
+                return None
 
     async def _get_optimal_gas_price(self, chain: str) -> int:
         """Get optimal gas price for chain.
