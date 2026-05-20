@@ -145,7 +145,7 @@ TEST_CATALOG: List[Dict[str, Any]] = [
     },
     {
         "id": "orchestrator_train_report",
-        "title": "Orchestrator: train ML model (report-only)",
+        "title": "Orchestrator: train ML model (report-only) [expected-empty]",
         "category": "scripts",
         "kind": "bash",
         "cmd": [
@@ -164,7 +164,7 @@ TEST_CATALOG: List[Dict[str, Any]] = [
     },
     {
         "id": "orchestrator_train_save",
-        "title": "Orchestrator: train + save ML model",
+        "title": "Orchestrator: train + save ML model [expected-empty]",
         "category": "scripts",
         "kind": "bash",
         "cmd": ["python", "-m", "modules.orchestrator_ai.core.ml_trainer"],
