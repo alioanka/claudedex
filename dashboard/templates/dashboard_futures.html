@@ -680,6 +680,31 @@
         </div>
     </div>
 
+    <!-- FUT-RM-09 (Wave 3): Funding Cost — predicted vs realized -->
+    <div class="section-card">
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-coins"></i>
+                Funding Cost (last <span id="funding-hours-label">24</span>h)
+            </div>
+            <div>
+                <select id="funding-hours-select" class="setting-select" onchange="loadFundingCost()" style="width:auto;">
+                    <option value="6">6h</option>
+                    <option value="12">12h</option>
+                    <option value="24" selected>24h</option>
+                    <option value="72">72h</option>
+                </select>
+            </div>
+        </div>
+        <div class="setting-description" style="margin-bottom:10px;">
+            Positive = cost to the book (you paid funding). Negative = revenue.
+            Realized populates after the exchange-income importer ships.
+        </div>
+        <div class="chart-container">
+            <canvas id="fundingCostChart"></canvas>
+        </div>
+    </div>
+
     <!-- Active Positions -->
     <div class="section-card">
         <div class="section-header">
@@ -789,6 +814,70 @@ const pnlChart = new Chart(ctx, {
     }
 });
 
+// FUT-RM-09: Funding Cost chart (predicted vs realized)
+let fundingCostChart = null;
+function initFundingCostChart() {
+    const el = document.getElementById('fundingCostChart');
+    if (!el) return;
+    const fctx = el.getContext('2d');
+    fundingCostChart = new Chart(fctx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Predicted ($)',
+                    data: [],
+                    backgroundColor: 'rgba(139, 92, 246, 0.6)',
+                    borderColor: '#8b5cf6',
+                    borderWidth: 1,
+                },
+                {
+                    label: 'Realized ($)',
+                    data: [],
+                    backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                    borderColor: '#10b981',
+                    borderWidth: 1,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true, position: 'top' } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                x: { grid: { display: false } },
+            },
+        },
+    });
+}
+async function loadFundingCost() {
+    if (!fundingCostChart) initFundingCostChart();
+    if (!fundingCostChart) return;
+    const sel = document.getElementById('funding-hours-select');
+    const lbl = document.getElementById('funding-hours-label');
+    const hours = sel ? parseInt(sel.value, 10) || 24 : 24;
+    if (lbl) lbl.textContent = String(hours);
+    try {
+        const resp = await fetch('/api/futures/funding-cost?hours=' + hours);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success || !data.buckets) return;
+        const labels = data.buckets.map(b => {
+            const d = new Date(b.hour);
+            // HH:00 form for compact axis
+            return ('0' + d.getHours()).slice(-2) + ':00';
+        });
+        fundingCostChart.data.labels = labels;
+        fundingCostChart.data.datasets[0].data = data.buckets.map(b => Number(b.predicted_usd || 0));
+        fundingCostChart.data.datasets[1].data = data.buckets.map(b => Number(b.realized_usd  || 0));
+        fundingCostChart.update();
+    } catch (e) {
+        console.debug('Could not load funding-cost chart:', e);
+    }
+}
+
 // Fetch futures data from API
 async function loadFuturesData() {
     try {
@@ -800,6 +889,9 @@ async function loadFuturesData() {
                 updateStats(data.futures);
             }
         }
+
+        // FUT-RM-09: refresh funding cost widget alongside main data.
+        loadFundingCost();
 
         // Fetch positions directly from futures module for full details (SL/TP/TSL)
         const posResponse = await fetch('/api/futures/positions');

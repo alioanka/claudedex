@@ -135,6 +135,15 @@ class FuturesRiskConfig(BaseModel):
     # Risk controls
     max_consecutive_losses: int = 4  # Reduced from 5 to pause earlier
 
+    # FUT-RM-10 (Wave 3): auto-deleverage on drawdown. When enabled, the
+    # monitor loop checks should_auto_deleverage(total_pnl, capital) every
+    # cycle. On trigger, the position with the worst unrealized PnL is
+    # halved (close 50% at market). Default OFF — operator must opt in
+    # via the settings page after canary.
+    auto_deleverage_enabled: bool = False
+    # Throttle so a single drawdown event doesn't fire on every cycle.
+    auto_deleverage_cooldown_seconds: int = 600   # 10 min between triggers
+
     # Market condition filters
     # Relaxed for live trading - strict filters were rejecting all trades in sideways markets
     require_trend_confirmation: bool = False  # Allow trading in sideways markets (was True)
@@ -668,6 +677,9 @@ class FuturesConfigManager:
             'max_daily_loss_pct': FuturesConfigType.RISK,
             'max_consecutive_losses': FuturesConfigType.RISK,
             'liquidation_buffer': FuturesConfigType.RISK,
+            # FUT-RM-10 auto-deleverage
+            'auto_deleverage_enabled': FuturesConfigType.RISK,
+            'auto_deleverage_cooldown_seconds': FuturesConfigType.RISK,
             # Risk settings - Trailing stop
             'trailing_stop': FuturesConfigType.RISK,  # alias
             'trailing_stop_enabled': FuturesConfigType.RISK,

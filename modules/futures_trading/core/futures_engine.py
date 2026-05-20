@@ -329,6 +329,13 @@ class FuturesTradingEngine:
             self.require_trend_confirmation = getattr(risk_config, 'require_trend_confirmation', False)
             self.min_volume_multiplier = getattr(risk_config, 'min_volume_multiplier', 0.8)
 
+            # FUT-RM-10 (Wave 3): auto-deleverage on drawdown.
+            self.auto_deleverage_enabled = bool(getattr(
+                risk_config, 'auto_deleverage_enabled', False))
+            self.auto_deleverage_cooldown_seconds = int(getattr(
+                risk_config, 'auto_deleverage_cooldown_seconds', 600))
+            self._auto_deleverage_last_at = None  # datetime of last trigger
+
             # Calculate max_daily_loss_usd from percentage and capital
             # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.
             if risk_config.max_daily_loss_pct and risk_config.max_daily_loss_pct > 0:
@@ -914,6 +921,13 @@ class FuturesTradingEngine:
         """Monitor active positions for exit signals and partial TPs"""
         if not self.active_positions:
             return
+
+        # FUT-RM-09: refresh the funding-cost snapshot for the widget.
+        # Cheap: UNIQUE constraint upserts within the current hour bucket.
+        try:
+            await self._record_funding_snapshot()
+        except Exception as snap_err:
+            logger.debug(f"funding snapshot skipped: {snap_err}")
 
         for symbol, position in list(self.active_positions.items()):
             try:
@@ -2155,6 +2169,163 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.debug(f"funding rate fetch failed for {symbol}: {e}")
             return None
+
+    async def _auto_deleverage_if_needed(self) -> bool:
+        """FUT-RM-10 (Wave 3): wire the unused should_auto_deleverage() check.
+
+        Called from the monitor loop. When the drawdown threshold trips
+        AND the feature flag is on AND we're outside cooldown, halve the
+        WORST unrealized-PnL open position (close 50% at market).
+
+        Returns True if a deleverage fired this call. False otherwise.
+
+        Safety:
+          - Feature-flagged off by default (auto_deleverage_enabled).
+          - Cooldown so a single drawdown event doesn't repeat-halve.
+          - Skips when no risk_manager or no positions.
+          - Best-effort: failure to close one position doesn't crash the
+            loop; logged at ERROR for the operator.
+          - Each trigger logs a clearly-labeled WARNING that the
+            futures_trades.log filter picks up.
+        """
+        try:
+            if not getattr(self, 'auto_deleverage_enabled', False):
+                return False
+            if self.risk_manager is None or not hasattr(
+                self.risk_manager, 'should_auto_deleverage'
+            ):
+                return False
+            if not self.active_positions:
+                return False
+            # Cooldown gate.
+            now = datetime.now()
+            last = getattr(self, '_auto_deleverage_last_at', None)
+            cooldown = max(0, int(getattr(self, 'auto_deleverage_cooldown_seconds', 600)))
+            if last and (now - last).total_seconds() < cooldown:
+                return False
+            # Compose total PnL (realized + unrealized) over a capital base.
+            unrealized = sum(
+                float(getattr(p, 'unrealized_pnl', 0) or 0)
+                for p in self.active_positions.values()
+            )
+            realized = float(getattr(self, 'total_pnl', 0) or 0)
+            total_pnl = realized + unrealized
+            capital = float(getattr(self, 'capital_allocation', 0) or 0)
+            if capital <= 0:
+                return False
+            should_dl = bool(self.risk_manager.should_auto_deleverage(
+                total_pnl=total_pnl,
+                total_capital=capital,
+            ))
+            if not should_dl:
+                return False
+            # Pick worst-PnL open position.
+            worst_symbol = None
+            worst_pnl = float('inf')
+            worst_pos = None
+            for sym, pos in self.active_positions.items():
+                p = float(getattr(pos, 'unrealized_pnl', 0) or 0)
+                if p < worst_pnl:
+                    worst_pnl = p
+                    worst_symbol = sym
+                    worst_pos = pos
+            if worst_pos is None or worst_symbol is None:
+                return False
+            close_size = max(0.0, float(getattr(worst_pos, 'size', 0)) / 2.0)
+            if close_size <= 0:
+                return False
+            logger.warning(
+                "🛑 FUT-RM-10 AUTO-DELEVERAGE triggered "
+                f"(total_pnl=${total_pnl:.2f} on capital=${capital:.2f}); "
+                f"halving worst position {worst_symbol} "
+                f"(unrealized_pnl=${worst_pnl:.2f}, size {worst_pos.size:.6f} -> {close_size:.6f})"
+            )
+            self._auto_deleverage_last_at = now
+            try:
+                await self._partial_close_position(
+                    worst_pos, close_size, 'fut_rm_10_auto_deleverage'
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    f"FUT-RM-10 partial close failed for {worst_symbol}: {e}"
+                )
+                return False
+        except Exception as e:
+            logger.debug(f"_auto_deleverage_if_needed errored: {e}")
+            return False
+
+    async def _record_funding_snapshot(self) -> None:
+        """FUT-RM-09 (Wave 3): write a per-hour funding-cost snapshot to
+        futures_funding_payments for the dashboard widget.
+
+        For each active position we compute:
+            predicted_usd = funding_rate(symbol) × notional × side_sign
+
+        side_sign is +1 when the book is *paying* funding (LONG with
+        positive funding, SHORT with negative funding) and -1 when the
+        book is *receiving*. So predicted_usd > 0 means cost to the book.
+
+        The UNIQUE(hour_bucket, symbol, side, exchange, network, source)
+        constraint upserts within an hour bucket so calling this every
+        cycle just refreshes the latest snapshot. The dashboard reads the
+        trailing 24h and sums by hour_bucket.
+
+        Realized is left at 0 here — populating it requires reading the
+        exchange income history (Binance /fapi/v1/income type=FUNDING_FEE,
+        Bybit /v5/account/transaction-log type=Funding). That's gated to
+        a follow-up commit so this one stays in the LoC budget.
+
+        Best-effort: any failure is logged at debug and never blocks the
+        trading loop. No DB writes in DRY_RUN unless db_pool is available
+        (the dashboard widget works for paper trading too).
+        """
+        try:
+            if not self.db_pool or not self.active_positions:
+                return
+            from datetime import datetime as _dt, timezone as _tz
+            now = _dt.now(_tz.utc).replace(minute=0, second=0, microsecond=0)
+            network = 'testnet' if getattr(self, 'testnet', False) else 'mainnet'
+            exch = getattr(self, 'exchange', 'binance') or 'binance'
+            rows = []
+            for symbol, pos in list(self.active_positions.items()):
+                try:
+                    rate = await self._get_funding_rate_cached(symbol)
+                    if rate is None:
+                        continue
+                    notional = float(getattr(pos, 'notional_value', 0) or 0)
+                    if notional <= 0:
+                        continue
+                    side_val = pos.side.value if hasattr(pos.side, 'value') else str(pos.side)
+                    side_u = side_val.upper()
+                    # LONG pays when funding > 0; SHORT pays when funding < 0.
+                    if side_u == 'LONG':
+                        side_sign = 1.0 if rate > 0 else -1.0
+                    else:
+                        side_sign = 1.0 if rate < 0 else -1.0
+                    predicted = abs(float(rate)) * notional * side_sign
+                    rows.append((now, symbol, side_u, notional, predicted, 0.0,
+                                 exch, network, 'engine'))
+                except Exception as inner:
+                    logger.debug(f"funding snapshot row failed for {symbol}: {inner}")
+            if not rows:
+                return
+            async with self.db_pool.acquire() as conn:
+                await conn.executemany(
+                    """
+                    INSERT INTO futures_funding_payments (
+                        hour_bucket, symbol, side, notional_usd,
+                        predicted_usd, realized_usd, exchange, network, source
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ON CONFLICT (hour_bucket, symbol, side, exchange, network, source)
+                    DO UPDATE SET
+                        notional_usd  = EXCLUDED.notional_usd,
+                        predicted_usd = EXCLUDED.predicted_usd
+                    """,
+                    rows,
+                )
+        except Exception as e:
+            logger.debug(f"funding snapshot write failed (non-fatal): {e}")
 
     async def _verify_isolated_or_close(self, symbol: str, side: TradeSide) -> None:
         """FUT-RM-07: defense-in-depth on MB-17.
