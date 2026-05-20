@@ -133,6 +133,11 @@ class DirectDEXExecutor(BaseExecutor):
         else:
             self.max_slippage = 0.005
         
+        # Price-impact ceiling (Wave-4). Refuses to surface a quote
+        # whose chunked-quoter round-trip impact exceeds this cap. 200
+        # bps default matches Uniswap-frontend "high impact" warning.
+        self.max_price_impact_bps = int(config.get('max_price_impact_bps', 200))
+
         # Sandwich protection
         self.use_commit_reveal = config.get('commit_reveal', False)
         self.randomize_gas = config.get('randomize_gas', True)
@@ -308,6 +313,25 @@ class DirectDEXExecutor(BaseExecutor):
             if not quotes:
                 logger.warning(f"No quotes found for {token_in} -> {token_out}")
                 return None
+
+            # Wave-4: refuse any quote whose chunked-quoter price impact
+            # exceeds the configured ceiling (default 200 bps). The
+            # ceiling is per-trade — passing it would either eat the
+            # slippage tolerance whole-cloth or get re-quoted at a
+            # worse fill than headline. Drop early.
+            cap = self.max_price_impact_bps / 10000.0
+            filtered = [q for q in quotes if float(q.price_impact) <= cap]
+            if not filtered:
+                worst = min(quotes, key=lambda q: float(q.price_impact))
+                logger.warning(
+                    "All %d quotes exceed max_price_impact_bps=%d (best %.2f bps); "
+                    "refusing %s -> %s on %s",
+                    len(quotes), self.max_price_impact_bps,
+                    float(worst.price_impact) * 10000.0,
+                    token_in, token_out, chain,
+                )
+                return None
+            quotes = filtered
 
             # Score by net-of-gas output, not raw headline output.
             try:
@@ -707,27 +731,61 @@ class DirectDEXExecutor(BaseExecutor):
         amount: int,
         chain: str
     ) -> float:
-        """Estimate price impact of trade"""
+        """Estimate price impact via real chunked quoter round-trip.
+
+        Algorithm (Wave-4):
+          1. Quote `amount` (actual size)            -> amount_out_actual
+          2. Quote `max(1, amount * 0.01)` (1% probe) -> amount_out_tiny
+          3. effective_price_tiny   = amount_out_tiny   / tiny_amount
+             effective_price_actual = amount_out_actual / amount
+          4. price_impact = (eff_tiny - eff_actual) / eff_tiny
+
+        Both legs go through `_simulate_swap`, which already routes V3
+        paths through the real QuoterV2 and V2 paths through
+        `getAmountsOut`. The 1% probe is the smallest size that still
+        produces a non-degenerate per-tick quote on the deepest pools
+        (a 0.1% probe rounds to zero on USDC/USDT-quoted majors).
+
+        Returns 0.0 on any failure so the caller can still rank a quote
+        — refusal is enforced by `get_best_quote` against
+        `max_price_impact_bps`.
+        """
         try:
-            # Get output for small amount
-            small_amount = amount // 1000
-            small_output = await self._simulate_swap(dex, path, small_amount, chain)
-            
-            # Get output for actual amount
-            actual_output = await self._simulate_swap(dex, path, amount, chain)
-            
-            # Calculate impact
-            expected_output = (small_output * amount) // small_amount
-            
-            if expected_output > 0:
-                impact = 1 - (actual_output / expected_output)
-                return max(0, impact)
-            
-            return 0
-            
+            if amount <= 0:
+                return 0.0
+
+            # 1% of size, but never zero (small caps may use 6-dec stables).
+            tiny_amount = max(1, amount // 100)
+
+            amount_out_tiny = await self._simulate_swap(
+                dex, path, tiny_amount, chain
+            )
+            amount_out_actual = await self._simulate_swap(
+                dex, path, amount, chain
+            )
+
+            if amount_out_tiny <= 0 or amount_out_actual <= 0:
+                return 0.0
+
+            # Per-unit effective price for each leg. Float is fine here
+            # because we only need ~6 decimals for bps comparisons.
+            eff_tiny = amount_out_tiny / tiny_amount
+            eff_actual = amount_out_actual / amount
+
+            if eff_tiny <= 0:
+                return 0.0
+
+            impact = (eff_tiny - eff_actual) / eff_tiny
+            # Clamp negatives (rare numerical noise) and >1 (impossible).
+            if impact <= 0:
+                return 0.0
+            if impact > 1:
+                return 1.0
+            return float(impact)
+
         except Exception as e:
             logger.debug(f"Error estimating price impact: {e}")
-            return 0
+            return 0.0
             
     async def _estimate_gas(
         self,
