@@ -468,6 +468,92 @@
                 </div>
             </div>
 
+            <!-- Wave-5: Why no trades? collapsible diagnostic panel.
+                 Reads /api/ai/diagnostics. Collapsed by default so it
+                 doesn't clutter the main view; the chevron rotates and
+                 the hint pill is always visible at the header. -->
+            <div class="section-card" id="whyNoTradesCard">
+                <div class="section-title" style="cursor: pointer; user-select: none;"
+                     onclick="toggleDiagPanel()">
+                    <i class="fas fa-question-circle"></i>
+                    Why no trades?
+                    <span id="diagHintPill" style="margin-left: 12px; padding: 2px 10px;
+                          border-radius: 12px; font-size: 0.75rem; font-weight: 600;
+                          background: rgba(107,114,128,0.2); color: #9ca3af;">
+                        loading...
+                    </span>
+                    <span style="margin-left: auto; font-size: 0.875rem; color: var(--text-secondary);">
+                        <span id="diagSignalsCount">0</span> signals
+                        | <span id="diagTradesCount">0</span> trades
+                        | rate <span id="diagActionRate">--</span>
+                        <i id="diagChevron" class="fas fa-chevron-right"
+                           style="margin-left: 10px; transition: transform 0.2s;"></i>
+                    </span>
+                </div>
+                <div id="diagBody" style="display: none; margin-top: 14px;">
+                    <div id="diagHintBanner" style="display: none; padding: 10px 14px;
+                         border-radius: 8px; background: rgba(245, 158, 11, 0.12);
+                         border-left: 3px solid #f59e0b; color: var(--text-primary);
+                         font-size: 0.875rem; margin-bottom: 14px;">
+                        <i class="fas fa-lightbulb"></i>
+                        <span id="diagHintText">--</span>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+                         gap: 10px; margin-bottom: 14px;">
+                        <div class="mode-card">
+                            <div class="mode-label">Buy signals (24h)</div>
+                            <div class="mode-value" id="diagBuyCount">--</div>
+                        </div>
+                        <div class="mode-card">
+                            <div class="mode-label">Sell signals (24h)</div>
+                            <div class="mode-value" id="diagSellCount">--</div>
+                        </div>
+                        <div class="mode-card">
+                            <div class="mode-label">Hold (below thr)</div>
+                            <div class="mode-value" id="diagHoldCount">--</div>
+                        </div>
+                        <div class="mode-card">
+                            <div class="mode-label">Active positions</div>
+                            <div class="mode-value" id="diagActivePos">--</div>
+                        </div>
+                    </div>
+
+                    <div style="margin-bottom: 14px;">
+                        <strong style="font-size: 0.875rem;">Rejection reasons (24h):</strong>
+                        <div id="diagReasons" style="margin-top: 6px; font-size: 0.8rem;
+                             color: var(--text-secondary);">--</div>
+                    </div>
+
+                    <div style="margin-bottom: 14px;">
+                        <strong style="font-size: 0.875rem;">Effective config (live, redacted):</strong>
+                        <div id="diagConfig" style="margin-top: 6px; font-size: 0.75rem;
+                             color: var(--text-secondary); font-family: monospace;
+                             background: rgba(15, 23, 42, 0.4); padding: 10px;
+                             border-radius: 6px; max-height: 160px; overflow-y: auto;">--</div>
+                    </div>
+
+                    <div>
+                        <strong style="font-size: 0.875rem;">Last 20 skipped signals:</strong>
+                        <div style="overflow-x: auto; margin-top: 6px;">
+                            <table class="signals-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Reason</th>
+                                        <th>Sentiment</th>
+                                        <th>Conf</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="diagSkipsTable">
+                                    <tr><td colspan="4" class="empty-state">No skipped signals recorded yet.</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- A6 W4: Multi-Provider Quorum Agreement-Rate Chart -->
             <div class="section-card">
                 <div class="section-title">
@@ -587,12 +673,13 @@ let quorumChart = null;
 async function refreshData() {
     try {
         // Fetch all data in parallel
-        const [statsRes, sentimentRes, tradesRes, settingsRes, quorumRes] = await Promise.all([
+        const [statsRes, sentimentRes, tradesRes, settingsRes, quorumRes, diagRes] = await Promise.all([
             fetch('/api/ai/stats'),
             fetch('/api/ai/sentiment'),
             fetch('/api/ai/trades'),
             fetch('/api/ai/settings'),
-            fetch('/api/ai/quorum-metrics?hours=24')
+            fetch('/api/ai/quorum-metrics?hours=24'),
+            fetch('/api/ai/diagnostics?hours=24')
         ]);
 
         const stats = await statsRes.json();
@@ -600,15 +687,125 @@ async function refreshData() {
         const trades = await tradesRes.json();
         const settings = await settingsRes.json();
         const quorum = await quorumRes.json();
+        const diag = await diagRes.json();
 
         if (stats.success) updateStats(stats.stats);
         if (sentiment.success) updateSentimentDisplay(sentiment.data);
         if (trades.success) updatePositionsAndTrades(trades.trades);
         if (settings.success) updateSettings(settings.settings);
         if (quorum.success) updateQuorumChart(quorum);
+        if (diag.success) updateDiagPanel(diag);
 
     } catch (error) {
         console.error('Error refreshing data:', error);
+    }
+}
+
+// Wave-5: collapsible "Why no trades?" panel.
+function toggleDiagPanel() {
+    const body = document.getElementById('diagBody');
+    const chev = document.getElementById('diagChevron');
+    if (!body) return;
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : 'block';
+    if (chev) chev.style.transform = open ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+
+function updateDiagPanel(payload) {
+    // Header strip — always visible even when panel is collapsed.
+    const sig = payload.signals_generated || 0;
+    const trd = payload.trades_opened || 0;
+    const rate = payload.action_rate || 0;
+    document.getElementById('diagSignalsCount').textContent = sig;
+    document.getElementById('diagTradesCount').textContent = trd;
+    document.getElementById('diagActionRate').textContent =
+        sig > 0 ? (rate * 100).toFixed(1) + '%' : '--';
+
+    // Hint pill — color-coded by severity.
+    const pill = document.getElementById('diagHintPill');
+    if (payload.hint) {
+        pill.textContent = 'action needed';
+        pill.style.background = 'rgba(245, 158, 11, 0.2)';
+        pill.style.color = '#f59e0b';
+    } else if (sig === 0) {
+        pill.textContent = 'idle';
+        pill.style.background = 'rgba(107, 114, 128, 0.2)';
+        pill.style.color = '#9ca3af';
+    } else if (trd > 0) {
+        pill.textContent = 'firing';
+        pill.style.background = 'rgba(16, 185, 129, 0.2)';
+        pill.style.color = '#10b981';
+    } else {
+        pill.textContent = 'no trades';
+        pill.style.background = 'rgba(239, 68, 68, 0.2)';
+        pill.style.color = '#ef4444';
+    }
+
+    // Hint banner (only visible inside the expanded body).
+    const banner = document.getElementById('diagHintBanner');
+    if (payload.hint) {
+        banner.style.display = '';
+        document.getElementById('diagHintText').textContent = payload.hint;
+    } else {
+        banner.style.display = 'none';
+    }
+
+    // Stat cards.
+    document.getElementById('diagBuyCount').textContent = payload.buy_signals || 0;
+    document.getElementById('diagSellCount').textContent = payload.sell_signals || 0;
+    document.getElementById('diagHoldCount').textContent = payload.hold_signals || 0;
+    document.getElementById('diagActivePos').textContent = payload.active_positions || 0;
+
+    // Rejection-reasons line.
+    const reasons = payload.signals_rejected_by_reason || {};
+    const keys = Object.keys(reasons);
+    const reasonsEl = document.getElementById('diagReasons');
+    if (keys.length === 0) {
+        reasonsEl.textContent =
+            'No skip events parsed from logs/ai_analysis/ai.log yet. ' +
+            'After the next cycle, this will populate.';
+    } else {
+        const parts = keys
+            .sort((a, b) => reasons[b] - reasons[a])
+            .map(k => `<span style="color: #f59e0b;">${k}</span>: ${reasons[k]}`);
+        reasonsEl.innerHTML = parts.join(' &nbsp;|&nbsp; ');
+    }
+
+    // Effective config.
+    const cfg = payload.effective_config || {};
+    const cfgEl = document.getElementById('diagConfig');
+    const cfgLines = Object.keys(cfg).sort().map(k => {
+        const v = cfg[k];
+        const valStr = (v === true) ? 'true' : (v === false) ? 'false' :
+                       (v === null || v === undefined) ? '-' : v.toString();
+        return `${k}: ${valStr}`;
+    });
+    cfgEl.textContent = cfgLines.join('\n');
+
+    // Recent skips table.
+    const skips = payload.recent_skips || [];
+    const tbody = document.getElementById('diagSkipsTable');
+    if (skips.length === 0) {
+        tbody.innerHTML =
+            '<tr><td colspan="4" class="empty-state">No skipped signals recorded yet.</td></tr>';
+    } else {
+        let html = '';
+        skips.slice().reverse().forEach(s => {
+            const ts = s.timestamp || '-';
+            const sent = (s.sentiment !== null && s.sentiment !== undefined)
+                ? s.sentiment.toFixed(2) : '-';
+            const conf = (s.conf !== null && s.conf !== undefined)
+                ? s.conf.toFixed(2) : '-';
+            html += `
+                <tr>
+                    <td style="font-family: monospace; font-size: 0.75rem;">${ts}</td>
+                    <td><span style="color: #f59e0b;">${s.reason}</span></td>
+                    <td>${sent}</td>
+                    <td>${conf}</td>
+                </tr>
+            `;
+        });
+        tbody.innerHTML = html;
     }
 }
 
