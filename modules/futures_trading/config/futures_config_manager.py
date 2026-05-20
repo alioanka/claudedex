@@ -169,6 +169,14 @@ class FuturesRiskConfig(BaseModel):
     atr_sl_min_pct: float = 1.5        # Floor on SL distance (price %)
     atr_tp_rr_ratio: float = 2.0       # TP1 = 2 × SL distance
 
+    # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off. After
+    # `post_loss_cooloff_threshold` losses in a row on the same symbol,
+    # FuturesRiskManager refuses new entries on that pair for
+    # `post_loss_cooloff_minutes` minutes. A winning trade resets the
+    # per-symbol counter and clears any active cool-off.
+    post_loss_cooloff_threshold: int = 2
+    post_loss_cooloff_minutes: int = 240
+
 
 class FuturesPairsConfig(BaseModel):
     """Trading pairs configuration"""
