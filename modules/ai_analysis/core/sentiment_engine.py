@@ -580,14 +580,22 @@ class SentimentEngine:
                     score_abs = abs(sentiment_score)
                     meets_threshold = score_abs >= self.confidence_threshold
 
+                    trade_fired_this_cycle = False
                     if self.direct_trading and meets_threshold:
                         logger.info(f"🤖 Trade conditions met: direct_trading=ON, score={sentiment_score:.2f} >= threshold={self.confidence_threshold}")
                         await self._execute_trade(sentiment_score)
                         trades_executed += 1
+                        trade_fired_this_cycle = True
                     elif not self.direct_trading:
                         logger.info(f"ℹ️ Trade skipped: direct_trading=OFF (enable in AI Settings to trade automatically)")
                     elif not meets_threshold:
                         logger.info(f"ℹ️ Trade skipped: score {score_abs:.2f} < threshold {self.confidence_threshold} (signal not strong enough)")
+
+                    # A6 W4: persist the quorum decision (if one ran this
+                    # cycle) AFTER trade evaluation so trade_fired reflects
+                    # reality. Single-provider cycles leave the slot None
+                    # and _persist_quorum_outcome short-circuits.
+                    await self._persist_quorum_outcome(trade_fired_this_cycle)
                 elif not news_data:
                     logger.info("🧠 No news data retrieved, skipping analysis")
                 elif not can_analyze:
@@ -677,7 +685,14 @@ class SentimentEngine:
         - min(|openai|, |claude|) >= quorum_min_abs_score (if > 0).
         On success, return the conservative-magnitude average:
         sign(avg) * min(|openai|, |claude|).
+
+        A6 W4: also stamps `self._last_quorum_outcome` with the per-tick
+        agreement record (scores, fail-reason, delta, headlines_count).
+        The run loop reads this slot after _quorum_sentiment returns and
+        persists it to ai_feature_store.metadata.quorum_outcome.
         """
+        openai_score = 0.0
+        claude_score = 0.0
         try:
             openai_t = asyncio.create_task(self._analyze_with_llm(texts))
             claude_t = asyncio.create_task(self._analyze_with_claude(texts))
@@ -686,6 +701,12 @@ class SentimentEngine:
             )
         except Exception as e:
             logger.warning(f"⚖️ Quorum: provider call failed: {e}")
+            self._record_quorum_outcome(
+                openai_score=openai_score, claude_score=claude_score,
+                headlines_count=len(texts), passed=False,
+                fail_reason='provider_exception',
+                final_score=0.0,
+            )
             return 0.0
 
         # Treat zero as "no opinion" — a clamped 0 from one provider means
@@ -695,6 +716,12 @@ class SentimentEngine:
                 "⚖️ Quorum FAIL (single-provider zero): OpenAI=%.2f Claude=%.2f",
                 openai_score, claude_score,
             )
+            self._record_quorum_outcome(
+                openai_score=openai_score, claude_score=claude_score,
+                headlines_count=len(texts), passed=False,
+                fail_reason='single_provider_zero',
+                final_score=0.0,
+            )
             return 0.0
 
         # Direction mismatch is the dangerous case the quorum exists to catch.
@@ -702,6 +729,12 @@ class SentimentEngine:
             logger.info(
                 "⚖️ Quorum FAIL (sign mismatch): OpenAI=%.2f Claude=%.2f",
                 openai_score, claude_score,
+            )
+            self._record_quorum_outcome(
+                openai_score=openai_score, claude_score=claude_score,
+                headlines_count=len(texts), passed=False,
+                fail_reason='sign_mismatch',
+                final_score=0.0,
             )
             return 0.0
 
@@ -711,6 +744,12 @@ class SentimentEngine:
                 "⚖️ Quorum FAIL (|delta|=%.2f > %.2f): OpenAI=%.2f Claude=%.2f",
                 delta, self.quorum_max_disagreement, openai_score, claude_score,
             )
+            self._record_quorum_outcome(
+                openai_score=openai_score, claude_score=claude_score,
+                headlines_count=len(texts), passed=False,
+                fail_reason='delta_exceeded',
+                final_score=0.0, delta=delta,
+            )
             return 0.0
 
         min_abs = min(abs(openai_score), abs(claude_score))
@@ -718,6 +757,12 @@ class SentimentEngine:
             logger.info(
                 "⚖️ Quorum FAIL (min |score|=%.2f < %.2f): OpenAI=%.2f Claude=%.2f",
                 min_abs, self.quorum_min_abs_score, openai_score, claude_score,
+            )
+            self._record_quorum_outcome(
+                openai_score=openai_score, claude_score=claude_score,
+                headlines_count=len(texts), passed=False,
+                fail_reason='min_abs_too_small',
+                final_score=0.0, delta=delta,
             )
             return 0.0
 
@@ -729,7 +774,84 @@ class SentimentEngine:
             "⚖️ Quorum PASS: OpenAI=%.2f Claude=%.2f -> %.2f (|delta|=%.2f)",
             openai_score, claude_score, score, delta,
         )
+        self._record_quorum_outcome(
+            openai_score=openai_score, claude_score=claude_score,
+            headlines_count=len(texts), passed=True,
+            fail_reason=None, final_score=score, delta=delta,
+        )
         return score
+
+    def _record_quorum_outcome(
+        self,
+        *,
+        openai_score: float,
+        claude_score: float,
+        headlines_count: int,
+        passed: bool,
+        fail_reason: Optional[str],
+        final_score: float,
+        delta: Optional[float] = None,
+    ) -> None:
+        """A6 W4: stash the most recent quorum decision for the run loop.
+
+        Schema (keys consumed by /api/ai/quorum-metrics):
+          - timestamp        : ISO 8601 UTC
+          - openai_score     : float in [-1, 1]
+          - claude_score     : float in [-1, 1]
+          - delta            : |openai - claude| (None when not computed)
+          - max_disagreement : self.quorum_max_disagreement (config snapshot)
+          - passed           : True iff sign+delta+min-abs all OK
+          - fail_reason      : enum-string when passed=False, else None
+          - final_score      : quorum-aggregated score (0.0 on fail)
+          - headlines_count  : how many headlines fed the LLMs
+          - trade_fired      : filled later by _execute_trade (default False)
+        """
+        if delta is None:
+            try:
+                delta = abs(float(openai_score) - float(claude_score))
+            except (TypeError, ValueError):
+                delta = None
+        self._last_quorum_outcome = {
+            'timestamp': datetime.utcnow().isoformat() + 'Z',
+            'openai_score': float(openai_score),
+            'claude_score': float(claude_score),
+            'delta': float(delta) if delta is not None else None,
+            'max_disagreement': float(self.quorum_max_disagreement),
+            'passed': bool(passed),
+            'fail_reason': fail_reason,
+            'final_score': float(final_score),
+            'headlines_count': int(headlines_count),
+            'trade_fired': False,
+        }
+
+    async def _persist_quorum_outcome(self, trade_fired: bool) -> None:
+        """A6 W4: write the per-tick quorum record into ai_feature_store.
+
+        Best-effort — write failure NEVER blocks the trade path. We piggy-
+        back on the existing `write_feature_row` helper (ml/feature_store.py)
+        instead of touching the table directly so we inherit its sanitize +
+        async-pool semantics.
+        """
+        outcome = self._last_quorum_outcome
+        if outcome is None:
+            return
+        outcome['trade_fired'] = bool(trade_fired)
+        try:
+            from ml.feature_store import write_feature_row
+            await write_feature_row(
+                self.db_pool,
+                token_address=None,
+                chain='ai',
+                feature_vector={'quorum_v1': outcome},
+                side=None,
+                metadata={'quorum_outcome': outcome},
+            )
+        except Exception as e:
+            logger.debug(f"quorum-metrics persist failed (non-fatal): {e}")
+        finally:
+            # Reset slot so we don't re-persist next cycle if quorum
+            # didn't run (e.g. single-provider mode).
+            self._last_quorum_outcome = None
 
     async def _call_llm_provider(self, provider: str, texts: List[str]) -> float:
         """Unified LLM dispatch for OpenAI / Anthropic. Per-provider deltas (URL,
