@@ -14,6 +14,7 @@ import json
 import aiohttp
 from web3 import Web3
 from typing import Dict, List, Optional, Tuple
+from collections import deque
 from datetime import datetime
 from eth_account import Account
 from eth_account.messages import encode_defunct
@@ -1001,6 +1002,12 @@ class EVMArbitrageEngine:
             'opportunities_executed': 0,
             'last_stats_log': datetime.now()
         }
+        # Wave-5: rolling buffer of opportunities that were REJECTED so the
+        # operator can see WHY no trades fired. Surfaced via
+        # /api/arbitrage/diagnostics + "Why no trades?" dashboard panel.
+        # Keep last 50 in-process; the API + persist snapshot ship the latest 20.
+        self._near_misses: "deque[Dict]" = deque(maxlen=50)
+        self._near_miss_counters: Dict[str, int] = {}
 
         # Telegram alerts - initialized in initialize() method
         self.telegram_alerts = None
@@ -1112,6 +1119,44 @@ class EVMArbitrageEngine:
         raise the bar when gas is volatile.
         """
         return self._min_profit_threshold_base * self._gas_spike_multiplier()
+
+    def _record_near_miss(self, reason: str, **fields) -> None:
+        """
+        Wave-5 observability: log + remember any opportunity that was REJECTED
+        by a gate (min-profit / gas-budget / cooldown / daily-cap / no-liquidity
+        / negative-raw-spread). Operator-visible via /api/arbitrage/diagnostics.
+
+        reason: short snake_case identifier (e.g. 'min_profit', 'gas_budget',
+                'cooldown', 'daily_cap', 'raw_spread_negative', 'risk_manager').
+        fields: arbitrary kwargs serialised into the buffer entry; common keys
+                are pair, buy_dex, sell_dex, profit_bps, gas_usd, threshold_bps.
+        Fail-soft - never raises into the trading loop.
+        """
+        try:
+            entry: Dict = {
+                'ts': datetime.now().isoformat(),
+                'chain': self.chain_name,
+                'reason': reason,
+            }
+            entry.update(fields)
+            self._near_misses.append(entry)
+            self._near_miss_counters[reason] = self._near_miss_counters.get(reason, 0) + 1
+            # One-line structured log so a grep on the rotating file tells
+            # the operator immediately why nothing is firing.
+            parts = [f"{k}={v}" for k, v in fields.items()
+                     if v is not None and k in (
+                         'pair', 'buy_dex', 'sell_dex', 'profit_bps',
+                         'threshold_bps', 'gas_usd', 'detail'
+                     )]
+            self.logger.info(f"[arb-skip] reason={reason} " + " ".join(parts))
+        except Exception:
+            pass
+
+    def get_near_misses(self, limit: int = 20) -> List[Dict]:
+        """Return the most-recent rejected opportunities (newest first)."""
+        items = list(self._near_misses)[-limit:]
+        items.reverse()
+        return items
 
     async def _persist_runtime_stats(self) -> None:
         """
@@ -1797,6 +1842,18 @@ class EVMArbitrageEngine:
                     self._best_spread_pair = spread_pair_key
 
             if weth_returned <= amount_owed:
+                # Sample sparsely - a negative raw spread is the common case.
+                if self._total_pairs_scanned % 120 == 1:
+                    _negative_bps = (
+                        (weth_returned - amount_owed) / borrow_amount * 10_000
+                        if borrow_amount > 0 else 0.0
+                    )
+                    self._record_near_miss(
+                        'raw_spread_negative',
+                        pair=f"{token_symbol}/{token_out_symbol}",
+                        buy_dex=best_buy_dex, sell_dex=best_sell_dex,
+                        profit_bps=round(_negative_bps, 2),
+                    )
                 return False  # No profit possible
 
             profit = weth_returned - amount_owed
