@@ -34,6 +34,22 @@ Mirrors on-chain trades from configured leader wallets across EVM chains and Sol
 - Dashboard: `GET /copytrading/leaders` page + `GET /api/copytrading/leaders` JSON + admin-only `POST /api/copytrading/leaders/refresh` to trigger a sweep.
 ## Live-trade readiness
 AMBER → GREEN candidate (pending production verification). MB-22 (fake Solana SELL), MB-23 (`* 1e18` unit-bug), MB-24 (per-chain DEX routing), MB-25 (emergency-stop integration) closed; BaseModule conversion done; secrets_manager wiring (`b20f56a`) and pool_engine sweep (`a21ec41`) landed. Wave-2 discovery rebuild + Kelly sizing + replay diagnostics shipped 2026-05-19.
+
+## Wave-4 (2026-05-20) — risk-gate hardening (CT-Q-09 + CT-Q-12)
+- **CT-Q-09 per-leader probation table.** Migration `030_copy_probation_gate_defaults.sql` plus `_is_leader_on_probation` + `_maybe_set_probation` helpers in `copy_engine.py`. Engine BUY path consults `copy_leader_scores.on_probation` + `probation_until` -- if benched, refuses the BUY with `[replay] reason=probation`. SELLs are NEVER gated (they reduce exposure). Auto-trigger: a closed mirrored trade with PnL <= `-probation_loss_pct_threshold`% benches the source leader for `probation_days`. Score-based auto-bench in `leader_scorer.upsert_score` (CT-Q-09b): scores < `probation_score_threshold` with >=10 trades also trigger. Re-entry is automatic on `probation_until` expiry. New flags (all `copytrading_config`, also accept bare keys for backwards compat):
+  - `copy_probation_gate_enabled` (bool, default `true`)
+  - `copy_probation_score_threshold` (number, default `30`)
+  - `copy_probation_loss_pct_threshold` (number, default `25`)
+  - `copy_probation_days` (number, default `7`)
+- **CT-Q-12 cross-module exposure aggregator.** New `modules/copy_trading/exposure_aggregator.py` (`get_exposure_usd`, `get_exposure_breakdown_usd`). Sums per-token open-position USD across DEX (`trades.usd_value`), SNIPER (`sniper_trades.entry_usd`), SOLANA (`solana_positions` if it has `entry_usd`), COPY (`copytrading_trades.entry_usd`), AI (`ai_trades.entry_usd`) for the same chain. Engine BUY path consults via `_check_cross_module_exposure`; refuses if `existing + intended > cap` with `[replay] reason=cross_module_cap` and a per-module breakdown in the extra dict. Default cap **$5000**. Fail-soft: any DB error returns (allow=True, 0.0, {}) so the existing per-module caps remain the safety net. New flags:
+  - `copy_cross_module_exposure_check_enabled` (bool, default `true`)
+  - `copy_cross_module_exposure_cap_usd` (number, default `5000`)
+
+Replay-log gate vocabulary expanded to: `probation`, `cross_module_cap` (in addition to Wave-1/2/3 gates `cooldown`, `position_cap`, `unsupported_chain`, `risk_gate`, `no_token_extracted`, `amount_too_small`, `no_position_to_close`, `success`, `error`).
+
+### Wave-4 carry-over (not shipped this wave)
+- `solana_positions.entry_usd` column. The aggregator currently noops on Solana open positions because the table has no USD basis (only `amount_sol`). SOLANA module owns the migration; until then the aggregator falls back to summing only the SOL-closed trades stored in `copytrading_trades` and `solana_trades` (which DO have USD basis).
+- Dashboard surfacing of the new flags. The settings page should expose the four probation knobs + two exposure knobs as operator-tunable fields. Engine consumes via `ConfigManager` already; UI lift remains for the dashboard agent.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
 - Wave-2 quant audit: section 2 of `docs/agents/reports/COPY_TRADING_quant.md` — the CT-Q-01 / CT-Q-02 backlog drove the rebuild.
