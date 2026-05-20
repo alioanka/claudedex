@@ -23,7 +23,7 @@ from eth_account.messages import encode_defunct
 import aiohttp
 
 from core.dry_run import should_skip_live
-from trading.orders.order_manager import Order
+from trading.orders.order_manager import Order, OrderStatus
 from trading.executors.base_executor import BaseExecutor
 from utils.helpers import retry_async, measure_time
 from security.encryption import EncryptionManager
