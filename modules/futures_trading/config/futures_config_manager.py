@@ -190,6 +190,18 @@ class FuturesStrategyConfig(BaseModel):
     # Higher = fewer trades but better win rate
     min_signal_score: int = 4  # Increased from 3 for better entries
 
+    # FUT-RM-15 (Wave 5): multi-indicator CONFLUENCE gate. The aggregate
+    # signal_score above only checks SIGNED magnitude — a single very-strong
+    # indicator (e.g. STRONG_BUY RSI alone, +2) plus weak agreement can clear
+    # the +4 bar after generous rounding. After Wave-5 audit of 4 losing trades
+    # (AAVE / FIL / NEAR shorts, all hit SL at -20% on 10x), we now ALSO
+    # require at least N of the 4 directional indicators
+    # {RSI extreme, MACD cross, Bollinger touch, EMA alignment} to point the
+    # same way before opening. Volume is excluded — it's a confirmer, not a
+    # direction-giver. Default 2 keeps reasonable trade frequency while
+    # rejecting single-indicator setups. Set 0 to disable.
+    min_signal_confluence_count: int = 2
+
     # Additional filters for trade quality
     require_trend_alignment: bool = True  # Trade only in direction of trend
     require_volume_confirmation: bool = True  # Require above-average volume

@@ -364,6 +364,10 @@ class FuturesTradingEngine:
             self.rsi_weak_oversold = strategy_config.rsi_weak_oversold
             self.rsi_weak_overbought = strategy_config.rsi_weak_overbought
             self.min_signal_score = strategy_config.min_signal_score
+            # FUT-RM-15 (Wave 5): multi-indicator confluence gate count
+            self.min_signal_confluence_count = int(getattr(
+                strategy_config, 'min_signal_confluence_count', 2
+            ))
             self.verbose_signals = strategy_config.verbose_signals
 
         else:
@@ -391,6 +395,8 @@ class FuturesTradingEngine:
             self.rsi_weak_oversold = 40.0
             self.rsi_weak_overbought = 60.0
             self.min_signal_score = 3  # Lower threshold for more signals
+            # FUT-RM-15 (Wave 5): multi-indicator confluence gate (fallback)
+            self.min_signal_confluence_count = 2
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
 
@@ -1193,8 +1199,45 @@ class FuturesTradingEngine:
                     if self.verbose_signals:
                         logger.info(f"     ⚠️ Conflicting signals: RSI overbought but MACD strongly bullish")
 
+                # FUT-RM-15 (Wave 5): multi-indicator CONFLUENCE gate.
+                # Count how many of the 4 directional indicators
+                # (RSI / MACD / Bollinger / EMA — volume is a confirmer, not
+                # a direction-giver) agree with the prospective entry side.
+                # We require >= self.min_signal_confluence_count agreement,
+                # in addition to the existing signed signal_score >=
+                # self.min_signal_score. This blocks single-indicator entries
+                # that just happen to round above the score bar.
+                confluence_min = int(getattr(self, 'min_signal_confluence_count', 0) or 0)
+                directional = (
+                    signals.rsi_signal.value,
+                    signals.macd_signal.value,
+                    signals.bb_signal.value,
+                    signals.ema_signal.value,
+                )
+                bullish_confluence = sum(1 for v in directional if v > 0)
+                bearish_confluence = sum(1 for v in directional if v < 0)
+                confluence_ok = True
+                if confluence_min > 0:
+                    if signal_score > 0 and bullish_confluence < confluence_min:
+                        confluence_ok = False
+                        if self.verbose_signals:
+                            logger.info(
+                                f"     ⚠️ Confluence filter: only {bullish_confluence}/4 "
+                                f"bullish indicators agree (min {confluence_min})"
+                            )
+                    elif signal_score < 0 and bearish_confluence < confluence_min:
+                        confluence_ok = False
+                        if self.verbose_signals:
+                            logger.info(
+                                f"     ⚠️ Confluence filter: only {bearish_confluence}/4 "
+                                f"bearish indicators agree (min {confluence_min})"
+                            )
+
                 # All filters must pass
-                all_filters_ok = trend_ok and volume_ok and momentum_ok and signals_aligned
+                all_filters_ok = (
+                    trend_ok and volume_ok and momentum_ok
+                    and signals_aligned and confluence_ok
+                )
 
                 if signal_score >= self.min_signal_score and all_filters_ok:
                     entry_side = TradeSide.LONG
@@ -1207,7 +1250,11 @@ class FuturesTradingEngine:
                 else:
                     if self.verbose_signals:
                         if not all_filters_ok:
-                            logger.info(f"     ❌ REJECTED: Quality filters failed (trend={trend_ok}, volume={volume_ok}, momentum={momentum_ok}, aligned={signals_aligned})")
+                            logger.info(
+                                f"     ❌ REJECTED: Quality filters failed "
+                                f"(trend={trend_ok}, volume={volume_ok}, momentum={momentum_ok}, "
+                                f"aligned={signals_aligned}, confluence={confluence_ok})"
+                            )
                         elif signal_score > 0:
                             logger.info(f"     ❌ REJECTED: Bullish but weak (score {signal_score} < {self.min_signal_score})")
                         elif signal_score < 0:
