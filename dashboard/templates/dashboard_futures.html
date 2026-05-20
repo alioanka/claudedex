@@ -975,6 +975,8 @@ async function loadFuturesData() {
 
         // FUT-RM-09: refresh funding cost widget alongside main data.
         loadFundingCost();
+        // FUT-RM-09b: refresh per-symbol forward forecast next to it.
+        loadFundingForecast();
 
         // Fetch positions directly from futures module for full details (SL/TP/TSL)
         const posResponse = await fetch('/api/futures/positions');

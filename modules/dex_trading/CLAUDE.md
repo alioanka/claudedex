@@ -33,8 +33,14 @@ AMBER → GREEN candidate (pending production verification). MB-01 (decimals —
 ## Wave-3 hardening (campaign `claude/create-expert-agents-JFSF5`)
 - `_quote_v3` real Uniswap V3 QuoterV2 binding (was `int(amount * 0.997)` placeholder). Iterates fee tiers {100, 500, 3000, 10000} for single-hop, falls back to `quoteExactInput(bytes,uint256)` for multi-hop. QuoterV2 addresses seeded per chain (ETH/POLY/ARB/BASE/OP/BSC), overridable via `config['v3_quoter_addresses']`. Returns 0 (not the placeholder) when no pool exists — so route ranking treats V3 as "no liquidity" instead of silently winning. Tests: `tests/unit/test_dex_quoter_v3.py`.
 
+## Wave-4 hardening (campaign `claude/create-expert-agents-JFSF5`)
+- `_estimate_price_impact` now does a real chunked QuoterV2 round-trip (was linear extrapolation from a 0.1% sample). Quotes the actual size and a 1%-of-size probe; impact = `(eff_tiny - eff_actual) / eff_tiny`. Both legs flow through `_simulate_swap`, which already routes V3 paths through the real QuoterV2. 1% is the smallest probe that still produces a non-degenerate quote on 6-dec USDC/USDT majors. Tests: `tests/unit/test_dex_price_impact.py`.
+- New `max_price_impact_bps` config (default **200 bps** — matches the Uniswap-frontend "high impact" warning). `get_best_quote` drops any DEX candidate whose impact exceeds the cap; when nothing passes it returns None instead of signing a tx that would eat the entire slippage tolerance. Override via `config['max_price_impact_bps']`.
+- `MEVProtectionLayer._attempt_bloxroute_bsc` — bloXroute BDN private-tx routing on BSC (Flashbots is Ethereum-only, so BSC swaps previously had no private path). Submits `blxr_private_tx` JSON-RPC to `https://api.blxrbdn.com` with `Authorization: <CLOUD_API_KEY>` header. Gated by `chain == 'bsc' and config.get('bloxroute_enabled', False)`. Auth header read from `config['bloxroute_auth_header']` (encrypted-secret friendly) or `BLOXROUTE_AUTH_HEADER` env. Returns None on missing-header / HTTP error / RPC error / timeout — `protect_transaction` then falls back to the public-mempool send path so the tx still ships. Endpoint overridable via `config['bloxroute_bsc_endpoint']`. Ethereum Flashbots branch is unchanged. Tests: `tests/unit/test_mev_bloxroute_bsc.py`.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
 - Wave-2 campaign report: `docs/agents/reports/DEX_CAMPAIGN.md`.
 - Wave-3 campaign report: `docs/agents/reports/DEX_WAVE3.md`.
+- Wave-4 campaign report: `docs/agents/reports/DEX_WAVE4.md`.
 - Canonical engine API: `docs/engines.md`.
