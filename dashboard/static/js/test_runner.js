@@ -77,6 +77,16 @@
     return pills ? `<span class="tr-tag-row">${pills}</span>` : '';
   }
 
+  // ---- safe wrapper around the recently-run history push. No-ops
+  //      if the toolbar hasn't loaded yet (e.g. Section A clones fire
+  //      before initToolbar wires window.TR_pushRecent).
+  function pushRecentSafe(test, status) {
+    if (typeof window.TR_pushRecent !== 'function') return;
+    window.TR_pushRecent(test.category, {
+      id: test.id, title: test.title, status: status, ts: Date.now(),
+    });
+  }
+
   // ---- copy-to-clipboard helper. Falls back to a textarea-modal on
   //      http:// remote URLs where navigator.clipboard is blocked.
   function attachCopyBtn(btn, getText) {
@@ -180,10 +190,19 @@
           id: test.id, title: test.title, chip: statusEl.textContent.trim(),
           duration_ms: result.duration_ms, body: body,
         });
+        // Push into the per-section recently-run history strip. Pass
+        // judged by exit_code (0 for bash/db_query, 2xx for probe).
+        const passed = result && result.success && !result.timed_out && (
+          test.kind === 'probe'
+            ? (result.exit_code >= 200 && result.exit_code < 300)
+            : (result.exit_code === 0)
+        );
+        pushRecentSafe(test, passed ? 'pass' : 'fail');
       } catch (e) {
         statusEl.innerHTML = chip('fail', 'ERROR');
         outEl.textContent = 'Run failed: ' + (e && e.message ? e.message : e);
         outEl.style.display = 'block';
+        pushRecentSafe(test, 'fail');
       } finally {
         runBtn.disabled = false;
       }
@@ -208,11 +227,6 @@
       api:     document.getElementById('tr-section-c-body'),
       db:      document.getElementById('tr-section-d-body'),
     };
-    // Clear any pending chip in the section headers
-    ['b','c','d'].forEach(s => {
-      const sec = document.getElementById('tr-section-' + s);
-      if (sec) sec.querySelectorAll('.chip-pending').forEach(c => c.remove());
-    });
     Object.values(targets).forEach(t => {
       if (t) {
         t.innerHTML = '';
@@ -223,7 +237,185 @@
       const target = targets[test.category];
       if (target) target.appendChild(renderTestCard(test));
     });
+    // Populate filter-chip totals (count of every tagged entry, ignoring
+    // current filters) so the operator sees "Must 16" not "Must 0".
+    const totals = {};
+    catalog.forEach(t => (t.tags || []).forEach(tag => {
+      totals[tag] = (totals[tag] || 0) + 1;
+    }));
+    document.querySelectorAll('[data-tag-count]').forEach(el => {
+      const tag = el.dataset.tagCount;
+      el.textContent = totals[tag] || 0;
+    });
+    // First paint: count chips reflect every card, recent-history strips
+    // hydrate from localStorage, and the search/chip listeners arm.
+    applyFilters();
+    refreshAllRecentStrips();
   }
+
+  // ─── Toolbar wiring: search box + filter chips + Run Filtered ────
+  // State is held in two sets: active tag filters (`STATE.tags`) and a
+  // lowercased search query (`STATE.q`). Both update on every event;
+  // applyFilters walks every .tr-card once and toggles .tr-hidden,
+  // then refreshes the per-section count chips.
+  const STATE = { tags: new Set(), q: '' };
+
+  function applyFilters() {
+    const q = STATE.q.trim();
+    const wantTags = STATE.tags;
+    const perSection = { scripts: 0, api: 0, db: 0 };
+    document.querySelectorAll('.tr-card[data-test-id]').forEach(card => {
+      const cardTags = (card.dataset.tags || '').split(',').filter(Boolean);
+      // Tag check: card must have AT LEAST ONE of the active tags (OR).
+      let tagOk = wantTags.size === 0;
+      if (!tagOk) {
+        for (const t of cardTags) {
+          if (wantTags.has(t)) { tagOk = true; break; }
+        }
+      }
+      const searchOk = !q || (card.dataset.searchBlob || '').indexOf(q) !== -1;
+      const visible = tagOk && searchOk;
+      card.classList.toggle('tr-hidden', !visible);
+      if (visible) {
+        // Determine which section the card lives in by walking up to the
+        // nearest [data-section] container.
+        const sec = card.closest('[data-section]');
+        if (sec) {
+          const k = sec.dataset.section;
+          if (perSection[k] !== undefined) perSection[k]++;
+        }
+      }
+    });
+    // Live-update per-section count chips.
+    document.querySelectorAll('[data-section-count]').forEach(el => {
+      const k = el.dataset.sectionCount;
+      el.textContent = perSection[k] || 0;
+    });
+  }
+
+  function initToolbar() {
+    const search = document.getElementById('tr-search');
+    if (search) {
+      search.addEventListener('input', (e) => {
+        STATE.q = (e.target.value || '').toLowerCase();
+        applyFilters();
+      });
+    }
+    document.querySelectorAll('.tr-filter-chip').forEach(chip => {
+      chip.addEventListener('click', () => {
+        const f = chip.dataset.filter;
+        if (f === '__all') {
+          STATE.tags.clear();
+          document.querySelectorAll('.tr-filter-chip').forEach(c =>
+            c.classList.toggle('active', c.dataset.filter === '__all'));
+        } else {
+          if (STATE.tags.has(f)) STATE.tags.delete(f);
+          else STATE.tags.add(f);
+          chip.classList.toggle('active', STATE.tags.has(f));
+          // Hide "All" highlight when any tag filter is active.
+          const allChip = document.querySelector('.tr-filter-chip[data-filter="__all"]');
+          if (allChip) allChip.classList.toggle('active', STATE.tags.size === 0);
+        }
+        applyFilters();
+      });
+    });
+    // Pre-light the All chip so the operator sees the initial state.
+    const allChip = document.querySelector('.tr-filter-chip[data-filter="__all"]');
+    if (allChip) allChip.classList.add('active');
+
+    const runBtn = document.getElementById('tr-run-filtered');
+    if (runBtn) runBtn.addEventListener('click', runFiltered);
+  }
+
+  // ---- "Run Filtered" — sequentially click the Run button on every
+  //      currently-visible card. Sequential (not parallel) because some
+  //      tests touch the same DB rows and we want the operator to be
+  //      able to read the progress meter without a 121-way race.
+  async function runFiltered() {
+    const cards = Array.from(document.querySelectorAll(
+      '.tr-card[data-test-id]:not(.tr-hidden)'));
+    if (!cards.length) {
+      alert('No visible tests — clear a filter or widen the search.');
+      return;
+    }
+    const progress = document.getElementById('tr-progress');
+    const runBtn = document.getElementById('tr-run-filtered');
+    if (runBtn) runBtn.disabled = true;
+    let done = 0;
+    for (const card of cards) {
+      done++;
+      if (progress) progress.textContent = `${done}/${cards.length} running…`;
+      const btn = card.querySelector('[data-action="run"]');
+      if (!btn) continue;
+      // Re-use the existing per-card click handler so results record
+      // into the Copy-All blob just like a manual click.
+      btn.click();
+      // Wait until the per-card button re-enables, polling every 150ms.
+      // Hard timeout (180s) so a stuck network call doesn't freeze the
+      // whole sweep — we surface and move on.
+      const t0 = Date.now();
+      while (btn.disabled && (Date.now() - t0) < 180000) {
+        await new Promise(r => setTimeout(r, 150));
+      }
+    }
+    if (progress) progress.textContent = `${done}/${cards.length} complete`;
+    if (runBtn) runBtn.disabled = false;
+  }
+
+  // ─── Recently-run history (last 5 per section, in localStorage) ───
+  // Key shape: `tr_recent_<section>` → JSON array of {id, title,
+  // status:'pass'|'fail', ts}. We touch this from inside the per-card
+  // Run handler (renderTestCard) by exposing pushRecent on window.TR.
+  const RECENT_LIMIT = 5;
+  function recentKey(section) { return 'tr_recent_' + section; }
+  function loadRecent(section) {
+    try { return JSON.parse(localStorage.getItem(recentKey(section)) || '[]'); }
+    catch (_) { return []; }
+  }
+  function pushRecent(section, item) {
+    const list = loadRecent(section);
+    list.unshift(item);
+    while (list.length > RECENT_LIMIT) list.pop();
+    try { localStorage.setItem(recentKey(section), JSON.stringify(list)); }
+    catch (_) {}
+    refreshRecentStrip(section);
+  }
+  function ageString(ts) {
+    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (s < 60) return s + 's ago';
+    if (s < 3600) return Math.floor(s / 60) + 'm ago';
+    if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+    return Math.floor(s / 86400) + 'd ago';
+  }
+  function refreshRecentStrip(section) {
+    const host = document.querySelector(`[data-section-recent="${section}"]`);
+    if (!host) return;
+    const list = loadRecent(section);
+    if (!list.length) { host.innerHTML = ''; return; }
+    const parts = ['<span class="tr-recent-label">Recent:</span>'];
+    list.forEach(item => {
+      const dot = item.status === 'pass' ? 'pass' : 'fail';
+      const t = esc((item.title || item.id || '').slice(0, 40));
+      parts.push(
+        `<span class="tr-recent-pill" data-jump-to="${esc(item.id)}" ` +
+        `title="${esc(item.title || item.id)} — click to jump">` +
+        `<span class="dot ${dot}"></span>${t}` +
+        `<span class="age">${ageString(item.ts)}</span></span>`
+      );
+    });
+    host.innerHTML = parts.join('');
+    host.querySelectorAll('[data-jump-to]').forEach(p => {
+      p.addEventListener('click', () => {
+        const id = p.dataset.jumpTo;
+        const card = document.querySelector(`.tr-card[data-test-id="${id}"]`);
+        if (card) { card.scrollIntoView({behavior:'smooth', block:'center'}); card.style.outline='2px solid #3b82f6'; setTimeout(()=>card.style.outline='',1500); }
+      });
+    });
+  }
+  function refreshAllRecentStrips() {
+    ['scripts','api','db'].forEach(refreshRecentStrip);
+  }
+  window.TR_pushRecent = pushRecent; // exposed for renderTestCard hook
 
   // ─── Section A clones — each verify() reads the same data the real
   //     page uses, sets the inline preview, and reports PASS/FAIL.
@@ -529,14 +721,19 @@
     wireRiskCss();
   }
 
-  // ---- DOM ready: kick off catalog load + Section A + Copy All
+  // ---- DOM ready: kick off catalog load + Section A + Copy All +
+  //      sticky-toolbar wiring (search/filter chips/Run Filtered).
   document.addEventListener('DOMContentLoaded', function () {
+    initToolbar();
     loadCatalog();
     wireSectionA();
     const copyBtn = document.getElementById('tr-copy-all');
     if (copyBtn) {
       copyBtn.addEventListener('click', copyAllResults);
     }
+    // Refresh the "Recent" age strings every 30s so "2m ago" doesn't
+    // get stuck. Cheap: 3 sections × ≤5 pills.
+    setInterval(refreshAllRecentStrips, 30000);
   });
 
   // ---- "Copy All Results" — assemble a single markdown blob across
