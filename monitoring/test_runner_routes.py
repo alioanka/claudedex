@@ -1847,6 +1847,122 @@ TEST_CATALOG: List[Dict[str, Any]] = [
     # already visible in that probe's response. Was 60 lines of identical
     # JSON.
 
+    # ════════════════════════════════════════════════════════════════════
+    # Wave-4 T2 catalog additions: FUTURES coverage for
+    # FUT-RM-07b (Telegram alert) + FUT-RM-09b (funding-forecast widget).
+    # Commits: 34e6c95 / 6f66608 / 142250b / b805626.
+    # ════════════════════════════════════════════════════════════════════
+    {
+        "id": "api_futures_funding_forecast",
+        "title": "API: GET /api/futures/funding-forecast (FUT-RM-09b)",
+        "category": "api",
+        "kind": "probe",
+        # Default 24h window; widget polls this exact URL.
+        "endpoint": "futures/funding-forecast?window_hours=24",
+        "cmd_preview": "GET /api/futures/funding-forecast?window_hours=24",
+        "timeout_s": 15,
+        "description": (
+            "FUT-RM-09b per-symbol 24h forward funding-cost forecast. "
+            "Reads the latest snapshot per (symbol, side) from "
+            "futures_funding_payments and projects predicted_usd × "
+            "intervals_per_window. Empty rows[] = no recent snapshot "
+            "(engine has not yet observed a funding interval for any "
+            "symbol on this network)."
+        ),
+    },
+    {
+        "id": "db_futures_funding_payments_recent",
+        "title": "DB: futures_funding_payments recent rows (mig 029)",
+        "category": "db",
+        "kind": "db_query",
+        # The funding-forecast widget reads from this table. Empty = the
+        # engine has not yet seen a funding interval close OR migration
+        # 029 has not been applied. The per-symbol projection in the
+        # /api/futures/funding-forecast handler short-circuits when no
+        # row is present.
+        "sql": (
+            "SELECT symbol, side, exchange, source, "
+            "  ROUND(predicted_usd::numeric, 4) AS predicted_usd, "
+            "  ROUND(realized_usd::numeric, 4) AS realized_usd, "
+            "  ROUND(notional_usd::numeric, 2) AS notional_usd, "
+            "  hour_bucket "
+            "FROM futures_funding_payments "
+            "WHERE hour_bucket > NOW() - INTERVAL '24 hours' "
+            "ORDER BY hour_bucket DESC, symbol "
+            "LIMIT 20"
+        ),
+        "cmd_preview": (
+            "SELECT symbol,side,predicted/realized_usd FROM "
+            "futures_funding_payments WHERE hour_bucket > now()-24h"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Last 24h of per-(symbol, side, source) funding payments. "
+            "Source 'engine' = predicted at gate time; 'income' = "
+            "exchange-confirmed funding income row; 'exit' = realized "
+            "at position close. Powers the FUT-RM-09b forecast widget."
+        ),
+    },
+    {
+        "id": "db_futures_telegram_alert_flag",
+        "title": "DB: FUTURES Telegram emergency-close flag (FUT-RM-07b)",
+        "category": "db",
+        "kind": "db_query",
+        # Gating flag for the FUT-RM-07b Telegram payload. Default TRUE
+        # (alert fires whenever the verify path detects a CROSS-margin
+        # fill). Operator can disable per-config_type if Telegram is
+        # noisy in a particular environment.
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key = 'telegram_emergency_close_enabled' "
+            "  AND config_type LIKE 'futures%' "
+            "ORDER BY config_type"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key='telegram_emergency_close_enabled' "
+            "AND config_type LIKE 'futures%'"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "FUT-RM-07b alert gate. Default True; row absent = engine "
+            "falls back to the FuturesLeverageConfig dataclass default "
+            "(also True). Set to 'false' to silence the critical "
+            "Telegram payload (the emergency-close itself still runs)."
+        ),
+    },
+    {
+        "id": "script_futures_funding_forecast_widget_present",
+        "title": "Script: FUTURES funding-forecast widget HTML presence (b805626)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/futures_funding_forecast_widget_check.sh"],
+        "cmd_preview": "bash scripts/futures_funding_forecast_widget_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Grep test for the funding-forecast widget DOM ids "
+            "(funding-forecast-window/total/table) and the "
+            "/api/futures/funding-forecast URL in "
+            "dashboard/templates/dashboard_futures.html. Catches "
+            "template refactors that drop the FUT-RM-09b panel."
+        ),
+    },
+    {
+        "id": "script_futures_fut_rm_07b_notify_helper",
+        "title": "Script: FUTURES FUT-RM-07b notify helper presence (34e6c95/6f66608)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/futures_fut_rm_07b_notify_check.sh"],
+        "cmd_preview": "bash scripts/futures_fut_rm_07b_notify_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Source-grep: asserts futures_engine.py declares "
+            "`_notify_fut_rm_07_emergency_close`, awaits it from the "
+            "verify-close path, AND gates it on "
+            "telegram_emergency_close_enabled. Refactors that delete "
+            "the call or drop the flag check fail this probe."
+        ),
+    },
+
     # ── AI (A6 wave-2: E1 quorum / E2 calibration / E3 bandit) ───────────
     {
         "id": "db_ai_calibration_table",
@@ -2279,6 +2395,83 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "applied; engine falls back to dataclass defaults. "
             "Disabling the check removes the cross-module safety net; "
             "per-module max_copy_amount + max_active_positions stay."
+        ),
+    },
+
+    # ── DEX (A1 wave-4: 115cb35 V3 impact, 6f96075 bloXroute BSC) ──────
+    {
+        "id": "db_dex_v3_quoter_addresses",
+        "title": "DB: DEX V3 QuoterV2 per-chain address overrides (115cb35)",
+        "category": "db",
+        "kind": "db_query",
+        # The chunked-probe V3 impact path (wave-4) uses the same
+        # `_quote_v3` -> QuoterV2 helper added in wave-3. Operators
+        # CAN override the per-chain quoter address via the
+        # `v3_quoter_addresses` config key (one row whose value is a
+        # JSON dict). Empty result = no override; the hard-coded
+        # UNISWAP_V3_QUOTER_V2_ADDRESSES literal in direct_dex.py
+        # (asserted by script_dex_quoter_v2_addresses_present) is the
+        # full source of truth. Non-empty rows = operator pointed at a
+        # fork (SushiSwap V3, PancakeSwap V3, etc.) and the override
+        # value should be valid JSON parseable as a chain->addr dict.
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key = 'v3_quoter_addresses' "
+            "ORDER BY config_type"
+        ),
+        "cmd_preview": "SELECT … WHERE key='v3_quoter_addresses'",
+        "timeout_s": 10,
+        "description": (
+            "Per-chain V3 QuoterV2 address overrides. Empty = engine "
+            "uses the hard-coded UNISWAP_V3_QUOTER_V2_ADDRESSES map "
+            "(eth/poly/arb/base/op/bsc). Non-empty = operator pointed "
+            "at a fork quoter; value should be a JSON dict keyed by "
+            "chain. Companion to script_dex_quoter_v2_addresses_present."
+        ),
+    },
+    {
+        "id": "db_dex_bloxroute_config",
+        "title": "DB: DEX bloXroute BSC private-tx config (6f96075)",
+        "category": "db",
+        "kind": "db_query",
+        # Wave-4 wired a real BSC private-tx send. Two operator-tunable
+        # config rows: bloxroute_enabled (gate, default false) and
+        # bloxroute_bsc_endpoint (default https://api.blxrbdn.com).
+        # The auth header is a SECRET (loaded from secrets_manager or
+        # BLOXROUTE_AUTH_HEADER env) and is NEVER read here.
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ('bloxroute_enabled','bloxroute_bsc_endpoint') "
+            "ORDER BY config_type, key"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN ('bloxroute_enabled','bloxroute_bsc_endpoint')"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "bloXroute BSC private-tx config. Default off (enabled="
+            "false). When flipped on, mev_protection routes BSC swaps "
+            "via blxr_private_tx instead of public mempool. Endpoint "
+            "default https://api.blxrbdn.com. Auth header is a secret "
+            "(not surfaced here); missing header => fallback to "
+            "public-mempool path. Ethereum still routes via Flashbots."
+        ),
+    },
+    {
+        "id": "script_dex_quoter_v2_addresses_present",
+        "title": "Script: DEX QuoterV2 per-chain map presence (115cb35)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/dex_quoter_v2_addresses_check.sh"],
+        "cmd_preview": "bash scripts/dex_quoter_v2_addresses_check.sh",
+        "timeout_s": 10,
+        "description": (
+            "Source-grep: asserts UNISWAP_V3_QUOTER_V2_ADDRESSES in "
+            "trading/executors/direct_dex.py has entries for "
+            "ethereum/polygon/arbitrum/base/optimism/bsc. Missing "
+            "chain rows = the chunked V3 impact probe returns None "
+            "and the max_price_impact_bps refusal gate silently "
+            "no-ops on that chain."
         ),
     },
 ]
