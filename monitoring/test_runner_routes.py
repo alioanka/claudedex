@@ -2136,6 +2136,151 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "Empty = refresh never ran or DiscoveryConfig errored out."
         ),
     },
+
+    # ════════════════════════════════════════════════════════════════════
+    # Wave-4 T1 catalog additions: DEX / SOLANA / COPY_TRADING coverage
+    # for the commits enumerated in the T1-W4 brief.
+    # ════════════════════════════════════════════════════════════════════
+
+    # ── COPY_TRADING (A7 wave-4: CT-Q-09 probation + CT-Q-12 exposure) ──
+    {
+        "id": "db_copy_probation_thresholds",
+        "title": "DB: COPY probation-gate thresholds (CT-Q-09, mig 030)",
+        "category": "db",
+        "kind": "db_query",
+        # Migration 030_copy_probation_gate_defaults.sql seeds the four
+        # copy_probation_* knobs the engine BUY path consults. The
+        # engine also accepts bare ('probation_*') keys; this probe
+        # surfaces both so the operator can see which form is active.
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ("
+            "  'copy_probation_gate_enabled','probation_gate_enabled',"
+            "  'copy_probation_score_threshold','probation_score_threshold',"
+            "  'copy_probation_loss_pct_threshold','probation_loss_pct_threshold',"
+            "  'copy_probation_days','probation_days'"
+            ") "
+            "ORDER BY key, config_type"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN copy_probation_* / probation_* knobs"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "CT-Q-09 probation-gate config. Defaults: enabled=true, "
+            "score<30 + >=10 trades auto-benches, mirrored-trade loss "
+            "worse than -25% auto-benches, bench duration 7 days. "
+            "Empty result = mig 030 not applied; engine falls back to "
+            "_load_settings dataclass defaults (still safe)."
+        ),
+    },
+    {
+        "id": "db_copy_probation_state",
+        "title": "DB: COPY leaders currently on probation (CT-Q-09)",
+        "category": "db",
+        "kind": "db_query",
+        # copy_engine._is_leader_on_probation reads on_probation +
+        # probation_until from copy_leader_scores (cols added in mig
+        # 026). BUY path refuses with `[replay] reason=probation` when
+        # any leader is benched. This probe lists who, why, until-when.
+        "sql": (
+            "SELECT chain, "
+            "  substring(wallet_address, 1, 12) || '...' AS wallet_short, "
+            "  on_probation, "
+            "  probation_until, "
+            "  probation_reason "
+            "FROM copy_leader_scores "
+            "WHERE on_probation = TRUE "
+            "ORDER BY probation_until DESC NULLS LAST "
+            "LIMIT 50"
+        ),
+        "cmd_preview": (
+            "SELECT chain,wallet,on_probation,probation_until,probation_reason"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "Currently benched leaders. Empty = nobody on probation "
+            "(all leaders eligible to mirror). Non-empty rows = engine "
+            "will refuse BUY broadcasts for these wallets until "
+            "probation_until passes; SELLs are NEVER gated. "
+            "probation_reason values: 'score<threshold', "
+            "'closed_trade_loss>threshold'."
+        ),
+    },
+    {
+        "id": "db_copy_exposure_breakdown",
+        "title": "DB: COPY cross-module exposure breakdown per chain (CT-Q-12)",
+        "category": "db",
+        "kind": "db_query",
+        # Mirrors what modules/copy_trading/exposure_aggregator.py
+        # sums at runtime. Per-chain UNION of open-position USD across
+        # DEX (trades.usd_value), SNIPER, AI, COPY (entry_usd) -- the
+        # SOLANA positions table has no entry_usd column yet (carry-
+        # over noted in COPY_TRADING/CLAUDE.md) so it appears as a
+        # zero row to make the gap visible.
+        "sql": (
+            "SELECT 'dex' AS module, chain, "
+            "  COUNT(*) AS open_positions, "
+            "  ROUND(COALESCE(SUM(usd_value),0)::numeric, 2) AS open_usd "
+            "FROM trades WHERE status='open' GROUP BY chain "
+            "UNION ALL "
+            "SELECT 'sniper', chain, COUNT(*), "
+            "  ROUND(COALESCE(SUM(entry_usd),0)::numeric, 2) "
+            "FROM sniper_trades WHERE status='open' GROUP BY chain "
+            "UNION ALL "
+            "SELECT 'ai', chain, COUNT(*), "
+            "  ROUND(COALESCE(SUM(entry_usd),0)::numeric, 2) "
+            "FROM ai_trades WHERE status='open' GROUP BY chain "
+            "UNION ALL "
+            "SELECT 'copy', chain, COUNT(*), "
+            "  ROUND(COALESCE(SUM(entry_usd),0)::numeric, 2) "
+            "FROM copytrading_trades WHERE status='open' GROUP BY chain "
+            "ORDER BY module, chain"
+        ),
+        "cmd_preview": (
+            "UNION ALL open-position USD by module across DEX/SNIPER/AI/COPY"
+        ),
+        "timeout_s": 15,
+        "description": (
+            "Per-module per-chain open exposure. Sums the same tables "
+            "exposure_aggregator.get_exposure_usd consults at BUY "
+            "time. Any chain whose total exceeds "
+            "copy_cross_module_exposure_cap_usd (default $5000) will "
+            "see COPY BUYs refused with [replay] reason=cross_module_"
+            "cap. SOLANA noop until solana_positions.entry_usd ships."
+        ),
+    },
+    {
+        "id": "db_copy_cross_module_cap",
+        "title": "DB: COPY cross-module exposure cap config (CT-Q-12)",
+        "category": "db",
+        "kind": "db_query",
+        # Migration 030 seeds the two CT-Q-12 flags. copy_engine.
+        # _check_cross_module_exposure consults both: the enable flag
+        # gates the lookup, the cap_usd compares against
+        # existing + intended.
+        "sql": (
+            "SELECT config_type, key, value FROM config_settings "
+            "WHERE key IN ("
+            "  'copy_cross_module_exposure_check_enabled',"
+            "  'cross_module_exposure_check_enabled',"
+            "  'copy_cross_module_exposure_cap_usd',"
+            "  'cross_module_exposure_cap_usd'"
+            ") "
+            "ORDER BY key, config_type"
+        ),
+        "cmd_preview": (
+            "SELECT … WHERE key IN copy_cross_module_exposure_* knobs"
+        ),
+        "timeout_s": 10,
+        "description": (
+            "CT-Q-12 cross-module exposure-cap config. Defaults: "
+            "check_enabled=true, cap_usd=5000. Empty = mig 030 not "
+            "applied; engine falls back to dataclass defaults. "
+            "Disabling the check removes the cross-module safety net; "
+            "per-module max_copy_amount + max_active_positions stay."
+        ),
+    },
 ]
 
 
