@@ -721,6 +721,26 @@ function renderTrades() {
         const symbol = t.symbol || (t.token_address ? t.token_address.substring(0, 8) : 'Token');
         const initials = symbol.substring(0, 2).toUpperCase();
 
+        // Wave-5: distinguish realized vs live unrealized PnL.
+        // - CLOSED rows: show as $X.XX (realized)
+        // - OPEN rows with live price: show as $X.XX (live)
+        // - OPEN legacy rows (no tokens_received): show "PnL pending"
+        const isOpen = status === 'open';
+        const pnlPending = !!t.pnl_pending;
+        const isLegacyRow = !!t.is_legacy_row;
+        let pnlSuffix = '';
+        let pnlDisplay = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+        if (pnlPending) {
+            pnlDisplay = '<span style="color:#f59e0b;">PnL pending</span>';
+            pnlSuffix = isLegacyRow
+                ? ' <small style="opacity:0.7">(legacy row, run backfill)</small>'
+                : ' <small style="opacity:0.7">(live price unavailable)</small>';
+        } else if (isOpen) {
+            pnlSuffix = ' <small style="opacity:0.7">(live)</small>';
+        } else {
+            pnlSuffix = ' <small style="opacity:0.7">(realized)</small>';
+        }
+
         html += `
             <tr>
                 <td>${t.timestamp ? formatDate(t.timestamp) : '-'}</td>
@@ -742,8 +762,8 @@ function renderTrades() {
                 <td><span class="badge badge-${side}">${side.toUpperCase()}</span></td>
                 <td>$${(t.entry_usd || t.usd_value || 0).toFixed(2)}</td>
                 <td class="pnl-cell ${pnlClass}">
-                    ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}
-                    ${t.profit_pct ? '<small>(' + (t.profit_pct >= 0 ? '+' : '') + t.profit_pct.toFixed(1) + '%)</small>' : ''}
+                    ${pnlDisplay}${pnlSuffix}
+                    ${(!pnlPending && t.profit_pct) ? '<br><small>(' + (t.profit_pct >= 0 ? '+' : '') + t.profit_pct.toFixed(1) + '%)</small>' : ''}
                 </td>
                 <td><span class="badge badge-${status}">${status.toUpperCase()}</span></td>
                 <td><span class="badge ${t.dry_run ? 'badge-dry' : 'badge-live'}">${t.dry_run ? 'DRY RUN' : 'LIVE'}</span></td>

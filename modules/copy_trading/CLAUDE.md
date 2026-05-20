@@ -50,6 +50,32 @@ Replay-log gate vocabulary expanded to: `probation`, `cross_module_cap` (in addi
 ### Wave-4 carry-over (not shipped this wave)
 - `solana_positions.entry_usd` column. The aggregator currently noops on Solana open positions because the table has no USD basis (only `amount_sol`). SOLANA module owns the migration; until then the aggregator falls back to summing only the SOL-closed trades stored in `copytrading_trades` and `solana_trades` (which DO have USD basis).
 - Dashboard surfacing of the new flags. The settings page should expose the four probation knobs + two exposure knobs as operator-tunable fields. Engine consumes via `ConfigManager` already; UI lift remains for the dashboard agent.
+
+## Wave-5 (2026-05-20) — dashboard PnL surfacing
+**Problem.** Operator reported that every Copy Trading page (`/copytrading/discovery`, `/copytrading/wallets`, `/copytrading/performance`, `/copytrading/trades`, `/copytrading/dashboard`) showed `Total PnL +$0.00` even though they had 5 open mirrored positions on 2 leaders (`5pziQHHK` x4, `Coyadnds` x1). Root cause: `copytrading_trades.profit_loss` is only populated on close — for OPEN positions it stays at 0, and every dashboard query was summing that column directly.
+
+**Fix.** New `_enrich_copytrading_pnl(raw_rows)` helper in `monitoring/enhanced_dashboard.py` that augments every row with:
+- `realized_pnl` = the `profit_loss` column verbatim (closed trades only)
+- `unrealized_pnl` = `live_jupiter_price * metadata.tokens_received - entry_usd` for OPEN Solana rows that have `tokens_received` populated
+- `pnl_pending` = `True` for legacy pre-`6fe0a36` rows where `tokens_received` is missing AND `entry_price` is within +/-5% of `native_price_at_trade` (the schema-bug signature). UI shows "PnL pending" instead of fabricating $0.
+- `profit_loss` is rewritten to `realized + unrealized` so every existing template that reads only `t.profit_loss` shows the right number with zero JS surgery.
+
+**Endpoints rewired (all in `monitoring/enhanced_dashboard.py`):**
+- `GET /api/copytrading/trades` — every row gets the enriched fields; aggregate `stats.realized_pnl` + `stats.unrealized_pnl` exposed.
+- `GET /api/copytrading/wallets` — per-wallet aggregation in ONE query + ONE batched price call. Adds `realized_pnl`, `unrealized_pnl`, `pending_count` per wallet.
+- `GET /api/copytrading/stats` — appends an OPEN-positions enrichment pass; folds unrealized PnL into both `total_pnl` and `live_pnl`. Adds `pnl_pending_count`.
+- `GET /api/copytrading/discover` (local fallback path) — hot wallets card now shows live PnL via a follow-up enrichment pass on per-wallet OPEN rows.
+
+**Templates updated** to show `(live)` vs `(realized)` suffix + legacy-row badge: `wallets_copytrading.html`, `trades_copytrading.html`, `performance_copytrading.html`, `dashboard_copytrading.html`, `discovery_copytrading.html`.
+
+**Legacy-row detection.** A row is "legacy" (pre-6fe0a36 schema bug, where `entry_price = native_SOL_price` instead of `entry_price = USD_per_token`) when BOTH:
+1. `metadata.tokens_received` is missing or 0
+2. `entry_price` is within +/-5% of `native_price_at_trade` (the schema-bug always wrote the EXACT native price into entry_price; fresh post-fix rows write USD-per-token which is almost never within 5% of the SOL price for a real token).
+
+Operator runs `python scripts/backfill_copy_tokens_received.py --force` to retroactively populate `metadata.tokens_received` on legacy rows. After backfill, the helper computes real unrealized PnL on those rows automatically.
+
+**Performance.** A single dashboard refresh hits Jupiter Price v3 at most once thanks to the existing 30s TTL `_token_price_cache`. Fail-soft: any price-fetch error leaves `unrealized_pnl=0` and `pnl_pending=True` so the UI doesn't lie.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
 - Wave-2 quant audit: section 2 of `docs/agents/reports/COPY_TRADING_quant.md` — the CT-Q-01 / CT-Q-02 backlog drove the rebuild.

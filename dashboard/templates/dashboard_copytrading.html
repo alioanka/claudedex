@@ -658,13 +658,29 @@ function updateStats(stats) {
 
     const pnl = stats.total_pnl || 0;
     const pnlEl = document.getElementById('stat-pnl');
+    // Wave-5: stats.total_pnl now = realized + unrealized. Show the
+    // split when both are nonzero so the operator can tell what's
+    // locked-in vs mark-to-market.
+    const realized = stats.realized_pnl || 0;
+    const unrealized = stats.unrealized_pnl || 0;
+    const pendingN = stats.pnl_pending_count || 0;
     let pnlText = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+    if (unrealized !== 0 && realized !== 0) {
+        pnlText += ` (R: ${realized >= 0 ? '+' : ''}$${Math.abs(realized).toFixed(2)} + Live: ${unrealized >= 0 ? '+' : ''}$${Math.abs(unrealized).toFixed(2)})`;
+    } else if (unrealized !== 0) {
+        pnlText += ' (live, open positions)';
+    } else if (realized !== 0) {
+        pnlText += ' (realized)';
+    }
     const sim = stats.simulated_trades || 0;
     const livePnl = stats.live_pnl;
     if (sim > 0 && livePnl !== undefined) {
         // Show real vs total when there are simulated rows in the mix
         const liveStr = (livePnl >= 0 ? '+' : '') + '$' + Math.abs(livePnl).toFixed(2);
         pnlText = `${liveStr} live (${pnlText} incl. DRY_RUN)`;
+    }
+    if (pendingN > 0) {
+        pnlText += ` — ${pendingN} legacy row(s) pending backfill`;
     }
     pnlEl.textContent = pnlText;
     pnlEl.className = 'hero-stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
@@ -691,6 +707,17 @@ function updateActivityFeed(trades) {
         const icon = trade.side?.toLowerCase() === 'sell' ? 'arrow-down' : 'arrow-up';
         const pnlClass = pnl >= 0 ? 'positive' : 'negative';
         const timeAgo = trade.timestamp ? formatTimeAgo(new Date(trade.timestamp)) : 'Recently';
+        // Wave-5: badge live vs realized
+        const isOpen = (trade.status || '').toLowerCase() === 'open';
+        const pnlPending = !!trade.pnl_pending;
+        let pnlLabel = '';
+        if (pnlPending) {
+            pnlLabel = '<small style="opacity:0.7"> pending</small>';
+        } else if (isOpen) {
+            pnlLabel = '<small style="opacity:0.7"> (live)</small>';
+        } else {
+            pnlLabel = '<small style="opacity:0.7"> (realized)</small>';
+        }
 
         html += `
             <div class="activity-item">
@@ -706,7 +733,7 @@ function updateActivityFeed(trades) {
                         &bull; $${(trade.entry_usd || trade.usd_value || 0).toFixed(2)}
                     </div>
                 </div>
-                ${pnl !== 0 ? `<div class="activity-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</div>` : ''}
+                ${(pnl !== 0 || isOpen) ? `<div class="activity-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}${pnlLabel}</div>` : ''}
                 <div class="activity-time">${timeAgo}</div>
             </div>
         `;

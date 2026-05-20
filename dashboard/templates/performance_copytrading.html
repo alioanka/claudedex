@@ -522,10 +522,17 @@ function processPerformance(trades) {
         return;
     }
 
-    // Calculate metrics
+    // Calculate metrics. Wave-5: profit_loss from /api/copytrading/trades
+    // now includes unrealized PnL for OPEN trades — no template change
+    // needed for the equity curve, but we split realized vs unrealized
+    // in the hero stat so operators can see how much of total PnL is
+    // mark-to-market vs locked-in.
     const wins = trades.filter(t => (t.profit_loss || 0) > 0);
     const losses = trades.filter(t => (t.profit_loss || 0) < 0);
     const totalPnl = trades.reduce((a, t) => a + (t.profit_loss || 0), 0);
+    const realizedPnl = trades.reduce((a, t) => a + (t.realized_pnl || 0), 0);
+    const unrealizedPnl = trades.reduce((a, t) => a + (t.unrealized_pnl || 0), 0);
+    const pendingCount = trades.filter(t => t.pnl_pending).length;
     const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
     const bestTrade = Math.max(...trades.map(t => t.profit_loss || 0));
     const worstTrade = Math.min(...trades.map(t => t.profit_loss || 0));
@@ -538,9 +545,20 @@ function processPerformance(trades) {
     const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
     const riskReward = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 999 : 0;
 
-    // Update hero stats
+    // Update hero stats (Wave-5: show realized + live unrealized)
     const pnlEl = document.getElementById('stat-pnl');
-    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
+    let pnlText = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
+    if (unrealizedPnl !== 0 && realizedPnl !== 0) {
+        pnlText += ` (R: ${realizedPnl >= 0 ? '+' : ''}$${Math.abs(realizedPnl).toFixed(2)} + Live: ${unrealizedPnl >= 0 ? '+' : ''}$${Math.abs(unrealizedPnl).toFixed(2)})`;
+    } else if (unrealizedPnl !== 0) {
+        pnlText += ' (live)';
+    } else if (realizedPnl !== 0) {
+        pnlText += ' (realized)';
+    }
+    if (pendingCount > 0) {
+        pnlText += ` — ${pendingCount} pending`;
+    }
+    pnlEl.textContent = pnlText;
     pnlEl.className = 'hero-stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
     document.getElementById('stat-trades').textContent = trades.length;

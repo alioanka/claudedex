@@ -409,6 +409,11 @@
             const totalTrades = wallet.total_trades || 0;
             const winningTrades = wallet.winning_trades || 0;
             const totalPnl = parseFloat(wallet.total_pnl) || 0;
+            // Wave-5: split realized vs unrealized for clarity
+            const realizedPnl = parseFloat(wallet.realized_pnl) || 0;
+            const unrealizedPnl = parseFloat(wallet.unrealized_pnl) || 0;
+            const pendingCount = wallet.pending_count || 0;
+            const openCount = wallet.open_positions || 0;
 
             // Calculate win rate safely
             const winRate = totalTrades > 0
@@ -418,6 +423,24 @@
             // Determine PnL styling
             const pnlClass = totalPnl >= 0 ? 'positive' : 'negative';
             const pnlSign = totalPnl >= 0 ? '+' : '';
+            const realizedClass = realizedPnl >= 0 ? 'positive' : 'negative';
+            const unrealizedClass = unrealizedPnl >= 0 ? 'positive' : 'negative';
+            // Wave-5: "(live)" suffix when there's an open-position
+            // component, "(realized)" otherwise. Pending badge when
+            // legacy rows can't be priced.
+            let pnlSuffix = '';
+            if (unrealizedPnl !== 0 && realizedPnl !== 0) {
+                pnlSuffix = ' <small style="opacity:0.7">(realized+live)</small>';
+            } else if (unrealizedPnl !== 0) {
+                pnlSuffix = ' <small style="opacity:0.7">(live)</small>';
+            } else if (realizedPnl !== 0) {
+                pnlSuffix = ' <small style="opacity:0.7">(realized)</small>';
+            } else if (openCount > 0) {
+                pnlSuffix = ' <small style="opacity:0.6">(pending live price)</small>';
+            }
+            const pendingBadge = pendingCount > 0
+                ? `<div style="margin-top:6px;font-size:0.7rem;color:#f59e0b;"><i class="fas fa-info-circle"></i> ${pendingCount} legacy row(s) need backfill</div>`
+                : '';
 
             html += `
                 <div class="wallet-card">
@@ -440,7 +463,13 @@
                         </div>
                         <div class="wallet-stat">
                             <div class="wallet-stat-label">Total PnL</div>
-                            <div class="wallet-stat-value ${pnlClass}">${pnlSign}$${Math.abs(totalPnl).toFixed(2)}</div>
+                            <div class="wallet-stat-value ${pnlClass}">${pnlSign}$${Math.abs(totalPnl).toFixed(2)}${pnlSuffix}</div>
+                            ${unrealizedPnl !== 0 && realizedPnl !== 0 ? `
+                            <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:4px;">
+                                R: <span class="${realizedClass}">${realizedPnl >= 0 ? '+' : ''}$${Math.abs(realizedPnl).toFixed(2)}</span> |
+                                U: <span class="${unrealizedClass}">${unrealizedPnl >= 0 ? '+' : ''}$${Math.abs(unrealizedPnl).toFixed(2)}</span>
+                            </div>` : ''}
+                            ${pendingBadge}
                         </div>
                         <div class="wallet-stat">
                             <div class="wallet-stat-label">Last Trade</div>

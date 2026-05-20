@@ -832,6 +832,21 @@
             const rankClass = index === 0 ? 'gold' : index === 1 ? 'silver' : index === 2 ? 'bronze' : 'default';
             const pnlClass = wallet.total_pnl >= 0 ? 'positive' : 'negative';
             const isTracked = trackedWallets.includes(wallet.address);
+            // Wave-5: split realized vs unrealized for hot wallets
+            const realized = wallet.realized_pnl || 0;
+            const unrealized = wallet.unrealized_pnl || 0;
+            const pendingN = wallet.pending_count || 0;
+            let pnlLabel = '';
+            if (unrealized !== 0 && realized !== 0) {
+                pnlLabel = '<div style="font-size:0.65rem;color:var(--text-secondary);margin-top:2px;">R: $' + realized.toFixed(0) + ' + Live: $' + unrealized.toFixed(0) + '</div>';
+            } else if (unrealized !== 0) {
+                pnlLabel = '<div style="font-size:0.65rem;color:var(--text-secondary);margin-top:2px;">(live)</div>';
+            } else if (realized !== 0) {
+                pnlLabel = '<div style="font-size:0.65rem;color:var(--text-secondary);margin-top:2px;">(realized)</div>';
+            }
+            const pendingNote = pendingN > 0
+                ? `<div style="font-size:0.65rem;color:#f59e0b;margin-top:2px;">${pendingN} legacy row(s)</div>`
+                : '';
 
             html += `
                 <div class="hot-wallet-card">
@@ -862,6 +877,8 @@
                         <div class="hot-wallet-stat">
                             <div class="hot-wallet-stat-label">PnL</div>
                             <div class="hot-wallet-stat-value ${pnlClass}">$${wallet.total_pnl.toFixed(0)}</div>
+                            ${pnlLabel}
+                            ${pendingNote}
                         </div>
                     </div>
                 </div>
