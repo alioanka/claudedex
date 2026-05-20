@@ -101,14 +101,22 @@ async def main(args):
     pool = await asyncpg.create_pool(db_url, min_size=1, max_size=2)
 
     try:
-        # Pull every OPEN copytrading position that's missing tokens_received.
+        # Pull every OPEN copytrading position that needs backfill.
+        # --force re-runs even on rows that already have tokens_received
+        # (use after the engine fix in fd51508/ce2f5f6 — older rows may
+        # have entry_price written as native SOL price even though
+        # metadata.tokens_received is present from an earlier partial
+        # backfill).
         async with pool.acquire() as conn:
-            where = (
-                "status = 'open' "
-                "AND chain = 'solana' "
-                "AND (metadata IS NULL "
-                "     OR NOT (metadata::jsonb ? 'tokens_received'))"
-            )
+            if args.force:
+                where = "status = 'open' AND chain = 'solana'"
+            else:
+                where = (
+                    "status = 'open' "
+                    "AND chain = 'solana' "
+                    "AND (metadata IS NULL "
+                    "     OR NOT (metadata::jsonb ? 'tokens_received'))"
+                )
             params = ()
             if args.trade_id:
                 where += " AND trade_id = $1"
@@ -164,12 +172,23 @@ async def main(args):
                 meta["tokens_received_source"] = "backfill_jupiter_v3"
                 meta["tokens_received_approx"] = True  # warn dashboard this is post-hoc
 
+                # Also fix the legacy schema-semantic bug: entry_price was
+                # written as native (SOL) price and amount as SOL amount.
+                # Rewrite them to be per-token USD price + token count so
+                # the dashboard live-PnL path can compute correctly without
+                # the metadata-fallback branch.
+                token_entry_price_usd = entry_usd / tokens_received
+
                 async with pool.acquire() as conn:
                     await conn.execute(
                         "UPDATE copytrading_trades "
-                        "SET metadata = $1::jsonb "
-                        "WHERE trade_id = $2",
+                        "SET metadata = $1::jsonb, "
+                        "    entry_price = $2, "
+                        "    amount = $3 "
+                        "WHERE trade_id = $4",
                         json.dumps(meta),
+                        token_entry_price_usd,
+                        tokens_received,
                         trade_id,
                     )
         logger.info("Backfill complete.")
@@ -184,5 +203,9 @@ if __name__ == "__main__":
                         help="Show what would be written without modifying the DB.")
     parser.add_argument("--trade-id", type=str, default=None,
                         help="Process only this specific trade_id.")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-backfill rows that already have tokens_received "
+                             "(useful after the entry_price-semantic fix to "
+                             "rewrite legacy entry_price/amount columns too).")
     args = parser.parse_args()
     sys.exit(asyncio.run(main(args)))

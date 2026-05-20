@@ -2198,12 +2198,19 @@ class CopyTradingEngine(BaseModule):
                         )
                 else:
                     # BUY: Record new open position.
-                    # Stash tokens_received (human-readable token count) into
-                    # metadata so the dashboard can compute correct live PnL.
-                    # Without this, copytrading_trades.amount is the SOL amount
-                    # (not the token count) and the dashboard cannot derive
-                    # current_value = live_price × tokens. Fail-soft: if
-                    # the helper can't fetch the price, omit the field.
+                    # SCHEMA SEMANTICS (operator-reported bug):
+                    #   entry_price column = USD per TOKEN (not native price)
+                    #   amount column      = TOKEN count (not SOL amount)
+                    #   entry_usd column   = USD spent on the position
+                    #   native_price_at_trade column = SOL/ETH USD price at trade time
+                    # Previously the engine wrote native_price + amount_native,
+                    # which caused the dashboard to show '-100% loss on USDC'
+                    # because (token_price - SOL_price) × SOL_amount is
+                    # meaningless. Stash tokens_received in metadata AND use
+                    # it to compute proper token-level entry_price + amount.
+                    # Fail-soft: if we can't get the price, fall back to the
+                    # legacy native_price + amount_native and skip the metadata
+                    # field so the dashboard knows to show 'PnL pending'.
                     tokens_received = None
                     try:
                         if chain == 'solana' and usd_value and usd_value > 0:
@@ -2215,6 +2222,14 @@ class CopyTradingEngine(BaseModule):
                     meta = {'dry_run': self.dry_run}
                     if tokens_received and tokens_received > 0:
                         meta['tokens_received'] = tokens_received
+                        token_entry_price_usd = float(usd_value) / tokens_received
+                        amount_for_db = tokens_received
+                    else:
+                        # Legacy fallback — preserve the pre-fix behavior on
+                        # rows where we can't get a quote (e.g. brand-new
+                        # token that Jupiter doesn't index yet).
+                        token_entry_price_usd = native_price
+                        amount_for_db = amount_native
                     await conn.execute("""
                         INSERT INTO copytrading_trades (
                             trade_id, token_address, chain, source_wallet, source_tx,
@@ -2225,7 +2240,7 @@ class CopyTradingEngine(BaseModule):
                         ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)
                     """,
                         trade_id, token_addr, chain, source_wallet or 'unknown', source_tx,
-                        'buy', native_price, 0.0, amount_native,
+                        'buy', token_entry_price_usd, 0.0, amount_for_db,
                         usd_value, 0.0, 0.0, 0.0,
                         'open' if result.get('success') else 'failed', self.dry_run, now,
                         result.get('tx_hash'), native_price,
