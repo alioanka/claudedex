@@ -30,12 +30,16 @@ AMBER → GREEN candidate (Jupiter spot; pending production verification). MB-06
 - **Adaptive priority fee + quote freshness TTL (`83df4ad`)** — JupiterHelper can bid `getRecentPrioritizationFees` percentile (default p75) and refetches stale Jupiter quotes before signing. Both opt-in; config wired in `8cf0143` bundle.
 - **P1-07 ML rug gate (`b1b358f`)** — `_open_position` runs `RugClassifier.predict` when `solana_ml_enabled=True`; refuses entry above `solana_ml_max_rug_prob`. Fail-soft when no trained model.
 
+Wave-4 additions:
+- **Jito bundle wiring (`d6a4a8c` + `a6c3a89`)** — `solana_jito_bundle_enabled` flag (default `False`). When True, the engine submits the signed Jupiter swap + a tip tx via `trading/chains/solana/jito_bundle.JitoClient` and falls back to vanilla Jupiter on bundle-rejection / rate-limit / timeout. Tip lamports configurable via `solana_jito_tip_lamports` (default 50_000 — the documented competitive floor; arbitrage's 10k default lands far less reliably). Every attempt + outcome (SEND / LANDED / REJECTED / SKIPPED-rate-limited / ERROR / fell-back) is logged at INFO so operator can see uptake.
+- **Pump-predictor warmup pre-fetch (`3edd27e`)** — engine startup pre-fills the per-token `TokenPriceBuffer` with the last hour of 1-min bars via Birdeye `defi/history_price` when `BIRDEYE_API_KEY` is configured, otherwise seeds a single Jupiter spot price per active token. Tokens warmed = `config_manager.jupiter_tokens` ∪ reconciled-from-DB position mints. Per-token skipped when the buffer is already full. The predictor gate itself stays opt-in via `solana_pump_predictor_enabled` (default `False`); the warmup just removes the 30-min cold-start window once the gate is flipped on.
+
 Outstanding (follow-ups, not blocking):
-- Jito bundle path for solana_trading (the JitoClient lives in `modules/arbitrage/solana_engine.py:297`; lift to `trading/chains/solana/jito_bundle.py` and wire as a fourth path alongside JupiterHelper).
-- Pump predictor wiring needs a per-token on-line price history buffer; not built yet.
 - `pump_predictor.py:170-215` scaler `fit_transform` over full dataset = standardization leakage (independent of the "look-ahead" label characterization in P1-08, which on re-read is a legitimate next-bar binary label, not X→y leakage).
+- Birdeye history is gated on operator-supplied `BIRDEYE_API_KEY`; without it the warmup only seeds 1 bar/token (not 60). Jupiter Price v3 has no history endpoint so this is the cheapest data source today.
 
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SOLANA_*.md` (smartcontract / quant / analyst).
 - Wave-2 campaign report: `docs/agents/reports/SOLANA_CAMPAIGN.md`.
+- Wave-4 report: `docs/agents/reports/SOLANA_WAVE4.md`.
 - Canonical engine API: `docs/engines.md`.
