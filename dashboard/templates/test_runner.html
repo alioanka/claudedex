@@ -124,24 +124,172 @@
     padding: 2px 8px !important;
     min-height: 22px !important;
   }
+
+  /* ── Sticky toolbar (search + filter chips + Run Filtered) ─────── */
+  .tr-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg-primary, #0f172a);
+    border-bottom: 1px solid var(--border-color, #334155);
+    padding: 10px 12px 12px 12px;
+    margin: -8px -8px 14px -8px;
+    box-shadow: 0 4px 10px -6px rgba(0,0,0,0.5);
+  }
+  .tr-toolbar input[type="search"] {
+    width: 100%;
+    background: var(--bg-tertiary, #0a0f1c);
+    color: var(--text-primary, #f1f5f9);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    outline: none;
+  }
+  .tr-toolbar input[type="search"]:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.25);
+  }
+  .tr-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .tr-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid var(--border-color, #334155);
+    background: var(--bg-secondary, #1e293b);
+    color: var(--text-secondary, #94a3b8);
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .tr-filter-chip:hover { color: var(--text-primary, #f1f5f9); }
+  .tr-filter-chip.active {
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
+  }
+  .tr-filter-chip[data-filter="must"].active     { background:#dc2626;border-color:#dc2626; }
+  .tr-filter-chip[data-filter="new"].active      { background:#16a34a;border-color:#16a34a; }
+  .tr-filter-chip[data-filter="p0"].active       { background:#ea580c;border-color:#ea580c; }
+  .tr-filter-chip[data-filter="flaky"].active    { background:#eab308;border-color:#eab308;color:#1f2937; }
+  .tr-filter-chip[data-filter="expected-empty"].active { background:#64748b;border-color:#64748b; }
+  .tr-filter-chip .count {
+    font-size: 0.65rem;
+    opacity: 0.8;
+    font-weight: 500;
+  }
+  .tr-toolbar-progress {
+    font-size: 0.78rem;
+    color: var(--text-secondary, #94a3b8);
+    margin-left: auto;
+  }
+  .tr-count-chip {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--bg-tertiary, #0f172a);
+    border: 1px solid var(--border-color, #334155);
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  /* hide cards when their data attrs don't match the active filters */
+  .tr-card.tr-hidden { display: none !important; }
+
+  /* Recently-run history strip — last 5 results per section. Each
+     item is a clickable chip that scrolls to the test card. */
+  .tr-recent {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 12px 0;
+  }
+  .tr-recent:empty { display: none; }
+  .tr-recent-label {
+    font-size: 0.7rem;
+    color: var(--text-secondary, #94a3b8);
+    margin-right: 4px;
+    align-self: center;
+  }
+  .tr-recent-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border: 1px solid var(--border-color, #334155);
+    background: var(--bg-tertiary, #0f172a);
+    color: var(--text-primary, #f1f5f9);
+    cursor: pointer;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tr-recent-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    display: inline-block;
+  }
+  .tr-recent-pill .dot.pass { background: #10b981; }
+  .tr-recent-pill .dot.fail { background: #ef4444; }
+  .tr-recent-pill .age {
+    color: var(--text-secondary, #94a3b8);
+    font-weight: 500;
+    margin-left: 4px;
+  }
 </style>
 {% endblock %}
 
 {% block content %}
 <div class="tr-page">
-  <div class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-      <h1 style="pointer-events:auto;">Test Runner</h1>
-      <div style="color: var(--text-secondary, #94a3b8); font-size: 0.9rem;">
-        One-screen verification for the session-18 dashboard fixes.
-        Backend contract: <code>/api/test-runner/{tests,run,probe/&lt;id&gt;}</code>
-        (owned by Agent 3 — pin to this shape).
-      </div>
-    </div>
-    <div>
-      <button id="tr-copy-all" class="btn btn-primary" type="button">
-        <i class="fas fa-clipboard"></i> Copy All Results
+  <!-- Sticky toolbar — search + filter chips + Run Filtered + Copy
+       All. Stays pinned to the top so the operator can narrow the
+       121-entry catalog without scrolling back. Wired in test_runner.js
+       (initToolbar). -->
+  <div class="tr-toolbar" id="tr-toolbar">
+    <input id="tr-search" type="search" autocomplete="off"
+           placeholder="Search by title or description…">
+    <div class="tr-filter-row" id="tr-filter-row">
+      <span style="font-size:0.75rem;color:var(--text-secondary,#94a3b8);">Filter:</span>
+      <span class="tr-filter-chip" data-filter="__all" title="Show every test (clear all tag filters)">All</span>
+      <span class="tr-filter-chip" data-filter="must"           title="Must-run sanity tests">Must <span class="count" data-tag-count="must">0</span></span>
+      <span class="tr-filter-chip" data-filter="new"            title="Wave-3 + Wave-4 additions">New <span class="count" data-tag-count="new">0</span></span>
+      <span class="tr-filter-chip" data-filter="p0"             title="Migration-present P0 probes">P0 <span class="count" data-tag-count="p0">0</span></span>
+      <span class="tr-filter-chip" data-filter="flaky"          title="Known-intermittent — deprioritize a red here">Flaky <span class="count" data-tag-count="flaky">0</span></span>
+      <span class="tr-filter-chip" data-filter="expected-empty" title="Returns 0 rows in DRY_RUN by design">Expected-empty <span class="count" data-tag-count="expected-empty">0</span></span>
+      <button id="tr-run-filtered" class="btn btn-sm btn-primary" type="button"
+              style="margin-left:8px;" title="Run every currently-visible test in sequence">
+        <i class="fas fa-bolt"></i> Run Filtered
       </button>
+      <button id="tr-copy-all" class="btn btn-sm btn-secondary" type="button"
+              title="Build a single markdown blob of every run result">
+        <i class="fas fa-clipboard"></i> Copy All
+      </button>
+      <span id="tr-progress" class="tr-toolbar-progress"></span>
+    </div>
+  </div>
+
+  <div style="margin-bottom: 14px;">
+    <h1 style="pointer-events:auto;margin:0;">Test Runner</h1>
+    <div style="color: var(--text-secondary, #94a3b8); font-size: 0.9rem;">
+      One-screen verification with tag pills (Must / New / P0 / Flaky /
+      Expected-empty). Backend contract:
+      <code>/api/test-runner/{tests,run,probe/&lt;id&gt;}</code>
+      (owned by Agent 3 — pin to this shape).
     </div>
   </div>
 
@@ -305,24 +453,30 @@
     </div>
   </section>
 
-  <!-- Section B: Scripts (built in commit 3) -->
-  <section class="tr-section" id="tr-section-b">
-    <h2>B. Scripts <span class="chip chip-pending">pending</span></h2>
+  <!-- Section B: Scripts. Count chip updates live as filters apply. -->
+  <section class="tr-section" id="tr-section-b" data-section="scripts">
+    <h2>B. Scripts <span class="tr-count-chip"
+          data-section-count="scripts">0</span></h2>
     <div class="tr-sub">bash kind tests from <code>/api/test-runner/tests</code>.</div>
+    <div class="tr-recent" data-section-recent="scripts"></div>
     <div id="tr-section-b-body"></div>
   </section>
 
-  <!-- Section C: API Probes (built in commit 4) -->
-  <section class="tr-section" id="tr-section-c">
-    <h2>C. API Probes <span class="chip chip-pending">pending</span></h2>
+  <!-- Section C: API Probes. -->
+  <section class="tr-section" id="tr-section-c" data-section="api">
+    <h2>C. API Probes <span class="tr-count-chip"
+          data-section-count="api">0</span></h2>
     <div class="tr-sub">probe kind tests via <code>/api/test-runner/probe/&lt;id&gt;</code>.</div>
+    <div class="tr-recent" data-section-recent="api"></div>
     <div id="tr-section-c-body"></div>
   </section>
 
-  <!-- Section D: DB Probes (built in commit 4) -->
-  <section class="tr-section" id="tr-section-d">
-    <h2>D. DB Probes <span class="chip chip-pending">pending</span></h2>
+  <!-- Section D: DB Probes. -->
+  <section class="tr-section" id="tr-section-d" data-section="db">
+    <h2>D. DB Probes <span class="tr-count-chip"
+          data-section-count="db">0</span></h2>
     <div class="tr-sub">db_query kind tests via <code>/api/test-runner/run</code>.</div>
+    <div class="tr-recent" data-section-recent="db"></div>
     <div id="tr-section-d-body"></div>
   </section>
 </div>
