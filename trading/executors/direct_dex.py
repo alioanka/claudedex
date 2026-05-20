@@ -23,7 +23,11 @@ try:
 except ImportError:  # pragma: no cover - legacy web3 fallback
     from web3.middleware import geth_poa_middleware as _POA_MIDDLEWARE
 from eth_account import Account
-from eth_abi import encode_abi
+# eth-abi >=4 renamed encode_abi → encode; we don't currently call either
+# in this module, so the import was a vestige from an earlier draft that
+# crashed the entire module on import (every DEX swap path was dead).
+# If a future refactor needs to ABI-encode a struct, import:
+#   from eth_abi import encode as encode_abi
 
 from core.dry_run import should_skip_live
 from trading.orders.order_manager import Order, OrderType, OrderStatus
