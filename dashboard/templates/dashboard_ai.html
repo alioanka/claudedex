@@ -467,6 +467,25 @@
                     <canvas id="sentimentChart"></canvas>
                 </div>
             </div>
+
+            <!-- A6 W4: Multi-Provider Quorum Agreement-Rate Chart -->
+            <div class="section-card">
+                <div class="section-title">
+                    <i class="fas fa-balance-scale"></i>
+                    Quorum Agreement Rate (24h)
+                    <span style="margin-left: auto; font-size: 0.75rem; color: var(--text-secondary);">
+                        <span id="quorumOverallRate">--</span> agreement
+                        | <span id="quorumTotalCount">0</span> ticks
+                        | <span id="quorumTradesFired">0</span> trades fired
+                    </span>
+                </div>
+                <div class="chart-container">
+                    <canvas id="quorumChart"></canvas>
+                </div>
+                <div id="quorumFailReasons" style="margin-top: 8px; font-size: 0.75rem; color: var(--text-secondary);">
+                    No quorum data yet — enable both AI providers AND set <code>quorum_required=true</code> in /ai/settings.
+                </div>
+            </div>
         </div>
 
         <!-- Right Column: Positions + Settings -->
@@ -563,25 +582,30 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(refreshData, 60000);
 });
 
+let quorumChart = null;
+
 async function refreshData() {
     try {
         // Fetch all data in parallel
-        const [statsRes, sentimentRes, tradesRes, settingsRes] = await Promise.all([
+        const [statsRes, sentimentRes, tradesRes, settingsRes, quorumRes] = await Promise.all([
             fetch('/api/ai/stats'),
             fetch('/api/ai/sentiment'),
             fetch('/api/ai/trades'),
-            fetch('/api/ai/settings')
+            fetch('/api/ai/settings'),
+            fetch('/api/ai/quorum-metrics?hours=24')
         ]);
 
         const stats = await statsRes.json();
         const sentiment = await sentimentRes.json();
         const trades = await tradesRes.json();
         const settings = await settingsRes.json();
+        const quorum = await quorumRes.json();
 
         if (stats.success) updateStats(stats.stats);
         if (sentiment.success) updateSentimentDisplay(sentiment.data);
         if (trades.success) updatePositionsAndTrades(trades.trades);
         if (settings.success) updateSettings(settings.settings);
+        if (quorum.success) updateQuorumChart(quorum);
 
     } catch (error) {
         console.error('Error refreshing data:', error);
@@ -750,6 +774,102 @@ function updateChart(data) {
                             return value;
                         }
                     }
+                }
+            }
+        }
+    });
+}
+
+function updateQuorumChart(payload) {
+    // A6 W4: render the multi-provider agreement-rate chart.
+    // payload shape: see /api/ai/quorum-metrics in monitoring/enhanced_dashboard.py.
+    const overall = payload.overall || {};
+    const buckets = payload.buckets || [];
+
+    // Header strip — overall agreement rate + tick / trade counts.
+    const rateEl = document.getElementById('quorumOverallRate');
+    const totalEl = document.getElementById('quorumTotalCount');
+    const tradesEl = document.getElementById('quorumTradesFired');
+    if (overall.agreement_rate !== null && overall.agreement_rate !== undefined) {
+        rateEl.textContent = (overall.agreement_rate * 100).toFixed(1) + '%';
+    } else {
+        rateEl.textContent = '--';
+    }
+    totalEl.textContent = overall.total || 0;
+    tradesEl.textContent = overall.trade_fired_count || 0;
+
+    // Fail-reason breakdown line.
+    const reasons = overall.fail_by_reason || {};
+    const failKeys = Object.keys(reasons);
+    const reasonsEl = document.getElementById('quorumFailReasons');
+    if (overall.total > 0 && failKeys.length) {
+        const parts = failKeys.map(k => `${k}: ${reasons[k]}`);
+        reasonsEl.textContent = 'Fail reasons (24h): ' + parts.join(' | ');
+    } else if (overall.total > 0) {
+        reasonsEl.textContent = 'All quorum calls passed in the last 24h.';
+    } else {
+        reasonsEl.textContent =
+            'No quorum data yet — enable both AI providers AND set quorum_required=true in /ai/settings.';
+    }
+
+    // Bucketed chart (line for agreement-rate, bar for trade_fired count).
+    const ctx = document.getElementById('quorumChart').getContext('2d');
+    if (quorumChart) quorumChart.destroy();
+    const labels = buckets.map(b => {
+        const d = new Date(b.bucket_start);
+        return d.toLocaleTimeString([], {hour: '2-digit'}) + ':00';
+    });
+    const rates = buckets.map(b => (b.agreement_rate !== null ? b.agreement_rate * 100 : null));
+    const trades = buckets.map(b => b.trade_fired || 0);
+
+    quorumChart = new Chart(ctx, {
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    type: 'line',
+                    label: 'Agreement rate (%)',
+                    data: rates,
+                    borderColor: '#22c55e',
+                    backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                    yAxisID: 'y',
+                    tension: 0.3,
+                    pointRadius: 3,
+                    spanGaps: true,
+                },
+                {
+                    type: 'bar',
+                    label: 'Trades fired',
+                    data: trades,
+                    backgroundColor: 'rgba(139, 92, 246, 0.6)',
+                    borderColor: '#8b5cf6',
+                    yAxisID: 'y1',
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true, labels: { color: '#94a3b8' } } },
+            scales: {
+                x: {
+                    display: true,
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8', maxTicksLimit: 12 }
+                },
+                y: {
+                    type: 'linear', position: 'left',
+                    min: 0, max: 100,
+                    grid: { color: 'rgba(148, 163, 184, 0.1)' },
+                    ticks: { color: '#94a3b8', callback: v => v + '%' },
+                    title: { display: true, text: 'Agreement %', color: '#94a3b8' }
+                },
+                y1: {
+                    type: 'linear', position: 'right',
+                    min: 0, suggestedMax: 4,
+                    grid: { display: false },
+                    ticks: { color: '#94a3b8', precision: 0 },
+                    title: { display: true, text: 'Trades', color: '#94a3b8' }
                 }
             }
         }

@@ -836,6 +836,10 @@ class DashboardEndpoints:
         # A6 E2: confidence-calibration reliability diagram + Brier score.
         # Source: ai_confidence_calibration (migration 023).
         self.app.router.add_get('/api/ai/calibration', self.api_get_ai_calibration)
+        # A6 W4: multi-provider quorum metrics. Source: ai_feature_store
+        # rows with metadata.quorum_outcome (written by SentimentEngine
+        # _persist_quorum_outcome on every cycle that ran a quorum call).
+        self.app.router.add_get('/api/ai/quorum-metrics', self.api_get_ai_quorum_metrics)
 
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
@@ -13167,6 +13171,156 @@ class DashboardEndpoints:
             return web.json_response({
                 'success': False, 'error': str(e),
                 'bins': [], 'brier': None, 'sample_count': 0,
+            })
+
+    async def api_get_ai_quorum_metrics(self, request):
+        """A6 W4: multi-provider quorum agreement-rate over time.
+
+        Query: ?hours=24 (default 24, capped at 720 = 30d to bound the
+        scan). Source: ai_feature_store rows with non-null
+        metadata.quorum_outcome (written by SentimentEngine
+        _persist_quorum_outcome). Returns:
+          - overall: {total, passed, fail_by_reason, agreement_rate,
+                      trade_fired_count, headline_avg}
+          - buckets: list of {bucket_start, total, passed,
+                              agreement_rate, trade_fired}
+                     bucketed by the hour. Empty hours are omitted —
+                     the chart fills gaps client-side.
+          - sample_outcomes: last 20 raw rows for the debug table
+        Empty / DB-down / table-absent all return success=true with
+        zeroed structures so the widget can render a "no data" state.
+        """
+        try:
+            hours = int(request.query.get('hours', '24'))
+        except (TypeError, ValueError):
+            hours = 24
+        hours = max(1, min(720, hours))
+        empty = {
+            'success': True, 'hours': hours,
+            'overall': {
+                'total': 0, 'passed': 0,
+                'fail_by_reason': {},
+                'agreement_rate': None,
+                'trade_fired_count': 0,
+                'headline_avg': None,
+            },
+            'buckets': [],
+            'sample_outcomes': [],
+        }
+        if not self.db:
+            empty['note'] = 'no db_pool'
+            return web.json_response(empty)
+        try:
+            async with self.db.pool.acquire() as conn:
+                table_exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'ai_feature_store'
+                    )
+                """)
+                if not table_exists:
+                    empty['note'] = 'run migration 014_add_ai_feature_store_table'
+                    return web.json_response(empty)
+                # Hourly buckets — pull the quorum_outcome blob and let
+                # asyncpg JSONB-extract on the SQL side (fewer Py loops).
+                rows = await conn.fetch(f"""
+                    SELECT
+                        date_trunc('hour', timestamp) AS bucket_start,
+                        COUNT(*)                       AS total,
+                        SUM(CASE WHEN (metadata->'quorum_outcome'->>'passed')::bool
+                                 THEN 1 ELSE 0 END)    AS passed,
+                        SUM(CASE WHEN (metadata->'quorum_outcome'->>'trade_fired')::bool
+                                 THEN 1 ELSE 0 END)    AS trade_fired,
+                        AVG((metadata->'quorum_outcome'->>'headlines_count')::int)
+                                                       AS headline_avg
+                    FROM ai_feature_store
+                    WHERE metadata ? 'quorum_outcome'
+                      AND timestamp >= NOW() - INTERVAL '{hours} hours'
+                    GROUP BY bucket_start
+                    ORDER BY bucket_start ASC
+                """)
+                buckets = []
+                total = 0
+                passed_total = 0
+                trade_fired_total = 0
+                headline_acc = 0.0
+                headline_n = 0
+                for r in rows:
+                    bt = int(r['total'])
+                    bp = int(r['passed'] or 0)
+                    bf = int(r['trade_fired'] or 0)
+                    buckets.append({
+                        'bucket_start': r['bucket_start'].isoformat(),
+                        'total': bt,
+                        'passed': bp,
+                        'agreement_rate': (bp / bt) if bt > 0 else None,
+                        'trade_fired': bf,
+                    })
+                    total += bt
+                    passed_total += bp
+                    trade_fired_total += bf
+                    if r['headline_avg'] is not None:
+                        headline_acc += float(r['headline_avg']) * bt
+                        headline_n += bt
+                # Fail-reason breakdown across the same window.
+                fail_rows = await conn.fetch(f"""
+                    SELECT
+                        metadata->'quorum_outcome'->>'fail_reason' AS reason,
+                        COUNT(*) AS n
+                    FROM ai_feature_store
+                    WHERE metadata ? 'quorum_outcome'
+                      AND (metadata->'quorum_outcome'->>'passed')::bool = false
+                      AND timestamp >= NOW() - INTERVAL '{hours} hours'
+                    GROUP BY reason
+                    ORDER BY n DESC
+                """)
+                fail_by_reason = {
+                    (r['reason'] or 'unknown'): int(r['n']) for r in fail_rows
+                }
+                # Raw recent rows for the debug table (cheap; capped at 20).
+                sample_rows = await conn.fetch(f"""
+                    SELECT timestamp, metadata->'quorum_outcome' AS outcome
+                    FROM ai_feature_store
+                    WHERE metadata ? 'quorum_outcome'
+                      AND timestamp >= NOW() - INTERVAL '{hours} hours'
+                    ORDER BY timestamp DESC
+                    LIMIT 20
+                """)
+                sample_outcomes = []
+                for r in sample_rows:
+                    outcome = r['outcome']
+                    if isinstance(outcome, str):
+                        try:
+                            outcome = json.loads(outcome)
+                        except Exception:
+                            outcome = {}
+                    sample_outcomes.append({
+                        'timestamp': r['timestamp'].isoformat(),
+                        'outcome': outcome or {},
+                    })
+            return web.json_response({
+                'success': True,
+                'hours': hours,
+                'overall': {
+                    'total': total,
+                    'passed': passed_total,
+                    'fail_by_reason': fail_by_reason,
+                    'agreement_rate': (
+                        (passed_total / total) if total > 0 else None
+                    ),
+                    'trade_fired_count': trade_fired_total,
+                    'headline_avg': (
+                        (headline_acc / headline_n) if headline_n > 0 else None
+                    ),
+                },
+                'buckets': buckets,
+                'sample_outcomes': sample_outcomes,
+            })
+        except Exception as e:
+            logger.error(f"Error in /api/ai/quorum-metrics: {e}")
+            return web.json_response({
+                'success': False, 'error': str(e),
+                'overall': empty['overall'], 'buckets': [], 'sample_outcomes': [],
             })
 
     # ==================== FULL DASHBOARD HANDLERS ====================
