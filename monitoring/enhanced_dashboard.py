@@ -509,6 +509,127 @@ class DashboardEndpoints:
         return out
 
     @staticmethod
+    def _detect_legacy_copy_row(entry_price, native_price_at_trade,
+                                metadata) -> bool:
+        """Wave-5: a row is 'legacy' (pre-6fe0a36 schema-bug) when:
+          - metadata.tokens_received is missing, AND
+          - entry_price looks like the native SOL/ETH USD price at trade
+            time (entry_price ≈ native_price_at_trade), which is the
+            pre-fix signature of `entry_price = native_price`.
+        We use a 5% tolerance band on the native_price comparison; the
+        legacy bug wrote the EXACT native_price_at_trade into
+        entry_price, so anything within a hair of it is the bug. Fresh
+        post-fix rows write entry_price = USD-per-token which is almost
+        never within 5% of the SOL price for a real meme/utility token.
+
+        Returns True when the row's reported PnL would be garbage and
+        the dashboard should fall back to "PnL pending".
+        """
+        try:
+            meta = metadata or {}
+            if isinstance(meta, str):
+                import json as _json
+                try:
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            if isinstance(meta, dict) and meta.get('tokens_received'):
+                return False  # new-format row — trust the columns
+            ep = float(entry_price or 0)
+            np_ = float(native_price_at_trade or 0)
+            if ep <= 0 or np_ <= 0:
+                return False  # not enough info to flag — leave as-is
+            # Within +/-5% of native price = legacy schema-bug write.
+            return abs(ep - np_) / np_ < 0.05
+        except Exception:
+            return False
+
+    async def _enrich_copytrading_pnl(self, raw_rows: list) -> list:
+        """Wave-5 PnL surfacing — fixes operator's "every page shows $0"
+        complaint. Takes raw copytrading_trades rows (asyncpg Records or
+        dicts) and returns enriched dicts with:
+          - realized_pnl: closed-trade profit_loss (the existing column)
+          - unrealized_pnl: for OPEN Solana rows with tokens_received in
+              metadata, computes live_price * tokens - entry_usd via the
+              Jupiter price helper. 0 for closed or legacy rows.
+          - pnl_pending: True for legacy rows (no tokens_received +
+              entry_price ≈ native_price). UI shows "PnL pending" instead
+              of a fabricated zero.
+          - is_legacy_row: True if detected as pre-fix schema-bug row.
+          - profit_loss: realized + unrealized — drop-in replacement for
+              the raw column so existing templates magically work without
+              JS changes (they all already read `t.profit_loss`).
+
+        Fail-soft: any price-fetch failure leaves unrealized_pnl=0 and
+        flips pnl_pending=True so the UI doesn't lie.
+        """
+        # Normalise asyncpg Records -> dicts so callers can use either.
+        enriched: list = []
+        need_prices: list = []  # mints for OPEN rows with tokens_received
+        for r in raw_rows:
+            row = dict(r) if not isinstance(r, dict) else dict(r)
+            meta = row.get('metadata') or {}
+            if isinstance(meta, str):
+                try:
+                    import json as _json
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            row['_meta_parsed'] = meta if isinstance(meta, dict) else {}
+            status = (row.get('status') or '').lower()
+            row['realized_pnl'] = float(row.get('profit_loss') or 0)
+            row['unrealized_pnl'] = 0.0
+            row['pnl_pending'] = False
+            row['is_legacy_row'] = self._detect_legacy_copy_row(
+                row.get('entry_price'),
+                row.get('native_price_at_trade'),
+                row['_meta_parsed'],
+            )
+            if status == 'open':
+                tokens = row['_meta_parsed'].get('tokens_received')
+                if tokens and float(tokens) > 0 and (row.get('chain') or '').lower() == 'solana':
+                    mint = row.get('token_address')
+                    if mint:
+                        need_prices.append(mint)
+                        row['_tokens_received'] = float(tokens)
+                elif row['is_legacy_row']:
+                    # Legacy row with no tokens_received — honestly
+                    # surface "pending" rather than fake a number.
+                    row['pnl_pending'] = True
+            enriched.append(row)
+
+        # Batch price lookup for all OPEN rows that need it
+        prices: dict = {}
+        if need_prices:
+            try:
+                prices = await self._get_token_prices_usd(list(set(need_prices)))
+            except Exception as e:
+                logger.debug(f"_enrich_copytrading_pnl: price fetch failed: {e}")
+                prices = {}
+
+        for row in enriched:
+            tokens = row.pop('_tokens_received', None)
+            if not tokens:
+                continue
+            mint = row.get('token_address')
+            live = float(prices.get(mint) or 0)
+            entry_usd = float(row.get('entry_usd') or 0)
+            if live > 0 and entry_usd > 0:
+                row['unrealized_pnl'] = (live * tokens) - entry_usd
+                row['current_price_usd'] = live
+            else:
+                # Price unavailable — be honest, don't fake $0.
+                row['pnl_pending'] = True
+
+        # Combined PnL: realized (closed) + unrealized (open). Existing
+        # JS uses `t.profit_loss` so we overwrite that field; raw stored
+        # value is preserved under `realized_pnl`.
+        for row in enriched:
+            row['profit_loss'] = row['realized_pnl'] + row['unrealized_pnl']
+            row.pop('_meta_parsed', None)
+        return enriched
+
+    @staticmethod
     def _serialize_decimals(obj):
         """Convert Decimal objects to float for JSON serialization"""
         if isinstance(obj, dict):
@@ -807,6 +928,9 @@ class DashboardEndpoints:
         # Wave-3: per-chain hourly gas-spend tile (reads
         # arbitrage_runtime_stats persisted by EVMArbitrageEngine).
         self.app.router.add_get('/api/arbitrage/gas-spend', self.api_get_arbitrage_gas_spend)
+        # Wave-5: "Why no trades?" panel - last 20 rejected opportunities,
+        # per-reason counters, cost profile, gas spend, chain liveness.
+        self.app.router.add_get('/api/arbitrage/diagnostics', self.api_get_arbitrage_diagnostics)
 
         # API - Copy Trading Module
         self.app.router.add_get('/api/copytrading/stats', self.api_get_copytrading_stats)
@@ -11608,6 +11732,8 @@ class DashboardEndpoints:
             'winning_trades': 0,
             'losing_trades': 0,
             'total_pnl': 0.0,
+            'realized_pnl': 0.0,
+            'unrealized_pnl': 0.0,
             'total_volume': 0.0,
             'avg_trade': 0.0,
             'win_rate': 0.0
@@ -11622,80 +11748,109 @@ class DashboardEndpoints:
                             side, entry_price, exit_price, amount,
                             entry_usd, exit_usd, profit_loss, profit_loss_pct,
                             status, is_simulated, entry_timestamp, exit_timestamp,
-                            tx_hash, native_price_at_trade
+                            tx_hash, native_price_at_trade, metadata
                         FROM copytrading_trades
                         ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
 
+                    # Wave-5: enrich every row with live unrealized PnL
+                    # (OPEN trades) + realized PnL (CLOSED). Without this
+                    # every row showed +$0.00 because profit_loss is 0
+                    # for open positions. _enrich_copytrading_pnl batches
+                    # the Jupiter price calls so we do ONE network round
+                    # trip for the entire response.
+                    enriched_rows = await self._enrich_copytrading_pnl(rows)
+
                     total_pnl = 0.0
                     total_volume = 0.0
+                    realized_total = 0.0
+                    unrealized_total = 0.0
                     wins = 0
                     losses = 0
 
-                    for row in rows:
-                        entry_usd = float(row['entry_usd'] or 0)
-                        exit_usd = float(row['exit_usd'] or 0)
-                        stored_pnl = float(row['profit_loss'] or 0)
-                        stored_pnl_pct = float(row['profit_loss_pct'] or 0)
+                    for row in enriched_rows:
+                        entry_usd = float(row.get('entry_usd') or 0)
+                        exit_usd = float(row.get('exit_usd') or 0)
+                        realized_pnl = float(row.get('realized_pnl') or 0)
+                        unrealized_pnl = float(row.get('unrealized_pnl') or 0)
+                        pnl_pending = bool(row.get('pnl_pending'))
 
-                        # Calculate P&L if not stored and we have valid entry data
-                        # IMPORTANT: Only recalculate if entry_usd > 0 to avoid treating
-                        # standalone SELL trades (no matching BUY) as full profit
-                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0 and entry_usd > 0:
-                            calculated_pnl = exit_usd - entry_usd
-                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100
+                        # Backfill realized PnL from entry/exit if column
+                        # was 0 but we have valid closed-trade data.
+                        if (realized_pnl == 0 and (row.get('status') or '').lower() == 'closed'
+                                and exit_usd > 0 and entry_usd > 0):
+                            realized_pnl = exit_usd - entry_usd
+                        calculated_pnl = realized_pnl + unrealized_pnl
+                        # profit_pct: from realized if closed, from unrealized vs entry if open
+                        if entry_usd > 0:
+                            calculated_pnl_pct = (calculated_pnl / entry_usd) * 100
                         else:
-                            calculated_pnl = stored_pnl
-                            calculated_pnl_pct = stored_pnl_pct
+                            calculated_pnl_pct = float(row.get('profit_loss_pct') or 0)
 
-                        # Track stats
+                        # Track stats — count realized wins/losses only
+                        # for the win-rate metric (unrealized swings).
                         total_volume += entry_usd
                         total_pnl += calculated_pnl
-                        if calculated_pnl > 0:
+                        realized_total += realized_pnl
+                        unrealized_total += unrealized_pnl
+                        if realized_pnl > 0:
                             wins += 1
-                        elif calculated_pnl < 0:
+                        elif realized_pnl < 0:
                             losses += 1
 
                         # Get proper token symbol based on chain
-                        token_addr = row['token_address'] or ''
-                        chain = (row['chain'] or 'solana').lower()
+                        token_addr = row.get('token_address') or ''
+                        chain = (row.get('chain') or 'solana').lower()
                         if chain == 'solana':
                             token_symbol = get_solana_token_name(token_addr)
                         else:
                             token_symbol = token_addr[:10] + '...' if len(token_addr) > 10 else token_addr
 
+                        entry_ts = row.get('entry_timestamp')
+                        exit_ts = row.get('exit_timestamp')
                         trades.append({
-                            'trade_id': row['trade_id'],
+                            'trade_id': row.get('trade_id'),
                             'symbol': token_symbol,
                             'token_address': token_addr,
-                            'chain': row['chain'],
-                            'source_wallet': row['source_wallet'],
-                            'source_tx': row['source_tx'] or '',
-                            'side': row['side'] or 'buy',
-                            'entry_price': float(row['entry_price'] or 0),
-                            'exit_price': float(row['exit_price'] or 0),
-                            'price': float(row['entry_price'] or 0),
-                            'quantity': float(row['amount'] or 0),
-                            'amount': float(row['amount'] or 0),
+                            'chain': row.get('chain'),
+                            'source_wallet': row.get('source_wallet'),
+                            'source_tx': row.get('source_tx') or '',
+                            'side': row.get('side') or 'buy',
+                            'entry_price': float(row.get('entry_price') or 0),
+                            'exit_price': float(row.get('exit_price') or 0),
+                            'price': float(row.get('entry_price') or 0),
+                            'quantity': float(row.get('amount') or 0),
+                            'amount': float(row.get('amount') or 0),
                             'entry_usd': entry_usd,
                             'exit_usd': exit_usd,
                             'usd_value': entry_usd,
+                            # profit_loss is the COMBINED realized+unrealized
+                            # so existing template code (which reads only
+                            # this field) shows the right number.
                             'profit_loss': calculated_pnl,
                             'profit_pct': calculated_pnl_pct,
-                            'status': row['status'] or 'open',
-                            'dry_run': row['is_simulated'],
-                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
-                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
-                            'tx_hash': row['tx_hash'] or '',
-                            'native_price': float(row['native_price_at_trade'] or 0)
+                            'realized_pnl': realized_pnl,
+                            'unrealized_pnl': unrealized_pnl,
+                            'pnl_pending': pnl_pending,
+                            'is_legacy_row': bool(row.get('is_legacy_row')),
+                            'current_price_usd': float(row.get('current_price_usd') or 0),
+                            'status': row.get('status') or 'open',
+                            'dry_run': row.get('is_simulated'),
+                            'timestamp': entry_ts.isoformat() if entry_ts else None,
+                            'exit_timestamp': exit_ts.isoformat() if exit_ts else None,
+                            'tx_hash': row.get('tx_hash') or '',
+                            'native_price': float(row.get('native_price_at_trade') or 0)
                         })
 
-                    # Calculate aggregate stats
+                    # Calculate aggregate stats (Wave-5: split realized
+                    # vs unrealized so the UI can show both)
                     aggregate_stats['total_trades'] = len(trades)
                     aggregate_stats['winning_trades'] = wins
                     aggregate_stats['losing_trades'] = losses
                     aggregate_stats['total_pnl'] = total_pnl
+                    aggregate_stats['realized_pnl'] = realized_total
+                    aggregate_stats['unrealized_pnl'] = unrealized_total
                     aggregate_stats['total_volume'] = total_volume
                     aggregate_stats['avg_trade'] = total_volume / len(trades) if trades else 0
                     aggregate_stats['win_rate'] = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
