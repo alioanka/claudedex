@@ -155,6 +155,20 @@ class FuturesRiskConfig(BaseModel):
     require_trend_confirmation: bool = False  # Allow trading in sideways markets (was True)
     min_volume_multiplier: float = 0.8  # Allow 80% of average volume (was 1.2)
 
+    # FUT-RM-16 (Wave 5): ATR-scaled SL/TP per symbol. The static 1.2% / 1.8%
+    # SL/TP that ships above is the right number for a quiet majors book but
+    # gets stopped out instantly on a vol-name (FIL, NEAR, AAVE all moved 4%+
+    # against the operator at 10x). When enabled, SL becomes
+    #   max(atr_sl_min_pct, atr_sl_multiplier * ATR_pct)
+    # and TP becomes atr_tp_rr_ratio * SL distance (i.e. enforced R:R).
+    # Defaults are tuned to keep the existing 1.2% / 1.8%≈1.5R behavior for
+    # quiet symbols (ATR_pct ~0.8%) while widening for volatile ones. Set
+    # atr_dynamic_sl_tp_enabled=False to revert to the static SL/TP above.
+    atr_dynamic_sl_tp_enabled: bool = True
+    atr_sl_multiplier: float = 1.5     # SL = max(atr_sl_min_pct, 1.5 × ATR%)
+    atr_sl_min_pct: float = 1.5        # Floor on SL distance (price %)
+    atr_tp_rr_ratio: float = 2.0       # TP1 = 2 × SL distance
+
 
 class FuturesPairsConfig(BaseModel):
     """Trading pairs configuration"""

@@ -342,6 +342,18 @@ class FuturesTradingEngine:
                 risk_config, 'auto_deleverage_cooldown_seconds', 600))
             self._auto_deleverage_last_at = None  # datetime of last trigger
 
+            # FUT-RM-16 (Wave 5): ATR-scaled SL/TP. When enabled, the engine
+            # uses signals.atr_pct at entry time to size SL/TP distances per
+            # symbol's actual volatility (see _open_position).
+            self.atr_dynamic_sl_tp_enabled = bool(getattr(
+                risk_config, 'atr_dynamic_sl_tp_enabled', True))
+            self.atr_sl_multiplier = float(getattr(
+                risk_config, 'atr_sl_multiplier', 1.5))
+            self.atr_sl_min_pct = float(getattr(
+                risk_config, 'atr_sl_min_pct', 1.5))
+            self.atr_tp_rr_ratio = float(getattr(
+                risk_config, 'atr_tp_rr_ratio', 2.0))
+
             # Calculate max_daily_loss_usd from percentage and capital
             # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.
             if risk_config.max_daily_loss_pct and risk_config.max_daily_loss_pct > 0:
@@ -384,6 +396,11 @@ class FuturesTradingEngine:
             self.atr_stop_multiplier = 1.5
             self.enforce_isolated_margin = True
             self.telegram_emergency_close_enabled = True
+            # FUT-RM-16 (Wave 5): ATR-scaled SL/TP fallback defaults
+            self.atr_dynamic_sl_tp_enabled = True
+            self.atr_sl_multiplier = 1.5
+            self.atr_sl_min_pct = 1.5
+            self.atr_tp_rr_ratio = 2.0
             self.stop_loss_pct = -5.0
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
@@ -1040,7 +1057,11 @@ class FuturesTradingEngine:
         # stop_loss_pct is stored as positive (e.g., 2.0)
         # SL triggers when price moves against position by >= stop_loss_pct
         # Example: if stop_loss_pct=2.0, SL triggers when price drops 2% (for LONG)
-        if position.trailing_stop_price is None and actual_price_change_pct <= -self.stop_loss_pct:
+        # FUT-RM-16 (Wave 5): when ATR-scaled SL was applied at entry, the
+        # position carries its own sl_pct in metadata so we respect the
+        # per-symbol level instead of the engine-wide static one.
+        effective_sl_pct = position.metadata.get('dynamic_sl_pct') or self.stop_loss_pct
+        if position.trailing_stop_price is None and actual_price_change_pct <= -effective_sl_pct:
             return "SL Hit"
 
         # Take profit check (legacy single TP - only if NOT using multiple tp_levels)
@@ -1839,8 +1860,47 @@ class FuturesTradingEngine:
             # Calculate stop loss price (SL% is price move %)
             sl_pct = abs(self.stop_loss_pct)
 
+            # FUT-RM-16 (Wave 5): ATR-scaled SL/TP per symbol. Overrides the
+            # static sl_pct with max(atr_sl_min_pct, atr_sl_multiplier × ATR%)
+            # and rescales TP1..TP4 so TP1 = atr_tp_rr_ratio × SL distance.
+            # TP2/TP3/TP4 keep their relative proportions to TP1 so the
+            # front-loaded size_pct distribution still makes sense.
+            atr_dyn = (
+                getattr(self, 'atr_dynamic_sl_tp_enabled', False)
+                and signals is not None
+                and getattr(signals, 'atr_pct', 0.0) > 0.0
+            )
+            _orig_sl_pct = self.stop_loss_pct
+            _orig_tps = (self.tp1_pct, self.tp2_pct, self.tp3_pct, self.tp4_pct)
+            if atr_dyn:
+                atr_pct = float(signals.atr_pct) * 100.0  # decimal -> %
+                dyn_sl_pct = max(
+                    float(self.atr_sl_min_pct),
+                    float(self.atr_sl_multiplier) * atr_pct,
+                )
+                dyn_tp1_pct = dyn_sl_pct * float(self.atr_tp_rr_ratio)
+                tp1_ratio = dyn_tp1_pct / self.tp1_pct if self.tp1_pct > 0 else 1.0
+                self.stop_loss_pct = dyn_sl_pct
+                self.tp1_pct = dyn_tp1_pct
+                self.tp2_pct = _orig_tps[1] * tp1_ratio
+                self.tp3_pct = _orig_tps[2] * tp1_ratio
+                self.tp4_pct = _orig_tps[3] * tp1_ratio
+                sl_pct = dyn_sl_pct
+                logger.info(
+                    f"FUT-RM-16 ATR SL/TP {symbol}: ATR%={atr_pct:.2f} -> "
+                    f"SL={dyn_sl_pct:.2f}% TP1={dyn_tp1_pct:.2f}% "
+                    f"(R:R={self.atr_tp_rr_ratio:.1f})"
+                )
+
             # Calculate multiple take profit levels
             tp_levels = self._calculate_tp_levels(current_price, side)
+
+            # FUT-RM-16: restore static settings so the next entry recomputes
+            # from the operator's baseline; the position carries its own
+            # tp_levels + stop_loss_price for live monitoring.
+            if atr_dyn:
+                self.stop_loss_pct = _orig_sl_pct
+                self.tp1_pct, self.tp2_pct, self.tp3_pct, self.tp4_pct = _orig_tps
 
             if side == TradeSide.LONG:
                 stop_loss_price = current_price * (1 - sl_pct / 100)
@@ -1918,12 +1978,19 @@ class FuturesTradingEngine:
                 liquidation_price=liquidation_price,
                 fees_paid=estimated_fees / 2,  # Entry fee
                 is_simulated=self.dry_run,
-                metadata={'signals': {
-                    'rsi': signals.rsi,
-                    'macd': signals.macd_histogram,
-                    'volume_ratio': signals.volume_ratio,
-                    'trend': signals.trend
-                }},
+                metadata={
+                    'signals': {
+                        'rsi': signals.rsi,
+                        'macd': signals.macd_histogram,
+                        'volume_ratio': signals.volume_ratio,
+                        'trend': signals.trend
+                    },
+                    # FUT-RM-16: stash the SL pct actually used at entry so
+                    # _check_exit_conditions uses the per-symbol level even
+                    # after the engine reverts self.stop_loss_pct for the
+                    # next entry. None when ATR sizing was off.
+                    'dynamic_sl_pct': sl_pct if atr_dyn else None,
+                },
                 tp_levels=tp_levels,
                 original_size=size,
                 highest_price=current_price if side == TradeSide.LONG else None,
