@@ -57,6 +57,26 @@
       .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
+  // ---- render the small coloured tag pills next to a test title.
+  //      Tags come from /api/test-runner/tests (see _compute_tags on the
+  //      backend). Allowed values are pinned to the CSS classes in
+  //      test_runner.html so a stray tag silently renders as nothing.
+  const ALLOWED_TAG_CLASSES = {
+    'must': 'tag-must',
+    'new': 'tag-new',
+    'p0': 'tag-p0',
+    'flaky': 'tag-flaky',
+    'expected-empty': 'tag-expected-empty',
+  };
+  function renderTagPills(tags) {
+    if (!Array.isArray(tags) || !tags.length) return '';
+    const pills = tags
+      .filter(t => ALLOWED_TAG_CLASSES[t])
+      .map(t => `<span class="tag-pill ${ALLOWED_TAG_CLASSES[t]}" title="tag: ${esc(t)}">${esc(t.toUpperCase())}</span>`)
+      .join('');
+    return pills ? `<span class="tr-tag-row">${pills}</span>` : '';
+  }
+
   // ---- copy-to-clipboard helper. Falls back to a textarea-modal on
   //      http:// remote URLs where navigator.clipboard is blocked.
   function attachCopyBtn(btn, getText) {
@@ -111,8 +131,13 @@
     const card = document.createElement('div');
     card.className = 'tr-card';
     card.dataset.testId = test.id;
+    // Stash tags + searchable text on the card so client-side filter +
+    // search chips (commits 3-4) can show/hide without a DOM walk.
+    const tags = Array.isArray(test.tags) ? test.tags : [];
+    card.dataset.tags = tags.join(',');
+    card.dataset.searchBlob = ((test.title || '') + ' ' + (test.description || '')).toLowerCase();
     card.innerHTML = `
-      <div class="tr-card-title">${esc(test.title)}</div>
+      <div class="tr-card-title">${esc(test.title)}${renderTagPills(tags)}</div>
       <div class="tr-row">
         <button type="button" class="btn btn-sm btn-primary" data-action="run">
           <i class="fas fa-play"></i> Run
