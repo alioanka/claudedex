@@ -297,9 +297,15 @@ class SentimentEngine:
         # configured AND quorum_required=true, _quorum_sentiment() requires
         # both providers to agree (sign + magnitude). Saves the bot from a
         # single-provider hallucination flipping the signal.
+        #
+        # Wave-5: when quorum_required=true but only ONE provider key is
+        # loaded, the gate auto-passes (1/1 agreement is trivially satisfied)
+        # — `_quorum_singleprov_logged` is the throttle for that one-time
+        # operator-facing log line. See the run loop's quorum branch.
         self.quorum_required = False
         self.quorum_max_disagreement = 0.4
         self.quorum_min_abs_score = 0.0  # 0 => skip the min-abs check; trade gate is still confidence_threshold
+        self._quorum_singleprov_logged = False
         # A6 W4: per-cycle quorum outcome (set by _quorum_sentiment, consumed
         # by the run loop). Persisted to ai_feature_store.metadata.quorum_outcome
         # so the dashboard widget can chart agreement-rate over time without
@@ -569,7 +575,30 @@ class SentimentEngine:
                     # require agreement even when the AIProviderManager
                     # produced the primary score from a single provider. This
                     # bolts the gate onto the live trade path in one place.
-                    if (
+                    #
+                    # Wave-5 single-provider auto-pass: when quorum_required=true
+                    # but only one provider key is loaded (operator's common
+                    # state — Claude only, no OpenAI), the gate effectively
+                    # disables (1/1 agreement == always pass). We log it once
+                    # per startup so the operator can see the rationale, then
+                    # skip the (impossible) second-provider call. WITHOUT this
+                    # branch the post-call gate is a no-op (the `and has_openai
+                    # and has_claude` filter short-circuits) — but a future
+                    # refactor could remove that filter and silently break every
+                    # single-provider deployment, so make the intent explicit.
+                    if self.quorum_required and not (has_openai and has_claude):
+                        if not getattr(self, '_quorum_singleprov_logged', False):
+                            logger.info(
+                                "⚖️ Quorum auto-pass: quorum_required=true but only "
+                                "%s key is loaded. With one provider, 1/1 agreement "
+                                "is trivially satisfied — passing %s through unchanged. "
+                                "Load the second AI provider key (OPENAI_API_KEY or "
+                                "ANTHROPIC_API_KEY) to enforce true multi-provider quorum.",
+                                'OpenAI' if has_openai else 'Claude',
+                                f"{sentiment_score:+.2f}",
+                            )
+                            self._quorum_singleprov_logged = True
+                    elif (
                         self.quorum_required
                         and has_openai
                         and has_claude
