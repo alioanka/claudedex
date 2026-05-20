@@ -335,18 +335,41 @@
         var statusEl = document.getElementById('refreshStatus');
         statusEl.textContent = 'Running discovery sweep — this may hit paid Helius/Birdeye quotas...';
         try {
+            // CSRF: refresh endpoint is admin-only POST; auth/csrf.py
+            // 403s without X-CSRF-Token. Use main.js helper if loaded.
+            var headers;
+            if (typeof window.withCsrfHeaders === 'function') {
+                headers = window.withCsrfHeaders('POST');
+            } else {
+                var m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+                headers = {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-Token': m ? decodeURIComponent(m[1]) : ''
+                };
+            }
             var r = await fetch('/api/copytrading/leaders/refresh', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: headers,
+                credentials: 'same-origin',
                 body: JSON.stringify({})
             });
-            var data = await r.json();
-            if (data.success) {
-                statusEl.textContent = 'Discovery sweep finished — ' + data.discovered +
-                    ' candidates scored (top ' + (data.top_score || 0) + '). Reloading rows...';
+            var data = await r.json().catch(function () { return {}; });
+            if (r.ok && data.success) {
+                var msg = 'Discovery sweep finished — ' + data.discovered +
+                    ' candidates scored';
+                if (data.top_score) msg += ' (top score ' + data.top_score.toFixed(2) + ')';
+                if (data.discovered === 0) {
+                    msg += '. 0 = no source returned wallets. Check that ' +
+                        'HELIUS_API_KEY / BIRDEYE_API_KEY are set in ' +
+                        '/settings/credentials, or wait for copytrading_trades ' +
+                        'to accumulate history (the on-chain fallback ranks ' +
+                        'your own copied wallets).';
+                }
+                statusEl.textContent = msg;
                 await loadLeaders();
             } else {
-                statusEl.textContent = 'Refresh failed: ' + (data.error || 'unknown error');
+                statusEl.textContent = 'Refresh failed: ' + (data.error ||
+                    ('HTTP ' + r.status + ' — re-login if 401/403'));
             }
         } catch (e) {
             statusEl.textContent = 'Refresh error: ' + e.message;

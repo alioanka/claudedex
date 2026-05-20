@@ -355,6 +355,67 @@ async def fetch_helius_active(
     ]
 
 
+async def fetch_operator_targets(
+    db_pool,
+    cfg: DiscoveryConfig,
+) -> List[DiscoveredCandidate]:
+    """Seed candidates from the operator-configured target_wallets list
+    in config_settings.copytrading_config.target_wallets. The operator
+    already chose these wallets, so they're trivially worth scoring even
+    before any third-party source returns rows.
+
+    Recognises EVM '0x...@chain' suffixed format (split on '@') and bare
+    Solana base58 addresses (assumed solana).
+    """
+    if db_pool is None:
+        return []
+    raw = None
+    try:
+        async with db_pool.acquire() as conn:
+            raw = await conn.fetchval(
+                "SELECT value FROM config_settings "
+                "WHERE config_type='copytrading_config' "
+                "  AND key='target_wallets'"
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"operator-targets DB read failed: {e}")
+        return []
+    if not raw:
+        return []
+    # value is stored as JSON list-of-strings by ConfigManager.
+    import json as _json
+    try:
+        wallets = _json.loads(raw) if isinstance(raw, str) else raw
+    except Exception:
+        return []
+    if not isinstance(wallets, list):
+        return []
+    out: List[DiscoveredCandidate] = []
+    for w in wallets:
+        if not isinstance(w, str) or not w.strip():
+            continue
+        s = w.strip()
+        if "@" in s:
+            addr, _, chain_suffix = s.partition("@")
+            chain = (chain_suffix or "ethereum").lower()
+        elif s.startswith("0x"):
+            addr, chain = s, "ethereum"
+        else:
+            addr, chain = s, "solana"
+        if chain not in cfg.chains:
+            continue
+        if not _looks_like_wallet(addr, chain):
+            continue
+        out.append(DiscoveredCandidate(
+            chain=chain,
+            wallet_address=addr,
+            source=SOURCE_MANUAL,
+            label="operator-configured",
+            raw={"source": "config_settings.target_wallets"},
+        ))
+    return out
+
+
 async def fetch_onchain_local(
     db_pool,
     chain: str,
@@ -368,17 +429,24 @@ async def fetch_onchain_local(
         return []
     try:
         async with db_pool.acquire() as conn:
+            # Operator-flagged: with only OPEN trades (status='open' /
+            # exit_timestamp IS NULL) the old WHERE filter returned 0
+            # candidates even when copytrading_trades had rows. Now
+            # we count both OPEN and CLOSED trades from the last 30 days
+            # — a wallet we're actively mirroring is a candidate by
+            # definition, even before its first exit. profit_loss is
+            # only summed over closed legs (open rows have NULL pl).
             rows = await conn.fetch(
                 """
                 SELECT source_wallet AS wallet_address,
-                       SUM(profit_loss) AS pnl,
-                       COUNT(*) AS n
+                       COALESCE(SUM(profit_loss) FILTER (WHERE profit_loss IS NOT NULL), 0) AS pnl,
+                       COUNT(*) AS n,
+                       COUNT(*) FILTER (WHERE status = 'open') AS n_open
                 FROM copytrading_trades
                 WHERE chain = $1
-                  AND exit_timestamp IS NOT NULL
-                  AND exit_timestamp > NOW() - INTERVAL '30 days'
+                  AND COALESCE(exit_timestamp, entry_timestamp) > NOW() - INTERVAL '30 days'
                 GROUP BY source_wallet
-                ORDER BY SUM(profit_loss) DESC NULLS LAST
+                ORDER BY COUNT(*) DESC, SUM(profit_loss) DESC NULLS LAST
                 LIMIT $2
                 """,
                 chain, cfg.max_candidates_per_source,
@@ -391,7 +459,11 @@ async def fetch_onchain_local(
             chain=chain,
             wallet_address=str(r["wallet_address"]),
             source=SOURCE_ONCHAIN,
-            raw={"pnl_30d": float(r["pnl"] or 0), "trades_30d": int(r["n"])},
+            raw={
+                "pnl_30d": float(r["pnl"] or 0),
+                "trades_30d": int(r["n"]),
+                "open_30d": int(r["n_open"] or 0),
+            },
         )
         for r in rows
         if r["wallet_address"]
@@ -502,6 +574,11 @@ async def discover_and_score(
         session = await session_ctx.__aenter__()
 
     try:
+        # Operator-configured target_wallets are always candidates — the
+        # operator already vouched for them by pasting them into settings.
+        # Without this seed the sweep can return 0 when 3rd-party APIs
+        # have no keys and copytrading_trades is empty.
+        jobs.append(fetch_operator_targets(db_pool, cfg))
         for chain in cfg.chains:
             if SOURCE_DEXSCREENER in cfg.sources:
                 jobs.append(fetch_dexscreener_top_traders(session, chain, cfg, rl))
