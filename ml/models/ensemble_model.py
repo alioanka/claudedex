@@ -917,42 +917,41 @@ class EnsemblePredictor:
             # Get predictions from all models
             predictions = {}
             
-            # Tree-based models
-            if self.models['xgboost_rug'] is not None:
-                predictions['xgboost_rug'] = self.models['xgboost_rug'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['xgboost_rug'] = 0.5
-                
-            if self.models['xgboost_pump'] is not None:
-                predictions['xgboost_pump'] = self.models['xgboost_pump'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['xgboost_pump'] = 0.5
-                
-            if self.models['lightgbm_rug'] is not None:
-                predictions['lightgbm_rug'] = self.models['lightgbm_rug'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['lightgbm_rug'] = 0.5
-                
-            if self.models['lightgbm_pump'] is not None:
-                predictions['lightgbm_pump'] = self.models['lightgbm_pump'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['lightgbm_pump'] = 0.5
-                
-            if self.models['random_forest'] is not None:
-                rf_pred = self.models['random_forest'].predict_proba(features_scaled)[0]
-                predictions['random_forest_pump'] = rf_pred[1] if len(rf_pred) > 1 else 0.5
-                predictions['random_forest_rug'] = 1 - predictions['random_forest_pump']
-            else:
-                predictions['random_forest_pump'] = 0.5
-                predictions['random_forest_rug'] = 0.5
-                
-            if self.models['gradient_boosting'] is not None:
-                gb_pred = self.models['gradient_boosting'].predict_proba(features_scaled)[0]
-                predictions['gradient_boosting_pump'] = gb_pred[1] if len(gb_pred) > 1 else 0.5
-                predictions['gradient_boosting_rug'] = 1 - predictions['gradient_boosting_pump']
-            else:
-                predictions['gradient_boosting_pump'] = 0.5
-                predictions['gradient_boosting_rug'] = 0.5
+            # Tree-based models. AI-Q-05: route through
+            # `calibrated_predict_proba` so when the operator flips
+            # `ai_calibrated_predictions_enabled` on AND a
+            # `calibrated_<name>.pkl` sidecar is loaded, the ensemble
+            # consumes calibrated probabilities (Brier-improved for
+            # downstream confidence_threshold gating). Helper falls back
+            # to the raw booster otherwise — numerically identical to
+            # pre-AI-Q-05 when the flag is off.
+            predictions['xgboost_rug'] = self.calibrated_predict_proba(
+                'xgboost_rug', features_scaled
+            )
+            predictions['xgboost_pump'] = self.calibrated_predict_proba(
+                'xgboost_pump', features_scaled
+            )
+            predictions['lightgbm_rug'] = self.calibrated_predict_proba(
+                'lightgbm_rug', features_scaled
+            )
+            predictions['lightgbm_pump'] = self.calibrated_predict_proba(
+                'lightgbm_pump', features_scaled
+            )
+            # RF / GB use pump as primary target — derive rug as 1-pump.
+            predictions['random_forest_pump'] = self.calibrated_predict_proba(
+                'random_forest', features_scaled
+            )
+            predictions['random_forest_rug'] = (
+                1 - predictions['random_forest_pump']
+            )
+            predictions['gradient_boosting_pump'] = (
+                self.calibrated_predict_proba(
+                    'gradient_boosting', features_scaled
+                )
+            )
+            predictions['gradient_boosting_rug'] = (
+                1 - predictions['gradient_boosting_pump']
+            )
                 
             # Neural network predictions
             # AI-Q-07: when the rolling buffer is enabled AND we have a

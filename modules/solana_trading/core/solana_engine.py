@@ -3272,6 +3272,98 @@ class SolanaTradingEngine:
             return await self.jupiter_client.get_price(token_mint)
         return None
 
+    async def _execute_swap_via_jito(
+        self,
+        input_mint: str,
+        output_mint: str,
+        amount: int,
+        slippage_bps: int,
+        token_symbol: str = '',
+    ) -> Optional[str]:
+        """Wave-4: route a Jupiter swap through a Jito MEV bundle.
+
+        Composes: signed Jupiter swap tx + tip tx, submits as a bundle,
+        returns the swap signature on landed confirmation. Returns None
+        on any failure so the caller can fall back to vanilla execute.
+
+        Every Jito attempt + outcome is logged so the operator can see
+        uptake.
+        """
+        if not (self.jito and self.jito_enabled and self.jupiter_helper and JITO_CLIENT_AVAILABLE):
+            return None
+
+        keypair = getattr(self.jupiter_helper, 'keypair', None)
+        if keypair is None:
+            logger.warning("🛡️ Jito attempt SKIPPED for %s — no keypair on JupiterHelper", token_symbol)
+            return None
+
+        # Cheap pre-check: if Jito is in global backoff, skip to fallback
+        # so we don't burn a quote + signing round-trip we can't submit.
+        available, wait_s = JitoClient.is_available()
+        if not available:
+            logger.info(
+                "🛡️ Jito attempt SKIPPED for %s — rate-limited (%.1fs wait)",
+                token_symbol, wait_s,
+            )
+            return None
+
+        try:
+            quote = await self.jupiter_helper.get_quote(
+                input_mint, output_mint, amount, slippage_bps,
+            )
+            if not quote:
+                logger.warning("🛡️ Jito attempt ABORT for %s — no Jupiter quote", token_symbol)
+                return None
+
+            pubkey_str = str(keypair.pubkey())
+            swap_data = await self.jupiter_helper.get_swap_transaction(quote, pubkey_str)
+            if not swap_data or not swap_data.get('swapTransaction'):
+                logger.warning("🛡️ Jito attempt ABORT for %s — no swap transaction from Jupiter", token_symbol)
+                return None
+
+            signed_swap_b64 = self.jupiter_helper.sign_transaction(swap_data['swapTransaction'])
+            if not signed_swap_b64:
+                logger.warning("🛡️ Jito attempt ABORT for %s — sign_transaction failed", token_symbol)
+                return None
+
+            tip_tx_b64 = await self.jito.create_tip_transaction(keypair, self.jito_tip_lamports)
+            bundle_txs = [signed_swap_b64, tip_tx_b64] if tip_tx_b64 else [signed_swap_b64]
+            if not tip_tx_b64:
+                logger.warning(
+                    "🛡️ Jito attempt PROCEEDING WITHOUT TIP for %s — tip tx build failed (low landing odds)",
+                    token_symbol,
+                )
+
+            logger.info(
+                "🛡️ Jito attempt SEND for %s — tip=%d lamports, bundle_size=%d",
+                token_symbol, self.jito_tip_lamports, len(bundle_txs),
+            )
+            bundle_id = await self.jito.send_bundle(bundle_txs, tip_lamports=self.jito_tip_lamports)
+            if not bundle_id:
+                logger.warning("🛡️ Jito attempt REJECTED for %s — bundle dropped or unconfirmed", token_symbol)
+                return None
+
+            # Extract the swap tx signature so the caller's position
+            # bookkeeping (tx_signature, balance-poll) keeps working.
+            try:
+                import base64
+                from solders.transaction import VersionedTransaction
+                raw = base64.b64decode(signed_swap_b64)
+                tx = VersionedTransaction.from_bytes(raw)
+                signature = str(tx.signatures[0]) if tx.signatures else bundle_id
+            except Exception as se:
+                logger.debug(f"Could not extract swap signature from bundle ({se}); using bundle_id")
+                signature = bundle_id
+
+            logger.info(
+                "🛡️ Jito attempt LANDED for %s — bundle=%s sig=%s",
+                token_symbol, bundle_id[:16], str(signature)[:16],
+            )
+            return signature
+        except Exception as e:
+            logger.warning(f"🛡️ Jito attempt ERROR for {token_symbol}: {e}")
+            return None
+
     async def _open_position(
         self,
         token_mint: str,
@@ -3649,14 +3741,32 @@ class SolanaTradingEngine:
                                 )
                                 return False
 
-                        # Use JupiterHelper for full swap execution
+                        # Use JupiterHelper for full swap execution.
+                        # Wave-4: if Jito bundle is enabled, try MEV-protected
+                        # path first; on rejection (rate-limit, bundle drop,
+                        # no result) we fall back to the vanilla path.
                         logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol} (slippage: {trade_slippage}bps)")
-                        tx_signature = await self.jupiter_helper.execute_swap(
-                            input_mint=SOL_MINT,
-                            output_mint=token_mint,
-                            amount=int(amount_sol * self.LAMPORTS_PER_SOL),
-                            slippage_bps=trade_slippage
-                        )
+                        tx_signature = None
+                        if self.jito_enabled and self.jito is not None:
+                            tx_signature = await self._execute_swap_via_jito(
+                                input_mint=SOL_MINT,
+                                output_mint=token_mint,
+                                amount=int(amount_sol * self.LAMPORTS_PER_SOL),
+                                slippage_bps=trade_slippage,
+                                token_symbol=token_symbol,
+                            )
+                            if not tx_signature:
+                                logger.info(
+                                    "⤵️ Jito bundle path returned no signature for %s — falling back to vanilla Jupiter",
+                                    token_symbol,
+                                )
+                        if not tx_signature:
+                            tx_signature = await self.jupiter_helper.execute_swap(
+                                input_mint=SOL_MINT,
+                                output_mint=token_mint,
+                                amount=int(amount_sol * self.LAMPORTS_PER_SOL),
+                                slippage_bps=trade_slippage
+                            )
 
                         if tx_signature:
                             logger.info(f"🟢 LIVE SWAP executed: {tx_signature}")
@@ -4322,6 +4432,12 @@ class SolanaTradingEngine:
                 await self.jupiter_helper.close()
             except Exception as e:
                 logger.debug(f"Error closing Jupiter helper: {e}")
+
+        if self.jito:
+            try:
+                await self.jito.close()
+            except Exception as e:
+                logger.debug(f"Error closing Jito client: {e}")
 
         if self.drift_helper:
             try:
