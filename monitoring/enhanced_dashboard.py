@@ -11101,7 +11101,15 @@ class DashboardEndpoints:
             return web.json_response({'success': False, 'error': str(e)}, status=500)
 
     async def api_get_copytrading_wallets(self, request):
-        """Get tracked wallets with their activity status and calculated P&L"""
+        """Get tracked wallets with their activity status + per-wallet
+        realized + UNREALIZED PnL (Wave-5 fix). Previously the column
+        sum was always 0 for the operator because their 5 mirrored
+        positions are all OPEN — profit_loss is only populated on
+        close. Now we fetch every per-wallet trade in one query, run
+        them through _enrich_copytrading_pnl (live Jupiter price for
+        OPEN rows that have metadata.tokens_received), then sum
+        realized + unrealized per wallet.
+        """
         wallets = []
         try:
             if self.db:
@@ -11115,75 +11123,98 @@ class DashboardEndpoints:
                         import json as json_module
                         try:
                             wallet_list = json_module.loads(wallets_row)
-                        except:
+                        except Exception:
                             wallet_list = [w.strip() for w in wallets_row.split(',') if w.strip()]
+                    else:
+                        wallet_list = []
 
-                        # For each wallet, get trade stats from copytrading_trades
-                        for addr in wallet_list:
-                            if not addr:
-                                continue
+                    # Wave-5: pull every per-wallet trade in ONE query so
+                    # we can enrich the OPEN rows with one batched price
+                    # call instead of N queries + N price calls.
+                    targets = [w.split('@')[0] for w in wallet_list if w]
+                    rows = []
+                    if targets:
+                        rows = await conn.fetch("""
+                            SELECT
+                                trade_id, token_address, chain, source_wallet,
+                                entry_price, exit_price, amount,
+                                entry_usd, exit_usd, profit_loss, status,
+                                entry_timestamp, exit_timestamp,
+                                native_price_at_trade, metadata
+                            FROM copytrading_trades
+                            WHERE source_wallet = ANY($1::text[])
+                        """, targets)
 
-                            # Get comprehensive stats for this wallet
-                            # Calculate P&L from closed trades where exit > entry
-                            trades_row = await conn.fetchrow("""
-                                SELECT
-                                    COUNT(*) as total_trades,
-                                    COUNT(*) FILTER (WHERE status = 'closed') as closed_trades,
-                                    COUNT(*) FILTER (WHERE status = 'open') as open_trades,
-                                    COALESCE(SUM(entry_usd), 0) as total_volume,
-                                    -- Calculate P&L: use stored value or calculate from entry/exit
-                                    COALESCE(SUM(
-                                        CASE
-                                            WHEN profit_loss != 0 THEN profit_loss
-                                            WHEN status = 'closed' AND exit_usd > 0 THEN exit_usd - entry_usd
-                                            ELSE 0
-                                        END
-                                    ), 0) as calculated_pnl,
-                                    -- Count wins
-                                    COUNT(*) FILTER (WHERE
-                                        profit_loss > 0 OR
-                                        (status = 'closed' AND exit_usd > entry_usd AND exit_usd > 0)
-                                    ) as winning,
-                                    -- Count losses
-                                    COUNT(*) FILTER (WHERE
-                                        profit_loss < 0 OR
-                                        (status = 'closed' AND exit_usd < entry_usd AND exit_usd > 0)
-                                    ) as losing,
-                                    MAX(entry_timestamp) as last_trade,
-                                    MIN(entry_timestamp) as first_trade
-                                FROM copytrading_trades
-                                WHERE source_wallet = $1
-                            """, addr)
+                    enriched = await self._enrich_copytrading_pnl(rows)
 
-                            total_trades = trades_row['total_trades'] if trades_row else 0
-                            winning = trades_row['winning'] if trades_row else 0
-                            losing = trades_row['losing'] if trades_row else 0
-                            total_pnl = float(trades_row['calculated_pnl'] or 0) if trades_row else 0
-                            total_volume = float(trades_row['total_volume'] or 0) if trades_row else 0
+                    # Aggregate per wallet
+                    agg: dict = {}
+                    for r in enriched:
+                        sw = r.get('source_wallet') or 'unknown'
+                        a = agg.setdefault(sw, {
+                            'total_trades': 0, 'open_trades': 0, 'closed_trades': 0,
+                            'realized_pnl': 0.0, 'unrealized_pnl': 0.0,
+                            'total_volume': 0.0, 'winning': 0, 'losing': 0,
+                            'last_trade': None, 'first_trade': None,
+                            'pending_count': 0,
+                        })
+                        a['total_trades'] += 1
+                        status = (r.get('status') or '').lower()
+                        if status == 'open':
+                            a['open_trades'] += 1
+                        elif status == 'closed':
+                            a['closed_trades'] += 1
+                        a['realized_pnl'] += float(r.get('realized_pnl') or 0)
+                        a['unrealized_pnl'] += float(r.get('unrealized_pnl') or 0)
+                        a['total_volume'] += float(r.get('entry_usd') or 0)
+                        rpnl = float(r.get('realized_pnl') or 0)
+                        if rpnl > 0:
+                            a['winning'] += 1
+                        elif rpnl < 0:
+                            a['losing'] += 1
+                        if r.get('pnl_pending'):
+                            a['pending_count'] += 1
+                        ets = r.get('entry_timestamp')
+                        if ets:
+                            if a['last_trade'] is None or ets > a['last_trade']:
+                                a['last_trade'] = ets
+                            if a['first_trade'] is None or ets < a['first_trade']:
+                                a['first_trade'] = ets
 
-                            # Calculate win rate
-                            win_rate = 0.0
-                            if winning + losing > 0:
-                                win_rate = (winning / (winning + losing)) * 100
-                            elif total_trades > 0:
-                                # If no closed trades, show as pending
-                                win_rate = 0.0
+                    for addr in wallet_list:
+                        if not addr:
+                            continue
+                        addr_norm = addr.split('@')[0]
+                        a = agg.get(addr_norm, {
+                            'total_trades': 0, 'open_trades': 0, 'closed_trades': 0,
+                            'realized_pnl': 0.0, 'unrealized_pnl': 0.0,
+                            'total_volume': 0.0, 'winning': 0, 'losing': 0,
+                            'last_trade': None, 'first_trade': None,
+                            'pending_count': 0,
+                        })
+                        total_pnl = a['realized_pnl'] + a['unrealized_pnl']
+                        win_rate = (a['winning'] / (a['winning'] + a['losing']) * 100) if (a['winning'] + a['losing']) > 0 else 0.0
 
-                            wallets.append({
-                                'address': addr,
-                                'short_address': f"{addr[:8]}...{addr[-6:]}" if len(addr) > 14 else addr,
-                                'total_trades': total_trades,
-                                'winning_trades': winning,
-                                'losing_trades': losing,
-                                'total_pnl': total_pnl,
-                                'total_volume': total_volume,
-                                'win_rate': win_rate,
-                                'open_positions': trades_row['open_trades'] if trades_row else 0,
-                                'closed_trades': trades_row['closed_trades'] if trades_row else 0,
-                                'last_trade': trades_row['last_trade'].isoformat() if trades_row and trades_row['last_trade'] else None,
-                                'first_trade': trades_row['first_trade'].isoformat() if trades_row and trades_row['first_trade'] else None,
-                                'status': 'active' if total_trades > 0 else 'inactive'
-                            })
+                        wallets.append({
+                            'address': addr_norm,
+                            'short_address': f"{addr_norm[:8]}...{addr_norm[-6:]}" if len(addr_norm) > 14 else addr_norm,
+                            'total_trades': a['total_trades'],
+                            'winning_trades': a['winning'],
+                            'losing_trades': a['losing'],
+                            # total_pnl = realized + unrealized — drop-in
+                            # for existing templates that read total_pnl.
+                            'total_pnl': total_pnl,
+                            'realized_pnl': a['realized_pnl'],
+                            'unrealized_pnl': a['unrealized_pnl'],
+                            'pending_count': a['pending_count'],
+                            'total_volume': a['total_volume'],
+                            'win_rate': win_rate,
+                            'open_positions': a['open_trades'],
+                            'closed_trades': a['closed_trades'],
+                            'last_trade': a['last_trade'].isoformat() if a['last_trade'] else None,
+                            'first_trade': a['first_trade'].isoformat() if a['first_trade'] else None,
+                            'status': 'active' if a['total_trades'] > 0 else 'inactive'
+                        })
 
             return web.json_response({'success': True, 'wallets': wallets, 'count': len(wallets)})
         except Exception as e:
@@ -11444,6 +11475,9 @@ class DashboardEndpoints:
             'losing_trades': 0,
             'active_positions': 0,
             'total_pnl': 0.0,
+            'realized_pnl': 0.0,
+            'unrealized_pnl': 0.0,
+            'pnl_pending_count': 0,
             'win_rate': 0.0,
             'wallets_tracked': 0,
             'unique_wallets': 0,
@@ -11559,6 +11593,44 @@ class DashboardEndpoints:
                         live_losses = live_row['live_losing'] or 0
                         live_valid = live_wins + live_losses
                         stats['live_win_rate'] = round((live_wins / live_valid) * 100, 1) if live_valid > 0 else 0.0
+
+                    # Wave-5: enrich OPEN positions with live unrealized
+                    # PnL so the dashboard hero number isn't $0.00 when
+                    # the operator has 5 open mirrored trades. Compute
+                    # for both is_simulated AND live rows so the
+                    # DRY_RUN-only operator still sees movement.
+                    open_rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, source_wallet,
+                            entry_price, exit_price, amount, entry_usd,
+                            exit_usd, profit_loss, status, is_simulated,
+                            entry_timestamp, exit_timestamp,
+                            native_price_at_trade, metadata
+                        FROM copytrading_trades
+                        WHERE status = 'open'
+                    """)
+                    if open_rows:
+                        enriched_open = await self._enrich_copytrading_pnl(open_rows)
+                        unreal_total = 0.0
+                        unreal_live = 0.0
+                        pending = 0
+                        for r in enriched_open:
+                            u = float(r.get('unrealized_pnl') or 0)
+                            unreal_total += u
+                            if not r.get('is_simulated'):
+                                unreal_live += u
+                            if r.get('pnl_pending'):
+                                pending += 1
+                        # Combined PnL = realized + unrealized so a
+                        # DRY_RUN session shows the right number.
+                        stats['realized_pnl'] = stats.get('total_pnl', 0.0)
+                        stats['unrealized_pnl'] = unreal_total
+                        stats['total_pnl'] = float(stats.get('total_pnl', 0.0)) + unreal_total
+                        if 'live_pnl' in stats:
+                            stats['live_realized_pnl'] = stats['live_pnl']
+                            stats['live_unrealized_pnl'] = unreal_live
+                            stats['live_pnl'] = stats['live_pnl'] + unreal_live
+                        stats['pnl_pending_count'] = pending
 
                     # Status reflects whether the subprocess is alive, not
                     # whether historical trades exist. Treats COPY_TRADING_MODULE_ENABLED
