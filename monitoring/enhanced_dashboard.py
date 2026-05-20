@@ -909,6 +909,9 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/futures/positions/close-all', self.api_futures_close_all_positions)
         self.app.router.add_get('/api/futures/trading/status', self.api_futures_trading_status)
         self.app.router.add_post('/api/futures/trading/unblock', self.api_futures_trading_unblock)
+        # FUT-RM-09b (Wave 4): per-symbol 24h forward funding-cost forecast.
+        # Derives from futures_funding_payments.predicted_usd × intervals/24h.
+        self.app.router.add_get('/api/futures/funding-forecast', self.api_futures_funding_forecast)
 
         # API - Trading controls
         self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
@@ -7869,6 +7872,105 @@ class DashboardEndpoints:
                 'success': False,
                 'error': f'Futures module not available: {str(e)}'
             }, status=503)
+
+    async def api_futures_funding_forecast(self, request):
+        """FUT-RM-09b (Wave 4): per-symbol 24h forward funding-cost forecast.
+
+        Reads the latest snapshot row per (symbol, side) from
+        futures_funding_payments (migration 029) and projects it forward
+        N intervals (default 3 = 24h on Binance/Bybit 8h funding cadence).
+
+        Returns:
+            {
+              "success": True,
+              "interval_hours": 8,
+              "intervals_per_window": 3,
+              "window_hours": 24,
+              "rows": [
+                {"symbol", "side", "notional_usd",
+                 "per_interval_usd", "forecast_24h_usd",
+                 "implied_apr_pct", "as_of"},
+                ...
+              ],
+              "total_forecast_usd": <signed sum>
+            }
+
+        Sign convention matches the row schema: positive = cost to book.
+        Fail-soft: no DB or no rows -> success=True with rows=[].
+        """
+        try:
+            # Operator may override the funding cadence (Binance/Bybit are
+            # both 8h on USDT perps today; OKX is 8h too). Bounded 1..24.
+            try:
+                interval_hours = int(request.query.get('interval_hours', '8'))
+            except (TypeError, ValueError):
+                interval_hours = 8
+            interval_hours = max(1, min(24, interval_hours))
+            try:
+                window_hours = int(request.query.get('window_hours', '24'))
+            except (TypeError, ValueError):
+                window_hours = 24
+            window_hours = max(1, min(168, window_hours))  # 1h..7d
+            intervals_per_window = max(1, window_hours // interval_hours)
+
+            rows_out = []
+            total_forecast = 0.0
+            if self.db_pool:
+                async with self.db_pool.acquire() as conn:
+                    # Latest snapshot per (symbol, side) within trailing 24h.
+                    # DISTINCT ON keeps the freshest row regardless of source.
+                    db_rows = await conn.fetch(
+                        """
+                        SELECT DISTINCT ON (symbol, side)
+                            symbol, side, notional_usd, predicted_usd, hour_bucket
+                        FROM futures_funding_payments
+                        WHERE hour_bucket >= NOW() - INTERVAL '24 hours'
+                        ORDER BY symbol, side, hour_bucket DESC
+                        """
+                    )
+                    for r in db_rows:
+                        try:
+                            notional = float(r['notional_usd'] or 0)
+                            per_interval = float(r['predicted_usd'] or 0)
+                            forecast = per_interval * intervals_per_window
+                            # Implied APR (signed): per-interval rate × 365×24/h.
+                            if notional > 0:
+                                rate = per_interval / notional
+                                periods_per_year = (365 * 24) / interval_hours
+                                apr_pct = rate * periods_per_year * 100.0
+                            else:
+                                apr_pct = 0.0
+                            rows_out.append({
+                                'symbol': r['symbol'],
+                                'side': r['side'],
+                                'notional_usd': notional,
+                                'per_interval_usd': per_interval,
+                                'forecast_24h_usd': forecast,
+                                'implied_apr_pct': apr_pct,
+                                'as_of': r['hour_bucket'].isoformat()
+                                    if r['hour_bucket'] else None,
+                            })
+                            total_forecast += forecast
+                        except Exception as row_err:
+                            logger.debug(
+                                f"funding-forecast row skipped: {row_err}"
+                            )
+            return web.json_response({
+                'success': True,
+                'interval_hours': interval_hours,
+                'intervals_per_window': intervals_per_window,
+                'window_hours': window_hours,
+                'rows': rows_out,
+                'total_forecast_usd': total_forecast,
+            })
+        except Exception as e:
+            logger.error(f"Error computing funding forecast: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e),
+                'rows': [],
+                'total_forecast_usd': 0.0,
+            }, status=500)
 
     async def api_futures_close_position(self, request):
         """Close a specific futures position"""

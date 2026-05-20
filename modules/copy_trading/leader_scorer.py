@@ -481,8 +481,17 @@ async def upsert_score(
     label: Optional[str] = None,
     source: str = "manual",
     raw_metrics: Optional[Dict] = None,
+    probation_score_threshold: Optional[float] = 30.0,
+    probation_days: float = 7.0,
 ) -> None:
-    """Persist a LeaderMetrics row to copy_leader_scores."""
+    """Persist a LeaderMetrics row to copy_leader_scores.
+
+    Wave-4 CT-Q-09: if `m.score < probation_score_threshold` AND the
+    sample is large enough to trust (>=10 trades), atomically set
+    `on_probation=TRUE, probation_until=NOW()+probation_days`. Pass
+    `probation_score_threshold=None` to disable the auto-bench (callers
+    that just want to refresh metrics without affecting state).
+    """
     if db_pool is None:
         return
     import json as _json
@@ -503,6 +512,34 @@ async def upsert_score(
             int(m.sample_window_days),
             _json.dumps(raw_metrics or {}),
         )
+        try:
+            if (
+                probation_score_threshold is not None
+                and m.score is not None
+                and float(m.score) < float(probation_score_threshold)
+                and int(m.trade_count_30d) >= 10
+            ):
+                d = max(1.0, min(365.0, float(probation_days)))
+                await conn.execute(
+                    """
+                    UPDATE copy_leader_scores
+                       SET on_probation     = TRUE,
+                           probation_until  = GREATEST(
+                               COALESCE(probation_until, NOW()),
+                               NOW() + ($3 || ' days')::INTERVAL
+                           ),
+                           probation_reason = $4,
+                           probation_set_at = NOW()
+                     WHERE chain = $1
+                       AND lower(wallet_address) = lower($2)
+                    """,
+                    m.chain, m.wallet_address, str(int(d)),
+                    f"score_{float(m.score):.1f}_lt_{float(probation_score_threshold):.0f}",
+                )
+        except Exception:
+            # Fail-soft: score persisted even if the probation flip
+            # didn't take (e.g. older schema without probation columns).
+            pass
 
 
 async def fetch_top_leaders(
