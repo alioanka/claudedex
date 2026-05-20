@@ -7692,47 +7692,115 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_close_position(self, request):
-        """Close a position"""
+        """Close a position.
+
+        Operator-reported regression: this legacy endpoint required
+        self.engine (the pre-subprocess in-process engine). In the
+        modular architecture the dashboard does NOT have access to the
+        trading subprocesses' in-memory state, so self.engine is always
+        None and every close request returned HTTP 503.
+
+        Resolution: before falling back to the legacy path, try the
+        per-module flag-file IPC by inspecting the position_id against
+        the module-specific trade tables. Currently routes COPY_TRADING
+        positions to the same flag-file the new
+        /api/copytrading/positions/{trade_id}/close endpoint uses.
+        Other modules still 503 until their own flag-file shim lands.
+        """
         try:
             data = await request.json()
-            position_id = data.get('position_id')
-            
+            position_id = data.get('position_id') or data.get('trade_id')
+
             if not position_id:
                 return web.json_response({
                     'success': False,
-                    'error': 'Position ID required'
+                    'error': 'Position ID required (position_id or trade_id)'
                 }, status=400)
-            
-            # ✅ FIX: Look for position in ENGINE's active_positions
+
+            # Sanitise — only [A-Za-z0-9_-] so we can't traverse FS.
+            safe = ''.join(c for c in str(position_id) if c.isalnum() or c in '_-')
+            if not safe or safe != position_id:
+                return web.json_response({
+                    'success': False,
+                    'error': 'invalid position_id format'
+                }, status=400)
+
+            # COPY_TRADING dispatch path — same flag-file IPC as
+            # /api/copytrading/positions/{trade_id}/close.
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        ct_row = await conn.fetchrow(
+                            "SELECT trade_id FROM copytrading_trades "
+                            "WHERE trade_id = $1 AND status = 'open'",
+                            safe,
+                        )
+                except Exception:
+                    ct_row = None
+                if ct_row:
+                    from pathlib import Path
+                    flag_path = Path('logs') / f'.close_copy_{safe}'
+                    try:
+                        flag_path.parent.mkdir(parents=True, exist_ok=True)
+                        flag_path.write_text('1', encoding='utf-8')
+                    except Exception as e:
+                        return web.json_response({
+                            'success': False, 'error': f'flag write failed: {e}'
+                        }, status=500)
+                    # Best-effort UI flip
+                    try:
+                        async with self.db.pool.acquire() as conn:
+                            await conn.execute(
+                                "UPDATE copytrading_positions "
+                                "SET status='closing', updated_at=NOW() "
+                                "WHERE trade_id = $1 AND status='open'",
+                                safe,
+                            )
+                    except Exception:
+                        pass
+                    return web.json_response({
+                        'success': True,
+                        'trade_id': safe,
+                        'module': 'copy_trading',
+                        'note': (
+                            'close request queued via flag-file IPC; '
+                            'engine will execute on next reconcile tick (~10s)'
+                        ),
+                    })
+
+            # Legacy path — only useful when dashboard runs in the same
+            # process as the old monolithic engine. Modular setup will
+            # always 503 here unless we add per-module IPC shims.
             if not self.engine or not hasattr(self.engine, 'active_positions'):
                 return web.json_response({
                     'success': False,
-                    'error': 'Trading engine not available'
+                    'error': (
+                        'Trading engine not available. For COPY_TRADING positions, '
+                        'use POST /api/copytrading/positions/{trade_id}/close. '
+                        'Other modules: per-module close IPC pending.'
+                    ),
                 }, status=503)
-            
+
             # Find the position by ID
             position = None
             token_address = None
-            
+
             for addr, pos in self.engine.active_positions.items():
                 if pos.get('id') == position_id:
                     position = pos
                     token_address = addr
                     break
-            
+
             if not position:
                 return web.json_response({
                     'success': False,
                     'error': f'Position {position_id} not found in active positions'
                 }, status=404)
-            
+
             # ✅ Close the position via engine
             try:
-                # Call the engine's close position method
                 await self.engine._close_position(position, reason="Manual close via dashboard")
-                
                 logger.info(f"Position {position_id} closed successfully via dashboard")
-                
                 return web.json_response({
                     'success': True,
                     'message': f"Position closed: {position.get('token_symbol', 'Unknown')}",
@@ -7748,7 +7816,7 @@ class DashboardEndpoints:
                     'success': False,
                     'error': f'Failed to close position: {str(e)}'
                 }, status=500)
-                
+
         except Exception as e:
             logger.error(f"Error in api_close_position: {e}")
             return web.json_response({
