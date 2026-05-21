@@ -544,7 +544,7 @@ function updatePositions(positions) {
                         <span title="${pos.source_wallet || ''}">${pos.source_wallet ? pos.source_wallet.substring(0, 8) + '...' : 'Unknown'}</span>
                     </div>
                     <div class="position-time">
-                        ${pos.timestamp ? formatTimeAgo(new Date(pos.timestamp)) : 'Recently'}
+                        ${pos.timestamp ? window.formatTimeAgo(pos.timestamp) : 'Recently'}
                     </div>
                     <button class="btn-close-position" data-trade-id="${tradeId}"
                             onclick="closePosition('${tradeId}', this)" ${closeBtnDisabled}>
@@ -612,15 +612,8 @@ async function closePosition(tradeId, btn) {
     }
 }
 
-function formatTimeAgo(date) {
-    const now = new Date();
-    const diff = now - date;
-
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
-    return Math.floor(diff / 86400000) + 'd ago';
-}
+// formatTimeAgo removed — superseded by window.formatTimeAgo in
+// /static/js/timezone.js (handles naive UTC ISO correctly).
 
 // Load on page load
 loadPositions();

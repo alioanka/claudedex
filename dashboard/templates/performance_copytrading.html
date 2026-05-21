@@ -586,11 +586,18 @@ function processPerformance(trades) {
 }
 
 function createEquityChart(trades) {
-    const sorted = [...trades].sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+    // parseUtcTimestamp ensures naive UTC ISO strings sort + plot at
+    // the operator's local wall-clock position. Without it the chart
+    // X axis was shifted by the operator's UTC offset.
+    const _ts = t => {
+        const d = window.parseUtcTimestamp(t.timestamp || 0);
+        return d ? d.getTime() : 0;
+    };
+    const sorted = [...trades].sort((a, b) => _ts(a) - _ts(b));
     let cumPnl = 0;
     const data = sorted.map(t => {
         cumPnl += (t.profit_loss || 0);
-        return { x: new Date(t.timestamp), y: cumPnl };
+        return { x: window.parseUtcTimestamp(t.timestamp) || new Date(0), y: cumPnl };
     });
 
     const ctx = document.getElementById('equityChart').getContext('2d');
@@ -625,7 +632,12 @@ function createDailyPnlChart(trades) {
     const dailyPnl = {};
     trades.forEach(t => {
         if (t.timestamp) {
-            const date = new Date(t.timestamp).toLocaleDateString('en-CA');
+            // Bucket by operator's local date (parseUtcTimestamp normalises
+            // naive UTC ISO so a trade at 23:00 UTC shows in the correct
+            // local day for UTC+3, not the prior calendar day).
+            const _d = window.parseUtcTimestamp(t.timestamp);
+            if (!_d) return;
+            const date = _d.toLocaleDateString('en-CA');
             dailyPnl[date] = (dailyPnl[date] || 0) + (t.profit_loss || 0);
         }
     });
@@ -737,7 +749,11 @@ function createTimeDistChart(trades) {
     const hourCounts = Array(24).fill(0);
     trades.forEach(t => {
         if (t.timestamp) {
-            const hour = new Date(t.timestamp).getHours();
+            // Hour-of-day chart now uses operator's local hour after
+            // parseUtcTimestamp normalises naive UTC ISO.
+            const _d = window.parseUtcTimestamp(t.timestamp);
+            if (!_d) return;
+            const hour = _d.getHours();
             hourCounts[hour]++;
         }
     });

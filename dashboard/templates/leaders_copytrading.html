@@ -297,7 +297,7 @@
                 '<td>' + fmtHold(l.avg_hold_seconds) + '</td>' +
                 '<td>' + (l.max_drawdown_pct != null ? (Number(l.max_drawdown_pct) * 100).toFixed(1) + '%' : '—') + '</td>' +
                 '<td>' + (l.trade_count_30d || 0) + '</td>' +
-                '<td>' + (l.last_scored_at ? new Date(l.last_scored_at).toLocaleString() : '—') + '</td>' +
+                '<td>' + (l.last_scored_at ? window.formatLocalDateTime(l.last_scored_at) : '—') + '</td>' +
                 '<td><button class="btn btn-success" type="button" data-addr="' +
                     l.wallet_address + '" data-action="track">' +
                     '<i class="fas fa-plus"></i> Track</button></td>' +

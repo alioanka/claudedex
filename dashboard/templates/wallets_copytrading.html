@@ -375,9 +375,11 @@
                 case 'winrate_desc': return bWinRate - aWinRate;
                 case 'winrate_asc': return aWinRate - bWinRate;
                 case 'recent':
-                    const aDate = a.last_trade ? new Date(a.last_trade) : new Date(0);
-                    const bDate = b.last_trade ? new Date(b.last_trade) : new Date(0);
-                    return bDate - aDate;
+                    // last_trade is server naive UTC ISO; parseUtcTimestamp
+                    // appends 'Z' so sort order matches actual chronology.
+                    const aDate = a.last_trade ? window.parseUtcTimestamp(a.last_trade) : new Date(0);
+                    const bDate = b.last_trade ? window.parseUtcTimestamp(b.last_trade) : new Date(0);
+                    return (bDate ? bDate.getTime() : 0) - (aDate ? aDate.getTime() : 0);
                 default: return 0;
             }
         });
@@ -512,14 +514,9 @@
     }
 
     function formatDate(isoString) {
-        const date = new Date(isoString);
-        const now = new Date();
-        const diff = now - date;
-
-        if (diff < 60000) return 'Just now';
-        if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-        if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
-        return Math.floor(diff / 86400000) + 'd ago';
+        // Delegates to window.formatTimeAgo (timezone.js). Local definition
+        // used naive new Date() which shifted by the operator's UTC offset.
+        return window.formatTimeAgo(isoString) || 'Just now';
     }
 
     async function removeWallet(address) {

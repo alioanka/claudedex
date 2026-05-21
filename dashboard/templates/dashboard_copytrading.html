@@ -715,7 +715,10 @@ function updateActivityFeed(trades) {
         const iconClass = trade.side?.toLowerCase() === 'sell' ? 'sell' : 'buy';
         const icon = trade.side?.toLowerCase() === 'sell' ? 'arrow-down' : 'arrow-up';
         const pnlClass = pnl >= 0 ? 'positive' : 'negative';
-        const timeAgo = trade.timestamp ? formatTimeAgo(new Date(trade.timestamp)) : 'Recently';
+        // window.formatTimeAgo (timezone.js) handles naive UTC ISO by
+        // appending 'Z' before parse — direct new Date(t) would shift
+        // by the operator's UTC offset.
+        const timeAgo = trade.timestamp ? window.formatTimeAgo(trade.timestamp) : 'Recently';
         // Wave-5: badge live vs realized
         const isOpen = (trade.status || '').toLowerCase() === 'open';
         const pnlPending = !!trade.pnl_pending;
@@ -813,7 +816,11 @@ function updateCharts(trades) {
     const dailyData = {};
     trades.forEach(trade => {
         if (trade.timestamp) {
-            const date = new Date(trade.timestamp).toLocaleDateString('en-CA');
+            // parseUtcTimestamp appends 'Z' so the daily bucket reflects
+            // the operator's local date, not naive-UTC interpreted as local.
+            const _d = window.parseUtcTimestamp(trade.timestamp);
+            const date = _d ? _d.toLocaleDateString('en-CA') : '';
+            if (!date) return;
             if (!dailyData[date]) {
                 dailyData[date] = { copies: 0, pnl: 0, wins: 0, losses: 0, solana: 0, ethereum: 0, bsc: 0 };
             }
@@ -1012,20 +1019,8 @@ function createEmptyCharts() {
     }
 }
 
-function formatTimeAgo(date) {
-    const now = new Date();
-    const diff = now - date;
-
-    // Guard against future timestamps (clock skew between the dashboard
-    // host and the chain-source of truth — Solana blocks can carry a
-    // block_time slightly ahead of NTP-wall, especially when the host
-    // is on a free-tier NTP pool).
-    if (diff < 0) return 'just now';
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
-    return Math.floor(diff / 86400000) + 'd ago';
-}
+// formatTimeAgo removed — superseded by window.formatTimeAgo in
+// /static/js/timezone.js (handles naive UTC ISO correctly).
 
 // Load on page load
 loadDashboard();

@@ -566,8 +566,12 @@ function applyFilters() {
     filteredTrades.sort((a, b) => {
         let aVal = a[sortColumn], bVal = b[sortColumn];
         if (sortColumn === 'timestamp') {
-            aVal = new Date(aVal || 0).getTime();
-            bVal = new Date(bVal || 0).getTime();
+            // Sort by epoch ms parsed as UTC; aVal/bVal are naive
+            // server ISO strings, so route through parseUtcTimestamp.
+            const ad = window.parseUtcTimestamp(aVal);
+            const bd = window.parseUtcTimestamp(bVal);
+            aVal = ad ? ad.getTime() : 0;
+            bVal = bd ? bd.getTime() : 0;
         }
         if (typeof aVal === 'string') aVal = aVal.toLowerCase();
         if (typeof bVal === 'string') bVal = bVal.toLowerCase();
@@ -615,7 +619,11 @@ function updateCharts(trades) {
     const dailyData = {};
     trades.forEach(t => {
         if (t.timestamp) {
-            const date = new Date(t.timestamp).toLocaleDateString('en-CA');
+            // Bucket by operator's local date — parseUtcTimestamp
+            // normalises naive UTC ISO to a Date with the right offset.
+            const _d = window.parseUtcTimestamp(t.timestamp);
+            if (!_d) return;
+            const date = _d.toLocaleDateString('en-CA');
             if (!dailyData[date]) dailyData[date] = { count: 0, pnl: 0 };
             dailyData[date].count++;
             dailyData[date].pnl += (t.profit_loss || 0);
@@ -819,7 +827,11 @@ function showEmpty() {
 }
 
 function formatDate(iso) {
-    const d = new Date(iso);
+    // Trade-history "May 20, 07:57 PM" rendering. The server emits
+    // naive UTC ISO strings; parseUtcTimestamp appends 'Z' so the
+    // displayed time matches the operator's wall clock (UTC+3, etc.).
+    const d = window.parseUtcTimestamp(iso);
+    if (!d) return '';
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
