@@ -676,7 +676,8 @@ function applyFilters() {
     filteredTrades = allTrades.filter(trade => {
         // Time filter
         if (startDate || endDate) {
-            const tradeDate = new Date(trade.closed_at || trade.time || trade.exit_time);
+            // parseUtcTimestamp normalises naive UTC ISO (W6 fix).
+            const tradeDate = window.parseUtcTimestamp(trade.closed_at || trade.time || trade.exit_time) || new Date(0);
             if (startDate && tradeDate < startDate) return false;
             if (endDate && tradeDate > endDate) return false;
         }
@@ -814,8 +815,8 @@ function sortFilteredTrades() {
 
         switch (col) {
             case 'time':
-                aVal = new Date(a.closed_at || a.time || a.exit_time).getTime();
-                bVal = new Date(b.closed_at || b.time || b.exit_time).getTime();
+                aVal = (window.parseUtcTimestamp(a.closed_at || a.time || a.exit_time) || new Date(0)).getTime();
+                bVal = (window.parseUtcTimestamp(b.closed_at || b.time || b.exit_time) || new Date(0)).getTime();
                 break;
             case 'symbol':
                 aVal = a.symbol || '';
@@ -930,7 +931,7 @@ function updateDisplay() {
 
         return `
             <tr>
-                <td>${closedAt ? new Date(closedAt).toLocaleString() : 'N/A'}</td>
+                <td>${closedAt ? window.formatLocalDateTime(closedAt) : 'N/A'}</td>
                 <td><strong>${trade.symbol}</strong></td>
                 <td><span class="badge badge-${trade.side}">${trade.side.toUpperCase()}</span></td>
                 <td>$${parseFloat(trade.entry_price).toFixed(4)}</td>

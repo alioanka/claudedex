@@ -1241,7 +1241,7 @@ function updateTrades(trades) {
         const pnl = trade.pnl || 0;
         const pnlPct = trade.pnl_pct || 0;
         const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
-        const closedAt = new Date(trade.closed_at).toLocaleString();
+        const closedAt = window.formatLocalDateTime(trade.closed_at);
 
         return `
             <tr>

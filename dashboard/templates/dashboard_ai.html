@@ -1093,7 +1093,7 @@ function updateSignalsTable(data) {
 
         html += `
             <tr>
-                <td>${new Date(signal.timestamp).toLocaleString()}</td>
+                <td>${window.formatLocalDateTime(signal.timestamp)}</td>
                 <td class="${scoreClass}" style="font-weight: 600;">${scoreDisplay}</td>
                 <td>${openaiScore}</td>
                 <td>${claudeScore}</td>

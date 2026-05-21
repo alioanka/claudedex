@@ -985,8 +985,8 @@ function renderTrades() {
         let aVal, bVal;
         switch (currentSort.column) {
             case 'time':
-                aVal = new Date(a.timestamp || a.entry_timestamp || 0).getTime();
-                bVal = new Date(b.timestamp || b.entry_timestamp || 0).getTime();
+                aVal = (window.parseUtcTimestamp(a.timestamp || a.entry_timestamp || 0) || new Date(0)).getTime();
+                bVal = (window.parseUtcTimestamp(b.timestamp || b.entry_timestamp || 0) || new Date(0)).getTime();
                 break;
             case 'token':
                 aVal = getTokenSymbol(a.token_address);
@@ -1015,7 +1015,7 @@ function renderTrades() {
 
     tableBody.innerHTML = sortedTrades.map(trade => {
         const timestamp = trade.timestamp || trade.entry_timestamp;
-        const timeStr = timestamp ? new Date(timestamp).toLocaleString() : 'N/A';
+        const timeStr = timestamp ? window.formatLocalDateTime(timestamp) : 'N/A';
         const pnl = parseFloat(trade.profit_loss || 0);
         const spread = parseFloat(trade.spread_pct || 0);
         const amount = parseFloat(trade.amount_eth || trade.amount || 0);

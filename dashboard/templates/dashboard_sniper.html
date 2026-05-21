@@ -735,7 +735,8 @@ function updateActivityFeed(activity) {
     }
 
     feed.innerHTML = activity.map(item => {
-        const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '';
+        const _dt = item.timestamp ? window.parseUtcTimestamp(item.timestamp) : null;
+        const time = _dt ? _dt.toLocaleTimeString() : '';
         return `
             <div class="activity-item">
                 <div class="activity-icon ${item.icon}">
@@ -854,7 +855,7 @@ function updateTrades(trades) {
     tableBody.innerHTML = trades.slice(0, 10).map(trade => {
         const pnl = trade.pnl || 0;
         const chain = trade.chain || 'solana';
-        const time = new Date(trade.closed_at).toLocaleString();
+        const time = window.formatLocalDateTime(trade.closed_at);
 
         return `
             <tr>
@@ -899,7 +900,10 @@ function shortenAddress(address) {
 
 function formatAge(timestamp) {
     if (!timestamp) return '-';
-    const diff = Date.now() - new Date(timestamp).getTime();
+    // parseUtcTimestamp handles naive UTC ISO (W6 fix).
+    const d = window.parseUtcTimestamp(timestamp);
+    if (!d) return '-';
+    const diff = Date.now() - d.getTime();
     const mins = Math.floor(diff / 60000);
     const hours = Math.floor(mins / 60);
     if (hours > 0) return `${hours}h ${mins % 60}m`;
