@@ -222,14 +222,31 @@ class AIProviderManager:
         return True
 
     async def _get_api_key(self, key_name: str) -> Optional[str]:
-        """Get API key from secrets manager or environment"""
+        """Get API key from secrets manager or environment.
+
+        Wave-6 fix: use get_async() so the DB-backed credentials path is
+        actually exercised. The sync `secrets.get(...)` short-circuits the
+        DB lookup when called from inside a running event loop — see
+        `_get_from_database_sync`'s "use get_async() in async context"
+        guard — so it silently returned None for ops who stored keys in
+        the encrypted `secure_credentials` table (which is the default
+        configured via /settings/credentials).
+        """
         try:
             from security.secrets_manager import secrets
-            key = secrets.get(key_name, log_access=False)
+            # Ensure secrets_manager has the db_pool so the DB lookup
+            # branch is reachable (bootstrap mode skips DB entirely).
+            if self.db_pool and (
+                not secrets._initialized
+                or secrets._db_pool is None
+                or secrets._bootstrap_mode
+            ):
+                secrets.initialize(self.db_pool)
+            key = await secrets.get_async(key_name, log_access=False)
             if key:
                 return key
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"secrets_manager lookup failed for {key_name}: {e}")
 
         return os.getenv(key_name)
 
