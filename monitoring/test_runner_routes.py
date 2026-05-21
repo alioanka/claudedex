@@ -3080,6 +3080,131 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "the one-click jump from the trade row to the explorer."
         ),
     },
+    # ── ARB (W6 a2849b7 / e32cf63) ───────────────────────────────────────
+    {
+        "id": "db_arb_runtime_health",
+        "title": "DB: ARB engine health (last_tick_at + last_error, W6 a2849b7)",
+        "category": "db",
+        "kind": "db_query",
+        # Wave-6 a2849b7 added last_tick_at + last_error + last_error_at
+        # to arbitrage_runtime_stats.stats so the operator can
+        # distinguish "subprocess dead" from "alive but rejecting".
+        # age_seconds > 600 (10m) with last_tick_at null = dead;
+        # age_seconds low + last_error populated = alive but erroring.
+        "sql": (
+            "SELECT chain, "
+            "  EXTRACT(EPOCH FROM (NOW() - updated_at))::int AS age_seconds, "
+            "  stats->>'last_tick_at' AS last_tick, "
+            "  stats->>'last_error' AS last_error, "
+            "  stats->>'last_error_at' AS last_error_at "
+            "FROM arbitrage_runtime_stats "
+            "ORDER BY chain"
+        ),
+        "cmd_preview": (
+            "last_tick_at + last_error + age_seconds per chain from "
+            "arbitrage_runtime_stats"
+        ),
+        "timeout_s": 10,
+        "tags": ["new", "must"],
+        "description": (
+            "Wave-6 ARB health surface. Distinguishes dead-engine "
+            "(age_seconds > 600 AND last_tick is null) from "
+            "alive-but-rejecting (low age + populated last_error). "
+            "Companion to /api/arbitrage/diagnostics; the operator "
+            "can trigger a restart with `touch logs/.restart_arbitrage` "
+            "which main.py picks up within 5s."
+        ),
+    },
+    {
+        "id": "script_arb_engine_health_script_present",
+        "title": "Script: ARB engine-health operator diagnostic (W6 e32cf63)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/arb_engine_health_script_check.sh"],
+        "cmd_preview": "bash scripts/arb_engine_health_script_check.sh",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Asserts scripts/arb_engine_health.py exists, is executable, "
+            "and queries arbitrage_runtime_stats. The script is the "
+            "single-command operator diagnostic for the 'ARB engine "
+            "silent' symptom (stale runtime stats, last_trades months "
+            "old, near_miss_counters returning 0 rows). Suggests the "
+            "next action — typically restart via the W6 flag-file "
+            "pattern `touch logs/.restart_arbitrage`."
+        ),
+    },
+    # ── Foreground fixes (W6 5a857e0) — close-button, CSRF, hot-wallets,
+    #    futures W5 knobs surfaced on settings_futures.html.
+    {
+        "id": "script_close_button_endpoint_dual_table",
+        "title": "Script: COPY close-button dual-table fallback (W6 5a857e0)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/copy_close_button_dual_table_check.sh"],
+        "cmd_preview": "bash scripts/copy_close_button_dual_table_check.sh",
+        "timeout_s": 10,
+        "tags": ["new", "must"],
+        "description": (
+            "Source-grep: asserts copy_engine.py _process_close_flag_"
+            "files declares the from_trades_table fallback so rows that "
+            "live ONLY in copytrading_trades (legacy soft-delete) are "
+            "still closeable via the dashboard's Close button. Operator-"
+            "reported regression closed in 5a857e0."
+        ),
+    },
+    {
+        "id": "script_reconcile_csrf_header",
+        "title": "Script: COPY reconcile button CSRF header (W6 5a857e0)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/copy_reconcile_csrf_check.sh"],
+        "cmd_preview": "bash scripts/copy_reconcile_csrf_check.sh",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Grep test: dashboard_copytrading.html wraps the "
+            "/api/copytrading/reconcile POST through "
+            "window.withCsrfHeaders('POST') so the token is attached "
+            "automatically. Operator-reported '403 on Reconcile' "
+            "regression closed in 5a857e0."
+        ),
+    },
+    {
+        "id": "script_dashboard_hot_wallets_filter_sort",
+        "title": "Script: DASHBOARD hot-wallets active filter + sort (W6 5a857e0)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/dashboard_hot_wallets_filter_check.sh"],
+        "cmd_preview": "bash scripts/dashboard_hot_wallets_filter_check.sh",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Grep test: discovery_copytrading.html filters the hot-"
+            "wallets card to ACTIVE wallets only (>0 trades OR nonzero "
+            "PnL) and sorts by trades DESC, PnL DESC. Operator-"
+            "reported 'card is full of 0-trade noise' regression "
+            "closed in 5a857e0."
+        ),
+    },
+    {
+        "id": "script_futures_settings_w5_knobs_present",
+        "title": "Script: FUTURES settings W5 risk knobs (W6 5a857e0)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/futures_settings_w5_knobs_check.sh"],
+        "cmd_preview": "bash scripts/futures_settings_w5_knobs_check.sh",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Grep test: settings_futures.html exposes the three W5 "
+            "risk knobs (futures_min_signal_confluence_count + "
+            "futures_atr_dynamic_sl_tp_enabled + "
+            "futures_post_loss_cooloff_minutes) so the operator can "
+            "tune them without psql. Closes the W5 carry-over flagged "
+            "in PM_FINAL_W5."
+        ),
+    },
 ]
 
 
