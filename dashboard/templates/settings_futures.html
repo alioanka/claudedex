@@ -810,6 +810,56 @@
             </div>
         </div>
 
+        <!-- Wave-5 Risk-Tightening (FUT-RM-15/16/17) -->
+        <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
+            <h4 style="color: #fbbf24; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-shield-alt"></i>
+                Wave-5 Risk Tightening (FUT-RM-15/16/17)
+            </h4>
+            <div class="info-box" style="background: rgba(251,191,36,0.10); border-color: rgba(251,191,36,0.30); color: #fbbf24;">
+                <i class="fas fa-lightbulb"></i>
+                <div>
+                    These three knobs ship default-ON. They reduce trade frequency
+                    but improve win rate. Operator's pre-W5 stats: 25% WR / -$15
+                    PnL on 4 trades at 10x leverage. Set confluence to 0 / ATR
+                    flag false / cool-off to 0 to revert any single one.
+                </div>
+            </div>
+            <div class="setting-grid">
+                <div class="setting-item">
+                    <label class="setting-label">Min Signal Confluence Count (FUT-RM-15)</label>
+                    <div class="setting-description">
+                        Require at least N of {RSI extreme, MACD cross, BB touch, EMA alignment} before opening. Default 2 = needs 2/4 indicators agreeing. Set 0 to disable.
+                    </div>
+                    <input type="number" class="setting-input"
+                           id="futures_min_signal_confluence_count"
+                           name="futures_min_signal_confluence_count"
+                           value="2" min="0" max="4" step="1">
+                </div>
+                <div class="setting-item">
+                    <label class="setting-label">ATR-Dynamic SL/TP (FUT-RM-16)</label>
+                    <div class="setting-description">
+                        Replace static 2%/4% with SL = max(1.5%, 1.5 × ATR_pct) and TP = 2 × SL. Adapts to each symbol's volatility.
+                    </div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="futures_atr_dynamic_sl_tp_enabled"
+                               name="futures_atr_dynamic_sl_tp_enabled" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <label class="setting-label">Post-Loss Cool-off (minutes) (FUT-RM-17)</label>
+                    <div class="setting-description">
+                        Skip a symbol for N minutes after 2 consecutive losses. Default 240 = 4h. Set 0 to disable per-symbol cool-off.
+                    </div>
+                    <input type="number" class="setting-input"
+                           id="futures_post_loss_cooloff_minutes"
+                           name="futures_post_loss_cooloff_minutes"
+                           value="240" min="0" max="1440" step="5">
+                </div>
+            </div>
+        </div>
+
         <!-- NEW: Advanced Signal Filters -->
         <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
             <h4 style="color: #a78bfa; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">

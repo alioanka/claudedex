@@ -477,6 +477,7 @@
             <div class="hero-stat-icon"><i class="fas fa-dollar-sign"></i></div>
             <div class="hero-stat-label">Total P&L</div>
             <div class="hero-stat-value" id="stat-pnl">$0.00</div>
+            <div class="hero-stat-sub" id="stat-pnl-sub" style="font-size:0.72em;opacity:0.75;display:none;margin-top:4px"></div>
         </div>
     </div>
 
@@ -572,9 +573,17 @@ async function reconcileTrades() {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reconciling...';
 
+        // CSRF: auth/csrf.py rejects non-GET without X-CSRF-Token.
+        const _csrfHeaders = (typeof window.withCsrfHeaders === 'function')
+            ? window.withCsrfHeaders('POST')
+            : (function () {
+                const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+                return { 'Content-Type': 'application/json', 'X-CSRF-Token': m ? decodeURIComponent(m[1]) : '' };
+            })();
         const response = await fetch('/api/copytrading/reconcile', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: _csrfHeaders,
+            credentials: 'same-origin'
         });
 
         const data = await response.json();
@@ -658,32 +667,32 @@ function updateStats(stats) {
 
     const pnl = stats.total_pnl || 0;
     const pnlEl = document.getElementById('stat-pnl');
-    // Wave-5: stats.total_pnl now = realized + unrealized. Show the
-    // split when both are nonzero so the operator can tell what's
-    // locked-in vs mark-to-market.
+    // Operator complaint: previous template wrote 60+ chars into the
+    // hero card and broke the layout. Keep the headline number short,
+    // move the realized/live/sim breakdown into the tooltip.
     const realized = stats.realized_pnl || 0;
     const unrealized = stats.unrealized_pnl || 0;
     const pendingN = stats.pnl_pending_count || 0;
-    let pnlText = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
-    if (unrealized !== 0 && realized !== 0) {
-        pnlText += ` (R: ${realized >= 0 ? '+' : ''}$${Math.abs(realized).toFixed(2)} + Live: ${unrealized >= 0 ? '+' : ''}$${Math.abs(unrealized).toFixed(2)})`;
-    } else if (unrealized !== 0) {
-        pnlText += ' (live, open positions)';
-    } else if (realized !== 0) {
-        pnlText += ' (realized)';
-    }
     const sim = stats.simulated_trades || 0;
     const livePnl = stats.live_pnl;
+    const sign = pnl >= 0 ? '+' : '-';
+    const pnlText = `${sign}$${Math.abs(pnl).toFixed(2)}`;
+    const tipLines = [];
+    if (realized !== 0) tipLines.push(`Realized: ${realized >= 0 ? '+' : '-'}$${Math.abs(realized).toFixed(2)}`);
+    if (unrealized !== 0) tipLines.push(`Live (open): ${unrealized >= 0 ? '+' : '-'}$${Math.abs(unrealized).toFixed(2)}`);
     if (sim > 0 && livePnl !== undefined) {
-        // Show real vs total when there are simulated rows in the mix
-        const liveStr = (livePnl >= 0 ? '+' : '') + '$' + Math.abs(livePnl).toFixed(2);
-        pnlText = `${liveStr} live (${pnlText} incl. DRY_RUN)`;
+        tipLines.push(`Live-only (excl. DRY_RUN): ${livePnl >= 0 ? '+' : '-'}$${Math.abs(livePnl).toFixed(2)}`);
     }
-    if (pendingN > 0) {
-        pnlText += ` — ${pendingN} legacy row(s) pending backfill`;
-    }
+    if (pendingN > 0) tipLines.push(`${pendingN} legacy row(s) pending backfill`);
     pnlEl.textContent = pnlText;
+    pnlEl.title = tipLines.length ? tipLines.join('\n') : 'Total P&L = Realized + Live unrealized';
     pnlEl.className = 'hero-stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
+    // Tiny sub-line for the breakdown — only renders when there's content.
+    const subEl = document.getElementById('stat-pnl-sub');
+    if (subEl) {
+        subEl.textContent = tipLines.length ? tipLines[0] : '';
+        subEl.style.display = tipLines.length ? '' : 'none';
+    }
 }
 
 function updateActivityFeed(trades) {

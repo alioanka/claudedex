@@ -2411,9 +2411,11 @@ class CopyTradingEngine(BaseModule):
                     pass
                 continue
             position = None
+            from_trades_table = False
             if self.db_pool:
                 try:
                     async with self.db_pool.acquire() as conn:
+                        # First check copytrading_positions (legacy table).
                         row = await conn.fetchrow(
                             "SELECT trade_id, chain, token_address, amount "
                             "FROM copytrading_positions "
@@ -2422,6 +2424,22 @@ class CopyTradingEngine(BaseModule):
                         )
                         if row:
                             position = dict(row)
+                        else:
+                            # OPERATOR-REPORTED BUG: positions are tracked in
+                            # copytrading_trades (no separate positions row)
+                            # for the current copy_engine path. Fall back to
+                            # that table so the close button actually does
+                            # something. Use entry_usd as the USD basis.
+                            row = await conn.fetchrow(
+                                "SELECT trade_id, chain, token_address, amount, entry_usd, "
+                                "       (metadata::jsonb->>'tokens_received')::float8 AS tokens_received "
+                                "FROM copytrading_trades "
+                                "WHERE trade_id = $1 AND status = 'open'",
+                                trade_id,
+                            )
+                            if row:
+                                position = dict(row)
+                                from_trades_table = True
                 except Exception as e:
                     logger.error(f"close-flag DB lookup failed for {trade_id}: {e}")
             if not position:
@@ -2441,9 +2459,18 @@ class CopyTradingEngine(BaseModule):
             # On success mark the position closed in DB so the UI reflects
             # the change immediately (engine's own SELL audit may also
             # do this on the next tick, but we don't want a race).
+            # If we resolved from copytrading_trades, update that table too —
+            # otherwise the operator's positions page keeps showing the row.
             if ok and self.db_pool:
                 try:
                     async with self.db_pool.acquire() as conn:
+                        if from_trades_table:
+                            await conn.execute(
+                                "UPDATE copytrading_trades "
+                                "SET status='closed', exit_timestamp=NOW() "
+                                "WHERE trade_id = $1",
+                                trade_id,
+                            )
                         await conn.execute(
                             "UPDATE copytrading_positions "
                             "SET status='closed', closed_at=NOW(), updated_at=NOW() "

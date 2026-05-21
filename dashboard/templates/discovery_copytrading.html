@@ -801,9 +801,34 @@
             const data = await response.json();
 
             if (data.success && data.wallets && data.wallets.length > 0) {
-                displayHotWallets(data.wallets.slice(0, 10));
-                document.getElementById('hotWalletsRefreshInfo').textContent =
-                    'Updated: ' + new Date().toLocaleTimeString();
+                // Operator complaint: hot wallets card was full of
+                // 0-trade 0-PnL configured wallets. Filter to ACTIVE
+                // wallets only (>0 trades OR nonzero PnL), then sort
+                // by trades DESC, then PnL DESC. If nothing's active,
+                // show a clear empty state instead of inactive noise.
+                const active = data.wallets.filter(w =>
+                    (Number(w.total_trades) || 0) > 0 ||
+                    Math.abs(Number(w.total_pnl) || 0) > 0.0001
+                );
+                active.sort((a, b) => {
+                    const ta = Number(a.total_trades) || 0;
+                    const tb = Number(b.total_trades) || 0;
+                    if (tb !== ta) return tb - ta;
+                    return (Number(b.total_pnl) || 0) - (Number(a.total_pnl) || 0);
+                });
+                if (active.length > 0) {
+                    displayHotWallets(active.slice(0, 10));
+                    document.getElementById('hotWalletsRefreshInfo').textContent =
+                        'Updated: ' + new Date().toLocaleTimeString() +
+                        ' — showing ' + active.length + ' active wallet(s)';
+                } else {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                            <i class="fas fa-fire-alt" style="font-size: 2rem; margin-bottom: 12px; opacity: 0.5;"></i>
+                            <p>No active wallets yet. Configured wallets need at least one mirrored trade before they appear here. Use the search form below to find new candidates.</p>
+                        </div>
+                    `;
+                }
             } else {
                 container.innerHTML = `
                     <div style="text-align: center; padding: 30px; color: var(--text-secondary);">
