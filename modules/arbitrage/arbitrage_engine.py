@@ -1009,6 +1009,20 @@ class EVMArbitrageEngine:
         self._near_misses: "deque[Dict]" = deque(maxlen=50)
         self._near_miss_counters: Dict[str, int] = {}
 
+        # W6 commit 4/5 — subprocess health surface. _persist_runtime_stats
+        # was only called every 5 minutes from _log_stats_if_needed, so any
+        # crash before the first tick (or any loop wedged inside
+        # _check_arb_opportunity) left the runtime_stats row unchanged for
+        # hours, making /api/arbitrage/diagnostics report stale: true with
+        # no way to tell "dead" from "just gated". These fields are stamped
+        # by the run loop on every tick (in-memory only, no DB hit), and
+        # persisted by the existing _persist_runtime_stats path so the
+        # dashboard can render "engine alive 12s ago" or "engine crashed
+        # 4h ago: <error>" without any new IPC.
+        self._last_tick_at: Optional[datetime] = None
+        self._last_error: Optional[str] = None
+        self._last_error_at: Optional[datetime] = None
+
         # Telegram alerts - initialized in initialize() method
         self.telegram_alerts = None
 
@@ -1198,6 +1212,18 @@ class EVMArbitrageEngine:
                 # without an IPC channel back into the engine subprocess.
                 'near_misses': self.get_near_misses(limit=20),
                 'near_miss_counters': dict(self._near_miss_counters),
+                # W6: subprocess health surface. Dashboard reads these to
+                # render "engine alive 12s ago" or "engine crashed 4h ago".
+                # last_tick_at is stamped at the top of every scan iteration,
+                # last_error is set inside the run-loop except handler. Both
+                # None on first persist (startup marker) before any tick.
+                'last_tick_at': (
+                    self._last_tick_at.isoformat() if self._last_tick_at else None
+                ),
+                'last_error': self._last_error,
+                'last_error_at': (
+                    self._last_error_at.isoformat() if self._last_error_at else None
+                ),
             }
             async with self.db_pool.acquire() as conn:
                 await conn.execute(
@@ -1593,9 +1619,24 @@ class EVMArbitrageEngine:
 
         pair_index = 0  # Track which pair we're scanning
 
+        # W6: persist a startup-marker snapshot before the first 5-min stats
+        # tick. Without this, a newly-restarted engine is invisible to
+        # /api/arbitrage/diagnostics for up to 5 minutes (the next
+        # _log_stats_if_needed cadence). last_tick_at / last_error stay
+        # None on this first write — caller can tell "alive but not yet
+        # scanned a pair" from "alive and ticking".
+        self._last_tick_at = None
+        self._last_error = None
+        await self._persist_runtime_stats()
+
         while self.is_running:
             try:
                 self._stats['scans'] += 1
+                # W6: stamp tick liveness BEFORE the per-pair work so even a
+                # scan that raises inside _check_arb_opportunity leaves a
+                # recent _last_tick_at — the dashboard then shows "alive but
+                # crash-looping" rather than "stale".
+                self._last_tick_at = datetime.now()
 
                 # Get current pair to scan (use chain-specific pairs and tokens)
                 token_in_symbol, token_out_symbol = self.arb_pairs[pair_index]
@@ -1620,7 +1661,21 @@ class EVMArbitrageEngine:
                 await asyncio.sleep(scan_delay)
 
             except Exception as e:
+                # W6: capture last error for /api/arbitrage/diagnostics so the
+                # dashboard can show the actual reason engines stop firing
+                # (e.g. AttributeError, RPC connection drop, asyncpg pool
+                # exhausted) without the operator having to ssh in and tail
+                # the rotating log.
+                self._last_error = f"{type(e).__name__}: {str(e)[:200]}"
+                self._last_error_at = datetime.now()
                 self.logger.error(f"Arb loop error: {e}")
+                # Best-effort persist so the next /api poll surfaces the
+                # error immediately rather than waiting 5min for the next
+                # stats tick. Fail-soft inside _persist_runtime_stats.
+                try:
+                    await self._persist_runtime_stats()
+                except Exception:
+                    pass
                 await asyncio.sleep(5)
 
     async def _log_stats_if_needed(self):

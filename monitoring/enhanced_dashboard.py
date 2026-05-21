@@ -10388,6 +10388,13 @@ class DashboardEndpoints:
                     },
                     'near_miss_counters': stats.get('near_miss_counters') or {},
                     'near_misses': stats.get('near_misses') or [],
+                    # W6: subprocess health surface. None on first persist
+                    # (startup marker before first scan tick); a fresh
+                    # `last_tick_at` with stale `updated_at` indicates the
+                    # engine is alive but its persist loop is wedged.
+                    'last_tick_at': stats.get('last_tick_at'),
+                    'last_error': stats.get('last_error'),
+                    'last_error_at': stats.get('last_error_at'),
                 }
                 if max_age is None or age_s > max_age:
                     max_age = age_s
