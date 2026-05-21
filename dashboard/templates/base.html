@@ -1193,7 +1193,14 @@
     <!-- Core JavaScript. ?v={{ asset_version }} is injected by
          EnhancedDashboard.__init__ (git HEAD short SHA) so every deploy
          invalidates browser caches. VPS failure 2: without this, the
-         MODE badge fix (5c7777b) was masked by stale cached main.js. -->
+         MODE badge fix (5c7777b) was masked by stale cached main.js.
+         timezone.js exposes window.parseUtcTimestamp /
+         formatLocalDateTime / formatTimeAgo and MUST load before any
+         page-specific scripts that render timestamps. The server emits
+         naive UTC ISO strings; without these helpers JS would parse
+         them as LOCAL time and shift displays by the operator's offset
+         (UTC+3 -> "3h ago" on fresh rows). -->
+    <script src="/static/js/timezone.js?v={{ asset_version or 'dev' }}"></script>
     <script src="/static/js/websocket.js?v={{ asset_version or 'dev' }}"></script>
     <script src="/static/js/dashboard.js?v={{ asset_version or 'dev' }}"></script>
     <script src="/static/js/main.js?v={{ asset_version or 'dev' }}"></script>
