@@ -2878,6 +2878,114 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "on fresh rows). Operator-reported regression 2026-05-21."
         ),
     },
+
+    # ════════════════════════════════════════════════════════════════════
+    # Wave-6 T1-W6 catalog additions — AI key-resolution + COPY BUY/SELL
+    # detector rewrite + ARB engine-health surface + dashboard/futures
+    # operator-reported fixes. Commits cca8d94 / 3939a20 / b675ab1 /
+    # 49400d6 / f81144f / 2d30f3c / 2466ec0 / f0fb2bd / 0770912 /
+    # a2849b7 / e32cf63 / 5a857e0. See docs/agents/CAMPAIGN_BRIEF.md.
+    # ════════════════════════════════════════════════════════════════════
+
+    # ── AI (W6 cca8d94 / 3939a20 / b675ab1 / 49400d6) ────────────────────
+    {
+        "id": "api_ai_diagnostics_subprocess_health",
+        "title": "API: /api/ai/diagnostics — subprocess_health surface (W6 49400d6)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "ai/diagnostics",
+        "cmd_preview": "GET /api/ai/diagnostics | .subprocess_health",
+        "timeout_s": 15,
+        "tags": ["new", "must", "p0"],
+        "description": (
+            "Wave-6 49400d6 added a subprocess_health block to the AI "
+            "diagnostics payload so the dashboard's Offline badge can "
+            "distinguish 'subprocess crashed' from 'alive but not signalling'. "
+            "Response MUST carry subprocess_health.last_sentiment_tick_at "
+            "(set by sentiment_engine._last_tick_at on every loop "
+            "iteration). null = subprocess never ticked since boot."
+        ),
+    },
+    {
+        "id": "script_ai_secrets_after_db_pool",
+        "title": "Script: AI main_ai secrets-after-db-pool ordering (W6 cca8d94)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/ai_secrets_after_db_pool_check.sh"],
+        "cmd_preview": "bash scripts/ai_secrets_after_db_pool_check.sh",
+        "timeout_s": 10,
+        "tags": ["new", "must", "p0"],
+        "description": (
+            "Root-cause guard for 'AI signals but 0 trades': asserts "
+            "main_ai.py calls asyncpg.create_pool(...) FIRST, then "
+            "_secrets.initialize(db_pool), then _secrets.get_async("
+            "OPENAI_API_KEY / ANTHROPIC_API_KEY). Any reorder leaves "
+            "secrets_manager in bootstrap mode and ai_provider boots "
+            "with empty keys, silently skipping every tick."
+        ),
+    },
+    {
+        "id": "script_ai_per_tick_liveness_log",
+        "title": "Script: AI sentiment_engine per-tick liveness log (W6 b675ab1)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/ai_per_tick_liveness_log_check.sh"],
+        "cmd_preview": "bash scripts/ai_per_tick_liveness_log_check.sh",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Asserts modules/ai_analysis/core/sentiment_engine.py emits "
+            "the 'sentiment cycle tick' liveness log line at the top "
+            "of every run() iteration AND stamps self._last_tick_at. "
+            "These feed the subprocess_health.last_sentiment_tick_at "
+            "surface; dropping either re-introduces the 'looks alive "
+            "but no trades' diagnostic dead end."
+        ),
+    },
+    {
+        "id": "db_ai_stats_health_keys",
+        "title": "DB: AI provider keys in secure_credentials / config_sensitive (W6 cca8d94)",
+        "category": "db",
+        "kind": "db_query",
+        # Wave-6 the AI provider keys live ENCRYPTED — either in the
+        # newer secure_credentials table (key_name col, migration 012)
+        # or the older config_sensitive table (key col, migration 002).
+        # We don't surface the plaintext value — only whether an
+        # encrypted row exists per provider so the operator can confirm
+        # the migration ran and the secrets_manager will resolve.
+        "sql": (
+            "SELECT 'secure_credentials' AS src, key_name AS k, "
+            "  CASE WHEN encrypted_value IS NOT NULL "
+            "       AND length(encrypted_value) > 0 "
+            "       THEN 'present' ELSE 'missing' END AS status, "
+            "  updated_at "
+            "FROM secure_credentials "
+            "WHERE key_name IN ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY') "
+            "UNION ALL "
+            "SELECT 'config_sensitive', key, "
+            "  CASE WHEN encrypted_value IS NOT NULL "
+            "       AND length(encrypted_value) > 0 "
+            "       THEN 'present' ELSE 'missing' END, "
+            "  updated_at "
+            "FROM config_sensitive "
+            "WHERE key IN ('OPENAI_API_KEY', 'ANTHROPIC_API_KEY') "
+            "ORDER BY src, k"
+        ),
+        "cmd_preview": (
+            "secure_credentials + config_sensitive WHERE key IN "
+            "('OPENAI_API_KEY','ANTHROPIC_API_KEY')"
+        ),
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Surfaces whether OPENAI_API_KEY + ANTHROPIC_API_KEY rows "
+            "exist (encrypted) in either secure_credentials or "
+            "config_sensitive. Empty result = secrets_manager DB path "
+            "has nothing to resolve and ai_provider falls back to env. "
+            "Companion to script_ai_secrets_after_db_pool which checks "
+            "the call ordering, not the data."
+        ),
+    },
 ]
 
 
