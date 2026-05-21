@@ -48,6 +48,11 @@ logging.basicConfig(
 logger = logging.getLogger("backfill_tokens_received")
 
 JUPITER_PRICE_V3 = "https://api.jup.ag/price/v3"
+# Birdeye public price endpoint — same pattern wave-3 sniper R5 uses
+# (`modules/sniper/core/sniper_engine.py::_get_token_price_via_birdeye`).
+# Free tier needs no API key; BIRDEYE_API_KEY (secrets manager) raises the
+# rate limit if present.
+BIRDEYE_PRICE_URL = "https://public-api.birdeye.so/defi/price"
 HTTP_TIMEOUT_S = 8
 # Exponential backoff schedule for HTTP 429s (operator-reported regression
 # 2026-05-21: 1/6 rows failed when Jupiter rate-limited mid-run and the
@@ -102,6 +107,44 @@ async def fetch_token_price_usd(session: aiohttp.ClientSession, mint: str) -> fl
         f"{len(JUPITER_429_BACKOFF_S)} retries — giving up"
     )
     return None
+
+
+async def fetch_token_price_birdeye(session: aiohttp.ClientSession, mint: str) -> float | None:
+    """Birdeye `/defi/price` fallback for Solana mints.
+
+    Mirrors the sniper R5 pattern (`modules/sniper/core/sniper_engine.py`):
+    use BIRDEYE_API_KEY from the secrets manager when available; fall back
+    to the public endpoint otherwise. Returns USD price per whole token or
+    None on any failure — never raises.
+    """
+    try:
+        from security.secrets_manager import secrets
+        api_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False)
+    except Exception:
+        api_key = os.getenv('BIRDEYE_API_KEY')  # plain-env fallback only
+    headers = {'X-Chain': 'solana', 'accept': 'application/json'}
+    if api_key:
+        headers['X-API-KEY'] = api_key
+    url = f"{BIRDEYE_PRICE_URL}?address={mint}"
+    try:
+        async with session.get(
+            url, headers=headers,
+            timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_S),
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(f"  Birdeye {mint[:10]} returned HTTP {resp.status}")
+                return None
+            data = await resp.json()
+    except Exception as e:
+        logger.warning(f"  Birdeye fetch failed for {mint[:10]}: {e}")
+        return None
+    # Birdeye response shape: {success: bool, data: {value: float, ...}}
+    inner = (data.get('data') or {}) if isinstance(data, dict) else {}
+    try:
+        price = float(inner.get('value') or 0)
+        return price if price > 0 else None
+    except (TypeError, ValueError):
+        return None
 
 
 async def get_db_url() -> str:
@@ -166,6 +209,7 @@ async def main(args):
         # end instead of having to grep through the per-row INFO lines.
         n_total = len(rows)
         n_backfilled = 0
+        n_birdeye_fallback = 0
         n_skipped_no_price = 0
         n_skipped_missing_fields = 0
         skipped_ids: list[str] = []
@@ -181,9 +225,23 @@ async def main(args):
                     skipped_ids.append(trade_id)
                     continue
 
+                # Primary: Jupiter Price v3 (with 429-retry).
                 price = await fetch_token_price_usd(session, mint)
+                price_source = "jupiter_v3"
+                # Tertiary: Birdeye /defi/price — same pattern wave-3 sniper
+                # R5 uses to survive Jupiter brown-outs. Skips automatically
+                # when both upstream calls fail and the row is logged as
+                # skipped (no_price) so the operator can retry later.
                 if not price:
-                    logger.warning(f"  skip {trade_id}: Jupiter returned no price for {mint[:10]}")
+                    logger.info(f"  {trade_id} {mint[:10]}: trying Birdeye fallback…")
+                    price = await fetch_token_price_birdeye(session, mint)
+                    if price:
+                        price_source = "birdeye_defi_price"
+                        n_birdeye_fallback += 1
+                if not price:
+                    logger.warning(
+                        f"  skip {trade_id}: no price from Jupiter or Birdeye for {mint[:10]}"
+                    )
                     n_skipped_no_price += 1
                     skipped_ids.append(trade_id)
                     continue
@@ -191,7 +249,8 @@ async def main(args):
                 tokens_received = entry_usd / price
                 logger.info(
                     f"  {trade_id} {mint[:10]}: "
-                    f"${entry_usd:.4f} ÷ ${price:.6f}/tok = {tokens_received:,.6f} tokens"
+                    f"${entry_usd:.4f} ÷ ${price:.6f}/tok = {tokens_received:,.6f} tokens "
+                    f"(source={price_source})"
                 )
 
                 if args.dry_run:
@@ -208,7 +267,7 @@ async def main(args):
                 if not isinstance(meta, dict):
                     meta = {}
                 meta["tokens_received"] = tokens_received
-                meta["tokens_received_source"] = "backfill_jupiter_v3"
+                meta["tokens_received_source"] = f"backfill_{price_source}"
                 meta["tokens_received_approx"] = True  # warn dashboard this is post-hoc
 
                 # Also fix the legacy schema-semantic bug: entry_price was
@@ -238,6 +297,7 @@ async def main(args):
         logger.info(
             f"Summary: total={n_total} "
             f"backfilled={n_backfilled} "
+            f"birdeye_fallback={n_birdeye_fallback} "
             f"skipped_no_price={n_skipped_no_price} "
             f"skipped_missing_fields={n_skipped_missing_fields}"
             + (f" skipped_ids={skipped_ids}" if skipped_ids else "")
