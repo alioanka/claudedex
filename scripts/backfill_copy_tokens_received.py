@@ -49,33 +49,59 @@ logger = logging.getLogger("backfill_tokens_received")
 
 JUPITER_PRICE_V3 = "https://api.jup.ag/price/v3"
 HTTP_TIMEOUT_S = 8
+# Exponential backoff schedule for HTTP 429s (operator-reported regression
+# 2026-05-21: 1/6 rows failed when Jupiter rate-limited mid-run and the
+# script gave up immediately, leaving the row with the legacy SOL-priced
+# entry_price and a -100% PnL on the dashboard).
+JUPITER_429_BACKOFF_S = (5, 10, 20, 40)
 
 
 async def fetch_token_price_usd(session: aiohttp.ClientSession, mint: str) -> float | None:
     """Return USD price for `mint` via Jupiter Price v3, or None on
-    any failure. Handles both v3 and legacy v2 response shapes."""
+    any failure. Handles both v3 and legacy v2 response shapes.
+
+    Retries on HTTP 429 with exponential backoff (5s/10s/20s/40s, 4 retries
+    total). Any other HTTP error or network failure returns None immediately
+    — the caller logs the skip and moves on to the next row.
+    """
     url = f"{JUPITER_PRICE_V3}?ids={mint}"
-    try:
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_S)) as resp:
-            if resp.status != 200:
-                logger.warning(f"  Jupiter {mint[:10]} returned HTTP {resp.status}")
-                return None
-            data = await resp.json()
-    except Exception as e:
-        logger.warning(f"  Jupiter fetch failed for {mint[:10]}: {e}")
-        return None
-    payload = data.get("data") if isinstance(data, dict) and "data" in data else data
-    if not isinstance(payload, dict):
-        return None
-    row = payload.get(mint)
-    if not isinstance(row, dict):
-        return None
-    raw = row.get("usdPrice") or row.get("price") or row.get("usd") or 0
-    try:
-        price = float(raw)
-        return price if price > 0 else None
-    except (TypeError, ValueError):
-        return None
+    last_status: int | None = None
+    for attempt, wait_s in enumerate((0, *JUPITER_429_BACKOFF_S)):
+        if wait_s:
+            logger.info(
+                f"  Jupiter {mint[:10]} HTTP 429 — backing off {wait_s}s "
+                f"(retry {attempt}/{len(JUPITER_429_BACKOFF_S)})"
+            )
+            await asyncio.sleep(wait_s)
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_S)) as resp:
+                last_status = resp.status
+                if resp.status == 429:
+                    continue  # retry with next backoff window
+                if resp.status != 200:
+                    logger.warning(f"  Jupiter {mint[:10]} returned HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+        except Exception as e:
+            logger.warning(f"  Jupiter fetch failed for {mint[:10]}: {e}")
+            return None
+        payload = data.get("data") if isinstance(data, dict) and "data" in data else data
+        if not isinstance(payload, dict):
+            return None
+        row = payload.get(mint)
+        if not isinstance(row, dict):
+            return None
+        raw = row.get("usdPrice") or row.get("price") or row.get("usd") or 0
+        try:
+            price = float(raw)
+            return price if price > 0 else None
+        except (TypeError, ValueError):
+            return None
+    logger.warning(
+        f"  Jupiter {mint[:10]} still HTTP {last_status} after "
+        f"{len(JUPITER_429_BACKOFF_S)} retries — giving up"
+    )
+    return None
 
 
 async def get_db_url() -> str:
@@ -136,6 +162,14 @@ async def main(args):
         if args.dry_run:
             logger.info("--dry-run set: not writing to DB.")
 
+        # Outcome counters so the operator gets a single-line summary at the
+        # end instead of having to grep through the per-row INFO lines.
+        n_total = len(rows)
+        n_backfilled = 0
+        n_skipped_no_price = 0
+        n_skipped_missing_fields = 0
+        skipped_ids: list[str] = []
+
         async with aiohttp.ClientSession() as session:
             for r in rows:
                 trade_id = r["trade_id"]
@@ -143,11 +177,15 @@ async def main(args):
                 entry_usd = float(r["entry_usd"] or 0)
                 if not mint or entry_usd <= 0:
                     logger.warning(f"  skip {trade_id}: missing mint or entry_usd")
+                    n_skipped_missing_fields += 1
+                    skipped_ids.append(trade_id)
                     continue
 
                 price = await fetch_token_price_usd(session, mint)
                 if not price:
                     logger.warning(f"  skip {trade_id}: Jupiter returned no price for {mint[:10]}")
+                    n_skipped_no_price += 1
+                    skipped_ids.append(trade_id)
                     continue
 
                 tokens_received = entry_usd / price
@@ -157,6 +195,7 @@ async def main(args):
                 )
 
                 if args.dry_run:
+                    n_backfilled += 1  # would-be backfill, counted for summary parity
                     continue
 
                 # Merge into existing metadata JSONB without clobbering keys.
@@ -191,7 +230,18 @@ async def main(args):
                         tokens_received,
                         trade_id,
                     )
+                n_backfilled += 1
+        # Single-line operator summary. After the wave-6 retry change the
+        # 429-only failure should be 0; persistent skips are now actionable
+        # (re-run with --trade-id or wait for Jupiter to recover).
         logger.info("Backfill complete.")
+        logger.info(
+            f"Summary: total={n_total} "
+            f"backfilled={n_backfilled} "
+            f"skipped_no_price={n_skipped_no_price} "
+            f"skipped_missing_fields={n_skipped_missing_fields}"
+            + (f" skipped_ids={skipped_ids}" if skipped_ids else "")
+        )
         return 0
     finally:
         await pool.close()
