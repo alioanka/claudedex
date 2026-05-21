@@ -15,6 +15,9 @@ Spatial (cross-DEX) and triangular EVM arbitrage with flash-loan funding (Aave V
 - Per-module: `logs/.pause_arbitrage` (written by dashboard pause/resume; read by `core.dry_run.is_module_paused`).
 - Hourly gas-budget gate: `_gas_budget_check_and_charge` (A2-07) — auto-cooldown on USD spend.
 - Effect: `should_skip_live` returns `True` -> live-write gates return their `_simulate_*` path.
+## Restart pattern
+- `logs/.restart_arbitrage` — flag file picked up by `main.py::_restart_flag_monitor` within 5s and dispatched to `ModuleProcess.restart()` (subject to the 3-restart / 1-hour-uptime budget). Same IPC shape as the kill-switch and pause flags so dashboard, scripts, and operators all share one mechanism.
+- Operator-friendly diagnostic before restarting: `python scripts/arb_engine_health.py` — read-only triage that prints arbitrage_runtime_stats freshness per chain, the last fired trade, all flag-file states, the tail of `arbitrage_errors.log`, and a VERDICT line that points at the restart flag when the engine is dead.
 ## Logs
 `logs/arbitrage/` — main, errors, trades (rotating handler).
 ## Primary risk-policy gate
@@ -36,6 +39,10 @@ Triangular path remains entry-disabled by atomic-receiver guard — explicit sco
 - `/api/arbitrage/diagnostics` — per-chain cost profile, scan/found/executed counters, last 20 near-misses, last 10 fired trades, snapshot liveness (>10 min = `stale=true`).
 - `/arbitrage/dashboard` "Why no trades?" collapsible panel — header carries top rejection reason + STALE flag without expanding; expanded view shows per-chain cards + color-coded near-miss table.
 - Engine log grep: `grep '\[arb-skip\]' logs/arbitrage/arbitrage.log` returns one structured line per rejected opportunity.
+- W6 subprocess health surface (`arbitrage_runtime_stats.stats`):
+  - `last_tick_at` — ISO timestamp stamped at the top of every scan iteration in `run()`. A fresh `last_tick_at` with a stale `updated_at` means the engine is alive but its persist call is wedged.
+  - `last_error` / `last_error_at` — error type + truncated message captured inside the run-loop `except`. Surfaces the actual cause (AttributeError, RPC drop, pool exhausted, ...) on the very next `/api/arbitrage/diagnostics` poll, no log-tailing required.
+  - Persisted once at engine startup (startup-marker write) before the first 5-min `_log_stats_if_needed` tick, so a freshly-restarted engine is visible to the API within seconds rather than 5 minutes.
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/ARBITRAGE_*.md` (smartcontract / quant / analyst).
 - Wave-2 audit: `docs/agents/reports/ARBITRAGE_CAMPAIGN.md`.
