@@ -11724,6 +11724,38 @@ class DashboardEndpoints:
                         except:
                             pass
 
+            # 2026-05-21 operator fix: expose count of BUYs refused
+            # because the detector picked a stablecoin/WSOL mint. The
+            # engine logs '[replay] reason=stablecoin_not_tradeable'
+            # to logs/copy_trading/main.log on every refusal. Tail the
+            # file (bounded read) and count matches. Process-restart
+            # resets the count to whatever's in the rotating log file
+            # -- this is forensics, not a settled metric.
+            stats['stablecoin_refusals'] = 0
+            stats['leader_sold_we_dont_hold'] = 0
+            try:
+                import os as _os
+                log_path = '/home/user/claudedex/logs/copy_trading/main.log'
+                if _os.path.exists(log_path):
+                    with open(log_path, 'rb') as f:
+                        f.seek(0, 2)
+                        size = f.tell()
+                        # 512 KB tail is plenty for a day of [replay] lines.
+                        f.seek(max(0, size - 524288))
+                        blob = f.read().decode('utf-8', errors='replace')
+                    stats['stablecoin_refusals'] = sum(
+                        1 for ln in blob.splitlines()
+                        if '[replay]' in ln
+                        and 'reason=stablecoin_not_tradeable' in ln
+                    )
+                    stats['leader_sold_we_dont_hold'] = sum(
+                        1 for ln in blob.splitlines()
+                        if '[replay]' in ln
+                        and 'reason=leader_sold_we_dont_hold' in ln
+                    )
+            except Exception as _e:
+                logger.debug(f"stablecoin_refusals tail failed (fail-soft): {_e}")
+
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
             logger.error(f"Error getting copytrading stats: {e}")
