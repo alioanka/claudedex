@@ -35,6 +35,33 @@ JUPITER_SWAP_API = "https://lite-api.jup.ag/swap/v1/swap"
 # Common tokens
 WSOL_MINT = "So11111111111111111111111111111111111111112"
 
+# Stablecoin + native-SOL mints that must NEVER be treated as the
+# "traded token" of a copy-trade (2026-05-21 operator fix). If we see a
+# leader's USDC balance rise, that's the OUTPUT leg of a SELL, not a
+# BUY of USDC. WSOL is included so SOL receipts are treated as quote-
+# side too. The 5 stuck copytrading_trades rows where token_address =
+# EPjFWdd... (USDC) are direct evidence of the pre-fix bug.
+STABLECOIN_MINTS = {
+    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",  # USDC (Solana)
+    "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB",  # USDT (Solana)
+    "USDH1SM1ojwWUga67PGrgFWUHibbjqMvuMaDkRJTgkX",   # USDH
+    WSOL_MINT,                                        # native SOL wrapper
+}
+
+# EVM analogue. Lowercased for case-insensitive comparison.
+EVM_STABLECOIN_ADDRESSES = {
+    a.lower() for a in [
+        "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",  # USDC mainnet
+        "0xdAC17F958D2ee523a2206206994597C13D831ec7",  # USDT mainnet
+        "0x6B175474E89094C44Da98b954EedeAC495271d0F",  # DAI
+        "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",  # USDC Base
+        "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",  # USDC Arbitrum
+        "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH mainnet
+        "0x4200000000000000000000000000000000000006",  # WETH Base/OP
+        "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",  # WBNB
+    ]
+}
+
 # Etherscan API V2 - Multi-chain support with single API key
 # See: https://docs.etherscan.io/etherscan-v2
 ETHERSCAN_V2_API = "https://api.etherscan.io/v2/api"
@@ -732,6 +759,11 @@ class CopyTradingEngine(BaseModule):
             'sol_copies': 0,
             'last_stats_log': datetime.now()
         }
+
+        # 2026-05-21 operator fix: counter of BUYs refused because the
+        # detector picked a stablecoin/WSOL mint. Read by
+        # /api/copytrading/stats (`stablecoin_refusals` key).
+        self._stablecoin_refusals = 0
 
     async def initialize(self) -> bool:
         """Initialize executor and load settings. Idempotent."""
@@ -1632,6 +1664,25 @@ class CopyTradingEngine(BaseModule):
                 )
                 return
 
+            # 2026-05-21 operator fix: never mirror a BUY whose target is
+            # a stablecoin / wrapped-native. The EVM extractor takes the
+            # last 20 bytes of input_data as the path's terminal token --
+            # for SELL methods (swapExactTokensForETH) the terminal is
+            # WETH, which we'd otherwise be tempted to "buy".
+            if is_buy and token_address.lower() in EVM_STABLECOIN_ADDRESSES:
+                logger.error(
+                    f"REFUSING BUY on stablecoin/WETH {token_address[:10]}... "
+                    f"on {chain_name} (method={method_name})."
+                )
+                self._log_replay_decision(
+                    chain=chain_name, wallet=source_tx.get('from', ''),
+                    tx_hash=tx_hash, decision='skipped',
+                    reason='stablecoin_not_tradeable',
+                    extra={'token': token_address[:12], 'method': method_name},
+                )
+                self._bump_stablecoin_refusals()
+                return
+
             logger.info(f"👯 Detected {side.upper()} trade for token {token_address[:20]}...")
 
             # Wave-4 CT-Q-09 probation gate. SELLs always allowed --
@@ -1790,6 +1841,38 @@ class CopyTradingEngine(BaseModule):
         except Exception as e:
             logger.debug(f"COPY position-cap check failed (fail-soft): {e}")
             return False
+
+    async def _has_open_copy_position(self, chain: str, token_address: str) -> bool:
+        """Return True iff we already have at least one row in
+        copytrading_trades with status='open' for the given chain+token.
+        Used by the SELL replay path to refuse mirroring an exit on a
+        token we never bought. Fail-soft: returns False on DB error."""
+        if not self.db_pool or not token_address:
+            return False
+        try:
+            async with self.db_pool.acquire() as conn:
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM copytrading_trades "
+                    "WHERE chain = $1 AND token_address = $2 "
+                    "AND status = 'open'",
+                    chain, token_address,
+                )
+            return int(count or 0) > 0
+        except Exception as e:
+            logger.debug(f"_has_open_copy_position fail-soft: {e}")
+            return False
+
+    def _bump_stablecoin_refusals(self) -> None:
+        """Increment in-memory counter of BUYs refused because the
+        detector picked a stablecoin/WSOL mint. Exposed via
+        /api/copytrading/stats. The [replay] log line is the
+        durable forensic record."""
+        try:
+            self._stablecoin_refusals = getattr(
+                self, '_stablecoin_refusals', 0
+            ) + 1
+        except Exception:
+            self._stablecoin_refusals = 1
 
     def _update_wallet_cooldown(self, wallet: str):
         """Update wallet's last copy time"""
