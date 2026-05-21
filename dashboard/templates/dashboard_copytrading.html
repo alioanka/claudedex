@@ -408,6 +408,25 @@
         --text-secondary: #6b7280;
         --metric-bg: #f3f4f6;
     }
+
+/* 2026-05-21 operator-requested action icons. */
+.token-actions { display: inline-flex; gap: 4px; margin-left: 4px; vertical-align: middle; }
+.icon-btn {
+    background: transparent;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 0.7rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-secondary, #94a3b8);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+.icon-btn:hover { color: #8b5cf6; border-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+.icon-btn.copied { color: #10b981; border-color: #10b981; }
+
 </style>
 {% endblock %}
 
@@ -592,7 +611,35 @@ async function reconcileTrades() {
             const msg = `Reconciled ${data.reconciled || 0} trades. Total P&L: $${(data.total_pnl || 0).toFixed(2)}`;
             alert('✅ ' + msg);
             // Reload dashboard to show updated data
-            loadDashboard();
+            
+// 2026-05-21 operator-requested copy-to-clipboard helper.
+function copyTokenAddress(ev, addr) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const btn = ev.currentTarget;
+    const finish = (ok) => {
+        if (!ok) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = '&#10003;';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.innerHTML = original; btn.classList.remove('copied'); }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(addr).then(() => finish(true)).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = addr; document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); finish(true); } catch (e) {}
+            document.body.removeChild(ta);
+        });
+    } else {
+        const ta = document.createElement('textarea');
+        ta.value = addr; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); finish(true); } catch (e) {}
+        document.body.removeChild(ta);
+    }
+}
+
+loadDashboard();
         } else {
             alert('❌ Reconciliation failed: ' + (data.error || 'Unknown error'));
         }
@@ -731,6 +778,24 @@ function updateActivityFeed(trades) {
             pnlLabel = '<small style="opacity:0.7"> (realized)</small>';
         }
 
+        // 2026-05-21: tokens-held + Birdeye/Solscan icons inline.
+        const mint = trade.token_address || '';
+        const isSol = (trade.chain || 'solana').toLowerCase() === 'solana';
+        const birdeyeChain = isSol ? 'solana' : 'ethereum';
+        const scanHost = isSol ? 'solscan.io/token' : 'etherscan.io/token';
+        const tokensHeld = (trade.metadata && trade.metadata.tokens_received)
+            || trade.tokens_received || trade.quantity || 0;
+        const tokenActions = mint
+            ? `<span class="token-actions">
+                <button class="icon-btn" title="Copy token address"
+                  onclick="copyTokenAddress(event, '${mint}')">&#128203;</button>
+                <a class="icon-btn" title="Birdeye" target="_blank"
+                   href="https://birdeye.so/token/${mint}?chain=${birdeyeChain}">&#128279;</a>
+                <a class="icon-btn" title="Solscan/Etherscan" target="_blank"
+                   href="https://${scanHost}/${mint}">&#128269;</a>
+               </span>`
+            : '';
+
         html += `
             <div class="activity-item">
                 <div class="activity-icon ${iconClass}">
@@ -741,8 +806,9 @@ function updateActivityFeed(trades) {
                         ${(trade.side || 'BUY').toUpperCase()} on ${trade.chain || 'Solana'}
                     </div>
                     <div class="activity-detail">
-                        ${trade.symbol || (trade.token_address ? trade.token_address.substring(0, 12) + '...' : 'Token')}
+                        ${trade.symbol || (mint ? mint.substring(0, 12) + '...' : 'Token')}${tokenActions}
                         &bull; $${(trade.entry_usd || trade.usd_value || 0).toFixed(2)}
+                        ${tokensHeld ? '&bull; <span style="opacity:0.7">' + Number(tokensHeld).toLocaleString(undefined, {maximumFractionDigits: 2}) + ' held</span>' : ''}
                     </div>
                 </div>
                 ${(pnl !== 0 || isOpen) ? `<div class="activity-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}${pnlLabel}</div>` : ''}

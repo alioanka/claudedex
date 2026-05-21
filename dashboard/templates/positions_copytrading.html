@@ -354,6 +354,25 @@
         --text-secondary: #6b7280;
         --metric-bg: #f3f4f6;
     }
+
+/* 2026-05-21 operator-requested action icons. */
+.token-actions { display: inline-flex; gap: 4px; margin-left: 4px; vertical-align: middle; }
+.icon-btn {
+    background: transparent;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 0.7rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-secondary, #94a3b8);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+.icon-btn:hover { color: #8b5cf6; border-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+.icon-btn.copied { color: #10b981; border-color: #10b981; }
+
 </style>
 {% endblock %}
 
@@ -490,13 +509,29 @@ function updatePositions(positions) {
         const closeBtnLabel = pos.status === 'closing' ? 'Closing...' : 'Close Position';
         const qty = pos.quantity != null ? pos.quantity : (pos.amount || 0);
 
+        // 2026-05-21: copy/Birdeye/Solscan icons inline with the symbol.
+        const mint = pos.token_address || '';
+        const isSol = (pos.chain || 'solana').toLowerCase() === 'solana';
+        const birdeyeChain = isSol ? 'solana' : 'ethereum';
+        const scanHost = isSol ? 'solscan.io/token' : 'etherscan.io/token';
+        const tokenActions = mint
+            ? `<span class="token-actions">
+                <button class="icon-btn" title="Copy token address"
+                  onclick="copyTokenAddress(event, '${mint}')">&#128203;</button>
+                <a class="icon-btn" title="Open on Birdeye" target="_blank"
+                   href="https://birdeye.so/token/${mint}?chain=${birdeyeChain}">&#128279;</a>
+                <a class="icon-btn" title="Open on Solscan/Etherscan" target="_blank"
+                   href="https://${scanHost}/${mint}">&#128269;</a>
+               </span>`
+            : '';
+
         html += `
             <div class="position-card">
                 <div class="position-header">
                     <div class="position-token">
                         <div class="token-icon">${tokenInitial}</div>
                         <div class="token-info">
-                            <h4>${tokenSymbol}</h4>
+                            <h4>${tokenSymbol}${tokenActions}</h4>
                             <div class="token-address">${pos.token_address ? pos.token_address.substring(0, 12) + '...' : 'Unknown'}</div>
                         </div>
                     </div>
@@ -616,6 +651,34 @@ async function closePosition(tradeId, btn) {
 // /static/js/timezone.js (handles naive UTC ISO correctly).
 
 // Load on page load
+
+// 2026-05-21 operator-requested copy-to-clipboard helper.
+function copyTokenAddress(ev, addr) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const btn = ev.currentTarget;
+    const finish = (ok) => {
+        if (!ok) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = '&#10003;';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.innerHTML = original; btn.classList.remove('copied'); }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(addr).then(() => finish(true)).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = addr; document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); finish(true); } catch (e) {}
+            document.body.removeChild(ta);
+        });
+    } else {
+        const ta = document.createElement('textarea');
+        ta.value = addr; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); finish(true); } catch (e) {}
+        document.body.removeChild(ta);
+    }
+}
+
 loadPositions();
 
 // Auto-refresh every 30 seconds (raised from 10s) AND suspend while
