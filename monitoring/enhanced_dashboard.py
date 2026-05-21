@@ -1,6 +1,17 @@
 """
 Enhanced Dashboard for DexScreener Trading Bot
 Professional web-based monitoring, control, and analytics interface
+
+Timestamp convention (operator-reported 2026-05-21):
+    All datetime values emitted by this module MUST be UTC and MUST
+    carry a trailing 'Z' (or a +HH:MM offset) so that browser-side
+    `new Date(s)` parses them as UTC rather than local. Use the
+    `_iso_utc(dt)` helper below — it accepts naive or aware datetimes
+    and always returns an ISO 8601 string with a 'Z' suffix when the
+    input is naive. Without this, an operator at UTC+3 reads fresh
+    rows as "3h ago" because JS interprets naive ISO as LOCAL time.
+    A matching client-side helper lives at
+    /static/js/timezone.js — both layers should be kept in sync.
 """
 
 import asyncio
@@ -39,6 +50,40 @@ except ImportError as e:
     AUTH_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def _iso_utc(dt) -> str:
+    """
+    Serialise a datetime as an ISO 8601 string with explicit UTC marker.
+
+    The DB stores copy_trading / sniper / arbitrage timestamps in UTC
+    but the column type is TIMESTAMP WITHOUT TIME ZONE, so asyncpg
+    returns naive datetime objects. ``naive.isoformat()`` yields a
+    string without 'Z' or '+00:00', and browser JS interprets that as
+    LOCAL time — shifting the display by the operator's UTC offset.
+
+    Returns '' for None, and appends 'Z' to naive datetimes.  Aware
+    datetimes are converted to UTC first so the wire format is uniform
+    regardless of what the DB driver attaches.
+    """
+    if dt is None:
+        return ''
+    try:
+        if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+            # Aware datetime — normalise to UTC and emit with 'Z'.
+            try:
+                from datetime import timezone as _tz
+                return dt.astimezone(_tz.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            except Exception:
+                return dt.isoformat()
+        # Naive datetime (asyncpg default for TIMESTAMP WITHOUT TIME ZONE)
+        # — assumed to be UTC by project convention.
+        return dt.isoformat() + 'Z'
+    except Exception:
+        # Last-resort string coercion — keeps the endpoint from 500'ing
+        # if an unexpected type sneaks in.
+        return str(dt)
+
 
 # Solana token name mapping for common tokens
 SOLANA_TOKEN_NAMES = {
@@ -10891,12 +10936,17 @@ class DashboardEndpoints:
             # Coerce datetimes / Decimals to JSON-safe primitives. The
             # generic JSON encoder used elsewhere in this dashboard
             # already handles Decimal but not asyncpg.Record fields.
+            # Route datetimes through _iso_utc so naive UTC values
+            # get a trailing 'Z' — client formatLocalDateTime() relies
+            # on the marker to parse them as UTC.
             def _coerce(v):
                 from datetime import datetime as _dt, date as _date
                 from decimal import Decimal as _Dec
                 if v is None:
                     return None
-                if isinstance(v, (_dt, _date)):
+                if isinstance(v, _dt):
+                    return _iso_utc(v)
+                if isinstance(v, _date):
                     return v.isoformat()
                 if isinstance(v, _Dec):
                     return float(v)
@@ -11218,8 +11268,11 @@ class DashboardEndpoints:
                             'win_rate': win_rate,
                             'open_positions': a['open_trades'],
                             'closed_trades': a['closed_trades'],
-                            'last_trade': a['last_trade'].isoformat() if a['last_trade'] else None,
-                            'first_trade': a['first_trade'].isoformat() if a['first_trade'] else None,
+                            # _iso_utc: append 'Z' so client formatTimeAgo
+                            # parses these as UTC (operator at UTC+3 would
+                            # otherwise see fresh wallets as "3h ago").
+                            'last_trade': _iso_utc(a['last_trade']) or None,
+                            'first_trade': _iso_utc(a['first_trade']) or None,
                             'status': 'active' if a['total_trades'] > 0 else 'inactive'
                         })
 
@@ -11775,7 +11828,8 @@ class DashboardEndpoints:
                             'unrealized_pnl_pct': float(row['unrealized_pnl_pct'] or 0),
                             'profit_loss': float(row['unrealized_pnl'] or 0),
                             'status': row['status'],
-                            'timestamp': row['opened_at'].isoformat() if row['opened_at'] else None
+                            # _iso_utc appends 'Z' so client side parses as UTC.
+                            'timestamp': _iso_utc(row['opened_at']) or None
                         })
 
                     # Also get open trades from trades table that aren't in positions
@@ -11835,7 +11889,9 @@ class DashboardEndpoints:
                             'unrealized_pnl_pct': unrealized_pnl_pct,
                             'profit_loss': unrealized_pnl,
                             'status': 'open',
-                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            # _iso_utc appends 'Z' so client formatTimeAgo
+                            # parses as UTC (operator-reported W6 fix).
+                            'timestamp': _iso_utc(row['entry_timestamp']) or None,
                             # Expose metadata so the live-PnL enricher can read
                             # tokens_received (new field; engine fix companion).
                             'metadata': row['metadata'],
@@ -12030,8 +12086,10 @@ class DashboardEndpoints:
                             'current_price_usd': float(row.get('current_price_usd') or 0),
                             'status': row.get('status') or 'open',
                             'dry_run': row.get('is_simulated'),
-                            'timestamp': entry_ts.isoformat() if entry_ts else None,
-                            'exit_timestamp': exit_ts.isoformat() if exit_ts else None,
+                            # _iso_utc appends 'Z' so client-side formatDate
+                            # ("May 20, 07:57 PM") renders in operator's TZ.
+                            'timestamp': _iso_utc(entry_ts) or None,
+                            'exit_timestamp': _iso_utc(exit_ts) or None,
                             'tx_hash': row.get('tx_hash') or '',
                             'native_price': float(row.get('native_price_at_trade') or 0)
                         })

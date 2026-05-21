@@ -2858,6 +2858,26 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "missing is non-fatal — just means operator hasn't tuned)."
         ),
     },
+    # ── DASHBOARD (W6 timezone-helper) ───────────────────────────────────
+    {
+        "id": "script_timezone_helper_present",
+        "title": "Script: DASHBOARD timezone helper presence (W6 2500f5f)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/timezone_helper_check.sh"],
+        "cmd_preview": "bash scripts/timezone_helper_check.sh",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Asserts dashboard/static/js/timezone.js exists, exports "
+            "window.parseUtcTimestamp / formatLocalDateTime / "
+            "formatTimeAgo, AND that base.html loads the script. The "
+            "server emits naive UTC ISO timestamps; without these "
+            "helpers browser JS parses them as LOCAL time and shifts "
+            "displays by the operator's UTC offset (UTC+3 -> '3h ago' "
+            "on fresh rows). Operator-reported regression 2026-05-21."
+        ),
+    },
 ]
 
 

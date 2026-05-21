@@ -1973,7 +1973,23 @@ class CopyTradingEngine(BaseModule):
             return (0, 0)
 
     async def _execute_solana_copy_trade(self, wallet: str, signature: str, tx_data: dict):
-        """Execute the same trade on Solana - handles both BUY and SELL"""
+        """Execute the same trade on Solana - handles both BUY and SELL.
+
+        2026-05-21 operator bugfix: previous logic iterated postTokenBalances
+        and stopped at the FIRST non-WSOL mint with a delta. When a leader
+        SOLD a token for USDC, USDC iterated first and was misread as the
+        traded token -> we entered a "BUY USDC" position. The 5 stuck
+        copytrading_trades rows where token_address=EPjFWdd... are
+        direct evidence.
+
+        New algorithm:
+          1. Compute per-mint NET delta = sum(post.uiAmount) - sum(pre).
+          2. Partition: base (mint not in STABLECOIN_MINTS) vs quote.
+          3. The traded token = base mint with largest |delta|.
+             STABLECOIN_MINTS members are never returned.
+          4. is_buy = base_delta > 0 (leader received tokens).
+          5. Quote-total is used as a cross-check warning log.
+        """
         logger.info(f"🚀 Analyzing Solana trade {signature[:20]}...")
 
         try:
@@ -1982,61 +1998,104 @@ class CopyTradingEngine(BaseModule):
             post_balances = meta.get('postTokenBalances', [])
             pre_balances = meta.get('preTokenBalances', [])
 
-            # Analyze balance changes to determine trade direction
-            # BUY: SOL decreases, Token increases
-            # SELL: SOL increases, Token decreases
+            def _ui_amount(b):
+                try:
+                    return float(
+                        (b.get('uiTokenAmount') or {}).get('uiAmount') or 0
+                    )
+                except (TypeError, ValueError):
+                    return 0.0
 
-            pre_mints = {b.get('mint'): b for b in pre_balances}
-            post_mints = {b.get('mint'): b for b in post_balances}
+            # Per-mint net delta (post - pre), summed across owner rows.
+            delta_by_mint: dict = {}
+            for b in pre_balances:
+                m = b.get('mint')
+                if m:
+                    delta_by_mint[m] = delta_by_mint.get(m, 0.0) - _ui_amount(b)
+            for b in post_balances:
+                m = b.get('mint')
+                if m:
+                    delta_by_mint[m] = delta_by_mint.get(m, 0.0) + _ui_amount(b)
 
-            # Find the token involved (not SOL)
+            # Drop near-zero dust deltas.
+            DUST_EPSILON = 1e-9
+            delta_by_mint = {
+                m: d for m, d in delta_by_mint.items()
+                if abs(d) > DUST_EPSILON
+            }
+
+            base_deltas = {
+                m: d for m, d in delta_by_mint.items()
+                if m not in STABLECOIN_MINTS
+            }
+            quote_deltas = {
+                m: d for m, d in delta_by_mint.items()
+                if m in STABLECOIN_MINTS
+            }
+
+            # Native-SOL fallback (closed WSOL accounts).
+            sol_delta = 0.0
+            try:
+                pre_sol = meta.get('preBalances') or []
+                post_sol = meta.get('postBalances') or []
+                if pre_sol and post_sol:
+                    sol_delta = (int(post_sol[0]) - int(pre_sol[0])) / 1e9
+            except Exception:
+                sol_delta = 0.0
+
             token_mint = None
-            is_buy = True  # Default to BUY
-
-            # Check for new tokens in post (BUY - receiving new token)
-            for mint, balance in post_mints.items():
-                if mint and mint != WSOL_MINT:
-                    if mint not in pre_mints:
-                        # New token acquired = BUY
-                        token_mint = mint
-                        is_buy = True
-                        break
-                    else:
-                        # Token existed before, check if balance increased or decreased
-                        pre_amount = float(pre_mints[mint].get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
-                        post_amount = float(balance.get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
-                        if post_amount > pre_amount:
-                            token_mint = mint
-                            is_buy = True
-                            break
-                        elif post_amount < pre_amount:
-                            token_mint = mint
-                            is_buy = False
-                            break
-
-            # Check for tokens that disappeared (SELL - token balance went to 0)
-            if not token_mint:
-                for mint, balance in pre_mints.items():
-                    if mint and mint != WSOL_MINT:
-                        pre_amount = float(balance.get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
-                        post_amount = 0
-                        if mint in post_mints:
-                            post_amount = float(post_mints[mint].get('uiTokenAmount', {}).get('uiAmount', 0) or 0)
-                        if pre_amount > 0 and post_amount < pre_amount:
-                            token_mint = mint
-                            is_buy = False
-                            break
+            base_delta = 0.0
+            if base_deltas:
+                token_mint = max(
+                    base_deltas.keys(), key=lambda m: abs(base_deltas[m])
+                )
+                base_delta = base_deltas[token_mint]
 
             if not token_mint:
-                logger.warning("Could not extract token from tx - skipping")
+                logger.warning(
+                    "No non-stablecoin token in tx -- likely stable<->stable "
+                    "swap. Skipping."
+                )
                 self._log_replay_decision(
                     chain='solana', wallet=wallet, tx_hash=signature,
                     decision='skipped', reason='no_token_extracted',
+                    extra={
+                        'mints_seen': list(delta_by_mint.keys())[:6],
+                        'sol_delta': round(sol_delta, 6),
+                    },
                 )
                 return
 
+            # Defense-in-depth: refuse outright if detector picked stable.
+            if token_mint in STABLECOIN_MINTS:
+                logger.error(
+                    f"REFUSING: detector picked stablecoin "
+                    f"{token_mint[:8]}... as traded token."
+                )
+                self._log_replay_decision(
+                    chain='solana', wallet=wallet, tx_hash=signature,
+                    decision='skipped', reason='stablecoin_not_tradeable',
+                    extra={'token': token_mint[:16]},
+                )
+                self._bump_stablecoin_refusals()
+                return
+
+            is_buy = base_delta > 0
             side = 'buy' if is_buy else 'sell'
-            logger.info(f"👯 Detected {side.upper()} trade for token {token_mint[:16]}...")
+
+            quote_total = sum(quote_deltas.values()) + sol_delta
+            if quote_total != 0 and ((quote_total > 0) == is_buy):
+                logger.warning(
+                    f"BUY/SELL cross-check disagrees for {signature[:16]}: "
+                    f"base={base_delta:+.4f} quote={quote_total:+.4f} -- "
+                    f"trusting base ({side})"
+                )
+
+            logger.info(
+                f"👯 Detected {side.upper()} for {token_mint[:16]}... "
+                f"(base_delta={base_delta:+.6f}, "
+                f"quote_total={quote_total:+.4f})"
+            )
 
             # Calculate copy amount
             sol_price = await self.executor.price_fetcher.get_price('sol') if self.executor else 200
@@ -2102,24 +2161,36 @@ class CopyTradingEngine(BaseModule):
                     amount_lamports=copy_lamports
                 )
             else:
-                # SELL: actually unload our copy bag via Jupiter. Never fabricate
-                # a synthetic tx hash - if we hold nothing, just log and return.
+                # SELL: only mirror if WE hold the token. Check BOTH
+                # on-chain SPL balance (LIVE mode) AND open copytrading
+                # _trades rows (DRY_RUN mode, where SPL=0).
                 raw_balance, _decimals = await self._get_solana_token_balance(token_mint)
-                if raw_balance <= 0:
+                has_db_position = await self._has_open_copy_position(
+                    'solana', token_mint,
+                )
+                if raw_balance <= 0 and not has_db_position:
                     logger.warning(
-                        f"⚠️ Leader SELL detected for {token_mint[:8]}... "
-                        f"but we hold no position to close (skipping)"
+                        f"⚠️ Leader SELL for {token_mint[:8]}... but we "
+                        f"hold no position (on-chain=0, db_open=False)."
                     )
                     self._log_replay_decision(
                         chain='solana', wallet=wallet, tx_hash=signature,
-                        decision='skipped', reason='no_position_to_close',
-                        extra={'token': token_mint[:16]},
+                        decision='skipped',
+                        reason='leader_sold_we_dont_hold',
+                        extra={
+                            'token': token_mint[:16],
+                            'on_chain_raw': raw_balance,
+                            'db_open': has_db_position,
+                        },
                     )
                     return
+                # DRY_RUN: SPL=0 because no real buy happened; pass
+                # placeholder so executor can simulate the exit.
+                exit_amount = raw_balance if raw_balance > 0 else 1
                 result = await self.executor.copy_solana_swap(
                     input_mint=token_mint,
                     output_mint=WSOL_MINT,
-                    amount_lamports=raw_balance,
+                    amount_lamports=exit_amount,
                     slippage_bps=300,  # memecoin-tolerant exit
                 )
 
