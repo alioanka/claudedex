@@ -93,30 +93,18 @@ async def main():
     except Exception as e:
         logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
-    # Check API Keys from secrets manager (Docker secrets, database, or env)
-    openai_key = None
-    anthropic_key = None
+    # Wave-6 fix: API keys live in the encrypted `secure_credentials` DB
+    # table, NOT in .env. The previous code read `secrets.get(...)` BEFORE
+    # the db_pool was connected — secrets_manager was still in bootstrap
+    # mode, so it silently fell back to os.getenv which always returned
+    # None. Subprocess then started with no keys, sentiment_engine logged
+    # "No AI API keys" and the run-loop produced zero signals for ~4 months.
+    #
+    # Resolution order (matches copy_trading / dex pattern):
+    #   1) secrets manager (Docker secret -> DB -> env, post-db-pool init)
+    #   2) os.getenv fallback (legacy .env operators)
 
-    try:
-        from security.secrets_manager import secrets
-        openai_key = secrets.get('OPENAI_API_KEY')
-        anthropic_key = secrets.get('ANTHROPIC_API_KEY')
-    except Exception:
-        # Fall back to environment
-        openai_key = os.getenv('OPENAI_API_KEY')
-        anthropic_key = os.getenv('ANTHROPIC_API_KEY')
-
-    if openai_key:
-        logger.info(f"   OpenAI API Key: {openai_key[:20]}...")
-    else:
-        logger.warning("⚠️ No OPENAI_API_KEY found - will check database after connection")
-
-    if anthropic_key:
-        logger.info(f"   Anthropic API Key: {anthropic_key[:20]}...")
-    else:
-        logger.warning("⚠️ No ANTHROPIC_API_KEY found - will check database after connection")
-
-    # Init DB - Use Docker secrets or environment
+    # Init DB FIRST so the secrets manager can decrypt DB-stored keys.
     try:
         from security.docker_secrets import get_database_url
         db_url = get_database_url()
@@ -134,6 +122,39 @@ async def main():
     except Exception as e:
         logger.error(f"❌ Database connection failed: {e}")
         return
+
+    # Now initialize secrets manager WITH the db_pool so the DB-backed
+    # encrypted credentials path is available (otherwise it stays in
+    # bootstrap mode and skips the DB lookup entirely).
+    openai_key = None
+    anthropic_key = None
+    try:
+        from security.secrets_manager import secrets as _secrets
+        _secrets.initialize(db_pool)
+        # Use get_async so the DB path is taken (sync get() short-circuits
+        # when called from inside a running event loop — see
+        # _get_from_database_sync's "use get_async() in async context"
+        # debug log).
+        openai_key = await _secrets.get_async('OPENAI_API_KEY', log_access=False)
+        anthropic_key = await _secrets.get_async('ANTHROPIC_API_KEY', log_access=False)
+    except Exception as e:
+        logger.warning(f"   secrets_manager lookup failed: {e}; falling back to env")
+
+    # .env fallback (gradual-migration support)
+    if not openai_key:
+        openai_key = os.getenv('OPENAI_API_KEY')
+    if not anthropic_key:
+        anthropic_key = os.getenv('ANTHROPIC_API_KEY')
+
+    if openai_key:
+        logger.info(f"   OpenAI API Key: {openai_key[:20]}... (len={len(openai_key)})")
+    else:
+        logger.warning("⚠️ No OPENAI_API_KEY found in secrets_manager or env")
+
+    if anthropic_key:
+        logger.info(f"   Anthropic API Key: {anthropic_key[:20]}... (len={len(anthropic_key)})")
+    else:
+        logger.warning("⚠️ No ANTHROPIC_API_KEY found in secrets_manager or env")
 
     # Init Config
     config_manager = ConfigManager()
