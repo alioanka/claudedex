@@ -2986,6 +2986,100 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "the call ordering, not the data."
         ),
     },
+    # ── COPY (W6 f81144f / 2d30f3c / 2466ec0 / f0fb2bd / 0770912) ────────
+    {
+        "id": "script_copy_stablecoin_guard_present",
+        "title": "Script: COPY stablecoin guard + open-position check (W6 f81144f)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/copy_stablecoin_guard_check.sh"],
+        "cmd_preview": "bash scripts/copy_stablecoin_guard_check.sh",
+        "timeout_s": 10,
+        "tags": ["new", "must", "p0"],
+        "description": (
+            "Source-grep: asserts modules/copy_trading/copy_engine.py "
+            "declares STABLECOIN_MINTS + EVM_STABLECOIN_ADDRESSES sets, "
+            "the _has_open_copy_position SELL-side gate, AND raises the "
+            "stablecoin_not_tradeable refusal label. Missing any one "
+            "re-introduces ghost SELLs against USDC/USDT/DAI mints."
+        ),
+    },
+    {
+        "id": "script_copy_buy_sell_detector_rewrite",
+        "title": "Script: COPY delta-based BUY/SELL detector (W6 2d30f3c)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/copy_buy_sell_detector_check.sh"],
+        "cmd_preview": "bash scripts/copy_buy_sell_detector_check.sh",
+        "timeout_s": 10,
+        "tags": ["new", "must", "p0"],
+        "description": (
+            "Source-grep: asserts copy_engine.py partitions balance "
+            "deltas into base_deltas (non-stablecoin mints) vs "
+            "quote_deltas (stablecoin mints) — the W6 rewrite that "
+            "correctly classifies a USDC->memecoin swap as a BUY of "
+            "the memecoin. Companion to script_copy_stablecoin_guard_"
+            "present which checks the constant set itself."
+        ),
+    },
+    {
+        "id": "db_copy_stablecoin_refusals_recent",
+        "title": "DB: COPY stuck stablecoin rows (pre-W6 era leftovers)",
+        "category": "db",
+        "kind": "db_query",
+        # USDC + USDT Solana mints. After f81144f + 2d30f3c the engine
+        # refuses any new BUY where token_address is in EVM_STABLECOIN_
+        # ADDRESSES or STABLECOIN_MINTS; the 5 pre-fix open rows stay
+        # in the DB until an operator manually closes them. This probe
+        # surfaces those rows so the operator can see they exist AND
+        # confirm no NEW rows are landing after Wave-6 deploy.
+        "sql": (
+            "SELECT trade_id, "
+            "  substring(source_wallet, 1, 12) || '...' AS leader, "
+            "  token_address, "
+            "  status, "
+            "  entry_timestamp "
+            "FROM copytrading_trades "
+            "WHERE token_address IN ("
+            "  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v',"
+            "  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'"
+            ") "
+            "  AND status = 'open' "
+            "ORDER BY entry_timestamp DESC "
+            "LIMIT 20"
+        ),
+        "cmd_preview": (
+            "SELECT trade_id, leader, status FROM copytrading_trades "
+            "WHERE token_address IN (USDC_mint, USDT_mint) AND status='open'"
+        ),
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Wave-6 stablecoin-guard regression check. Pre-fix the "
+            "engine opened 5 ghost rows against USDC/USDT mints. After "
+            "f81144f + 2d30f3c those rows should NOT grow — re-run "
+            "this probe after a few hours of live traffic; the row "
+            "count must be stable. Pre-existing rows stay open until "
+            "the operator closes them via /api/copytrading/close."
+        ),
+    },
+    {
+        "id": "script_copy_trade_ui_icons_present",
+        "title": "Script: COPY trades-page UI icons (W6 2466ec0 / f0fb2bd)",
+        "category": "scripts",
+        "kind": "bash",
+        "cmd": ["bash", "scripts/copy_trade_ui_icons_check.sh"],
+        "cmd_preview": "bash scripts/copy_trade_ui_icons_check.sh",
+        "timeout_s": 10,
+        "tags": ["new"],
+        "description": (
+            "Grep test: trades_copytrading.html ships the W6 UI "
+            "enrichment - copyTokenAddress() copy-to-clipboard, "
+            "birdeye.so/token chart link, solscan.io/token explorer "
+            "link. Template refactors that drop any silently regress "
+            "the one-click jump from the trade row to the explorer."
+        ),
+    },
 ]
 
 
