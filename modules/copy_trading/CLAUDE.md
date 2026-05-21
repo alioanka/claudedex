@@ -76,6 +76,36 @@ Operator runs `python scripts/backfill_copy_tokens_received.py --force` to retro
 
 **Performance.** A single dashboard refresh hits Jupiter Price v3 at most once thanks to the existing 30s TTL `_token_price_cache`. Fail-soft: any price-fetch error leaves `unrealized_pnl=0` and `pnl_pending=True` so the UI doesn't lie.
 
+## Wave-6 (2026-05-21) — BUY/SELL detection rewrite + stablecoin guard
+
+**Operator-reported critical bug.** Leader wallet `Coyadnds...HBjuBLh` SELL tx (token outflow + SOL/USDC inflow) was misread as a BUY of USDC. Five rows in `copytrading_trades` with `token_address = EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v` (USDC mint) are direct evidence -- we never should have held USDC as a copy-position.
+
+**Root cause.** `_execute_solana_copy_trade` iterated `postTokenBalances` and stopped at the FIRST non-WSOL mint with a non-zero delta. When USDC iterated first, it was returned as `token_mint` with `is_buy=True` (positive delta).
+
+**Fix (commit `2d30f3c`).** Delta-based detector:
+1. Compute per-mint NET delta = `sum(post.uiAmount) - sum(pre.uiAmount)` across all owner rows.
+2. Partition into `base_deltas` (mint NOT in `STABLECOIN_MINTS`) vs `quote_deltas` (USDC/USDT/USDH/WSOL).
+3. Traded token = `base_deltas` mint with largest `|delta|`. Stablecoin mints are NEVER returned as the traded token.
+4. `is_buy = base_delta > 0` (leader received tokens). Quote-side total is a cross-check warning, base is truth.
+5. Defense-in-depth: refusal log `[replay] reason=stablecoin_not_tradeable` + `_stablecoin_refusals++` if detector ever picks a stable.
+
+**SELL-side rule.** Only mirror if WE hold the token in EITHER on-chain SPL balance OR an open `copytrading_trades` row (via `_has_open_copy_position`). Otherwise log `[replay] reason=leader_sold_we_dont_hold` and skip. The previous `no_position_to_close` branch only checked on-chain balance -- broken under DRY_RUN where SPL=0 even after a simulated BUY.
+
+**EVM parallel guard.** `_execute_evm_copy_trade` refuses BUYs whose target is in `EVM_STABLECOIN_ADDRESSES` (USDC / USDT / DAI / BUSD / WETH / WBNB / WMATIC on Ethereum, Base, Arbitrum, Optimism). Same `stablecoin_not_tradeable` reason string for symmetric forensics.
+
+**New constants.**
+- `STABLECOIN_MINTS` (set) -- USDC + USDT + USDH + WSOL on Solana. Members never become `token_mint`.
+- `EVM_STABLECOIN_ADDRESSES` (lowercased set) -- EVM analogue. Members refuse on BUY.
+
+**New replay-log reasons.** `stablecoin_not_tradeable`, `leader_sold_we_dont_hold` -- both join the existing Wave-1..4 vocabulary (`cooldown`, `position_cap`, `unsupported_chain`, `risk_gate`, `no_token_extracted`, `amount_too_small`, `no_position_to_close`, `probation`, `cross_module_cap`, `success`, `error`).
+
+**Stats endpoint (commit `0770912`).** `/api/copytrading/stats` now tails `logs/copy_trading/main.log` (bounded 512 KB read) and exposes:
+- `stablecoin_refusals` -- count of `[replay] reason=stablecoin_not_tradeable` lines.
+- `leader_sold_we_dont_hold` -- count of `[replay] reason=leader_sold_we_dont_hold` lines.
+Caveat: these reset on log rotation. They're forensic counters, not settled metrics.
+
+**UI enrichment (commits `2466ec0` + `f0fb2bd`).** `/copytrading/trades` + `/copytrading/positions` + `/copytrading/dashboard` row rendering now shows: tokens-held (from `metadata.tokens_received`), entry $ / now $ per-token, copy-to-clipboard icon button on the token address, Birdeye link, and Solscan / Etherscan link. All three pages inline the same `copyTokenAddress` helper -- self-contained, no shared JS dependency.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
 - Wave-2 quant audit: section 2 of `docs/agents/reports/COPY_TRADING_quant.md` — the CT-Q-01 / CT-Q-02 backlog drove the rebuild.
