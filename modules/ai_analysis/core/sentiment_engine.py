@@ -342,6 +342,16 @@ class SentimentEngine:
         # Bounded deque so a long-running engine doesn't grow unbounded.
         self._recent_skips: deque = deque(maxlen=20)
 
+        # Wave-6: subprocess-health surface. The dashboard's "Offline"
+        # badge on /ai/dashboard is computed from sentiment_logs freshness,
+        # but that doesn't distinguish "cycle running, all signals zero"
+        # from "cycle frozen / crashed". These two timestamps are read by
+        # /api/ai/diagnostics so the badge tooltip can show the real
+        # cause: when did the cycle last tick? when did it last fire?
+        self._last_tick_at: Optional[datetime] = None
+        self._last_signal_at: Optional[datetime] = None
+        self._last_skip_reason: Optional[str] = None
+
     async def initialize(self):
         logger.info("🧠 Initializing Sentiment Engine (ENHANCED)...")
 
@@ -498,6 +508,26 @@ class SentimentEngine:
         while self.is_running:
             try:
                 cycle_count += 1
+                # Wave-6: explicit liveness tick. The previous loop only
+                # logged "Cycle N: Fetching market news..." which (a)
+                # didn't surface which providers were live and (b) gave
+                # the operator no way to distinguish "loop frozen" from
+                # "loop ticking but no signal". This is the single
+                # grepable line for "is the AI subprocess alive?".
+                _provider_count = (1 if self.openai_api_key else 0) + (
+                    1 if self.anthropic_api_key else 0
+                )
+                logger.info(
+                    "🤖 sentiment cycle tick: cycle=%d providers=%d "
+                    "direct_trading=%s dry_run=%s positions=%d trades=%d",
+                    cycle_count,
+                    _provider_count,
+                    self.direct_trading,
+                    self.dry_run,
+                    len(self.active_positions),
+                    trades_executed,
+                )
+                self._last_tick_at = datetime.utcnow()
                 # Reload settings occasionally
                 await self._load_settings()
 
@@ -643,6 +673,7 @@ class SentimentEngine:
                         trades_executed += 1
                         trade_fired_this_cycle = True
                         self._signals_acted_on += 1
+                        self._last_signal_at = datetime.utcnow()
                     elif not self.direct_trading:
                         # #1 cause of "50 signals, 0 trades" — the operator
                         # never flipped direct_trading=ON in /ai/settings.
@@ -702,6 +733,7 @@ class SentimentEngine:
         mirrors the ARB-equivalent ledger so dashboards can reuse the parser.
         """
         self._skip_reasons[reason] += 1
+        self._last_skip_reason = reason
         rec = {
             'timestamp': datetime.utcnow().isoformat() + 'Z',
             'reason': reason,
@@ -734,12 +766,25 @@ class SentimentEngine:
             act_rate = self._signals_acted_on / denom
         except Exception:
             act_rate = 0.0
+        # Wave-6: subprocess-health surface. These three slots let the
+        # dashboard distinguish "subprocess crashed" (last_tick_at is
+        # old) from "cycle ticking but all signals rejected"
+        # (last_tick_at is fresh, last_signal_at is old, last_skip_reason
+        # explains why). Without them the operator could only see
+        # "Offline" with no context.
+        _tick = self._last_tick_at.isoformat() + 'Z' if self._last_tick_at else None
+        _sig = self._last_signal_at.isoformat() + 'Z' if self._last_signal_at else None
         return {
             'signals_generated': int(self._signals_generated),
             'signals_acted_on': int(self._signals_acted_on),
             'action_rate': round(float(act_rate), 4),
             'signals_rejected_by_reason': dict(self._skip_reasons),
             'recent_skips': list(self._recent_skips),
+            'subprocess_health': {
+                'last_sentiment_tick_at': _tick,
+                'last_signal_at': _sig,
+                'last_skip_reason': self._last_skip_reason,
+            },
             'effective_config': {
                 'ai_provider': self.ai_provider,
                 'direct_trading': bool(self.direct_trading),
