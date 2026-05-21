@@ -13203,6 +13203,13 @@ class DashboardEndpoints:
             # than 30 min while env=true, the module is stale not running.
             enabled = os.getenv('AI_MODULE_ENABLED', 'false').lower() == 'true'
             stats['status'] = 'Disabled' if not enabled else 'Offline'
+            # Wave-6: previously the Offline badge had no tooltip cause.
+            # status_reason surfaces *why* the heartbeat is missing so
+            # the operator can act without grepping logs.
+            stats['status_reason'] = (
+                'AI_MODULE_ENABLED=false' if not enabled
+                else 'no sentiment_logs row found — subprocess may have crashed'
+            )
 
             if self.db:
                 async with self.db.pool.acquire() as conn:
@@ -13215,7 +13222,29 @@ class DashboardEndpoints:
                         score = float(latest['score'])
                         if enabled and latest.get('timestamp'):
                             age = (datetime.now() - latest['timestamp']).total_seconds()
-                            stats['status'] = 'Running' if age <= 1800 else f'Stale ({int(age)}s)'
+                            if age <= 1800:
+                                stats['status'] = 'Running'
+                                stats['status_reason'] = f'last tick {int(age)}s ago'
+                            else:
+                                stats['status'] = f'Stale ({int(age)}s)'
+                                # Distinguish "rare crash" from "subprocess
+                                # silently key-less since Jan 31" — the
+                                # exact bug Wave-6 fixed. >24h stale +
+                                # zero open positions strongly suggests
+                                # the subprocess never recovered.
+                                if age > 86400:
+                                    stats['status_reason'] = (
+                                        f'no heartbeat for {age/3600:.1f}h — '
+                                        f'subprocess likely crashed or '
+                                        f'started key-less. Check '
+                                        f'logs/ai_analysis/stderr.log + '
+                                        f'/api/ai/diagnostics subprocess_health.'
+                                    )
+                                else:
+                                    stats['status_reason'] = (
+                                        f'last tick {int(age/60)}min ago '
+                                        f'(>30min = stale; cycle interval is 15min)'
+                                    )
                         stats['sentiment_score'] = score
                         if score > 0.5: stats['sentiment_label'] = 'Bullish'
                         elif score < -0.5: stats['sentiment_label'] = 'Bearish'
@@ -13777,8 +13806,15 @@ class DashboardEndpoints:
             'quorum_required': False,
             'quorum_max_disagreement': 0.4,
             'bandit_enabled': False,
-            'openai_key_configured': bool(os.getenv('OPENAI_API_KEY')),
-            'claude_key_configured': bool(os.getenv('ANTHROPIC_API_KEY')),
+            # Wave-6: previously read os.getenv() only, but operators
+            # store keys in the encrypted `secure_credentials` table via
+            # /settings/credentials. The mismatch caused the diagnostics
+            # endpoint to falsely report `claude_key_configured: false`
+            # even when the AI subprocess had loaded the key fine via
+            # secrets_manager. _ai_key_configured() resolves through
+            # the same priority chain the subprocess uses.
+            'openai_key_configured': await self._ai_key_configured('OPENAI_API_KEY'),
+            'claude_key_configured': await self._ai_key_configured('ANTHROPIC_API_KEY'),
         }
         signals_generated = 0
         trades_opened = 0
@@ -13926,6 +13962,71 @@ class DashboardEndpoints:
                 f"new entries until a position closes."
             )
 
+        # Wave-6: subprocess_health surface. The Offline badge on
+        # /ai/dashboard was previously computed from sentiment_logs
+        # freshness alone (api_get_ai_stats) — that doesn't tell the
+        # operator *why* the subprocess is silent. This block joins:
+        #   - last_sentiment_tick_at  : latest sentiment_logs.timestamp
+        #   - last_signal_at          : latest ai_trades.entry_timestamp
+        #   - last_skip_reason        : most recent [ai-skip] reason
+        #   - restart_count_24h       : pulled from logs/orchestrator.log
+        #                               (counts "Restarting ai_analysis").
+        #   - status_hint             : crashed / stale / running / idle
+        subprocess_health = {
+            'last_sentiment_tick_at': latest_sentiment.get('timestamp') if latest_sentiment else None,
+            'last_signal_at': None,
+            'last_skip_reason': recent_skips[-1]['reason'] if recent_skips else None,
+            'restart_count_24h': 0,
+            'status_hint': 'unknown',
+        }
+        if self.db:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    last_trade_ts = await conn.fetchval(
+                        "SELECT MAX(entry_timestamp) FROM ai_trades"
+                    )
+                    if last_trade_ts:
+                        subprocess_health['last_signal_at'] = last_trade_ts.isoformat()
+            except Exception as e:
+                logger.debug(f"diagnostics: last_signal_at lookup failed: {e}")
+        # Restart count from orchestrator log (bounded read).
+        try:
+            orch_log = '/home/user/claudedex/logs/orchestrator.log'
+            if os.path.exists(orch_log):
+                with open(orch_log, 'rb') as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 262144))  # 256KB tail
+                    blob = f.read().decode('utf-8', errors='replace')
+                ai_restart_lines = [
+                    ln for ln in blob.splitlines()
+                    if 'Restarting' in ln and 'ai_analysis' in ln.lower()
+                ]
+                subprocess_health['restart_count_24h'] = len(ai_restart_lines)
+        except Exception as e:
+            logger.debug(f"diagnostics: orchestrator.log tail failed: {e}")
+        # Status hint synthesis.
+        if subprocess_health['last_sentiment_tick_at']:
+            try:
+                ts = subprocess_health['last_sentiment_tick_at']
+                last_ts = datetime.fromisoformat(ts.replace('Z', ''))
+                age_min = (datetime.utcnow() - last_ts).total_seconds() / 60.0
+                if age_min > 30:
+                    subprocess_health['status_hint'] = (
+                        f'stalled ({age_min:.0f}min since last tick)'
+                    )
+                elif subprocess_health['last_signal_at']:
+                    subprocess_health['status_hint'] = 'healthy'
+                else:
+                    subprocess_health['status_hint'] = (
+                        'ticking but never signaled — check direct_trading '
+                        '+ confidence_threshold'
+                    )
+            except (ValueError, AttributeError):
+                pass
+        else:
+            subprocess_health['status_hint'] = 'no heartbeat — subprocess likely crashed'
+
         return web.json_response({
             'success': True,
             'hours': hours,
@@ -13940,8 +14041,32 @@ class DashboardEndpoints:
             'signals_rejected_by_reason': skip_counter,
             'recent_skips': recent_skips,
             'effective_config': effective_config,
+            'subprocess_health': subprocess_health,
             'hint': hint,
         })
+
+    async def _ai_key_configured(self, key_name: str) -> bool:
+        """Wave-6: resolve an AI API key through the same priority order
+        the subprocess uses (secrets_manager DB -> env). Returns True iff
+        a non-empty value is reachable. The previous code only checked
+        os.getenv() which produced the false-negative `claude_key_
+        configured: false` even after the operator added the key via
+        /settings/credentials. We intentionally do NOT return the value
+        — only existence — so this can stay an unauthenticated diagnostics
+        field without leaking the secret.
+        """
+        try:
+            from security.secrets_manager import secrets as _s
+            if self.db and (
+                not _s._initialized or _s._db_pool is None or _s._bootstrap_mode
+            ):
+                _s.initialize(self.db.pool)
+            v = await _s.get_async(key_name, log_access=False)
+            if v:
+                return True
+        except Exception as e:
+            logger.debug(f"_ai_key_configured({key_name}) secrets lookup failed: {e}")
+        return bool(os.getenv(key_name))
 
     # ==================== FULL DASHBOARD HANDLERS ====================
 
