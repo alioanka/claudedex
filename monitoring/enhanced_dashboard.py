@@ -8084,7 +8084,44 @@ class DashboardEndpoints:
                             'close request queued via flag-file IPC; '
                             'engine will execute on next reconcile tick (~10s)'
                         ),
-                    })
+                    }, status=202)
+
+                # DEX dispatch path — the main /positions page posts the
+                # integer trades.id as position_id. Per modules/dex_trading/
+                # CLAUDE.md the DEX subprocess polls logs/.close_dex_<id>
+                # (DexPositionService.close_flag_loop, every 15s) and looks
+                # the row up by `id` DB-first. We confirm the id maps to an
+                # OPEN non-Solana trades row before dropping the flag.
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        dex_row = await conn.fetchrow(
+                            "SELECT id FROM trades "
+                            "WHERE id = $1::bigint AND status = 'open' "
+                            "AND UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')",
+                            int(safe) if safe.isdigit() else -1,
+                        )
+                except Exception:
+                    dex_row = None
+                if dex_row:
+                    from pathlib import Path
+                    flag_path = Path('logs') / f'.close_dex_{safe}'
+                    try:
+                        flag_path.parent.mkdir(parents=True, exist_ok=True)
+                        flag_path.write_text('1', encoding='utf-8')
+                    except Exception as e:
+                        return web.json_response({
+                            'success': False, 'error': f'flag write failed: {e}'
+                        }, status=500)
+                    return web.json_response({
+                        'success': True,
+                        'position_id': safe,
+                        'module': 'dex_trading',
+                        'note': (
+                            'close request queued via flag-file IPC '
+                            '(logs/.close_dex_<id>); the DEX subprocess closes '
+                            'it on its next poll (~15s)'
+                        ),
+                    }, status=202)
 
             # Legacy path — only useful when dashboard runs in the same
             # process as the old monolithic engine. Modular setup will
@@ -8093,9 +8130,11 @@ class DashboardEndpoints:
                 return web.json_response({
                     'success': False,
                     'error': (
-                        'Trading engine not available. For COPY_TRADING positions, '
-                        'use POST /api/copytrading/positions/{trade_id}/close. '
-                        'Other modules: per-module close IPC pending.'
+                        'Trading engine not available, and position_id did not '
+                        'match an open DEX (trades.id) or COPY_TRADING (trade_id) '
+                        'position. Sniper uses /api/sniper/position/close, Solana '
+                        '/api/solana/close-position, Futures '
+                        '/api/futures/position/close.'
                     ),
                 }, status=503)
 
@@ -10128,16 +10167,26 @@ class DashboardEndpoints:
 
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    # ISSUE 6: sniper writes sniper_trades, NOT the generic
+                    # `trades` table. The old UPDATE trades WHERE
+                    # strategy='sniper' matched zero rows (silent no-op).
+                    # Per modules/sniper/CLAUDE.md the close is a pure DB
+                    # UPDATE; the engine retires active_snipes on its next
+                    # monitor tick (no flag-file / in-process call needed).
                     result = await conn.execute("""
-                        UPDATE trades
+                        UPDATE sniper_trades
                         SET status = 'closed', exit_timestamp = NOW(),
-                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close"')
-                        WHERE strategy = 'sniper' AND token_address = $1 AND status = 'open'
+                            exit_reason = 'manual_close'
+                        WHERE token_address = $1 AND status = 'open'
                     """, token_address)
                     if 'UPDATE 0' in result:
                         return web.json_response({'success': False, 'error': 'Position not found', 'already_closed': True})
 
-            return web.json_response({'success': True, 'message': f'Position {token_address[:16]}... closed'})
+            return web.json_response({
+                'success': True,
+                'message': f'Position {token_address[:16]}... close requested',
+                'note': 'sniper_trades marked closed; engine retires the in-memory snipe on its next monitor tick',
+            }, status=202)
         except Exception as e:
             logger.error(f"Error closing sniper position: {e}")
             return web.json_response({'success': False, 'error': str(e)})
@@ -10145,15 +10194,26 @@ class DashboardEndpoints:
     async def api_sniper_close_all_positions(self, request):
         """Close all sniper positions"""
         try:
+            closed_n = 0
             if self.db:
                 async with self.db.pool.acquire() as conn:
-                    await conn.execute("""
-                        UPDATE trades
+                    # ISSUE 6: target sniper_trades (engine's real table), not
+                    # the empty `trades WHERE strategy='sniper'` set.
+                    result = await conn.execute("""
+                        UPDATE sniper_trades
                         SET status = 'closed', exit_timestamp = NOW(),
-                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close_all"')
-                        WHERE strategy = 'sniper' AND status = 'open'
+                            exit_reason = 'manual_close_all'
+                        WHERE status = 'open'
                     """)
-            return web.json_response({'success': True, 'message': 'All sniper positions closed'})
+                    try:
+                        closed_n = int(result.split()[-1])
+                    except Exception:
+                        closed_n = 0
+            return web.json_response({
+                'success': True,
+                'message': f'{closed_n} sniper position(s) close requested',
+                'closed': closed_n,
+            }, status=202)
         except Exception as e:
             logger.error(f"Error closing all sniper positions: {e}")
             return web.json_response({'success': False, 'error': str(e)})
