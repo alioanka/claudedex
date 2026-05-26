@@ -2953,9 +2953,16 @@ class TradingBotEngine:
             logger.info(f"   ✅ Volatility acceptable")
             
             # 6. Verify contract is verified (if available)
+            # Wave-9 quant audit: default is now FALSE (was True). An absent or
+            # unknown verification result must NOT be treated as "verified" —
+            # that was an optimistic default that silenced this caution whenever
+            # the (now honest) _check_smart_contract returned no positive signal.
+            # This remains a WARN, not a hard reject: the binding contract-risk
+            # gate is RiskScore.contract_risk inside _calculate_opportunity_score
+            # (which rejects on a missing/worst-case risk assessment).
             logger.info(f"   Checking contract verification...")
             contract_safety = opportunity.metadata.get('contract_safety', {})
-            if not contract_safety.get('verified', True):
+            if not contract_safety.get('verified', False):
                 logger.warning(f"   ⚠️  Contract not verified - proceeding with caution")
             
             logger.info(f"✅ All safety checks PASSED for {token_symbol}")
@@ -3121,8 +3128,18 @@ class TradingBotEngine:
         )
 
     async def _check_developer_reputation(self, dev_address: str) -> float:
-        """Check developer reputation score"""
-        # Placeholder - returns neutral score
+        """Developer reputation score.
+
+        UNIMPLEMENTED no-op (Wave-9 quant audit). The REAL developer-risk
+        signal is already produced by RiskManager.analyze_token() →
+        RiskScore.developer_risk (the 20% risk weight in
+        _calculate_opportunity_score). This parallel score is NOT consumed by
+        any gate or scorer — it is only stored in opportunity.metadata for
+        audit. Returns a NEUTRAL 0.5 (no optimism injected); do NOT wire this
+        into a score without first replacing it with a real on-chain
+        dev-history source (analysis/dev_analyzer.py).
+        """
+        # Neutral placeholder — feeds no live gate/score; see RiskScore.developer_risk.
         return 0.5
 
     async def _analyze_liquidity_depth(self, pair: Dict) -> Dict:
@@ -3130,17 +3147,44 @@ class TradingBotEngine:
         return {'depth': pair.get('liquidity', 0)}
 
     async def _check_smart_contract(self, token_address: str) -> Dict:
-        """Check smart contract for vulnerabilities"""
-        return {'verified': True, 'issues': []}
+        """Smart-contract verification check.
+
+        HONEST UNIMPLEMENTED stub (Wave-9 quant audit). It previously returned
+        `verified=True` unconditionally — a FALSE positive safety signal that
+        claimed every contract was source-verified. No real verifier is wired
+        into this engine path (analysis/smart_contract_analyzer.py exists but is
+        not instantiated here; the REAL contract-risk signal is
+        RiskScore.contract_risk via RiskManager.analyze_token, which DOES feed
+        the scorer). We now return `verified=False`/`status='unknown'` so the
+        downstream gate in _final_safety_checks logs a caution instead of
+        silently asserting a verification we never performed.
+        """
+        # NEVER assert a positive safety signal we cannot verify.
+        return {'verified': False, 'status': 'unknown', 'issues': [],
+                'note': 'engine-level contract check unimplemented; '
+                        'real signal is RiskScore.contract_risk'}
 
     async def _analyze_holder_distribution(self, token_address: str) -> Dict:
-        """Analyze token holder distribution"""
-        return {'concentrated': False}
+        """Holder-distribution analysis.
 
-    def _extract_features(self, data: Dict) -> np.ndarray:
-        """Extract ML features from data"""
-        # Placeholder - return dummy features
-        return np.random.rand(10)
+        UNIMPLEMENTED no-op (Wave-9 quant audit). Not consumed by any gate or
+        scorer — only stored in opportunity.metadata for audit. The REAL
+        holder-concentration signal is RiskScore.holder_risk via
+        RiskManager.analyze_token. Returns a NEUTRAL/UNKNOWN value (no optimism:
+        does NOT assert `concentrated=False`, which would have been an
+        unverified "looks safe" claim).
+        """
+        return {'concentrated': None, 'status': 'unknown',
+                'note': 'engine-level holder check unimplemented; '
+                        'real signal is RiskScore.holder_risk'}
+
+    # NOTE (Wave-9 quant audit): the former `_extract_features(data)` that
+    # returned `np.random.rand(10)` was DELETED. It had ZERO callers in this
+    # engine — the live ML path builds features via `_build_ml_feature_dict`
+    # → `EnsemblePredictor.extract_features` (a deterministic 95-dim vector),
+    # never this method. Returning RANDOM features from a live path is the
+    # worst possible fabrication, so the dead stub is removed outright rather
+    # than left as a foot-gun for a future caller.
 
     def _calculate_pnl(self, position: Dict) -> float:
         """Calculate position P&L"""
