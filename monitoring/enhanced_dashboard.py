@@ -4547,15 +4547,39 @@ class DashboardEndpoints:
                             copy_winning = int(row['wins'] or 0)
                 except Exception as e:
                     logger.debug(f"Copytrading summary fetch failed: {e}")
+                # ISSUE 3: AI was the only module missing from the summary
+                # roll-up. Add ai_trades so the headline P&L / trade count
+                # reflect all 7 modules. Table missing on older deployments
+                # is swallowed so the summary never 500s.
+                ai_pnl = ai_trades_n = ai_positions = ai_winning = 0
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed') AS trades,
+                              COUNT(*) FILTER (WHERE status='open') AS positions,
+                              COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins
+                            FROM ai_trades
+                        """)
+                        if row:
+                            ai_pnl = float(row['pnl'] or 0)
+                            ai_trades_n = int(row['trades'] or 0)
+                            ai_positions = int(row['positions'] or 0)
+                            ai_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"AI summary fetch failed: {e}")
+            else:
+                ai_pnl = ai_trades_n = ai_positions = ai_winning = 0
 
             # Combine totals from ALL modules
-            total_pnl += futures_pnl + solana_pnl + sniper_pnl + arb_pnl + copy_pnl
+            total_pnl += futures_pnl + solana_pnl + sniper_pnl + arb_pnl + copy_pnl + ai_pnl
             total_trades += (futures_trades + solana_trades + sniper_trades
-                             + arb_trades + copy_trades_n)
+                             + arb_trades + copy_trades_n + ai_trades_n)
             open_positions_count += (futures_positions + solana_positions
-                                     + sniper_positions + copy_positions)
+                                     + sniper_positions + copy_positions + ai_positions)
             winning_trades_count += (futures_winning + solana_winning + sniper_winning
-                                     + arb_winning + copy_winning)
+                                     + arb_winning + copy_winning + ai_winning)
 
             # Calculate combined win rate
             win_rate = (winning_trades_count / total_trades * 100) if total_trades > 0 else 0
