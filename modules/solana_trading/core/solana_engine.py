@@ -4641,6 +4641,10 @@ class SolanaTradingEngine:
             'rpc_connected': rpc_connected,
             'rpc_url': self.rpc_manager.current_url[:50] + '...',
             'dry_run': self.dry_run,
+            # Issue 15: public address only — NEVER the keypair. Sourced from the
+            # SOLANA_MODULE_PRIVATE_KEY secret, derived at load time. Operator
+            # uses this to know which wallet to fund before going live.
+            'wallet_address': self.wallet_pubkey,
             'wallet_balance_sol': wallet_balance,
             'risk_can_trade': self.risk_metrics.can_trade,
             'active_positions': len(self.active_positions),

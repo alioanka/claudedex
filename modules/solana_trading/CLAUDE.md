@@ -14,6 +14,12 @@ Solana spot trading via Jupiter aggregator with trailing-stop ladder, plus optio
 - `jupiter_quote_max_age_s` (default 10s) — execute_swap refetches quotes older than this before signing (mirrors `jupiter_executor.py` P1 fix).
 - `solana_ml_enabled` (default `False`) — when True, `_open_position` runs the lazy-loaded `ml/models/rug_classifier.RugClassifier` and refuses entry above `solana_ml_max_rug_prob` (default 0.40). Fail-soft: no trained model → gate idle (refuse-to-predict, MB-19 pattern).
 - `drift_max_leverage` / `drift_max_funding_pct_annual` / `drift_oracle_deviation_max_pct` / `drift_min_oracle_conf_bps` — MB-15 client-side guards inside `DriftHelper.open_position`. Drift `place_perp_order` is gated by all four AND the killswitch / pause flag. Drift stays toggle-OFF by default.
+## Wallet / Account identity
+- The Solana trading keypair is loaded from the secrets-manager key **`SOLANA_MODULE_PRIVATE_KEY`** (`security/secrets_manager.secrets.get_async('SOLANA_MODULE_PRIVATE_KEY')`, with a plain-`os.getenv` fallback for bootstrap and Fernet auto-decrypt when the stored value is still encrypted). Accepts JSON-array, base58, or hex key formats; `solana_engine.py:~1353` `_get_solana_private_key`.
+- The resulting **public address** is derived once at load time (`self.wallet_pubkey = str(self.wallet.pubkey())`, `solana_engine.py:~1426`) and is the wallet the module trades from. This is the address the operator must FUND before flipping LIVE.
+- Surfaced for the dashboard as `wallet_address` on `engine.get_health()` (→ `/health`, `/stats` health block on port `SOLANA_HEALTH_PORT`, default 8082). Public address ONLY — the private key/keypair is never exposed on any surface.
+- To find the address without the bot running: decrypt `SOLANA_MODULE_PRIVATE_KEY` and derive the pubkey, or read it from the running module's `/health`.
+
 ## Kill switch
 - Global: `logs/.killswitch` (written by `scripts/emergency_stop.py` or `/api/bot/emergency-exit`; polled by BaseModule subprocesses via `core.dry_run.start_killswitch_poller`).
 - Per-module: `logs/.pause_solana` (written by dashboard pause/resume; read by `core.dry_run.is_module_paused`).
