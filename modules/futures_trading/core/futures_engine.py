@@ -1333,16 +1333,27 @@ class FuturesTradingEngine:
             signals.macd_signal_line = signal_line
             signals.macd_histogram = histogram
 
+            # Wave-7: score the histogram as a PERCENTAGE of price, not in raw
+            # price units. The old absolute 0.001/0.005 thresholds were
+            # price-scale dependent — they fired on almost every BTC bar and
+            # almost no cheap-alt bar. hist_pct makes the same threshold mean
+            # the same momentum across all symbols. 0.02% = weak cross,
+            # 0.08% = strong momentum (tuned to the prior majors behaviour).
+            last_close_macd = closes[-1] if closes else 0.0
+            hist_pct = (histogram / last_close_macd * 100.0) if last_close_macd > 0 else 0.0
+            macd_weak_thr = 0.02   # % of price for BUY/SELL
+            macd_strong_thr = 0.08  # % of price for STRONG_BUY/STRONG_SELL
+
             if histogram > 0 and macd > signal_line:
-                signals.macd_signal = SignalStrength.BUY if histogram > 0.001 else SignalStrength.NEUTRAL
+                signals.macd_signal = SignalStrength.BUY if hist_pct > macd_weak_thr else SignalStrength.NEUTRAL
             elif histogram < 0 and macd < signal_line:
-                signals.macd_signal = SignalStrength.SELL if histogram < -0.001 else SignalStrength.NEUTRAL
+                signals.macd_signal = SignalStrength.SELL if hist_pct < -macd_weak_thr else SignalStrength.NEUTRAL
 
             # Amplify MACD signal for strong momentum
-            if abs(histogram) > 0.005:
-                if histogram > 0:
+            if abs(hist_pct) > macd_strong_thr:
+                if histogram > 0 and macd > signal_line:
                     signals.macd_signal = SignalStrength.STRONG_BUY
-                else:
+                elif histogram < 0 and macd < signal_line:
                     signals.macd_signal = SignalStrength.STRONG_SELL
 
             # Calculate Volume ratio
@@ -1476,23 +1487,50 @@ class FuturesTradingEngine:
         return rsi
 
     def _calculate_macd(self, closes: List[float]) -> Tuple[float, float, float]:
-        """Calculate MACD (12, 26, 9)"""
-        def ema(data: List[float], period: int) -> float:
-            if len(data) < period:
-                return sum(data) / len(data)
+        """Calculate MACD (12, 26, 9) with a REAL 9-period signal line.
+
+        Pre-Wave-7 this used signal_line = macd_line * 0.9, which made
+        histogram = macd_line * 0.1 — i.e. the histogram was just a fixed
+        fraction of the MACD line, not the MACD-minus-signal crossover the
+        downstream scoring assumes. That broke MACD as a momentum signal:
+        the histogram never reflected an actual signal-line cross, and its
+        magnitude scaled with raw price (huge on BTC, tiny on a $0.50 alt),
+        so the absolute 0.001/0.005 thresholds in _get_technical_signals
+        fired almost-always on majors and almost-never on cheap alts.
+
+        Fix: build the full MACD-line series across the window, then take a
+        true 9-period EMA of it as the signal line. histogram = macd - signal.
+        """
+        def ema_series(data: List[float], period: int) -> List[float]:
+            """Return the EMA value at each step (same length as data)."""
+            if not data:
+                return []
             multiplier = 2 / (period + 1)
-            ema_value = sum(data[:period]) / period
-            for price in data[period:]:
+            seed = min(period, len(data))
+            ema_value = sum(data[:seed]) / seed
+            out: List[float] = [ema_value]
+            for price in data[seed:]:
                 ema_value = (price - ema_value) * multiplier + ema_value
-            return ema_value
+                out.append(ema_value)
+            return out
 
-        ema_12 = ema(closes, 12)
-        ema_26 = ema(closes, 26)
-        macd_line = ema_12 - ema_26
+        if len(closes) < 26:
+            # Not enough history for a meaningful MACD; report flat.
+            return 0.0, 0.0, 0.0
 
-        # For signal line, we'd need historical MACD values
-        # Simplified: use recent EMA as approximation
-        signal_line = macd_line * 0.9  # Simplified approximation
+        ema_12_series = ema_series(closes, 12)
+        ema_26_series = ema_series(closes, 26)
+        # Align the two series on their shared tail so each MACD point uses
+        # the 12- and 26-EMA computed at the same bar.
+        n = min(len(ema_12_series), len(ema_26_series))
+        macd_series = [
+            ema_12_series[-n + i] - ema_26_series[-n + i] for i in range(n)
+        ]
+        macd_line = macd_series[-1]
+
+        # Real 9-period signal line = EMA of the MACD-line series.
+        signal_series = ema_series(macd_series, 9)
+        signal_line = signal_series[-1] if signal_series else macd_line
         histogram = macd_line - signal_line
 
         return macd_line, signal_line, histogram
