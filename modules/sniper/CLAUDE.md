@@ -12,16 +12,32 @@ New-pool / new-token sniper across EVM chains and Solana. Watches for liquidity 
 - `take_profit_pct` / `stop_loss_pct` — read from DB in `sniper_engine.py:_load_settings` (no longer shadowed after MB-12)
 - `target_chain` — EVM chain id / `solana` for routing
 - `max_active_positions` — emergency brake; reject new candidates at `_evaluate_target` once `len(active_snipes) >= cap` (default 500, seeded by migration 016)
+- `gas_buffer_usd` — per-cap-slot gas/fee reserve used by the funding recommendation (default 0.50; see "## Wallet funding")
 ## Kill switch
 - Global: `logs/.killswitch` (written by `scripts/emergency_stop.py` or `/api/bot/emergency-exit`; polled by BaseModule subprocesses via `core.dry_run.start_killswitch_poller`).
 - Per-module: `logs/.pause_sniper` (written by dashboard pause/resume; read by `core.dry_run.is_module_paused`).
 - Effect: `should_skip_live` returns `True` -> trade executor returns simulated fill.
 ## Logs
 `logs/sniper/` is the single source of truth:
-- `sniper.log` / `sniper.log.{1..5}` — structured logger output (10MB cap, 5 rotations)
+- `sniper.log` / `sniper.log.{1..3}` — structured logger output (10MB cap, 3 rotations)
 - `sniper_errors.log` / `.{1..3}` — ERROR-level only (5MB cap, 3 rotations)
 - `stdout.log`, `stderr.log` / `.{1..3}` — captured by the parent
   `RotatingLogFile` in `main.py` (10MB cap, 3 rotations)
+
+### Log-volume control (Wave 7)
+The high-frequency informational lines are now logged at DEBUG (filtered
+out by the INFO file handler) so `logs/sniper/` stops growing from
+per-trade / per-candidate spam:
+- WSS init-candidate (`solana_listener.py`, thousands/hr) — DEBUG.
+- Per-trade engine lines: `EXECUTING SNIPE`, `SNIPE SUCCESS`, `TX:`,
+  `Entry value:`, `Exiting position`, `EXIT SUCCESS`, modeled-exit — DEBUG.
+Kept at INFO/WARN: `TARGET ACQUIRED`, `STOP LOSS`, `TAKE PROFIT`, cap
+rejections (already 1/min throttled), and all ERROR lines. The throughput
+counts that those DEBUG lines used to convey are preserved in
+`sniper_runtime_stats` (`wss_dispatched`, `positions_synthetic_closed`,
+etc.). Main rotating handler tightened 10MB x5 -> 10MB x3 in
+`main_sniper.py`. To temporarily see the DEBUG firehose, set the
+`SniperEngine`/`SolanaListener` loggers to DEBUG in `main_sniper.py`.
 
 The subprocess used to install its own `StderrToRotatingFile` that
 double-wrote stderr to both `logs/sniper/stderr.log` AND fd 2 (where
@@ -189,6 +205,114 @@ closed; matches PM mission item "Pyth-feed wiring for blue-chip mints".
 
 Commits: d89b1c4 (helper + ids), f2e95d3 (engine wiring — bundled
 into ARB commit due to concurrent index race), 5c00192 (tests).
+
+## DRY_RUN simulation — what it models, what it does NOT (Wave 7)
+DRY_RUN is the current default and the only validated mode. Earlier the
+sim had no exit price feed, so every DRY_RUN trade retired flat
+(exit_price == entry_price, P&L = 0) or sold at a constant `*1.1`. That
+produced the "$0.84 on every win" / identical-size / ~93%-win-rate
+artifact the operator saw on `/sniper/dashboard` and `/analytics`. That
+was fabricated, not collected, data. What the sim now does:
+
+- **Entry size varies.** `_execute_snipe` jitters the entry amount ±20%
+  around `trade_amount`, seeded by the mint hash (reproducible). `entry_usd`
+  / `entry_price` derive from `result.amount_in`, so sizes differ per trade.
+  LIVE always uses the exact configured `trade_amount` (no jitter).
+- **Exit P&L is MODELED, not measured.** When the monitor loop has a real
+  price (Pyth/Jupiter/Birdeye), it computes real P&L and exits on TP/SL as
+  before. When the mint has NO obtainable price (the common Pump.fun case),
+  `_close_position_synthetic` now draws a realistic %P&L from
+  `_model_dry_run_exit_pct`: ~55% loss (clustered toward SL), ~30% chop,
+  ~15% winner (toward TP), seeded by mint hash, bounded by the DB
+  `take_profit_pct` / `stop_loss_pct` caps. `_simulate_sell` in
+  `trade_executor.py` uses the same distribution shape for the
+  has-a-price-but-DRY_RUN path. Exit price now differs from entry, P&L and
+  win rate span a believable spread.
+- **What it does NOT model:** real fills, real slippage/price-impact, real
+  gas, MEV, or the true post-launch price path of any specific mint. It is a
+  population-level outcome model for data realism, not a backtest. Treat the
+  modeled win rate as illustrative, not predictive. For a true historical
+  backtest, replay archived prices — out of scope here.
+
+## Wallet / Account identity (issue 15)
+Sniper is multi-chain. Keys are resolved in `sniper_engine.py` wallet init
+via `security` secrets (encrypted) with `.env` fallback — never plain reads
+of a private key:
+- **Solana (primary, Jupiter):** private key `SOLANA_MODULE_PRIVATE_KEY`,
+  public address `SOLANA_MODULE_WALLET`. **SHARED with the `solana_trading`
+  module** — both modules use the exact same `SOLANA_MODULE_*` keys
+  (confirmed in `modules/solana_trading/config/solana_config.py`). Funding
+  this one Solana wallet funds BOTH sniper and solana_trading. Plan position
+  caps and balance across both modules accordingly.
+- **EVM:** private key `PRIVATE_KEY` (fallback `EVM_PRIVATE_KEY`), public
+  address `WALLET_ADDRESS` (fallback `EVM_WALLET_ADDRESS`).
+- The resolved PUBLIC address is surfaced (never the key) on the diagnostics
+  surface `sniper_runtime_stats.stats`: `wallet_address` (Solana-preferred),
+  plus explicit `solana_wallet_address` / `evm_wallet_address`.
+
+## Wallet funding (issue 12)
+With 400+ open positions the operator needs a concrete fund number.
+`_compute_funding_recommendation` (snapshotted into `sniper_runtime_stats`)
+exposes:
+- `open_notional_usd` = `SUM(entry_usd)` over `sniper_trades WHERE status='open'`
+  — capital already committed to open positions.
+- `avg_entry_usd` = `AVG(entry_usd)` over the same rows (falls back to
+  `trade_amount` if no open rows yet).
+- `recommended_funding_usd` =
+  `open_notional_usd` + `(max_active_positions - open_count) * avg_entry_usd`
+  + `max_active_positions * gas_buffer_usd`.
+  i.e. cover the open book, plus headroom to fill every remaining cap slot at
+  the average size, plus a per-slot gas/fee reserve. Worst-case sizing so a
+  fully-saturated cap can't run the wallet dry mid-snipe.
+- `gas_buffer_usd_per_slot` echoes the buffer used (DB key `gas_buffer_usd`,
+  default $0.50; Solana fees are ~$0.01 so this is conservative).
+
+**Is 400+ open expected?** Yes, given the cap. `max_active_positions`
+defaults to 500 and IS enforced — gated at `_evaluate_target` (cheap exit
+before safety cost) and re-checked at `_execute_snipe`, both via
+`_effective_active_count()` = `max(in-memory, COUNT(*) FROM sniper_trades
+WHERE status='open')` so DB orphans across restarts still count. 400+ is
+normal accumulation under a 500 cap when the modeled/real exits don't retire
+positions as fast as new launches arrive. To reduce the standing count,
+lower `max_active_positions` and/or set `max_hold_minutes` (time-stop) in DB.
+
+## Sniper trades persistence — table contract (issues 13 + 6, for the dashboard agent)
+The engine persists ONLY to **`sniper_trades`** (migration
+`010_add_sniper_ai_tables.sql`). It NEVER writes the generic `trades` table.
+- **Entry** (`_log_snipe_to_db`): INSERT with `status='open'` (or `'failed'`),
+  `side='buy'`, `is_simulated=should_skip_live(...)`, real `entry_usd`.
+- **Exit** (`_log_exit_to_db` / `_close_position_synthetic`): UPDATE the row
+  to `status='closed'` with `exit_price`, `exit_usd`, `profit_loss`,
+  `profit_loss_pct`, `exit_reason`.
+- **Status values:** `'open'`, `'closed'`, `'failed'`. (In-memory `data['status']`
+  uses `'active'`/`'buying'`/`'closed'` but those never reach the DB; DB is
+  always `open`/`closed`/`failed`.)
+- **Key columns** read by the dashboard: `trade_id, token_address, chain,
+  side, entry_price, exit_price, amount, entry_usd, exit_usd, profit_loss,
+  profit_loss_pct, safety_score, safety_rating, status, exit_reason,
+  is_simulated, entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash,
+  metadata`.
+
+**Issue 13 (`/sniper/trades` empty):** the dashboard READ handlers
+(`api_get_sniper_trades`, `api_get_sniper_positions`) already query
+`sniper_trades` with the right columns/status, so the engine side is correct
+and IS persisting rows. An empty page is therefore a dashboard-side
+filter/render issue (HTML/JS), which the dashboard agent owns — NOT an
+engine persistence gap.
+
+**Issue 6 (close position) — ENGINE-SIDE FINDING, dashboard agent must fix
+the query:** close is triggered purely via DB UPDATE from the dashboard
+(`/api/sniper/position/close`, `/api/sniper/positions/close-all`) — there is
+no flag-file and no in-process call to the sniper engine (it runs as a
+standalone subprocess, not registered with `module_manager`). BUT those two
+handlers `UPDATE trades SET status='closed' ... WHERE strategy='sniper'`,
+which matches ZERO rows because the engine writes `sniper_trades`, not
+`trades`. So close-all currently silent no-ops. **Fix (dashboard agent):**
+change both handlers to `UPDATE sniper_trades SET status='closed',
+exit_timestamp=NOW(), exit_reason='manual_close' WHERE token_address=$1 AND
+status='open'` (and the close-all variant without the token filter). The
+engine's in-memory `active_snipes` will retire the position on its next
+monitor tick; no engine change needed for DRY_RUN.
 
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
