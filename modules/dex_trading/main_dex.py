@@ -208,7 +208,10 @@ class DEXHealthServer:
             'status': 'healthy' if self.app.engine else 'degraded',
             'module': 'dex',
             'timestamp': datetime.now().isoformat(),
-            'engine_running': self.app.engine is not None
+            'engine_running': self.app.engine is not None,
+            # Public EVM address only (issue 15) — never the private key.
+            'wallet_address': getattr(self.app, 'wallet_address', None),
+            'dry_run': getattr(self.app, 'is_dry_run', True),
         }
         return web.json_response(health)
 
@@ -227,7 +230,8 @@ class DEXHealthServer:
             'status': 'Running' if self.app.engine else 'Stopped',
             'active_positions': 0,
             'total_pnl': 0.0,
-            'win_rate': 0.0
+            'win_rate': 0.0,
+            'wallet_address': getattr(self.app, 'wallet_address', None),
         }
 
         if self.app.engine and hasattr(self.app.engine, 'active_positions'):
@@ -378,6 +382,10 @@ class TradingBotApplication:
         self.dashboard = None
         self.health_server = None
         self.telegram_controller = None
+        self.position_service = None
+        # Resolved public EVM wallet address (issue 15) — set in initialize().
+        self.wallet_address = None
+        self.is_dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # DEX Health server port (for standalone dashboard communication)
         self.health_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
@@ -723,11 +731,37 @@ class TradingBotApplication:
             await self.engine.initialize()
             # --- FIX ENDS HERE ---
 
+            # Resolve the PUBLIC EVM wallet address (issue 15) so the operator
+            # knows which wallet to fund for live mode and the dashboard/health
+            # surface can display it. Private key is NEVER exposed.
+            self.wallet_address = self._resolve_wallet_address(
+                decrypted_key, nested_config.get('wallet_address')
+            )
+            if self.wallet_address:
+                self.logger.info(f"🔑 DEX EVM wallet: {self.wallet_address}")
+            else:
+                self.logger.warning("⚠️ Could not resolve DEX wallet address")
+
             # Initialize analytics engine for dashboard analytics
             self.logger.info("Initializing analytics engine...")
             self.analytics_engine = AnalyticsEngine(db_manager=self.db_manager)
             await self.analytics_engine.initialize()
             self.logger.info("✅ Analytics engine initialized")
+
+            # DB-first OPEN-position price refresh + manual-close flag poller.
+            # Source of truth for /dex/* dashboard PnL; fixes frozen prices on
+            # positions not held in the engine's in-memory active_positions.
+            try:
+                from data.collectors.dexscreener import DexScreenerCollector
+                from modules.dex_trading.position_service import DexPositionService
+                ps_collector = DexScreenerCollector({})
+                await ps_collector.initialize()
+                self.position_service = DexPositionService(
+                    self.db_manager, ps_collector, dry_run=self.is_dry_run
+                )
+                self.logger.info("✅ DEX position service initialized (price-refresh + close-flag)")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize DEX position service: {e}")
 
             # Check if standalone dashboard is running (started by orchestrator)
             # If so, skip dashboard in DEX module to avoid port conflict
@@ -773,6 +807,22 @@ class TradingBotApplication:
         missing = self.config_manager.validate_environment()
         if missing:
             raise ValueError(f"Missing required environment variables: {missing}")
+
+    def _resolve_wallet_address(self, private_key, configured_address):
+        """Return the public EVM address. Prefer an explicitly configured
+        WALLET_ADDRESS; otherwise derive from the (decrypted) private key.
+        Never logs or returns the private key. Returns None on failure."""
+        if configured_address:
+            return configured_address
+        if not private_key:
+            return None
+        try:
+            from eth_account import Account
+            key = private_key if private_key.startswith('0x') else f'0x{private_key}'
+            return Account.from_key(key).address
+        except Exception as e:
+            self.logger.debug(f"wallet address derivation failed: {e}")
+            return None
 
     async def _position_monitor(self):
         """Monitor positions separately to ensure it's running"""
@@ -886,6 +936,13 @@ class TradingBotApplication:
                 asyncio.create_task(self._position_monitor())
             ]
 
+            # DB-first OPEN-position price refresh + dashboard manual-close IPC.
+            if self.position_service:
+                tasks.append(asyncio.create_task(
+                    self.position_service.price_refresh_loop(), name="dex_price_refresh"))
+                tasks.append(asyncio.create_task(
+                    self.position_service.close_flag_loop(), name="dex_close_flag"))
+
             # Only start dashboard if standalone dashboard is NOT enabled
             if self.dashboard and not getattr(self, 'standalone_dashboard_enabled', False):
                 tasks.append(asyncio.create_task(self.dashboard.start()))
@@ -944,6 +1001,10 @@ class TradingBotApplication:
                 self.logger.info("Stopping Telegram controller...")
                 await self.telegram_controller.notify("DEX bot shutting down...", priority="high")
                 await self.telegram_controller.stop_polling()
+
+            # Stop position service loops
+            if self.position_service:
+                self.position_service.stop()
 
             # Stop health server if running
             if self.health_server:
