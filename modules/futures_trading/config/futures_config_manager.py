@@ -159,6 +159,18 @@ class FuturesRiskConfig(BaseModel):
     require_trend_confirmation: bool = False  # Allow trading in sideways markets (was True)
     min_volume_multiplier: float = 0.8  # Allow 80% of average volume (was 1.2)
 
+    # FUT-RM-21 (Wave 7): regime gate. The signal stack mixes mean-reversion
+    # (RSI extremes scored as STRONG_BUY/SELL) with trend-following (Bollinger
+    # breakout, EMA cross) and sums them additively — so the engine happily
+    # buys a downtrend on an RSI bounce. That is the classic "catching a
+    # falling knife" loss the -$59.99 book kept paying. This gate is stricter
+    # than require_trend_confirmation: it HARD-BLOCKS counter-trend entries
+    # (no LONG when SMA20<SMA50 downtrend; no SHORT in an uptrend) while still
+    # allowing both directions in a `sideways` regime (range mean-reversion is
+    # legitimate there). Default ON. Set False to revert to the additive-only
+    # behaviour.
+    block_counter_trend_entries: bool = True
+
     # FUT-RM-16 (Wave 5): ATR-scaled SL/TP per symbol. The static 1.2% / 1.8%
     # SL/TP that ships above is the right number for a quiet majors book but
     # gets stopped out instantly on a vol-name (FIL, NEAR, AAVE all moved 4%+
@@ -783,6 +795,8 @@ class FuturesConfigManager:
             # Risk - new market filters
             'require_trend_confirmation': FuturesConfigType.RISK,
             'min_volume_multiplier': FuturesConfigType.RISK,
+            # FUT-RM-21 (Wave 7): regime / counter-trend gate
+            'block_counter_trend_entries': FuturesConfigType.RISK,
             # Funding settings
             'funding_arb': FuturesConfigType.FUNDING,  # alias
             'funding_arbitrage_enabled': FuturesConfigType.FUNDING,

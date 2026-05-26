@@ -334,6 +334,9 @@ class FuturesTradingEngine:
             # Market condition filters (relaxed defaults for live trading)
             self.require_trend_confirmation = getattr(risk_config, 'require_trend_confirmation', False)
             self.min_volume_multiplier = getattr(risk_config, 'min_volume_multiplier', 0.8)
+            # FUT-RM-21 (Wave 7): hard-block counter-trend entries by regime.
+            self.block_counter_trend_entries = bool(getattr(
+                risk_config, 'block_counter_trend_entries', True))
 
             # FUT-RM-10 (Wave 3): auto-deleverage on drawdown.
             self.auto_deleverage_enabled = bool(getattr(
@@ -433,6 +436,10 @@ class FuturesTradingEngine:
             self.edge_slippage_pct = 0.05
             self.edge_funding_fallback_pct = 0.05
             self.one_entry_per_candle = True
+            # FUT-RM-21 (Wave 7) fallback default
+            self.block_counter_trend_entries = True
+            self.require_trend_confirmation = False
+            self.min_volume_multiplier = 0.8
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
 
@@ -1233,6 +1240,24 @@ class FuturesTradingEngine:
                         if self.verbose_signals:
                             logger.info(f"     ⚠️ Volume filter: {signals.volume_ratio:.2f}x < required {self.min_volume_multiplier:.2f}x")
 
+                # FUT-RM-21 (Wave 7): regime gate. The signal stack mixes
+                # mean-reversion (RSI extremes) with trend-following (BB
+                # breakout, EMA) additively, so a bullish RSI bounce can clear
+                # the score in a clear downtrend — catching a falling knife.
+                # Hard-block counter-trend entries: no LONG in a downtrend
+                # regime, no SHORT in an uptrend regime. `sideways` stays
+                # tradeable both ways (range mean-reversion is legitimate).
+                regime_ok = True
+                if getattr(self, 'block_counter_trend_entries', True):
+                    if signal_score > 0 and signals.trend == "downtrend":
+                        regime_ok = False
+                        if self.verbose_signals:
+                            logger.info("     ⚠️ Regime gate: bullish signal but regime is DOWNTREND — blocked")
+                    elif signal_score < 0 and signals.trend == "uptrend":
+                        regime_ok = False
+                        if self.verbose_signals:
+                            logger.info("     ⚠️ Regime gate: bearish signal but regime is UPTREND — blocked")
+
                 # MOMENTUM CONFIRMATION: Recent price must move in signal direction
                 momentum_ok = True
                 if signal_score > 0 and signals.price_change_1h < -0.5:
@@ -1296,7 +1321,7 @@ class FuturesTradingEngine:
                 # All filters must pass
                 all_filters_ok = (
                     trend_ok and volume_ok and momentum_ok
-                    and signals_aligned and confluence_ok
+                    and signals_aligned and confluence_ok and regime_ok
                 )
 
                 if signal_score >= self.min_signal_score and all_filters_ok:
@@ -1313,7 +1338,7 @@ class FuturesTradingEngine:
                             logger.info(
                                 f"     ❌ REJECTED: Quality filters failed "
                                 f"(trend={trend_ok}, volume={volume_ok}, momentum={momentum_ok}, "
-                                f"aligned={signals_aligned}, confluence={confluence_ok})"
+                                f"aligned={signals_aligned}, confluence={confluence_ok}, regime={regime_ok})"
                             )
                         elif signal_score > 0:
                             logger.info(f"     ❌ REJECTED: Bullish but weak (score {signal_score} < {self.min_signal_score})")
