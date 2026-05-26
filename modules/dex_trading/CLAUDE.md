@@ -2,7 +2,7 @@
 ## What it does
 Spot trading on EVM DEXes (Uniswap V2/V3, SushiSwap, PancakeSwap) across Ethereum, BSC, Polygon, Arbitrum, Base. Routes through `trading/executors/direct_dex.py` with optional Flashbots MEV protection.
 ## Entry point
-`modules/dex_trading/main_dex.py` — launched as a subprocess by `main.py` when `DEX_MODULE_ENABLED=true`. Engine: `modules/dex_trading/dex_module.py` wraps the shared `trading/trading_engine.py`.
+`modules/dex_trading/main_dex.py` — launched as a subprocess by `main.py` when `DEX_MODULE_ENABLED=true`. Live engine is the shared `core/engine.py:TradingBotEngine` (constructed in `main_dex.py:initialize`). NOTE: `modules/dex_trading/dex_module.py` (`DexTradingModule`) is a BaseModule wrapper that is NOT wired into the live engine path — the subprocess uses `TradingBotEngine` directly. Editing `dex_module.py` has no runtime effect on trading.
 ## Key config (DB-backed via `ConfigManager`)
 - `max_slippage_bps` — per-trade slippage cap (default 50)
 - `max_gas_price` — gwei ceiling for tx submission (default 50)
@@ -37,6 +37,86 @@ AMBER → GREEN candidate (pending production verification). MB-01 (decimals —
 - `_estimate_price_impact` now does a real chunked QuoterV2 round-trip (was linear extrapolation from a 0.1% sample). Quotes the actual size and a 1%-of-size probe; impact = `(eff_tiny - eff_actual) / eff_tiny`. Both legs flow through `_simulate_swap`, which already routes V3 paths through the real QuoterV2. 1% is the smallest probe that still produces a non-degenerate quote on 6-dec USDC/USDT majors. Tests: `tests/unit/test_dex_price_impact.py`.
 - New `max_price_impact_bps` config (default **200 bps** — matches the Uniswap-frontend "high impact" warning). `get_best_quote` drops any DEX candidate whose impact exceeds the cap; when nothing passes it returns None instead of signing a tx that would eat the entire slippage tolerance. Override via `config['max_price_impact_bps']`.
 - `MEVProtectionLayer._attempt_bloxroute_bsc` — bloXroute BDN private-tx routing on BSC (Flashbots is Ethereum-only, so BSC swaps previously had no private path). Submits `blxr_private_tx` JSON-RPC to `https://api.blxrbdn.com` with `Authorization: <CLOUD_API_KEY>` header. Gated by `chain == 'bsc' and config.get('bloxroute_enabled', False)`. Auth header read from `config['bloxroute_auth_header']` (encrypted-secret friendly) or `BLOXROUTE_AUTH_HEADER` env. Returns None on missing-header / HTTP error / RPC error / timeout — `protect_transaction` then falls back to the public-mempool send path so the tx still ships. Endpoint overridable via `config['bloxroute_bsc_endpoint']`. Ethereum Flashbots branch is unchanged. Tests: `tests/unit/test_mev_bloxroute_bsc.py`.
+
+## Wallet / Account identity (issue 15)
+EVM-only module (no SOL leg yet). Single EVM wallet is shared across all enabled
+EVM chains (Ethereum, BSC, Polygon, Arbitrum, Base, Optimism, Avalanche) — same
+address, fund per-chain native gas token (ETH / BNB / MATIC / etc.).
+- **Private key**: secret `PRIVATE_KEY` (encrypted in DB `config_sensitive` via
+  `security/encryption.py`; Fernet-encrypted `gAAAAAB...` values are decrypted in
+  `main_dex.py:initialize` with `ENCRYPTION_KEY`). `.env` fallback only.
+- **Public address**: secret/env `WALLET_ADDRESS` if set, otherwise DERIVED from
+  the decrypted `PRIVATE_KEY` via `eth_account.Account.from_key(...).address`
+  (`main_dex.py:_resolve_wallet_address`). Stored on `app.wallet_address`.
+- **Surfaced** (public address only — NEVER the private key): DEX health server
+  `GET :8085/health` and `GET :8085/stats` both return a `wallet_address` field
+  (plus `dry_run` on `/health`). Dashboard can proxy these for display.
+
+## Manual close — flag-file IPC (issues 5 + 6, engine side)
+The dashboard process cannot call the engine directly (separate process), so the
+close button uses flag-file IPC mirroring copy-trading.
+- **Flag file**: `logs/.close_dex_<id>` (empty file; presence is the trigger).
+- **`<id>` format**: the integer SERIAL `trades.id` — exactly the value the
+  dashboard already returns as `position['id']` from `api_open_positions` /
+  `api_dex_positions`. NOT `trade_id` (the UUID text column).
+- **Engine side**: `modules/dex_trading/position_service.py:DexPositionService`.
+  `close_flag_loop()` polls every 15s, `close_position(id)` looks the row up by
+  `id` in the `trades` table (DB-first; works even after a subprocess restart
+  when the engine's in-memory `active_positions` is empty), marks it
+  `status='closed'` with `exit_price` (fresh quote → last-known → entry),
+  `profit_loss`, `exit_timestamp`. Under DRY_RUN / kill-switch / pause it is a
+  SIMULATED close (`metadata.closed_simulated=true`). Flag deleted after each
+  attempt. **Dashboard agent: write `logs/.close_dex_<trades.id>` to close.**
+
+## OPEN-position price refresh (issue 4, stuck position)
+`DexPositionService.price_refresh_loop()` (started in `main_dex.py:run`) is the
+source of truth for OPEN-position price/PnL on `/dex/*`. Every 30s it refreshes
+`metadata.current_price` + `profit_loss` + `profit_loss_percentage` for every
+OPEN `trades` row on the DEX chains, querying live price by
+`metadata.pair.pair_address` (→ `dexscreener.get_pair_data`) with a
+`get_token_price` fallback. **Root cause of the frozen GRAIL position:** the
+shared engine only refreshes positions held in its in-memory `active_positions`
+dict, and `core/engine.py:_load_state()` is a no-op — so after a restart NO open
+position gets a price update and PnL freezes at entry indefinitely. This loop is
+DB-first and independent of `active_positions`. If price fetch fails
+`>=5` times or no update for `>=30min`, the row is flagged
+`metadata.price_stale=true` + `metadata.price_stale_reason` (token likely
+unroutable/illiquid) instead of silently freezing the last price.
+
+## ML / entry-scoring review (issue 4 ML) — FINDINGS (shared infra, not edited)
+The DEX entry decision is `core/engine.py:_calculate_opportunity_score` +
+`TradingOpportunity.score`. This is SHARED infra used by AI/sniper too, so per
+campaign rules it is documented here and NOT rewritten mid-campaign. Recommend
+the owning agent address:
+1. **The ML ensemble is dead weight for entries.** `EnsemblePredictor`
+   (`ml/models/ensemble_model.py`) is loaded + retrained but NEVER consulted for
+   entry. `pump_predictor.py` / `rug_classifier.py` / `volume_validator.py` are
+   not called either. Entry is a pure heuristic (volume/liquidity/price/risk/age).
+2. **`ml_confidence` is mislabeled.** `main_dex`-engine sets `ml_confidence=score`
+   (the heuristic), and `pump_probability=score*0.8`, `rug_probability=0.2`
+   (hardcoded constant — `rug_classifier` exists but is unused). So
+   `TradingOpportunity.score` is a circular re-derivation of the heuristic, not an
+   independent ML signal. `DecisionMaker` (`core/decision_maker.py`) is
+   constructed but never invoked in the entry path.
+3. **Risk-analysis failure is REWARDED (loss surface).** When
+   `risk_manager.analyze_token` raises (caught → `risk_score=None`), the 20% risk
+   weight is dropped from BOTH numerator and denominator, and the score is
+   normalized `score/weights` over the smaller denominator — so a token we could
+   NOT safety-check scores as if risk were perfect and can pass `min_score`.
+   A missing safety signal should bias the score DOWN, not up. Recommend: treat
+   `risk_score is None` as `overall_risk=1.0` (max risk) rather than omitting the
+   term, or hard-reject when risk analysis fails.
+Conservative DEX-side guards were NOT added because `DexTradingModule.process_opportunity`
+is not wired into the live `TradingBotEngine` path (see Entry point note) — the
+fix must land in the shared scorer to have effect.
+
+## DRY_RUN data-quality notes
+- OPEN DEX positions live in `trades` (`status='open'`, `side='buy'`); there is no
+  `current_price` column — live price for open positions is carried in
+  `metadata.current_price` (which is what the dashboard reads). The refresh loop
+  above keeps it current; closed-trade PnL is the `profit_loss` column.
+- Simulated closes set `metadata.closed_simulated=true` so DRY_RUN fills are
+  distinguishable from real ones in audit.
 
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
