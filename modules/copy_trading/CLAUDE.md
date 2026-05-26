@@ -106,6 +106,69 @@ Caveat: these reset on log rotation. They're forensic counters, not settled metr
 
 **UI enrichment (commits `2466ec0` + `f0fb2bd`).** `/copytrading/trades` + `/copytrading/positions` + `/copytrading/dashboard` row rendering now shows: tokens-held (from `metadata.tokens_received`), entry $ / now $ per-token, copy-to-clipboard icon button on the token address, Birdeye link, and Solscan / Etherscan link. All three pages inline the same `copyTokenAddress` helper -- self-contained, no shared JS dependency.
 
+## Wave-7 (2026-05-26) — secrets ordering + Helius RPC + wallet identity
+
+**Issue 17a — keys logged as NOT SET (same class as AI commit `cca8d94`).**
+`main_copy.py` read `secrets.get('ETHERSCAN_API_KEY')` / `HELIUS_API_KEY`
+at startup BEFORE the db_pool was created and BEFORE
+`secrets.initialize(db_pool)`. The secrets manager was still in bootstrap
+mode, so it fell through to `os.getenv` (None for DB-only operators) and
+logged `ETHERSCAN_API_KEY: NOT SET` / `HELIUS_API_KEY: Not set` even
+though both live in the encrypted `secure_credentials` DB table. Fix
+(mirrors `cca8d94`): connect DB first -> `secrets.initialize(db_pool)` ->
+resolve via `get_async` (sync `get()` short-circuits inside a running
+event loop) -> `.env` fallback retained. Startup now logs the keys as
+`SET`.
+
+**Issue 17b — "Solana RPC rate limited - backing off" spam.** The copy
+monitor (`_monitor_solana_wallets`, 15s loop) was hitting a public Solana
+RPC because the Helius key wasn't resolved (17a) and Helius is registered
+under PoolEngine provider type `HELIUS_API`, not `SOLANA_RPC`. RPC
+resolution path now:
+1. `CopyTradeExecutor.initialize()` (async, post-db_pool): resolve
+   `HELIUS_API_KEY` via `secrets.get_async`; if present, build
+   `https://mainnet.helius-rpc.com/?api-key=<key>` and PREFER it.
+2. Fallback: `RPCProvider.get_rpc('SOLANA_RPC')` (PoolEngine) -> `.env`
+   `SOLANA_RPC_URL`.
+3. `CopyTradingEngine.initialize()` adopts the executor's resolved
+   `solana_rpc_url` (the engine's `__init__` resolves it SYNCHRONOUSLY
+   pre-bootstrap and can't see the DB-stored key; the monitor reads the
+   ENGINE's `self.solana_rpc_url`, so the value is mirrored across).
+4. The 429-rotation handler no longer rotates AWAY from Helius to a
+   public endpoint (that would just 429 again).
+
+**Issue 6 — close path (VERIFIED end-to-end).** `_process_close_flag_files`
+polls `logs/.close_copy_<trade_id>` (dashboard manual-close IPC), looks up
+the position in `copytrading_positions` FIRST then falls back to
+`copytrading_trades WHERE status='open'` (`from_trades_table=True`) —
+positions actually live in `copytrading_trades`. `close_position` routes
+via the executor's `copy_solana_swap` / `copy_evm_swap`, which under
+DRY_RUN short-circuit through `should_skip_live` -> `_simulate_*`. On
+success both tables are marked `status='closed'`. Confirmed wired and
+DRY_RUN-safe.
+
+## Wallet / Account identity
+The copy module executes mirrored trades from the bot's OWN execution
+wallets — DISTINCT from the leader `targets` it copies. Public addresses
+only; private keys/keypairs are never logged or surfaced.
+- **EVM execution wallet** (`self.executor.evm_wallet`): public address
+  from secrets key `WALLET_ADDRESS`; signer key from secrets key
+  `PRIVATE_KEY` (Fernet-decrypted in `_get_decrypted_key`, env fallback).
+  ONE EOA signs across all supported EVM chains (Ethereum / Base /
+  Arbitrum / Optimism) — fund that address with native gas on each chain.
+- **Solana execution wallet** (`self.executor.solana_wallet`): public
+  address from secrets key `SOLANA_MODULE_WALLET`; keypair from secrets
+  key `SOLANA_MODULE_PRIVATE_KEY`.
+- These are the bot's wallets that BROADCAST copies, NOT the leader
+  wallets in `targets` (those are observed, never controlled).
+- **Surfaced for the dashboard:** `CopyTradingEngine.get_execution_wallets()`
+  returns the public addresses + their source secret-key names;
+  `_persist_execution_wallets()` (called from `initialize()`) writes them
+  to `config_settings(config_type='copytrading_diagnostics')` keys
+  `evm_execution_wallet` / `solana_execution_wallet` (public address only,
+  empty string until resolved). Dashboard agent: read these to show the
+  operator which wallet funds copy trades per chain.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
 - Wave-2 quant audit: section 2 of `docs/agents/reports/COPY_TRADING_quant.md` — the CT-Q-01 / CT-Q-02 backlog drove the rebuild.
