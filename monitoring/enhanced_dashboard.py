@@ -6142,8 +6142,17 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            query = "SELECT exit_timestamp, profit_loss, strategy, metadata FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
-            trades = await self.db.pool.fetch(query)
+            # ISSUE 3: the main-dashboard charts previously read ONLY the
+            # generic `trades` table (DEX). Sniper/Arbitrage/Solana/Futures/
+            # Copy/AI live in their own tables, so the equity curve, strategy
+            # breakdown, win/loss and monthly charts silently omitted them.
+            # Reuse _unified_closed_trades (already tz-normalized via _as_utc)
+            # so every module is represented. strategy is the normalized
+            # module label ('dex','sniper','arbitrage','solana','futures',
+            # 'copy','ai') so strategy_performance shows all 7 modules.
+            async with self.db.pool.acquire() as conn:
+                unified = await self._unified_closed_trades(conn)
+            trades = [r for r in unified if r.get('exit_timestamp') is not None]
 
             if not trades:
                 return web.json_response({'success': True, 'data': {
@@ -6156,9 +6165,18 @@ class DashboardEndpoints:
                     'monthly': [],
                 }})
 
-            df = pd.DataFrame([dict(trade) for trade in trades])
+            df = pd.DataFrame([{
+                'exit_timestamp': r['exit_timestamp'],
+                'profit_loss': r['profit_loss'],
+                'strategy': r['strategy'],
+                'metadata': r['metadata'],
+            } for r in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+            # utc=True keeps the column tz-aware UTC so the >= timeframe
+            # filter below (vs pd.Timestamp.utcnow()) does not raise the
+            # naive/aware comparison error (issue 18 class).
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], utc=True)
+            df = df.sort_values('exit_timestamp').reset_index(drop=True)
 
             # Use strategy column from DB, fallback to metadata if empty
             def get_strategy(row):
