@@ -505,6 +505,12 @@ class FuturesTradingEngine:
         # where we can properly load credentials from secrets manager
         self.telegram_alerts = None
 
+        # ISSUE-15 (Wave 7): non-sensitive identity of the API key in use, so
+        # the operator can tell WHICH account is live without exposing secrets.
+        # Set by _set_api_key_fingerprint() during exchange init. Format:
+        # "****<last4>" (never the full key) or None when no key is loaded.
+        self.api_key_fingerprint: Optional[str] = None
+
         # Logging mode info
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
         net_str = "TESTNET" if self.testnet else "MAINNET"
@@ -529,6 +535,20 @@ class FuturesTradingEngine:
         """Inject a FuturesRiskManager. Entry path will call validate_new_position
         before opening a position; rejection logs the reason and aborts entry."""
         self.risk_manager = risk_manager
+
+    def _set_api_key_fingerprint(self, api_key: Optional[str]) -> None:
+        """ISSUE-15: stash a NON-SENSITIVE fingerprint of the active API key
+        (last 4 chars only) so the diagnostics/health surface can show which
+        account is in use. Never stores or returns the full key."""
+        try:
+            if api_key and len(api_key) >= 4:
+                self.api_key_fingerprint = f"****{api_key[-4:]}"
+            elif api_key:
+                self.api_key_fingerprint = "****"
+            else:
+                self.api_key_fingerprint = None
+        except Exception:
+            self.api_key_fingerprint = None
 
     async def initialize(self):
         """Initialize exchange connections and components"""
@@ -702,6 +722,9 @@ class FuturesTradingEngine:
             if not api_key or not api_secret:
                 raise ValueError("BINANCE API keys required")
 
+            # ISSUE-15: record masked fingerprint of the active key.
+            self._set_api_key_fingerprint(api_key)
+
             self.exchange_client = ccxt.binance({
                 'apiKey': api_key,
                 'secret': api_secret,
@@ -803,6 +826,9 @@ class FuturesTradingEngine:
 
             if not api_key or not api_secret:
                 raise ValueError("BYBIT API keys required")
+
+            # ISSUE-15: record masked fingerprint of the active key.
+            self._set_api_key_fingerprint(api_key)
 
             self.exchange_client = ccxt.bybit({
                 'apiKey': api_key,
@@ -2947,12 +2973,26 @@ class FuturesTradingEngine:
         except:
             pass
 
+        # ISSUE-15: non-sensitive account identity so the dashboard/operator
+        # can tell WHICH exchange + account is in use. The api_key_secret_name
+        # is the env/secret KEY NAME (not the value) the active key was read
+        # from; api_key_fingerprint is the masked last-4. Never the full key.
+        exch_u = (self.exchange or '').upper()
+        api_key_secret_name = (
+            f"{exch_u}_TESTNET_API_KEY" if self.testnet else f"{exch_u}_API_KEY"
+        )
+
         return {
             'status': 'healthy' if self.is_running and exchange_connected else 'degraded',
             'engine_running': self.is_running,
             'exchange_connected': exchange_connected,
             'dry_run': self.dry_run,
             'testnet': self.testnet,
+            # Account identity (non-sensitive)
+            'exchange': self.exchange,
+            'network': 'testnet' if self.testnet else 'mainnet',
+            'api_key_secret_name': api_key_secret_name,
+            'api_key_fingerprint': getattr(self, 'api_key_fingerprint', None),
             'risk_can_trade': self.risk_metrics.can_trade,
             'active_positions': len(self.active_positions),
             'daily_pnl': self.risk_metrics.daily_pnl,
