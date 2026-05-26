@@ -2989,13 +2989,120 @@ class TradingBotEngine:
             self.blacklisted_tokens = set()
             self.blacklisted_devs = set()
 
+    # EVM/Solana DEX chains this engine trades. Mirrors
+    # modules/dex_trading/position_service._DEX_CHAINS so _load_state restores
+    # exactly the rows position_service manages (no orphaned / cross-module rows).
+    _DEX_STATE_CHAINS = (
+        'ethereum', 'bsc', 'polygon', 'arbitrum', 'base',
+        'optimism', 'avalanche', 'solana',
+    )
+
     async def _load_state(self):
-        """Load saved bot state"""
+        """Restore OPEN positions from the DB into self.active_positions
+        (Wave-8 DEFECT 3).
+
+        Previously a no-op, so after a subprocess restart self.active_positions
+        was empty: in-engine exit logic, the rug-probability exit gate and
+        get_stats() all behaved as if there were no open positions, and
+        DexPositionService (DB-first) was masking only the PRICE-refresh symptom.
+
+        Coexistence with modules/dex_trading/position_service.py:
+        - We restore the SAME rows position_service reads
+          (trades WHERE status='open' AND side='buy' AND chain IN dex_chains).
+        - Each restored position carries `trade_id` = the INTEGER trades.id, so
+          the engine's close path (db.update_trade(trade_id, ...), which matches
+          the `id` column for ints) writes to the EXACT row position_service
+          manages — no duplicate/orphan rows, last-writer-wins on metadata which
+          converges since both write the same fresh quote.
+        - Restored positions are tagged metadata.restored_from_db=True for audit
+          and to distinguish them from positions opened in-process this session.
+
+        Fail-soft: any error logs and leaves active_positions as-is — a bad load
+        must never crash startup.
+        """
         try:
-            # Load from database or file
-            pass
-        except Exception:
-            pass
+            from decimal import Decimal as _Dec
+
+            pool = getattr(getattr(self, 'db', None), 'pool', None)
+            if pool is None:
+                logger.info("   _load_state: no DB pool — starting with empty active_positions")
+                return
+
+            chains = ', '.join(f"'{c}'" for c in self._DEX_STATE_CHAINS)
+            query = f"""
+                SELECT id, trade_id, token_address, chain, entry_price, amount,
+                       usd_value, entry_timestamp, metadata
+                FROM trades
+                WHERE status = 'open' AND side = 'buy'
+                  AND chain IN ({chains})
+                ORDER BY entry_timestamp DESC
+                LIMIT 200
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query)
+
+            restored = 0
+            async with self.positions_lock:
+                for row in rows:
+                    try:
+                        token_address = row['token_address']
+                        if not token_address:
+                            continue
+
+                        # metadata may be jsonb(dict) or text(json) depending on driver.
+                        raw_meta = row['metadata']
+                        if isinstance(raw_meta, dict):
+                            metadata = dict(raw_meta)
+                        elif raw_meta:
+                            try:
+                                metadata = json.loads(raw_meta)
+                            except Exception:
+                                metadata = {}
+                        else:
+                            metadata = {}
+
+                        # Match the in-memory shape used by the live entry path
+                        # (lines ~1220/1300): entry_price + amount as Decimal so
+                        # the monitoring/exit arithmetic stays type-correct.
+                        try:
+                            entry_price = _Dec(str(row['entry_price'] or 0))
+                            amount = _Dec(str(row['amount'] or 0))
+                        except Exception:
+                            continue
+
+                        entry_time = row['entry_timestamp']
+                        if not isinstance(entry_time, datetime):
+                            entry_time = datetime.now()
+
+                        position = {
+                            'token_address': token_address,
+                            'token_symbol': metadata.get('token_symbol', 'UNKNOWN'),
+                            'entry_price': entry_price,
+                            'amount': amount,
+                            'entry_value': float(row['usd_value'] or 0),
+                            'chain': (row['chain'] or 'ethereum'),
+                            'strategy': {'name': metadata.get('entry_strategy', 'momentum')},
+                            'entry_time': entry_time,
+                            'stop_loss_percentage': metadata.get('stop_loss_percentage', 0.1),
+                            'take_profit_percentage': metadata.get('take_profit_percentage', 0.3),
+                            # INTEGER trades.id -> engine close writes target this exact row.
+                            'trade_id': row['id'],
+                            'metadata': {**metadata, 'restored_from_db': True},
+                        }
+                        self.active_positions[token_address] = position
+                        restored += 1
+                    except Exception as row_err:
+                        logger.debug(f"   _load_state: skipped a row: {row_err}")
+                        continue
+
+            logger.info(
+                f"   _load_state: restored {restored} open position(s) into "
+                f"active_positions (DB-first refresh still owned by "
+                f"DexPositionService)"
+            )
+        except Exception as e:
+            # Fail-soft: never block startup on a bad state load.
+            logger.warning(f"   _load_state failed (non-fatal): {e}")
 
     async def _warmup_collectors(self):
         """Warm up data collectors"""
