@@ -118,6 +118,59 @@ fix must land in the shared scorer to have effect.
 - Simulated closes set `metadata.closed_simulated=true` so DRY_RUN fills are
   distinguishable from real ones in audit.
 
+## Wave-8 ML + risk-failure + state-restore (campaign `claude/create-expert-agents-JFSF5`)
+The three issues flagged in the "ML / entry-scoring review" section above were
+fixed in the shared scorer `core/engine.py` (the LIVE DEX entry decision via
+`main_dex.py:725` → `TradingBotEngine.run()`). DRY_RUN untouched; no safety gate
+loosened — every change can only make a gate stricter or more honest.
+
+- **DEFECT 1 — risk-failure was rewarded → now penalized.**
+  `_calculate_opportunity_score` previously added the 0.20 risk term only `if
+  risk_score`, dropping that weight from the normalization denominator on
+  failure so an un-safety-checkable token scored HIGHER. Now a missing/failed
+  risk assessment is treated as WORST-CASE and the scorer **rejects outright**
+  (returns 0.0) — an unverifiable honeypot/rug signal must never raise the
+  score (most conservative option for a safety gate). The opportunity-construction
+  default also changed from the latent-crash `RiskScore(overall_risk=0.5)`
+  (`overall_risk` is a read-only @property, not a ctor arg → would TypeError) to a
+  real all-1.0 worst-case `RiskScore` (now an unreachable branch).
+
+- **DEFECT 2 — ML ensemble now consulted; heuristic fallback labeled honestly.**
+  The opportunity used to fabricate `ml_confidence=heuristic_score`,
+  `pump_probability=score*0.8` and a flat `rug_probability=0.2` that silently
+  passed the `>0.5` rug gate. `_analyze_opportunity` now calls
+  `EnsemblePredictor.predict_decoupled(token, chain, features)` (features mapped
+  from data already gathered — no invented pipeline). A result is used ONLY if
+  trustworthy: no `error` key and not the degenerate all-0.5 untrained
+  passthrough (returned when the unfitted `RobustScaler.transform` raises — the
+  state whenever NO model artifacts exist on disk, which is the case in this
+  environment). Otherwise it falls back to the heuristic, tagged
+  `metadata.ml_source='heuristic_fallback'` (vs `'ensemble'`), and NEVER reports a
+  fake high `ml_confidence`. Fallback `rug_probability` is now score-coupled
+  (`0.25..0.6`, inverse to the heuristic score) instead of the free optimistic
+  `0.2` — weak tokens approach the 0.5 rug gate on their own merit. The real
+  ensemble branch activates once artifacts ship via `scripts/retrain_models.py`.
+
+- **DEFECT 3 — `_load_state` restores open positions (was `try: pass`).**
+  On restart it restores `trades WHERE status='open' AND side='buy' AND chain IN
+  dex_chains` into `engine.active_positions`, shaped like the live entry path
+  (`entry_price`/`amount` as `Decimal`). Each restored position carries
+  `trade_id` = the INTEGER `trades.id`, so the engine's close
+  (`db.update_trade(id, ...)`) targets the EXACT row `position_service.py`
+  manages — no duplicate/orphan rows; tagged `metadata.restored_from_db=True`.
+  `DexPositionService.price_refresh_loop` remains the DB-first source of truth for
+  OPEN-position price/PnL; the restored in-memory dict re-enables in-engine exit
+  logic, the rug-prob exit gate and `get_stats`. Both write the same fresh quote
+  to the same row, so they converge (last-writer-wins). Fail-soft: a bad load
+  logs and leaves `active_positions` untouched — never crashes startup.
+
+- **Same-pattern follow-ups (Wave-9, NOT fixed here):** the "ML fabricated /
+  risk-failure rewarded" pattern likely also exists in sniper/solana/copy entry
+  scoring — to be audited separately. Engine placeholder stubs remain known
+  stubs: `_check_developer_reputation` (returns 0.5), `_analyze_liquidity_depth`,
+  `_check_smart_contract` (returns `verified=True`), `_analyze_holder_distribution`,
+  `_extract_features` (returns `np.random.rand(10)`, unused by the new ML path).
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
 - Wave-2 campaign report: `docs/agents/reports/DEX_CAMPAIGN.md`.
