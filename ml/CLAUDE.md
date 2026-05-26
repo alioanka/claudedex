@@ -43,57 +43,98 @@ canonical names, `retrain()` fills the gaps with `0.0` and prints which
 features were missing — review that warning; large gaps mean the model is
 under-fed even if it activates.
 
-## KNOWN GAP — `scripts/retrain_models.py` does NOT train the ensemble
+## GAP CLOSED — `scripts/train_ensemble.py` trains + activates the ensemble
 
-As of Wave-9, `scripts/retrain_models.py` trains three *separate* models
-(`PumpPredictor`, `RugClassifier`, `VolumeValidatorML`) and writes them to
-`ml/models/` with names like `latest` / `volume_validator_latest.pkl`. It
-**never** constructs `EnsemblePredictor` and **never** writes the artifacts the
-engine reads (`models/scaler.pkl`, `models/xgboost_rug.pkl`,
-`models/features.json`, ...). Two consequences:
+The former gap (no DB→canonical-82 pipeline; `retrain_models.py` wrote 3
+*separate* legacy models to `ml/models/`, never built `EnsemblePredictor`, never
+wrote the `models/` artifacts the engine reads → could not flip `ml_source` off
+`heuristic_fallback`) is **CLOSED** by `scripts/train_ensemble.py` (Wave-10).
 
-- **Path mismatch:** retrain → `ml/models/`; ensemble reads → `models/`.
-- **Model mismatch:** running today's `retrain_models.py` does NOT flip
-  `ml_source` off `heuristic_fallback`.
+`scripts/retrain_models.py` is **superseded for the ensemble** (it still trains
+the legacy `PumpPredictor`/`RugClassifier`/`VolumeValidatorML` to `ml/models/` —
+not deleted, out of scope — but it does NOT produce the ensemble artifacts and
+does NOT activate the live DEX ML path). Use `train_ensemble.py` for the
+ensemble.
 
-Closing this requires a DB→canonical-82-feature pipeline (the
-`ai_feature_store` rows written by `AIStrategy` are a *different* shape —
-`scaler_v1`/`raw_v1` — not the ensemble's `extract_features` layout). That is a
-data-pipeline task, intentionally NOT done in Wave-9 (no DB/data here). Until
-it is built, the ensemble stays in fallback. Treat this as the open item that
-gates ensemble activation.
+### Feature parity (train == inference, by construction)
 
-## How to activate the ensemble on the VPS (when the pipeline exists)
+The trainer does NOT copy the feature mapping. The live inference path and the
+trainer BOTH call the shared pure function
+`ml.feature_builder.build_ml_feature_dict(pair, risk_score, patterns)` →
+`EnsemblePredictor.extract_features` → the canonical 82-vector. `core/engine.py`
+`_build_ml_feature_dict` is now a thin wrapper around that shared function
+(byte-identical output — verified). The trainer wraps each stored
+`trades.metadata.risk_score` *dict* in a `SimpleNamespace` so the same
+`getattr`/`hasattr` branch runs. No skew possible.
 
-1. Produce a labeled training DataFrame whose columns are (a superset of)
-   `ENSEMBLE_FEATURE_NAMES`, plus label columns `pump_label`, `rug_label`
-   (0/1), and optionally `returns`.
-2. Train + persist to the path the engine reads:
-   ```python
-   from ml.models.ensemble_model import EnsemblePredictor
-   p = EnsemblePredictor({"model_dir": "models/"})  # MUST match engine default
-   new_models = await p.retrain(training_df)          # reindexes to canonical order
-   await p.update_models(new_models)                  # calls save_models()
+### Training source + labels
+
+Source = `trades` rows with `status='closed'` AND `metadata NOT NULL`, filtered
+by `created_at >= now - --days`. Labels derived per row:
+
+- `rug_label = 1` if `profit_loss_percentage <= -50` OR
+  `metadata.close_reason == 'stop_loss_rapid'`, else 0.
+- `pump_label = 1` if `profit_loss_percentage >= 20`, else 0.
+- `returns = profit_loss_percentage / 100.0`.
+
+These match `EnsemblePredictor.retrain()`'s expected columns (`retrain` drops
+`['label','pump_label','rug_label','returns']` from the feature set and reads
+`pump_label`/`rug_label`/`returns`). Class imbalance is handled in the CV report
+via `scale_pos_weight`; `retrain()` itself fits the trees on the 82-vector after
+reindexing to canonical order.
+
+## How to activate the ensemble on the VPS
+
+1. **Inspect first (writes nothing):**
+   ```bash
+   python scripts/train_ensemble.py --dry-run-no-save --days 90
    ```
-   `save_models()` writes `models/{xgboost_rug,xgboost_pump,lightgbm_rug,
-   lightgbm_pump,random_forest,gradient_boosting,isolation_forest}.pkl`,
-   `models/scaler.pkl`, and `models/features.json` (the feature-name list, in
-   canonical order — this is the filename `load_models()` reads back).
-3. Restart the DEX module (or any process holding the `TradingBotEngine`) so
-   `load_models()` re-reads `models/`.
-4. **Confirm activation:** watch the DEX log for the per-opportunity line
+   Prints rows used, class balance, and StratifiedKFold CV AUC/precision/recall
+   per head. No artifacts, no DB write. Use this to sanity-check signal before
+   committing artifacts.
+2. **Train + persist + version:**
+   ```bash
+   python scripts/train_ensemble.py --days 90
+   ```
+   This runs `retrain → update_models → save_models`, writing to repo-root
+   `models/` (the engine's default `model_dir`):
+   `models/{xgboost_rug,xgboost_pump,lightgbm_rug,lightgbm_pump,random_forest,
+   gradient_boosting,isolation_forest}.pkl`, `models/scaler.pkl`, and
+   `models/features.json` (82 names, canonical order — what `load_models()`
+   reads back). It then UPSERTs ONE row into
+   `config_settings(config_type='ml_models', key='ensemble_version')` with JSON
+   `{version, trained_at, git_sha, n_samples, pump_pos, rug_pos, cv_metrics,
+   source}`. That version row is the script's **only** DB write — it touches no
+   `trades`, no `dry_run`, no trading-behaviour config.
+3. **Confirm artifacts + version:** `ls models/` shows the 9 `.pkl` files +
+   `scaler.pkl` + `features.json`; query
+   `SELECT value FROM config_settings WHERE config_type='ml_models' AND
+   key='ensemble_version'` to see the live version.
+4. **Restart the DEX module** so `load_models()` re-reads `models/`.
+5. **Confirm activation:** watch the DEX log for the per-opportunity line
    `🤖 ML[ensemble] conf=... pump=... rug=...`. When it reads `ML[ensemble]`
-   (not `ML[heuristic_fallback]`), the trained ensemble is live. The same
-   provenance is persisted on every opportunity at
-   `metadata.ml_source == 'ensemble'`.
-5. Keep DRY_RUN = true. Activating the ensemble must not be paired with
-   enabling LIVE; validate the signal in DRY_RUN first.
+   (not `ML[heuristic_fallback]`), the trained ensemble is live; the same
+   provenance is persisted at `metadata.ml_source == 'ensemble'`.
+6. **Keep DRY_RUN = true.** Activating the ensemble must NOT be paired with
+   enabling LIVE — validate the signal in DRY_RUN first. The trainer itself is
+   offline/analytical and never places trades or alters DRY_RUN.
+
+### Offline self-test (no DB, no VPS)
+
+```bash
+python scripts/train_ensemble.py --mock
+```
+Generates ~400 synthetic metadata rows (production JSONB shape) and runs the
+FULL fit+save pipeline (skipping only the DB version write), so the pipeline is
+validated end-to-end. Requires the bot image's heavy deps
+(xgboost/lightgbm/sklearn/torch/pandas); in a dep-less env it exits non-zero
+with a clear "deps live in the bot image" message and writes nothing partial.
+Mock CV numbers are near-random by design (synthetic features carry no signal —
+mock validates plumbing, not predictive quality).
 
 ## Model versioning
 
-Per project rule, any trainer that writes ensemble artifacts must stamp a model
-version in DB. `save_models()` writes `models/features.json` (the schema
-fingerprint). When the DB-backed ensemble retrain entrypoint is built, it must
-also record a `model_version` row (e.g. in `config_settings` or a
-`model_registry` table) alongside the artifact write so the dashboard can show
-which version is live. This is part of the open KNOWN-GAP item above.
+`scripts/train_ensemble.py` records the version in
+`config_settings(ml_models, ensemble_version)` (JSON) on every successful save,
+alongside `models/features.json` (the schema fingerprint), so the dashboard can
+surface which ensemble version is live.
