@@ -109,7 +109,8 @@ lines + public addresses).
 ## PUNCH-LIST (still open — none block DRY_RUN data correctness)
 
 ### P1 — recommended next wave (data QUALITY, not correctness)
-- **B. core/engine.py ML dead-weight (DEX entry).** `EnsemblePredictor` /
+- **B. core/engine.py ML dead-weight (DEX entry).** — CLOSED in Wave 8 (commits
+  031a1bc / fd66a0e / 1abef40). See `docs/agents/PM_FINAL_WAVE8.md`. `EnsemblePredictor` /
   `DecisionMaker` loaded but never consulted; `ml_confidence` is the heuristic
   re-labeled; `rug_probability=0.2` hardcoded; risk-analysis FAILURE is
   REWARDED (the 20% risk weight is dropped from num+denom so an un-checkable
@@ -125,9 +126,9 @@ lines + public addresses).
   COPY / FUTURES uniformly. Low severity (Telegram is a control convenience,
   not a data path). Verify on the VPS that the "TOKEN not set" line is gone for
   AI and ARB.
-- **D. DEX live-but-idle health = "no health".** When DEX runs but isn't
-  trading there's no heartbeat row, so the dashboard shows "no health". Cosmetic;
-  add a lightweight heartbeat/last_tick surface (mirror ARB's `last_tick_at`).
+- **D. DEX live-but-idle health = "no health".** — CLOSED in Wave 8 (commit
+  6f4a9d7: `dex_runtime_stats` heartbeat + dashboard 150s freshness fallback +
+  migration 032). See `docs/agents/PM_FINAL_WAVE8.md`.
 - **futures_trades has no `status` column** (only stores closed trades). PM's
   analytics fix maps this to `status_filter='TRUE'`. If a future migration adds
   `status`/open rows to `futures_trades`, revisit the override in
