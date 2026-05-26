@@ -14507,10 +14507,22 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.debug(f"funding accounts DB read failed: {e}")
 
-        # AI does not execute on-chain itself (delegates to executors); note it.
+        # AI does not execute on-chain itself: it delegates to the canonical
+        # FUTURES executor (MB-20 — see modules/ai_analysis/CLAUDE.md), so any
+        # AI trade lands on the FUTURES exchange account above, NOT a separate
+        # wallet. Tell the operator exactly which account funds AI's delegated
+        # trades so issue 15 is actionable (not just "delegating").
+        fut = accounts.get('futures_trading', {})
         accounts['ai_analysis'] = _entry(
             'delegated',
-            status='no own wallet — AI delegates execution to other modules',
+            delegates_to='futures_trading',
+            status=(
+                'no own wallet — AI delegates execution to the canonical '
+                'futures executor; trades land on the FUTURES exchange '
+                'account (see futures_trading above)'
+            ),
+            execution_exchange=fut.get('exchange'),
+            execution_network=fut.get('network'),
         )
 
         return web.json_response({'success': True, 'data': {'accounts': accounts}})
