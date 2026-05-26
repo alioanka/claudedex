@@ -3205,6 +3205,97 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "in PM_FINAL_W5."
         ),
     },
+
+    # ── Wave-7 DASHBOARD fixes (issues 18/1/3/2/5+6/15) ───────────────
+    {
+        "id": "api_full_dashboard_charts_no_500",
+        "title": "API: /api/dashboard/charts/full (issue 18 tz crash)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "dashboard/charts/full",
+        "cmd_preview": "GET /api/dashboard/charts/full",
+        "timeout_s": 20,
+        "tags": ["new", "p0"],
+        "description": (
+            "Full-dashboard Performance Analytics chart data. Issue 18: this "
+            "endpoint raised 'can't compare offset-naive and offset-aware "
+            "datetimes' and returned success=false, blanking all 15 charts. "
+            "PASS = HTTP 200 with success:true (no 500, no tz error). "
+            "Normalized via _as_utc in _unified_closed_trades."
+        ),
+    },
+    {
+        "id": "api_funding_accounts",
+        "title": "API: /api/funding/accounts (issue 15 wallet panel)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "funding/accounts",
+        "cmd_preview": "GET /api/funding/accounts",
+        "timeout_s": 20,
+        "tags": ["new"],
+        "description": (
+            "Consolidated 'which wallet/exchange funds which module' panel "
+            "source. PASS = HTTP 200 with data.accounts containing all 7 "
+            "modules; each reports a public wallet/exchange or 'not "
+            "initialized'. Public addresses only — never private keys."
+        ),
+    },
+    {
+        "id": "api_performance_charts_all_modules",
+        "title": "API: /api/performance/charts (issue 3 all-7-modules)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "performance/charts?timeframe=all",
+        "cmd_preview": "GET /api/performance/charts?timeframe=all",
+        "timeout_s": 20,
+        "tags": ["new"],
+        "description": (
+            "Main-dashboard equity/PnL/strategy charts. Issue 3: this read "
+            "only the DEX `trades` table; now built from _unified_closed_trades "
+            "so strategy_performance spans all 7 modules. PASS = HTTP 200 "
+            "success:true; inspect strategy_performance for non-DEX labels."
+        ),
+    },
+    {
+        "id": "api_modules_health_strings",
+        "title": "API: /api/modules (issue 1 health fallbacks)",
+        "category": "api",
+        "kind": "probe",
+        "endpoint": "modules",
+        "cmd_preview": "GET /api/modules",
+        "timeout_s": 20,
+        "tags": ["new"],
+        "description": (
+            "Module health status. Issue 1(a): dex/arb/copy/ai now derive "
+            "'ENABLED + RUNNING' from DB-freshness heartbeats when no health "
+            "port answers (was always 'ENABLED (no health)'). PASS = HTTP 200; "
+            "enabled+active modules should show 'ENABLED + RUNNING'."
+        ),
+    },
+    {
+        "id": "db_copy_execution_wallets",
+        "title": "DB: copytrading_diagnostics execution wallets (issue 15)",
+        "category": "db",
+        "kind": "db_query",
+        "sql": (
+            "SELECT key, value FROM config_settings "
+            "WHERE config_type='copytrading_diagnostics' "
+            "AND key IN ('evm_execution_wallet','solana_execution_wallet') "
+            "ORDER BY key"
+        ),
+        "cmd_preview": (
+            "SELECT key,value FROM config_settings WHERE "
+            "config_type='copytrading_diagnostics'"
+        ),
+        "timeout_s": 15,
+        "tags": ["new"],
+        "description": (
+            "Source rows for the COPY card on the Funding/Accounts panel. "
+            "Populated by CopyTradingEngine._persist_execution_wallets once "
+            "the copy subprocess initializes (public addresses only). Empty "
+            "until the module has run at least once."
+        ),
+    },
 ]
 
 
