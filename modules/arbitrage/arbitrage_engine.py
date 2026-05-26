@@ -1023,6 +1023,18 @@ class EVMArbitrageEngine:
         self._last_error: Optional[str] = None
         self._last_error_at: Optional[datetime] = None
 
+        # Wave-3 realized-slippage learning state. MUST be initialized here so
+        # every chain subclass (ETH/ARB/Base) inherits sane defaults: these are
+        # READ in get_stats, get_realized_slippage, the _refresh guard, and the
+        # execute path BEFORE _refresh_realized_slippage first assigns them.
+        # Missing init => AttributeError every tick (engine dead since Feb 7).
+        # min_samples=5 matches the documented Wave-3 contract (ARB_WAVE3.md);
+        # ttl=3600s matches the "hourly refresh" docstring on _refresh.
+        self._realized_slip_cache: Dict[str, Tuple[float, float, int]] = {}
+        self._realized_slip_refreshed_at: Optional[datetime] = None
+        self._realized_slip_ttl_s: int = 3600
+        self._realized_slip_min_samples: int = 5
+
         # Telegram alerts - initialized in initialize() method
         self.telegram_alerts = None
 
