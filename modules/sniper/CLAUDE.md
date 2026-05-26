@@ -314,6 +314,34 @@ status='open'` (and the close-all variant without the token filter). The
 engine's in-memory `active_snipes` will retire the position on its next
 monitor tick; no engine change needed for DRY_RUN.
 
+## Wave-9 honest-scoring audit (2026-05-26)
+Audited the entry/scoring path for the two DEX-scorer defects fixed in
+Wave-8 (`core/engine.py`). Both ABSENT here. No code changed; no gate
+loosened; `safety_check_enabled` left as-is (intentionally false for
+Phase-2 data collection — NOT touched).
+
+- **PATTERN 1 (a failed safety/risk check is silently rewarded) — ABSENT.**
+  The sniper scorer is `TokenSafetyChecker._calculate_score`, a *subtractive
+  penalty* model (starts at 100, only subtracts), NOT a normalize-by-
+  sum-of-weights average — so there is no denominator term to drop when a
+  sub-check is missing. When a safety oracle is unreachable the defaults
+  (`liquidity_usd=0, holder_count=0, top_holder_pct=100, not verified, not
+  renounced`) flow into the score and drive it to DANGER (EVM trace → 0,
+  Solana trace → 15), which `_check_filters` REJECTS in production. The
+  honeypot quorum (`_quorum_honeypot_decision`) fails safe on disagreement.
+  The `try/except` in `_check_filters` (sniper_engine.py:587) returns
+  `False` on any safety-check exception (fail-safe, "don't snipe if safety
+  errors") — the opposite of the DEX defect. NB the `safety_check_enabled
+  is False` short-circuit at `_check_filters:500` is the intentional
+  Phase-2 toggle, not a swallowed-failure path.
+- **PATTERN 2 (fabricated ML/confidence constants feeding real gates) —
+  ABSENT.** No `ml_confidence` / `pump_probability` / `rug_probability`
+  fields exist on the sniper path; the only modeled values are the DRY_RUN
+  entry jitter (`_execute_snipe`) and exit %P&L (`_model_dry_run_exit_pct`
+  / `_simulate_sell`), both already disclosed as MODELED (not measured) in
+  the "DRY_RUN simulation" section above — they don't masquerade as model
+  output and feed no entry gate.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.

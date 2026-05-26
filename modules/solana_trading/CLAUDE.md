@@ -67,6 +67,38 @@ Outstanding (follow-ups, not blocking):
 
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SOLANA_*.md` (smartcontract / quant / analyst).
+## Wave-9 honest-scoring audit (2026-05-26)
+Audited the entry/scoring path for the two DEX-scorer defects fixed in
+Wave-8 (`core/engine.py`). Both ABSENT here. No code changed; no gate
+loosened; DRY_RUN untouched.
+
+- **PATTERN 1 (a failed safety/risk check is silently rewarded) — ABSENT.**
+  The Solana entry decision is NOT a normalize-by-weight score; it is a
+  chain of hard boolean gates in `_open_position` (symbol/scam-name/
+  blacklist/holder/dev-holding/mcap/liquidity/momentum/vol-liq/sell-
+  pressure, sniper_engine sections 1-5) each returning `False` to reject,
+  plus the cross-module `RiskManager.validate_trade` gate, plus the
+  opt-in ML rug + pump gates. `filter_token` is likewise a boolean.
+  Nothing divides by a sum-of-weights so nothing inflates when a term is
+  missing. The two ML gates (`_ml_rug_probability` /
+  `_pump_predict_probability`) are layered ON TOP of the still-active hard
+  checks; their `try/except` "continue without it" falls back to those
+  hard checks, not to "treat as safe". `calculate_dynamic_position_size`
+  affects SIZE only (bounded `[min, 2x]`), not the entry gate.
+- **PATTERN 2 (fabricated ML/confidence constants feeding real gates) —
+  ABSENT.** `_ml_rug_probability` / `_pump_predict_probability` are
+  HONEST: they return `None` (refuse-to-predict) when no trained model is
+  loaded, and the caller falls back to the heuristic gates — they never
+  fabricate a probability. The only hardcoded heuristics are
+  `signal_strength`/`trend_strength` feeding `calculate_dynamic_position_size`
+  (transparent sizing math, not surfaced as model output, feeds no gate).
+- **Punch-list (operator sign-off, NOT fixed):** the hard gates use the
+  idiom `if value and value < threshold` — missing/zero metadata SKIPS the
+  check rather than failing closed. This is a "missing-data-treated-as-
+  benign" posture, NOT either DEX pattern, and tightening it to fail-closed
+  would change rejection behavior materially. Flagged for review, left
+  as-is.
+
 - Wave-2 campaign report: `docs/agents/reports/SOLANA_CAMPAIGN.md`.
 - Wave-4 report: `docs/agents/reports/SOLANA_WAVE4.md`.
 - Canonical engine API: `docs/engines.md`.

@@ -170,6 +170,41 @@ only; private keys/keypairs are never logged or surfaced.
   operator which wallet funds copy trades per chain.
 
 ## See also
+## Wave-9 honest-scoring audit (2026-05-26)
+Audited `leader_scorer.py` + the `copy_engine.py` entry path for the two
+DEX-scorer defects fixed in Wave-8 (`core/engine.py`). Both ABSENT. No
+code changed; no gate loosened; DRY_RUN untouched.
+
+- **PATTERN 1 (a failed safety/risk check is silently rewarded) — ABSENT.**
+  `leader_scorer.compute_score` normalizes weights over a FIXED set of 5
+  components (pnl/sharpe/hit_rate/hold/drawdown) and ALWAYS computes all 5
+  — no component is conditionally dropped from the denominator, so the
+  "missing term inflates the normalized score" defect cannot occur. Every
+  metric helper degrades a missing/insufficient input toward 0 (Sharpe→0
+  under 3 samples, hold→0, dd→0), and `sample_credit` shrinks the whole
+  composite toward 0 for low-trade leaders — missing data LOWERS the score,
+  the opposite of the DEX bug. `_kelly_from_metrics` returns 0 (refuse to
+  size) below 5 trades or break-even. Walk-forward enforced via
+  `_filter_window` on `exit_timestamp` (no look-ahead). On the engine side,
+  the primary `RiskManager.validate_trade` gate in `copy_solana_swap` /
+  `copy_evm_swap` FAILS CLOSED (refuses the swap on exception) — exemplary.
+- **PATTERN 2 (fabricated ML/confidence constants feeding real gates) —
+  ABSENT.** No fabricated probability/confidence fields. `_simulate_*`
+  return only tx-hash/amount (no fake PnL). Close-path PnL is computed from
+  real `entry_usd`/`exit_usd` via live `PriceFetcher.get_price` (CoinGecko);
+  the only constants are last-resort NATIVE-token price fallbacks on total
+  API failure, which don't feed any gate.
+- **Punch-list (operator sign-off, NOT fixed):** the SECONDARY refinement
+  gates `_is_leader_on_probation` + `_check_cross_module_exposure` are
+  fail-SOFT (a DB error returns "allow"). Superficially PATTERN-1-shaped,
+  but deliberate and defensible: both are layered ON TOP of the
+  fail-CLOSED `RiskManager.validate_trade` + per-module caps + position
+  cap, and can only further-restrict — a lookup failure cannot bypass the
+  primary safety gate. Left as documented design; flagged so the operator
+  is aware of the asymmetry vs the sniper/DEX fail-closed posture.
+  `_get_leader_kelly` returns 0.0 (shrinks size) on DB failure — already
+  conservative.
+
 - Phase 1 audit reports: `docs/agents/reports/COPY_TRADING_*.md` (quant / analyst / backend).
 - Wave-2 quant audit: section 2 of `docs/agents/reports/COPY_TRADING_quant.md` — the CT-Q-01 / CT-Q-02 backlog drove the rebuild.
 - Canonical engine API: `docs/engines.md`.
