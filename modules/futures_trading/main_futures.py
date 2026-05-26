@@ -755,6 +755,30 @@ class FuturesTradingApplication:
             # Initialize Telegram controller for remote control (credentials from secrets manager)
             if get_telegram_controller:
                 try:
+                    # ISSUE-19 fix (mirrors AI cca8d94): the shared
+                    # TelegramBotController.__init__ resolves the token via the
+                    # SYNCHRONOUS secrets.get(), which deliberately short-circuits
+                    # the DB lookup when called from inside a running event loop
+                    # (see secrets_manager._get_from_database_sync "use get_async()
+                    # in async context" guard at L341). Operators who store the
+                    # token in the Secure Engine (encrypted secure_credentials DB
+                    # row) but NOT in .env therefore got a None token and the
+                    # controller logged "TELEGRAM_BOT_TOKEN not set". DEX/Solana
+                    # never hit this because they resolve the token via get_async.
+                    # Pre-warm the secrets cache here with the async resolver so the
+                    # controller's sync get() finds the value in secrets._cache.
+                    try:
+                        from security.secrets_manager import secrets as _secrets
+                        for _k in (
+                            'TELEGRAM_BOT_TOKEN',
+                            'TELEGRAM_CHAT_ID',
+                            'TELEGRAM_ADMIN_IDS',
+                        ):
+                            await _secrets.get_async(_k, log_access=False)
+                    except Exception as _warm_err:
+                        self.logger.debug(
+                            f"Telegram secret pre-warm skipped (non-fatal): {_warm_err}"
+                        )
                     self.telegram_controller = get_telegram_controller(self.db_pool)
                     if await self.telegram_controller.initialize():
                         self.telegram_controller.register_module(
