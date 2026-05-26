@@ -3296,6 +3296,241 @@ TEST_CATALOG: List[Dict[str, Any]] = [
             "until the module has run at least once."
         ),
     },
+
+    # ── Wave-8 DEX fixes (heartbeat / ML provenance / state restore) ──
+    # These three validate the Wave-8 DEX work. Two preconditions are
+    # NOT yet deployed on the operator's VPS at branch-cut and are
+    # handled FAIL-SOFT so a clean run isn't littered with red:
+    #   * migration 032 (dex_runtime_stats) may be unapplied → the
+    #     freshness probe uses to_regclass() and returns an explicit
+    #     "run migration 032" row instead of a hard SQL error.
+    #   * the ML ensemble is in honest heuristic_fallback until the
+    #     operator trains models (see ml/CLAUDE.md) → ml_source is
+    #     EXPECTED to read 'heuristic_fallback', NOT a fabricated
+    #     confidence. Both are tagged expected-empty so an empty/absent
+    #     result is not misread as a regression.
+    {
+        "id": "db_dex_runtime_stats_freshness",
+        "title": "DB: dex_runtime_stats heartbeat freshness (migration 032)",
+        "category": "db",
+        "kind": "db_query",
+        # to_regclass() returns NULL (not an error) when the table is
+        # absent, so a pre-migration-032 VPS gets a clean one-row
+        # "MIGRATION_MISSING — run migration 032" message instead of a
+        # red SQL failure. When the table exists we report the heartbeat
+        # age; fresh = updated within ~150s of NOW() while DEX runs.
+        "sql": (
+            "SELECT CASE "
+            "  WHEN to_regclass('public.dex_runtime_stats') IS NULL "
+            "    THEN 'MIGRATION_MISSING — run migration 032 (dex_runtime_stats)' "
+            "  WHEN NOT EXISTS (SELECT 1 FROM dex_runtime_stats WHERE id = 1) "
+            "    THEN 'NO_HEARTBEAT_ROW — DEX module has not written stats yet' "
+            "  WHEN (SELECT EXTRACT(EPOCH FROM (NOW() - updated_at)) "
+            "        FROM dex_runtime_stats WHERE id = 1) <= 150 "
+            "    THEN 'FRESH — age ' || (SELECT ROUND(EXTRACT(EPOCH FROM "
+            "         (NOW() - updated_at)))::text FROM dex_runtime_stats "
+            "         WHERE id = 1) || 's (DEX heartbeat alive)' "
+            "  ELSE 'STALE — age ' || (SELECT ROUND(EXTRACT(EPOCH FROM "
+            "       (NOW() - updated_at)))::text FROM dex_runtime_stats "
+            "       WHERE id = 1) || 's (>150s: DEX stopped or crashed)' "
+            "END AS heartbeat_status"
+        ),
+        "cmd_preview": (
+            "to_regclass-guarded freshness of dex_runtime_stats.updated_at "
+            "(<=150s = FRESH)"
+        ),
+        "timeout_s": 15,
+        "tags": ["new", "expected-empty"],
+        "description": (
+            "Wave-8 DEX liveness heartbeat (migration 032 / dex_runtime_stats). "
+            "FRESH = the DEX subprocess wrote updated_at within ~150s, proving "
+            "the per-tick heartbeat fires. MIGRATION_MISSING = run migration "
+            "032 first. NO_HEARTBEAT_ROW = DEX not running yet. STALE = DEX "
+            "stopped/crashed. Fail-soft: never hard-errors pre-migration."
+        ),
+    },
+    {
+        "id": "db_dex_ml_source_provenance",
+        "title": "DB: DEX ml_source provenance (Wave-8 DEFECT-2)",
+        "category": "db",
+        "kind": "db_query",
+        # ml_source lives in trades.metadata for DEX rows. Pre-training
+        # it MUST read 'heuristic_fallback' — the honest current state.
+        # It only reads 'ensemble' after the operator trains + persists
+        # ensemble artifacts (ml/CLAUDE.md). Group-by surfaces the split
+        # so any fabricated optimistic label (e.g. a bogus 'ensemble'
+        # with no trained model) would stand out immediately.
+        "sql": (
+            "SELECT "
+            "  COALESCE(metadata->>'ml_source', '(none)') AS ml_source, "
+            "  COUNT(*) AS n, "
+            "  MAX(entry_timestamp) AS most_recent "
+            "FROM trades "
+            "WHERE entry_timestamp > NOW() - INTERVAL '24 hours' "
+            "GROUP BY ml_source "
+            "ORDER BY n DESC"
+        ),
+        "cmd_preview": (
+            "GROUP BY trades.metadata->>'ml_source', last 24h"
+        ),
+        "timeout_s": 15,
+        "tags": ["new", "expected-empty"],
+        "description": (
+            "Wave-8 DEFECT-2: every DEX opportunity carries an HONEST "
+            "ml_source provenance label, never a fabricated ML confidence. "
+            "EXPECTED value today is 'heuristic_fallback' (the ensemble runs "
+            "in fail-soft fallback until models are trained — see ml/CLAUDE.md). "
+            "It reads 'ensemble' ONLY after the operator trains + persists "
+            "artifacts and restarts DEX. 0 rows = no DEX trades in 24h (fine "
+            "in DRY_RUN with no candidates)."
+        ),
+    },
+    {
+        "id": "db_dex_load_state_open_trades",
+        "title": "DB: DEX open trades for _load_state restore (manual-check)",
+        "category": "db",
+        "kind": "db_query",
+        # _load_state restore is hard to auto-probe without the running
+        # engine's in-memory positions dict, so this is a documented
+        # manual-check: it lists the open DEX trades the engine SHOULD
+        # repopulate into engine.positions on restart. The operator
+        # cross-checks this count against /api/dashboard/summary open
+        # positions or the DEX log's "restored N open positions" line.
+        "sql": (
+            "SELECT token_address, entry_price, amount, entry_timestamp "
+            "FROM trades "
+            "WHERE status = 'open' "
+            "ORDER BY entry_timestamp DESC "
+            "LIMIT 50"
+        ),
+        "cmd_preview": "Open DEX trades (status='open') — restore reference set",
+        "timeout_s": 15,
+        "tags": ["new", "expected-empty"],
+        "description": (
+            "Wave-8 _load_state restore — manual cross-check (low priority). "
+            "Lists open DEX trades the engine should reflect in its in-memory "
+            "positions after a restart. Compare this count to the DEX log's "
+            "'restored N open positions' line (or /api/dashboard/summary open "
+            "count). Not an auto-pass/fail probe: the engine's positions dict "
+            "isn't queryable from the dashboard. 0 rows = no open DEX "
+            "positions (normal in DRY_RUN with no entries)."
+        ),
+    },
+
+    # ── Wave-9 DEX engine quant-audit fixes (code-presence sanity) ────
+    # All three are READ-ONLY source-greps / import checks run inline
+    # via `bash -c` / `python -c` (no helper-script files added, no DB,
+    # no engine instantiation). They assert STATIC behavior that holds
+    # whether or not any module is running, so they have no
+    # not-deployed precondition and are plain sanity checks.
+    {
+        "id": "script_dex_contract_gate_honest",
+        "title": "Script: DEX _check_smart_contract honesty grep (Wave-9)",
+        "category": "scripts",
+        "kind": "bash",
+        # Asserts the gate no longer returns a blanket verified:True and
+        # that the honest verified:False / status:'unknown' return is
+        # present. Tolerant of single/double quote style.
+        "cmd": [
+            "bash", "-c",
+            "set -euo pipefail; cd \"${CLAUDEDEX_REPO_ROOT:-/app}\"; "
+            "f=core/engine.py; "
+            "if [ ! -f \"$f\" ]; then echo \"FAIL — $f not found\"; exit 1; fi; "
+            "blk=$(awk '/async def _check_smart_contract/{c=1} "
+            "c{print} /async def _analyze_holder_distribution/{if(c)exit}' \"$f\"); "
+            "if echo \"$blk\" | grep -Eq \"['\\\"]verified['\\\"][[:space:]]*:[[:space:]]*True\"; "
+            "then echo 'FAIL — _check_smart_contract still returns verified:True (blanket safe)'; "
+            "echo \"$blk\" | grep -nE \"['\\\"]verified['\\\"][[:space:]]*:[[:space:]]*True\"; exit 1; fi; "
+            "if echo \"$blk\" | grep -Eq \"['\\\"]verified['\\\"][[:space:]]*:[[:space:]]*False\" "
+            "&& echo \"$blk\" | grep -Eq \"['\\\"]status['\\\"][[:space:]]*:[[:space:]]*['\\\"]unknown['\\\"]\"; "
+            "then echo 'PASS — _check_smart_contract returns honest verified:False/status:unknown'; exit 0; "
+            "else echo 'FAIL — honest verified:False/status:unknown return missing from _check_smart_contract'; exit 1; fi",
+        ],
+        "cmd_preview": (
+            "grep core/engine.py::_check_smart_contract for honest "
+            "verified:False/status:'unknown' (no blanket verified:True)"
+        ),
+        "timeout_s": 20,
+        "tags": ["new", "must"],
+        "description": (
+            "Wave-9 contract-gate honesty: _check_smart_contract previously "
+            "returned a blanket verified:True — a FALSE positive safety signal. "
+            "PASS asserts the blanket verified:True is gone AND the honest "
+            "verified:False / status:'unknown' return is present, so the "
+            "downstream gate logs a caution instead of asserting an "
+            "unperformed verification. Static source-grep; no engine run."
+        ),
+    },
+    {
+        "id": "script_dex_random_feature_stub_removed",
+        "title": "Script: DEX np.random.rand feature-stub removed (Wave-9)",
+        "category": "scripts",
+        "kind": "bash",
+        # Asserts ZERO non-comment np.random.rand in core/engine.py. The
+        # deleted _extract_features stub returned np.random.rand(10) — a
+        # random feature vector on a live path. We tolerate the named
+        # token inside the tombstone COMMENT (line starts with #), only
+        # flag a code-level appearance.
+        "cmd": [
+            "bash", "-c",
+            "set -euo pipefail; cd \"${CLAUDEDEX_REPO_ROOT:-/app}\"; "
+            "f=core/engine.py; "
+            "if [ ! -f \"$f\" ]; then echo \"FAIL — $f not found\"; exit 1; fi; "
+            "hits=$(grep -nE 'np\\.random\\.rand' \"$f\" "
+            "| grep -vE '^[[:space:]]*[0-9]+:[[:space:]]*#') || true; "
+            "if [ -n \"$hits\" ]; then "
+            "echo 'FAIL — np.random.rand present in core/engine.py (non-comment):'; "
+            "echo \"$hits\" | head -5; exit 1; fi; "
+            "echo 'PASS — no non-comment np.random.rand in core/engine.py (stub removed; tombstone only)'",
+        ],
+        "cmd_preview": (
+            "grep core/engine.py for non-comment np.random.rand → expect none "
+            "(tombstone comment OK)"
+        ),
+        "timeout_s": 20,
+        "tags": ["new", "must"],
+        "description": (
+            "Wave-9: the dead _extract_features stub that returned "
+            "np.random.rand(10) (random features on a live path) was DELETED. "
+            "PASS = zero non-comment np.random.rand occurrences in "
+            "core/engine.py; the Wave-9 tombstone comment naming the removed "
+            "code is tolerated. Reappearance = a fabricated-feature foot-gun "
+            "is back. Static source-grep."
+        ),
+    },
+    {
+        "id": "script_ensemble_feature_contract_82",
+        "title": "Script: ENSEMBLE_FEATURE_NAMES == 82 + clean import (Wave-9)",
+        "category": "scripts",
+        "kind": "bash",
+        # Imports the canonical feature-name list and asserts len == 82
+        # (the fixed-order contract documented in ml/CLAUDE.md). Guards
+        # against silent feature-order/length drift between train and
+        # inference. Import must also succeed (catches syntax/dep drift).
+        "cmd": [
+            "python", "-c",
+            "from ml.models.ensemble_model import ENSEMBLE_FEATURE_NAMES as F; "
+            "n=len(F); "
+            "import sys; "
+            "print('PASS — ENSEMBLE_FEATURE_NAMES imports cleanly, len=%d (==82)' % n) "
+            "if n==82 else (print('FAIL — ENSEMBLE_FEATURE_NAMES len=%d, expected 82 (feature-order drift)' % n) or sys.exit(1))",
+        ],
+        "cmd_preview": (
+            "python -c 'assert len(ENSEMBLE_FEATURE_NAMES)==82' (clean import)"
+        ),
+        "timeout_s": 30,
+        "tags": ["new", "must"],
+        "description": (
+            "Wave-9 ensemble feature contract: the inference vector is a "
+            "fixed-order 82-element list (ml/CLAUDE.md). PASS = the module "
+            "imports cleanly AND len(ENSEMBLE_FEATURE_NAMES)==82. Guards "
+            "against future feature add/remove/reorder drift that would "
+            "silently desync train-time from inference-time. Needs the "
+            "dashboard image's ML deps (pandas/torch) on PATH; an ImportError "
+            "here flags a dependency/packaging regression, not a feature "
+            "count change."
+        ),
+    },
 ]
 
 
