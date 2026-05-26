@@ -20,7 +20,7 @@ import os
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 import json
@@ -83,6 +83,36 @@ def _iso_utc(dt) -> str:
         # Last-resort string coercion — keeps the endpoint from 500'ing
         # if an unexpected type sneaks in.
         return str(dt)
+
+
+def _as_utc(dt):
+    """Normalise a datetime to tz-aware UTC for safe comparison/subtraction.
+
+    Wave-6's ``_iso_utc`` timezone work surfaced a latent bug: some DB
+    columns are ``TIMESTAMP WITH TIME ZONE`` (asyncpg returns *aware*
+    datetimes) while others are ``TIMESTAMP WITHOUT TIME ZONE`` (asyncpg
+    returns *naive* datetimes, which the project treats as UTC). Mixing
+    the two when sorting or subtracting raises
+    ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+
+    This helper makes every datetime consistently tz-aware UTC:
+      * ``None``               -> ``None`` (callers must None-check)
+      * naive datetime         -> same wall-clock, tagged UTC
+      * aware datetime         -> converted to UTC
+
+    Anything that is not a datetime (or has no ``tzinfo``) is returned
+    unchanged so callers can fall back gracefully.
+    """
+    if dt is None:
+        return None
+    try:
+        if not hasattr(dt, 'tzinfo'):
+            return dt
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return dt
 
 
 # Solana token name mapping for common tokens
@@ -1833,9 +1863,25 @@ class DashboardEndpoints:
                 return 'ENABLED + RUNNING'
             return 'ENABLED (no health)'
 
-        # DEX: runs in same process as the engine/dashboard. We approximate
-        # 'running' as enabled + engine attached (no separate health port).
+        # DEX: when the dashboard runs in-process with the engine we can use
+        # self.engine; but the dashboard usually runs as a SEPARATE process
+        # (engine is None there). FAILURE 1(a) fix: fall back to a recent
+        # `trades` row (last 2h) as the cross-process heartbeat, mirroring
+        # the COPY proxy. Without this, DEX always showed "ENABLED (no
+        # health)" on the standalone dashboard even while live.
         dex_running_flag = bool(dex_enabled and self.engine is not None)
+        if dex_enabled and not dex_running_flag and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    recent = await conn.fetchval(
+                        "SELECT COUNT(*) FROM trades "
+                        "WHERE entry_timestamp > NOW() - INTERVAL '2 hours' "
+                        "AND UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')"
+                    )
+                    if recent and recent > 0:
+                        dex_running_flag = True
+            except Exception:
+                pass
         dex_status = _module_status(dex_running_flag, dex_enabled)
         futures_status = _module_status(futures_running, futures_enabled)
         solana_status = _module_status(solana_running, solana_enabled)
@@ -1899,6 +1945,23 @@ class DashboardEndpoints:
                         arbitrage_running = True
         except Exception:
             pass
+        # FAILURE 1(a) fix: ARBITRAGE has no reliable health-port server in
+        # the dashboard process, so fall back to arbitrage_runtime_stats
+        # freshness — the engine snapshots one row per chain every ~5 min
+        # via EVMArbitrageEngine._persist_runtime_stats. If ANY chain row is
+        # < 120s old the subprocess is alive. Mirrors the sniper path so the
+        # module reports "ENABLED + RUNNING" instead of "ENABLED (no health)".
+        if not arbitrage_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT MIN(EXTRACT(EPOCH FROM (NOW() - updated_at)))::int
+                        FROM arbitrage_runtime_stats
+                    """)
+                    if age is not None and age <= 120:
+                        arbitrage_running = True
+            except Exception:
+                pass
 
         # Check Copy Trading module health
         try:
@@ -1909,6 +1972,22 @@ class DashboardEndpoints:
                         copytrading_running = True
         except Exception:
             pass
+        # FAILURE 1(a) fix: COPY has no health-port server reachable from the
+        # dashboard process. Mirror api_get_copytrading_stats' heartbeat:
+        # a copytrading_trades row in the last 2h means the subprocess is
+        # mirroring leaders. (COPY does not write runtime_stats yet, so this
+        # recent-activity proxy is the most honest cross-process signal.)
+        if not copytrading_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    recent = await conn.fetchval(
+                        "SELECT COUNT(*) FROM copytrading_trades "
+                        "WHERE entry_timestamp > NOW() - INTERVAL '2 hours'"
+                    )
+                    if recent and recent > 0:
+                        copytrading_running = True
+            except Exception:
+                pass
 
         # Check AI module health
         try:
@@ -1919,6 +1998,22 @@ class DashboardEndpoints:
                         ai_running = True
         except Exception:
             pass
+        # FAILURE 1(a) fix: AI has no health-port server reachable here.
+        # Mirror api_get_ai_stats' heartbeat: the AI subprocess writes a
+        # sentiment_logs row roughly every analysis cycle (~5-15 min); a row
+        # in the last 30 min means it is alive. NOW()-timestamp is computed
+        # in SQL so no naive/aware datetime comparison happens in Python.
+        if not ai_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - timestamp))::int
+                        FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1
+                    """)
+                    if age is not None and age <= 1800:
+                        ai_running = True
+            except Exception:
+                pass
 
         # Query database for additional module metrics
         if self.db and self.db_pool:
@@ -14346,8 +14441,12 @@ class DashboardEndpoints:
                         'strategy': strat,
                         'chain': r['chain'] or 'UNKNOWN',
                         'profit_loss': float(r['profit_loss'] or 0),
-                        'entry_timestamp': r['entry_timestamp'],
-                        'exit_timestamp': r['exit_timestamp'],
+                        # _as_utc: mixed TIMESTAMP / TIMESTAMPTZ columns across
+                        # module tables otherwise raise "can't compare
+                        # offset-naive and offset-aware datetimes" when these
+                        # rows are sorted/subtracted downstream.
+                        'entry_timestamp': _as_utc(r['entry_timestamp']),
+                        'exit_timestamp': _as_utc(r['exit_timestamp']),
                         'amount': float(r['amount'] or 0),
                         'entry_price': float(r['entry_price'] or 0),
                         'metadata': r['metadata'],
@@ -14373,8 +14472,8 @@ class DashboardEndpoints:
                     'strategy': 'solana',
                     'chain': r['chain'] or 'SOLANA',
                     'profit_loss': float(r['profit_loss'] or 0) * sol_price,
-                    'entry_timestamp': r['entry_timestamp'],
-                    'exit_timestamp': r['exit_timestamp'],
+                    'entry_timestamp': _as_utc(r['entry_timestamp']),
+                    'exit_timestamp': _as_utc(r['exit_timestamp']),
                     'amount': float(r['amount'] or 0),
                     'entry_price': float(r['entry_price'] or 0),
                     'metadata': r['metadata'],
