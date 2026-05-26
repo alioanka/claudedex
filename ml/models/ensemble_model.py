@@ -26,6 +26,62 @@ from dataclasses import dataclass
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+# ---------------------------------------------------------------------------
+# Wave-9 quant: CANONICAL feature contract.
+# This list mirrors `EnsemblePredictor.extract_features()` EXACTLY — same
+# fields, same order, same count (95). It is the single source of truth that
+# binds the TRAINING feature matrix to the INFERENCE feature vector. The
+# scaler is fitted at train time and `.transform()`'d at inference; if the two
+# sides disagree on column order or count the model silently consumes garbage.
+# `retrain()` reindexes its incoming DataFrame to this order before fitting,
+# so an activated ensemble is fed features in the same order it was trained on.
+# If you add/remove/reorder a feature in extract_features, update this list in
+# lock-step (and retrain — old artifacts become invalid).
+# ---------------------------------------------------------------------------
+ENSEMBLE_FEATURE_NAMES: List[str] = [
+    # price_data (8)
+    'current_price', 'price_change_1h', 'price_change_24h', 'price_change_7d',
+    'volatility_24h', 'price_std', 'price_skew', 'price_kurtosis',
+    # volume_data (7)
+    'volume_24h', 'volume_change_24h', 'buy_volume_ratio', 'large_trades_ratio',
+    'unique_traders_24h', 'avg_trade_size', 'volume_to_mcap_ratio',
+    # liquidity_data (5)
+    'total_liquidity', 'liquidity_change_24h', 'liquidity_locked_percent',
+    'liquidity_to_mcap_ratio', 'impermanent_loss_risk',
+    # holder_data (6)
+    'total_holders', 'holder_growth_24h', 'top_10_holders_percent',
+    'whale_count', 'avg_holding_time', 'holder_concentration_index',
+    # contract_data (7)
+    'is_verified', 'has_mint_function', 'has_pause_function',
+    'ownership_renounced', 'is_proxy', 'contract_age_days', 'transaction_count',
+    # social_data (7)
+    'twitter_followers', 'twitter_engagement_rate', 'telegram_members',
+    'telegram_growth_rate', 'reddit_mentions', 'sentiment_score', 'fomo_index',
+    # technical_data (10)
+    'rsi', 'macd', 'macd_signal', 'bollinger_upper', 'bollinger_lower',
+    'ema_9', 'ema_21', 'ema_50', 'obv', 'adx',
+    # risk_data (6)
+    'liquidity_risk', 'developer_risk', 'contract_risk', 'volume_risk',
+    'holder_risk', 'honeypot_probability',
+    # market_data (5)
+    'btc_correlation', 'eth_correlation', 'market_cap',
+    'fully_diluted_valuation', 'circulating_supply_percent',
+    # time_data (5)
+    'hour_of_day', 'day_of_week', 'days_since_launch',
+    'hours_since_ath', 'hours_since_atl',
+    # pattern_data (8)
+    'has_cup_handle', 'has_ascending_triangle', 'has_double_bottom',
+    'has_golden_cross', 'has_death_cross', 'trend_strength',
+    'support_level_distance', 'resistance_level_distance',
+    # mempool_data (4)
+    'pending_buy_volume', 'pending_sell_volume', 'large_pending_trades',
+    'sandwich_attack_risk',
+    # whale_data (4)
+    'whale_accumulation_score', 'whale_distribution_score',
+    'smart_money_flow', 'institutional_interest',
+]
+
+
 @dataclass
 class PredictionResult:
     """Result from ensemble prediction"""
@@ -1117,15 +1173,36 @@ class EnsemblePredictor:
         """
         try:
             # Prepare data
-            X = training_data.drop(['label', 'pump_label', 'rug_label'], axis=1, errors='ignore')
+            X = training_data.drop(['label', 'pump_label', 'rug_label', 'returns'],
+                                   axis=1, errors='ignore')
             y_pump = training_data.get('pump_label', pd.Series([0] * len(training_data)))
             y_rug = training_data.get('rug_label', pd.Series([0] * len(training_data)))
-            
+
+            # Wave-9 quant FEATURE-CONTRACT GUARD: the inference path scales a
+            # fixed-order vector produced by extract_features (== ENSEMBLE_FEATURE_NAMES).
+            # If we fit the scaler/models on the training DataFrame in its own
+            # arbitrary column order, scaler.transform() at inference would map
+            # each scaled column onto the WRONG feature -> silent garbage. So we
+            # reindex the training matrix to the canonical order before fitting.
+            # Missing canonical columns are filled with 0.0 (extract_features'
+            # own default) and a warning is emitted so the operator can see the
+            # gaps; extra columns are dropped. This makes train == inference by
+            # construction.
+            missing = [c for c in ENSEMBLE_FEATURE_NAMES if c not in X.columns]
+            extra = [c for c in X.columns if c not in ENSEMBLE_FEATURE_NAMES]
+            if missing:
+                print(f"⚠️  retrain: {len(missing)} canonical features absent from "
+                      f"training data, filled with 0.0: {missing}")
+            if extra:
+                print(f"ℹ️  retrain: dropping {len(extra)} non-canonical columns: {extra}")
+            X = X.reindex(columns=ENSEMBLE_FEATURE_NAMES, fill_value=0.0)
+
             # Scale features
             X_scaled = self.scaler.fit_transform(X)
-            
-            # Store feature names
-            self.feature_names = list(X.columns)
+
+            # Store feature names in CANONICAL order (matches extract_features /
+            # the persisted feature_names.json that load_models reads back).
+            self.feature_names = list(ENSEMBLE_FEATURE_NAMES)
             
             # Train models in parallel
             new_models = {}
