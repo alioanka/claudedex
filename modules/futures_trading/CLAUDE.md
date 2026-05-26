@@ -130,6 +130,115 @@ hit on SOL long (+18%). Audit confirmed two structural causes:
 - `69862c1` FUT-RM-17: per-symbol consecutive-loss cool-off
 - `ac7a57b` FUT-RM-17: surface cool-off knobs in FuturesRiskConfig
 - `57a6a2c` FUT-RM-18: lower default leverage from 10x to 5x
+
+## Wave-7 changes (campaign 2026-05-26)
+
+Triggered by operator report of `-$59.99` total P&L @ 39% win rate on
+`/futures/dashboard`. Root-cause audit of the entry/exit/sizing stack found
+the book was bleeding on (a) costs the entry logic never priced in, (b) a
+broken momentum indicator, (c) over-trading the same candle, and (d)
+counter-trend entries. Each fix below is THEORY ONLY — it reduces obvious
+bleed and is theoretically sound, but profitability MUST be re-validated in
+DRY_RUN before going live. No backtest was run in this environment.
+
+- **MACD signal-line fix** (`d805d37`) — `_calculate_macd` used
+  `signal_line = macd_line * 0.9`, making the histogram a fixed 10% of the
+  MACD line rather than a real signal-line cross. The histogram was also in
+  raw price units, so the absolute 0.001/0.005 score thresholds fired on
+  nearly every BTC bar and almost no cheap-alt bar. Now builds the full
+  MACD-line series and takes a true 9-period EMA as the signal line, and
+  scores the histogram as a percent of price (`hist_pct`, thresholds
+  0.02%/0.08%) so the same momentum scores the same across all symbols.
+  STRONG_* amplification now also requires the cross direction. *Edge
+  thesis:* MACD was previously noise on alts and over-firing on majors;
+  fixing it makes the 5-indicator confluence stack actually mean what the
+  score implies.
+
+- **FUT-RM-19** (`1bb8a4e`) — fee + funding aware minimum-edge gate. Before
+  opening, `_compute_net_edge_pct()` = `TP1_distance% - 2*taker_fee% -
+  slippage% - adverse_funding%` (favorable funding floored at 0, never
+  credited — we don't want funding-chasing entries). Refuses entry when net
+  edge `< min_net_edge_pct` (default 0.30%). Breach logged + routed to
+  `monitoring/alerts.py` (best-effort, fail-soft). *Edge thesis:* at 39% win
+  rate the book churned trades whose first realistic target couldn't clear
+  round-trip Bybit taker (0.12%) + slippage + funding; this is the working-
+  rule edge formula applied as a hard gate. Pre-order so DRY_RUN-safe.
+
+- **FUT-RM-20** (`1bb8a4e`) — one-entry-per-candle throttle. The 30s scan
+  loop re-evaluated the same 15m bar ~30 times. `_current_candle_open()`
+  floors `now` to the signal-timeframe bar; a symbol already entered this
+  candle is skipped. *Edge thesis:* kills repeated entries into the same
+  chop, the cheapest over-trading fix available.
+
+- **FUT-RM-21** (`284dcfd`) — regime gate (`block_counter_trend_entries`,
+  default ON, RISK config). The signal stack scores mean-reversion (RSI
+  extremes) and trend-following (BB breakout, EMA) additively, so a bullish
+  RSI bounce cleared the score in a clear downtrend (catching falling
+  knives). Hard-blocks LONG when SMA20<SMA50 (DOWNTREND) and SHORT in an
+  UPTREND; SIDEWAYS stays tradeable both ways (range mean-reversion is
+  legitimate). Stricter than the existing `require_trend_confirmation`
+  toggle (which stays default-off). *Edge thesis:* stops the single largest
+  class of structural loss — fighting the dominant regime.
+
+- **ISSUE-19 Telegram token** (`8a105b2`) — the shared
+  `TelegramBotController.__init__` resolves the token via SYNC
+  `secrets.get()`, which short-circuits the DB lookup inside a running event
+  loop (`secrets_manager._get_from_database_sync` L341). Ops who store the
+  token only in the Secure Engine (encrypted `secure_credentials`) got a None
+  token -> "TELEGRAM_BOT_TOKEN not set". DEX/Solana avoid this by resolving
+  via `get_async`. Fix pre-warms `secrets._cache` with `get_async` for
+  TELEGRAM_BOT_TOKEN/CHAT_ID/ADMIN_IDS in `main_futures.run()` before
+  constructing the controller, so its sync `get()` hits the cache. Mirrors
+  AI fix `cca8d94`. (The engine's own `FuturesTelegramAlerts` already used
+  `get_async` and was unaffected.)
+
+- **ISSUE-15 exchange/account identity** (`1ddf4ee`) — see the section below.
+
+## Wave-7 configuration cheat-sheet
+| Key | Type | Default | What it does |
+|---|---|---|---|
+| `min_edge_gate_enabled` | bool | true | Toggle the FUT-RM-19 fee+funding edge gate. |
+| `min_net_edge_pct` | float | 0.30 | TP1 distance must beat round-trip costs by ≥ this (price %). 0 disables. |
+| `edge_slippage_pct` | float | 0.05 | Modeled round-trip slippage (price %) in the edge calc. |
+| `edge_funding_fallback_pct` | float | 0.05 | Funding-drag assumption (price %) when the live rate is unavailable. |
+| `one_entry_per_candle` | bool | true | FUT-RM-20: at most one entry per symbol per signal-timeframe candle. |
+| `block_counter_trend_entries` | bool | true | FUT-RM-21: hard-block LONG in DOWNTREND / SHORT in UPTREND regimes. |
+
+## Exchange / Account identity (ISSUE-15)
+- **Active exchange:** selected by `futures_general.exchange` (DB-backed,
+  `binance` or `bybit`; resolved as `engine.exchange`). The same value is on
+  `GET /health` (`exchange`) and `GET /stats` (`exchange`, uppercased).
+- **API-key secret names** (Secure Engine `secure_credentials` first, then
+  `.env`): mainnet `BINANCE_API_KEY` / `BINANCE_API_SECRET` or `BYBIT_API_KEY`
+  / `BYBIT_API_SECRET`; testnet `BINANCE_TESTNET_API_KEY` /
+  `BINANCE_TESTNET_API_SECRET` or `BYBIT_TESTNET_API_KEY` /
+  `BYBIT_TESTNET_API_SECRET`. The list is pinned in
+  `FuturesConfigManager.SENSITIVE_KEYS`.
+- **Testnet vs mainnet:** `engine.testnet`. Precedence: `FUTURES_TESTNET` env
+  override -> if `DRY_RUN=false` default MAINNET (safety) -> else
+  `futures_general.testnet` DB value. Surfaced on `/health` as `network`
+  (`testnet`/`mainnet`).
+- **Sub-account:** none — ccxt uses the single key pair above; there is no
+  sub-account/portfolio-margin selector in this module.
+- **Health surface (non-sensitive):** `GET /health` (port `FUTURES_HEALTH_PORT`,
+  default 8081) returns `exchange`, `network`, `api_key_secret_name` (the KEY
+  NAME, not the value), and `api_key_fingerprint` = `****<last4>`. The full
+  key/secret is NEVER exposed. The dashboard reads `/health` and can render
+  these to confirm which account is funded.
+
+## Close-position path (ISSUE-6 verification)
+- The close is triggered by **direct HTTP IPC, not a flag file**. Dashboard
+  `POST /api/futures/position/close {"symbol": "BTC/USDT"}` ->
+  `enhanced_dashboard.api_futures_close_position` -> HTTP
+  `POST http://localhost:{FUTURES_HEALTH_PORT}/position/close` (default 8081)
+  -> `HealthServer.close_position_handler` -> `engine._close_position(symbol,
+  "manual_close")`. Close-all is the analogous `/api/futures/positions/close-all`
+  -> `/positions/close-all` -> `engine.close_all_positions()`.
+- `_close_position` is DRY_RUN-aware: under DRY_RUN it logs a simulated close
+  and records the trade; live it sends a `create_market_order(...,
+  params={'reduceOnly': True})`. Verified end-to-end; no flag-file polling is
+  needed for futures close (unlike the on-chain modules).
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.
