@@ -977,6 +977,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/risk/metrics', self.api_risk_metrics)
         self.app.router.add_get('/api/wallets/balances', self.api_wallet_balances)
         self.app.router.add_get('/api/wallets/aggregated-balances', self.api_wallet_aggregated_balances)
+        # ISSUE 15: consolidated "which wallet/exchange funds which module"
+        self.app.router.add_get('/api/funding/accounts', self.api_funding_accounts)
 
         # API - Sniper Module
         self.app.router.add_get('/api/sniper/stats', self.api_get_sniper_stats)
@@ -14368,6 +14370,150 @@ class DashboardEndpoints:
         """Render the new Full Dashboard page"""
         template = self.jinja_env.get_template('full_dashboard.html')
         return web.Response(text=template.render(page='full_dashboard'), content_type='text/html')
+
+    async def api_funding_accounts(self, request):
+        """ISSUE 15: consolidated "Funding / Accounts" surface.
+
+        Reports, per module, the PUBLIC wallet address (EVM/Solana) or the
+        exchange+account it executes from, so the operator knows which
+        account to fund for LIVE. Public addresses ONLY — never private
+        keys. Each module surfaces its identity on a different diagnostics
+        channel (per each module's CLAUDE.md), so we read them all:
+          DEX     -> /health (:DEX_HEALTH_PORT, default 8085) .wallet_address
+          SOLANA  -> /health (:SOLANA_HEALTH_PORT, 8082)      .wallet_address
+          FUTURES -> /health (:FUTURES_HEALTH_PORT, 8081)     .exchange/.network/.api_key_fingerprint
+          SNIPER  -> sniper_runtime_stats.stats (id=1)        .wallet_address / .solana_/.evm_wallet_address
+          ARB     -> arbitrage_runtime_stats.stats (per chain).wallet_address / .chain
+          COPY    -> config_settings('copytrading_diagnostics') evm_/solana_execution_wallet
+        Any module not yet initialized reports status='not initialized'
+        instead of crashing the panel.
+        """
+        accounts = {}
+
+        def _entry(kind, **kw):
+            e = {'kind': kind, 'status': 'not initialized'}
+            e.update(kw)
+            return e
+
+        # --- Health-port modules (DEX / SOLANA / FUTURES) ---
+        async def _probe_health(port_env, default_port):
+            try:
+                port = int(os.getenv(port_env, str(default_port)))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{port}/health', timeout=3) as resp:
+                        if resp.status == 200:
+                            return await resp.json()
+            except Exception:
+                pass
+            return None
+
+        dex_h = await _probe_health('DEX_HEALTH_PORT', 8085)
+        accounts['dex_trading'] = _entry('evm_wallet')
+        if dex_h:
+            addr = dex_h.get('wallet_address')
+            accounts['dex_trading'].update(
+                wallet_address=addr or None,
+                chains='ETH/BSC/Polygon/Arbitrum/Base (shared EOA)',
+                status='initialized' if addr else 'no wallet_address on /health',
+            )
+
+        sol_h = await _probe_health('SOLANA_HEALTH_PORT', 8082)
+        accounts['solana_trading'] = _entry('solana_wallet')
+        if sol_h:
+            addr = sol_h.get('wallet_address')
+            accounts['solana_trading'].update(
+                wallet_address=addr or None,
+                status='initialized' if addr else 'no wallet_address on /health',
+            )
+
+        fut_h = await _probe_health('FUTURES_HEALTH_PORT', 8081)
+        accounts['futures_trading'] = _entry('exchange')
+        if fut_h:
+            ex = fut_h.get('exchange')
+            accounts['futures_trading'].update(
+                exchange=ex or None,
+                network=fut_h.get('network'),
+                api_key_secret_name=fut_h.get('api_key_secret_name'),
+                api_key_fingerprint=fut_h.get('api_key_fingerprint'),
+                status='initialized' if ex else 'no exchange on /health',
+            )
+
+        # --- DB runtime-stats modules (SNIPER / ARB) + COPY diagnostics ---
+        accounts['sniper'] = _entry('wallet')
+        accounts['arbitrage'] = _entry('evm_wallet')
+        accounts['copy_trading'] = _entry('wallet')
+        if self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    # SNIPER
+                    try:
+                        row = await conn.fetchrow(
+                            "SELECT stats FROM sniper_runtime_stats WHERE id = 1")
+                        if row and row['stats']:
+                            st = row['stats']
+                            if isinstance(st, str):
+                                st = json.loads(st)
+                            accounts['sniper'].update(
+                                wallet_address=st.get('wallet_address') or None,
+                                solana_wallet_address=st.get('solana_wallet_address') or None,
+                                evm_wallet_address=st.get('evm_wallet_address') or None,
+                                status='initialized' if (st.get('wallet_address')
+                                    or st.get('solana_wallet_address')
+                                    or st.get('evm_wallet_address')) else 'no wallet in runtime stats',
+                            )
+                    except Exception as e:
+                        logger.debug(f"funding: sniper read failed: {e}")
+                    # ARBITRAGE — one EOA shared across chains; report it + chains
+                    try:
+                        arows = await conn.fetch(
+                            "SELECT chain, stats FROM arbitrage_runtime_stats")
+                        arb_addr = None
+                        arb_chains = []
+                        for r in arows:
+                            st = r['stats'] or {}
+                            if isinstance(st, str):
+                                try:
+                                    st = json.loads(st)
+                                except Exception:
+                                    st = {}
+                            arb_addr = arb_addr or st.get('wallet_address')
+                            if r['chain']:
+                                arb_chains.append(r['chain'])
+                        if arows:
+                            accounts['arbitrage'].update(
+                                wallet_address=arb_addr or None,
+                                chains=', '.join(sorted(set(arb_chains))) or None,
+                                status='initialized' if arb_addr else 'no wallet in runtime stats',
+                            )
+                    except Exception as e:
+                        logger.debug(f"funding: arbitrage read failed: {e}")
+                    # COPY — public execution wallets persisted to config_settings
+                    try:
+                        crows = await conn.fetch(
+                            "SELECT key, value FROM config_settings "
+                            "WHERE config_type = 'copytrading_diagnostics' "
+                            "AND key IN ('evm_execution_wallet','solana_execution_wallet')")
+                        cmap = {r['key']: (r['value'] or None) for r in crows}
+                        if crows:
+                            evm = cmap.get('evm_execution_wallet') or None
+                            sol = cmap.get('solana_execution_wallet') or None
+                            accounts['copy_trading'].update(
+                                evm_execution_wallet=evm,
+                                solana_execution_wallet=sol,
+                                status='initialized' if (evm or sol) else 'wallets not resolved yet',
+                            )
+                    except Exception as e:
+                        logger.debug(f"funding: copy read failed: {e}")
+            except Exception as e:
+                logger.debug(f"funding accounts DB read failed: {e}")
+
+        # AI does not execute on-chain itself (delegates to executors); note it.
+        accounts['ai_analysis'] = _entry(
+            'delegated',
+            status='no own wallet — AI delegates execution to other modules',
+        )
+
+        return web.json_response({'success': True, 'data': {'accounts': accounts}})
 
     async def api_wallet_aggregated_balances(self, request):
         """Get aggregated balances from all wallets and exchanges"""
