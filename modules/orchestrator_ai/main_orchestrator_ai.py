@@ -91,6 +91,10 @@ async def main() -> None:
     tick_interval = int(os.getenv('ORCHESTRATOR_TICK_INTERVAL', '300'))
     lookback_hours = int(os.getenv('ORCHESTRATOR_LOOKBACK_HOURS', '24'))
     ttl_minutes = int(os.getenv('ORCHESTRATOR_REC_TTL_MINUTES', '60'))
+    # Issue 20: below this closed-trade count a module gets a not_ready
+    # 'hold' recommendation instead of being silently skipped, so the
+    # operator sees one recommendation per module per tick. Default 5.
+    min_trades_for_score = int(os.getenv('ORCHESTRATOR_MIN_TRADES_FOR_SCORE', '5'))
 
     from modules.orchestrator_ai.core.orchestrator_engine import run_loop
     from modules.orchestrator_ai.core.market_state import MarketStateCache
@@ -112,6 +116,7 @@ async def main() -> None:
             lookback_hours=lookback_hours,
             recommendation_ttl_minutes=ttl_minutes,
             market_state_getter=market_state_getter,
+            min_trades_for_score=min_trades_for_score,
         )
     finally:
         await pool.close()

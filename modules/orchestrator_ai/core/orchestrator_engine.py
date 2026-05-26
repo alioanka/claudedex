@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional
 
-from .performance_scorer import ModuleScoreInputs, score_module
+from .performance_scorer import ModuleScore, ModuleScoreInputs, score_module
 
 logger = logging.getLogger("orchestrator_ai")
 
@@ -249,6 +249,19 @@ async def _supersede_stale_pending(conn, ttl_minutes: int) -> int:
         return 0
 
 
+async def _supersede_module_pending(conn, module: str) -> None:
+    """Mark this module's currently-pending (un-acted, un-superseded) rows
+    as superseded so the fresh per-tick recommendation becomes the single
+    current row for the module. Keeps the table bounded to ~one live row
+    per module while preserving full audit history."""
+    await conn.execute(
+        "UPDATE orchestrator_recommendations "
+        "SET superseded_at = NOW() "
+        "WHERE module = $1 AND approved IS NULL AND superseded_at IS NULL",
+        module,
+    )
+
+
 async def _insert_recommendation(conn, score_result, module: str, inputs) -> None:
     metrics = {
         "closed_trades": inputs.closed_trades,
@@ -276,12 +289,24 @@ async def run_tick(
     lookback_hours: int = 24,
     recommendation_ttl_minutes: int = 60,
     market_btc_24h: Optional[float] = None,
+    min_trades_for_score: int = 5,
 ) -> dict:
     """Run a single scoring tick. Returns a summary dict.
 
     Caller (the subprocess loop) decides cadence. This function is
     re-entrant and self-contained; calling twice in parallel is safe
     but doubles DB load.
+
+    Issue 20: EVERY scored module produces exactly one current
+    recommendation row per tick — including modules with too little data
+    (a 'hold' tagged not_ready) and modules whose verdict is plain 'hold'.
+    Previously only sniper/solana surfaced because (a) the < min_trades
+    gate dropped the other 5 silently and (b) 'hold' rows were de-duped to
+    once per 24h, so a module that returned 'hold' went dark after its
+    first row. The operator wants to SEE a per-module recommendation, not
+    silence. To keep the table bounded we supersede the module's prior
+    pending row before inserting the fresh one (one live row per module,
+    full audit history retained).
     """
     summary = {
         "modules_scored": 0,
@@ -318,7 +343,9 @@ async def run_tick(
         except Exception as e:
             summary["errors"].append(f"supersede: {e}")
 
-        # 2. Score every module + write non-'hold' rows.
+        # 2. Score every module and emit ONE current recommendation per
+        #    module (issue 20). Insufficient-data modules get a 'hold'
+        #    tagged not_ready rather than being silently dropped.
         for module, schema in _MODULE_QUERIES.items():
             inputs = await _collect_module_inputs(
                 conn, module, schema, lookback_hours, market_btc_24h,
@@ -326,41 +353,49 @@ async def run_tick(
             if inputs is None:
                 continue
             summary["modules_scored"] += 1
-            if inputs.closed_trades < 5:
-                # Skip noise — not enough data to meaningfully score.
-                continue
-            result = score_module(inputs)
-            # ML-calibrated confidence (optional). When a trained model
-            # is on disk, multiply the hard-coded confidence by
-            # P(operator_agrees | features). Caps the result so the
-            # confidence shown in the rec reflects BOTH data sufficiency
-            # AND the model's belief that the operator will agree.
-            ml_model = _load_ml_model()
-            if ml_model is not None:
-                p_agree = _ml_calibrated_confidence(
-                    ml_model, inputs, result.components, result.score
+            if inputs.closed_trades < min_trades_for_score:
+                # Not enough data to meaningfully score, but the operator
+                # still wants a per-module row. Emit an explicit
+                # not_ready 'hold' with zero confidence so the dashboard
+                # shows "scored, staying DRY_RUN — insufficient data".
+                result = ModuleScore(
+                    score=0.0,
+                    confidence=0.0,
+                    recommended="hold",
+                    reason=(
+                        f"Not ready: {inputs.closed_trades} closed trades in "
+                        f"the {lookback_hours}h window (need >= "
+                        f"{min_trades_for_score}). Staying DRY_RUN."
+                    ),
+                    components={"not_ready": True, "closed_trades": inputs.closed_trades},
                 )
-                if p_agree is not None:
-                    raw_conf = result.confidence
-                    # Geometric mean: any side near 0 drags the product down.
-                    calibrated = math.sqrt(raw_conf * p_agree)
-                    result.components["raw_confidence"] = round(raw_conf, 3)
-                    result.components["p_agree_ml"] = round(p_agree, 3)
-                    result.confidence = round(calibrated, 3)
-            # We deliberately DO write 'hold' rows too — gives the
-            # operator visibility into "the orchestrator looked at this
-            # but chose not to act". But to keep the table bounded we
-            # only persist 'hold' once per module per 24h window.
-            if result.recommended == "hold":
-                recent_hold = await conn.fetchval(
-                    "SELECT 1 FROM orchestrator_recommendations "
-                    "WHERE module = $1 AND recommended = 'hold' "
-                    "AND created_at > NOW() - INTERVAL '24 hours' LIMIT 1",
-                    module,
-                )
-                if recent_hold:
-                    continue
+            else:
+                result = score_module(inputs)
+                # ML-calibrated confidence (optional). When a trained model
+                # is on disk, multiply the hard-coded confidence by
+                # P(operator_agrees | features). Caps the result so the
+                # confidence shown in the rec reflects BOTH data sufficiency
+                # AND the model's belief that the operator will agree.
+                ml_model = _load_ml_model()
+                if ml_model is not None:
+                    p_agree = _ml_calibrated_confidence(
+                        ml_model, inputs, result.components, result.score
+                    )
+                    if p_agree is not None:
+                        raw_conf = result.confidence
+                        # Geometric mean: any side near 0 drags the product down.
+                        calibrated = math.sqrt(raw_conf * p_agree)
+                        result.components["raw_confidence"] = round(raw_conf, 3)
+                        result.components["p_agree_ml"] = round(p_agree, 3)
+                        result.confidence = round(calibrated, 3)
+            # Supersede this module's prior pending row, then insert the
+            # fresh one. This guarantees every scored module surfaces
+            # exactly one current recommendation each tick (including
+            # 'hold' / not_ready) while keeping the table bounded to one
+            # live row per module. The audit history is preserved via
+            # superseded_at on the old rows.
             try:
+                await _supersede_module_pending(conn, module)
                 await _insert_recommendation(conn, result, module, inputs)
                 summary["recommendations_inserted"] += 1
                 logger.info(
@@ -378,12 +413,16 @@ async def run_loop(
     lookback_hours: int = 24,
     recommendation_ttl_minutes: int = 60,
     market_state_getter=None,
+    min_trades_for_score: int = 5,
 ) -> None:
     """Forever loop. Caller cancels the task to stop.
 
     market_state_getter: optional async callable that returns the
     BTC 24h change % for the current tick. If None, the scorer's
     market signal contributes a neutral 0.5.
+
+    min_trades_for_score: closed-trade threshold below which a module
+    gets a not_ready 'hold' recommendation instead of a full score.
     """
     logger.info(
         "orchestrator engine starting: interval=%ds lookback=%dh ttl=%dm",
@@ -402,6 +441,7 @@ async def run_loop(
                 lookback_hours=lookback_hours,
                 recommendation_ttl_minutes=recommendation_ttl_minutes,
                 market_btc_24h=btc_24h,
+                min_trades_for_score=min_trades_for_score,
             )
             logger.info("tick summary: %s", summary)
         except Exception as e:
