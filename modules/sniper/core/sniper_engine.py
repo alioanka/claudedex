@@ -4,6 +4,8 @@ Sniper Engine - High-speed new token sniping
 
 import asyncio
 import logging
+import hashlib
+import random
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 import json
@@ -760,11 +762,20 @@ class SniperEngine:
                     timing.outcome = 'failed'
                 return
 
+            # Entry size. LIVE always uses the exact configured trade_amount.
+            # DRY_RUN jitters ±20% (seeded by token so it's reproducible) so
+            # collected data shows realistic size variation instead of an
+            # identical notional on every simulated trade.
+            entry_amount = self.trade_amount
+            if self.dry_run and token_address:
+                seed = int(hashlib.sha256(("size:" + token_address).encode()).hexdigest()[:16], 16)
+                entry_amount = self.trade_amount * (0.8 + (random.Random(seed).random() * 0.4))
+
             # Execute buy using the trade executor
             result = await self.executor.execute_buy(
                 token_address=token_address,
                 chain=chain,
-                amount_in=self.trade_amount,
+                amount_in=entry_amount,
                 slippage=self.slippage,
                 priority_fee=self.priority_fee
             )
@@ -776,13 +787,16 @@ class SniperEngine:
                 logger.info(f"✅ SNIPE SUCCESS: {token_address}")
                 logger.info(f"   TX: {result.tx_hash} | Amount: {result.amount_out}")
 
-                # Determine native token and get real USD price
+                # Determine native token and get real USD price. Use the
+                # actual amount spent (result.amount_in) — in DRY_RUN this is
+                # the jittered entry size, so entry_usd / entry_price vary
+                # per trade instead of being a fixed constant.
                 native_token = 'sol' if chain == 'solana' else 'eth'
                 native_price = await self.price_fetcher.get_price(native_token)
-                entry_usd = self.trade_amount * native_price
+                entry_usd = result.amount_in * native_price
 
                 data['status'] = 'active'
-                data['entry_price'] = self.trade_amount / result.amount_out if result.amount_out > 0 else 0
+                data['entry_price'] = result.amount_in / result.amount_out if result.amount_out > 0 else 0
                 data['amount_bought'] = result.amount_out
                 data['tx_hash'] = result.tx_hash
                 data['entry_time'] = result.timestamp
@@ -979,13 +993,56 @@ class SniperEngine:
 
             await asyncio.sleep(1)
 
-    async def _close_position_synthetic(self, data: Dict, reason: str) -> None:
-        """Force-close a position in DRY_RUN when no price feed is available.
+    def _model_dry_run_exit_pct(self, token_address: str) -> float:
+        """Model a realistic snipe exit %P&L when no live price feed exists.
 
-        Sets exit_price = entry_price, profit_loss = 0, status = 'closed' so
-        the position retires from active_snipes. Used to prevent unbounded
-        accumulation when Pump.fun / freshly-launched mints have no price
-        feed; not used on the live path.
+        DRY_RUN snipes new Pump.fun / freshly-launched mints that have no
+        Jupiter/Birdeye/Pyth price yet, so the monitor loop can never compute
+        a real exit. Previously the position was retired flat (exit==entry,
+        P&L=0), which made EVERY DRY_RUN trade look identical and inflated the
+        win rate to a constant. That is fabricated data, not collected data.
+
+        Instead, model a distribution that matches observed memecoin-snipe
+        reality: most fresh mints bleed out or rug, a minority pump. The draw
+        is seeded by token_address so a given mint always exits the same way
+        (reproducible across re-runs / restarts) while the population spans a
+        believable spread. TP/SL caps from DB config bound the outcome so the
+        modeled exit respects the same take_profit_pct / stop_loss_pct the
+        live path enforces.
+
+        IMPORTANT: this is a MODEL, not a measured price. It is only used in
+        DRY_RUN and only for mints with no obtainable price. The live path
+        never calls this. Documented in modules/sniper/CLAUDE.md.
+        """
+        seed = int(hashlib.sha256(token_address.encode()).hexdigest()[:16], 16)
+        rng = random.Random(seed)
+        roll = rng.random()
+        # Outcome buckets (memecoin snipe realities):
+        #   ~55% bleed/rug to a loss, ~30% small chop, ~15% pump.
+        if roll < 0.55:
+            # Loss: clustered toward the stop-loss floor.
+            pct = -rng.uniform(abs(self.stop_loss_pct) * 0.4, abs(self.stop_loss_pct))
+        elif roll < 0.85:
+            # Chop: small move either side, well inside TP/SL.
+            pct = rng.uniform(-abs(self.stop_loss_pct) * 0.3, self.take_profit_pct * 0.3)
+        else:
+            # Winner: up toward (and sometimes capped at) take-profit.
+            pct = rng.uniform(self.take_profit_pct * 0.5, self.take_profit_pct)
+        # Bound to live-path exit caps so modeled P&L never exceeds what the
+        # real TP/SL gates would have realized.
+        return max(-abs(self.stop_loss_pct), min(self.take_profit_pct, pct))
+
+    async def _close_position_synthetic(self, data: Dict, reason: str) -> None:
+        """Retire a DRY_RUN position with a MODELED exit when no price feed
+        is available.
+
+        Pump.fun / freshly-launched mints have no Jupiter/Birdeye/Pyth price
+        yet, so the monitor loop cannot compute a real exit. Rather than retire
+        flat (which fabricated a constant P&L and an unrealistic win rate), we
+        draw a realistic exit %P&L from `_model_dry_run_exit_pct`, derive the
+        exit price/USD from it, and persist that. Exit price now differs from
+        entry, P&L varies, and the win rate reflects the modeled distribution.
+        Only used in DRY_RUN; the live path computes real P&L in _exit_position.
         """
         try:
             target = data.get('target') or {}
@@ -994,12 +1051,19 @@ class SniperEngine:
                 return
 
             entry_price = data.get('entry_price', 0) or 0
+            entry_usd = data.get('entry_usd', 0) or 0
             trade_id = data.get('db_trade_id')
             now = datetime.now()
 
+            # Model a realistic exit instead of a flat zero.
+            pnl_pct = self._model_dry_run_exit_pct(token_address)
+            exit_price = entry_price * (1 + pnl_pct / 100.0) if entry_price else 0
+            exit_usd = entry_usd * (1 + pnl_pct / 100.0) if entry_usd else 0
+            pnl_usd = exit_usd - entry_usd
+
             # Mark in-memory before DB write so subsequent ticks skip it.
             data['status'] = 'closed'
-            data['exit_price'] = entry_price
+            data['exit_price'] = exit_price
             data['exit_reason'] = reason
             data['exit_time'] = now
 
@@ -1011,13 +1075,14 @@ class SniperEngine:
                             UPDATE sniper_trades SET
                                 status = 'closed',
                                 exit_price = $1,
-                                exit_timestamp = $2,
-                                profit_loss = 0,
-                                profit_loss_pct = 0,
-                                exit_reason = $3
-                            WHERE trade_id = $4
+                                exit_usd = $2,
+                                exit_timestamp = $3,
+                                profit_loss = $4,
+                                profit_loss_pct = $5,
+                                exit_reason = $6
+                            WHERE trade_id = $7
                             """,
-                            entry_price, now, reason, trade_id,
+                            exit_price, exit_usd, now, pnl_usd, pnl_pct, reason, trade_id,
                         )
                 except Exception as e:
                     logger.debug(f"synthetic close db update failed: {e}")
@@ -1028,9 +1093,9 @@ class SniperEngine:
             self._stats['positions_synthetic_closed'] = (
                 self._stats.get('positions_synthetic_closed', 0) + 1
             )
-            logger.info(
-                f"🧹 Synthetic-close {token_address[:8]}... reason={reason} "
-                f"(no price feed; DRY_RUN cleanup)"
+            logger.debug(
+                f"🧹 Modeled-exit {token_address[:8]}... reason={reason} "
+                f"P&L {pnl_pct:+.1f}% (${pnl_usd:+.2f}; DRY_RUN, no live price)"
             )
         except Exception as e:
             logger.error(f"_close_position_synthetic error: {e}")

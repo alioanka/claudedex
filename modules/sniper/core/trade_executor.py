@@ -9,7 +9,9 @@ IMPORTANT: Only executes real trades when DRY_RUN=false
 """
 
 import asyncio
+import hashlib
 import logging
+import random
 import aiohttp
 import json
 import os
@@ -868,7 +870,6 @@ class TradeExecutor:
         await asyncio.sleep(0.5)
 
         # Generate fake transaction hash
-        import hashlib
         fake_hash = hashlib.sha256(f"{token_address}{datetime.now().timestamp()}".encode()).hexdigest()
 
         # Simulate some output amount
@@ -899,10 +900,25 @@ class TradeExecutor:
 
         await asyncio.sleep(0.5)
 
-        import hashlib
         fake_hash = hashlib.sha256(f"{token_address}{datetime.now().timestamp()}".encode()).hexdigest()
 
-        simulated_output = amount_in / 1000000 * 1.1  # Slight profit
+        # The buy leg minted tokens at amount_in_native * 1e6 (see _simulate_buy),
+        # so a flat /1e6 round-trips to break-even. A constant *1.1 made EVERY
+        # simulated win identical (the "$0.84 on every trade" the operator saw).
+        # Model a realistic price move seeded by the token mint so the round-trip
+        # P&L varies per trade and re-runs are reproducible: ~55% lose, ~30%
+        # chop, ~15% pump. This is a MODEL for DRY_RUN data collection, not a
+        # measured exit price.
+        seed = int(hashlib.sha256(("exitmult:" + token_address).encode()).hexdigest()[:16], 16)
+        rng = random.Random(seed)
+        roll = rng.random()
+        if roll < 0.55:
+            move = 1.0 - rng.uniform(0.10, 0.85)   # loss: -10%..-85%
+        elif roll < 0.85:
+            move = 1.0 + rng.uniform(-0.08, 0.12)  # chop
+        else:
+            move = 1.0 + rng.uniform(0.20, 2.50)   # winner: +20%..+250%
+        simulated_output = amount_in / 1000000 * move
 
         logger.info(f"🧪 [DRY RUN] Simulated SELL complete: {simulated_output} {chain.upper()}")
 
