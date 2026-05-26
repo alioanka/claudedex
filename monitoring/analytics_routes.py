@@ -12,7 +12,7 @@ API endpoints for advanced analytics:
 import asyncio
 import logging
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from aiohttp import web
 import json
@@ -20,6 +20,47 @@ import json
 from core.analytics_engine import AnalyticsEngine, TimeFrame
 
 logger = logging.getLogger("AnalyticsRoutes")
+
+
+def _as_utc(dt):
+    """Normalise a datetime to tz-aware UTC (issue-18 class safety).
+
+    Module trade tables mix TIMESTAMP and TIMESTAMPTZ columns, so
+    subtracting an entry_timestamp from an exit_timestamp can raise
+    "can't compare offset-naive and offset-aware datetimes". Tag naive
+    datetimes as UTC and convert aware ones to UTC so duration math is
+    always safe. Returns None unchanged.
+    """
+    if dt is None:
+        return None
+    try:
+        if not hasattr(dt, 'tzinfo'):
+            return dt
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return dt
+
+
+def _iso_utc(dt):
+    """ISO 8601 with explicit UTC marker so browser JS parses as UTC.
+
+    Naive datetimes (asyncpg TIMESTAMP WITHOUT TIME ZONE) are treated as
+    UTC and get a trailing 'Z'; aware datetimes are normalised to UTC.
+    Mirrors enhanced_dashboard._iso_utc + static/js/timezone.js.
+    """
+    if dt is None:
+        return None
+    try:
+        u = _as_utc(dt)
+        if u is None:
+            return None
+        if u.tzinfo is not None:
+            return u.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+        return u.isoformat() + 'Z'
+    except Exception:
+        return dt.isoformat() if hasattr(dt, 'isoformat') else str(dt)
 
 
 class DecimalEncoder(json.JSONEncoder):
@@ -271,16 +312,26 @@ class AnalyticsRoutes:
         for r in rows:
             dur = None
             if r['entry_timestamp'] and r['exit_timestamp']:
-                dur = int((r['exit_timestamp'] - r['entry_timestamp']).total_seconds())
+                # _as_utc both sides: mixed TIMESTAMP/TIMESTAMPTZ columns
+                # otherwise raise the naive/aware comparison error (issue 18).
+                dur = int((_as_utc(r['exit_timestamp']) - _as_utc(r['entry_timestamp'])).total_seconds())
             out.append({
                 'trade_id': r['trade_id'],
                 'token': r['token_address'],
                 'side': 'BUY',
+                # Issue 2(b): these read the REAL per-trade columns
+                # (entry_price / exit_price / amount / module pnl_col) — not
+                # a constant. Once the sniper/solana engine agents land their
+                # PnL/price fixes, the displayed numbers will vary per row.
                 'entry_price': float(r['entry_price'] or 0),
                 'exit_price': float(r['exit_price'] or 0),
                 'size': float(r['amount'] or 0),
                 'pnl': float(r['pnl'] or 0),
-                'timestamp': r['exit_timestamp'].isoformat() if r['exit_timestamp'] else None,
+                # _iso_utc appends 'Z' so timezone.js renders the operator's
+                # local time instead of misreading naive UTC as local.
+                'entry_timestamp': _iso_utc(r['entry_timestamp']),
+                'exit_timestamp': _iso_utc(r['exit_timestamp']),
+                'timestamp': _iso_utc(r['exit_timestamp']),
                 'duration_seconds': dur,
             })
         return {'trades': out, 'total': len(out), 'limit': limit, 'offset': 0}
