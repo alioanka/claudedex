@@ -1201,7 +1201,7 @@ class EnsemblePredictor:
             X_scaled = self.scaler.fit_transform(X)
 
             # Store feature names in CANONICAL order (matches extract_features /
-            # the persisted feature_names.json that load_models reads back).
+            # the persisted features.json that load_models reads back).
             self.feature_names = list(ENSEMBLE_FEATURE_NAMES)
             
             # Train models in parallel
