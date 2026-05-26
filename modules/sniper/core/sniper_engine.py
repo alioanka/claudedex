@@ -827,7 +827,9 @@ class SniperEngine:
             self.pending_targets.pop(token_address, None)
             return
 
-        logger.info(f"🔫 EXECUTING SNIPE: {token_address} on {chain}")
+        # Per-trade hot path (63k+ trades in a DRY_RUN window). DEBUG to keep
+        # logs/sniper/ small; failures below are still ERROR.
+        logger.debug(f"🔫 EXECUTING SNIPE: {token_address} on {chain}")
         data['status'] = 'buying'
 
         try:
@@ -861,8 +863,8 @@ class SniperEngine:
                 if timing:
                     timing.stamp('t_broadcast_done')
                     timing.outcome = 'success'
-                logger.info(f"✅ SNIPE SUCCESS: {token_address}")
-                logger.info(f"   TX: {result.tx_hash} | Amount: {result.amount_out}")
+                logger.debug(f"✅ SNIPE SUCCESS: {token_address}")
+                logger.debug(f"   TX: {result.tx_hash} | Amount: {result.amount_out}")
 
                 # Determine native token and get real USD price. Use the
                 # actual amount spent (result.amount_in) — in DRY_RUN this is
@@ -880,7 +882,7 @@ class SniperEngine:
                 data['entry_usd'] = entry_usd  # Store USD value for accurate exit PnL
                 data['native_price_at_entry'] = native_price
 
-                logger.info(f"   Entry value: ${entry_usd:.2f} ({self.trade_amount:.4f} {native_token.upper()} @ ${native_price:.2f})")
+                logger.debug(f"   Entry value: ${entry_usd:.2f} ({result.amount_in:.4f} {native_token.upper()} @ ${native_price:.2f})")
 
                 self.active_snipes[token_address] = data
                 del self.pending_targets[token_address]
@@ -1374,7 +1376,7 @@ class SniperEngine:
         chain = data.get('chain_type', 'solana')
         amount = data.get('amount_bought', 0)
 
-        logger.info(f"💰 Exiting position: {token_address} | Reason: {reason}")
+        logger.debug(f"💰 Exiting position: {token_address} | Reason: {reason}")
 
         try:
             if not self.executor or amount <= 0:
@@ -1390,8 +1392,8 @@ class SniperEngine:
             )
 
             if result.success:
-                logger.info(f"✅ EXIT SUCCESS: {token_address}")
-                logger.info(f"   TX: {result.tx_hash} | Received: {result.amount_out}")
+                logger.debug(f"✅ EXIT SUCCESS: {token_address}")
+                logger.debug(f"   TX: {result.tx_hash} | Received: {result.amount_out}")
 
                 data['status'] = 'closed'
                 data['exit_price'] = result.amount_out / amount if amount > 0 else 0

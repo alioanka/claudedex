@@ -523,7 +523,11 @@ class SolanaListener:
                             # and dispatch the slow RPC work to a task.
                             rpc_receipt_perf = time.perf_counter()
 
-                            logger.info(
+                            # High-frequency: one line per opcode-prefiltered
+                            # candidate (thousands/hour). DEBUG so it does not
+                            # dominate logs/sniper/. Count is preserved in
+                            # _stats['wss_dispatched'] for the dashboard.
+                            logger.debug(
                                 f"⚡ WSS init-candidate [{src.value}]: sig={signature[:16]}... "
                                 f"({len(logs)} log lines)"
                             )

@@ -31,8 +31,9 @@ log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(me
 logger = logging.getLogger("SniperModule")
 logger.setLevel(logging.INFO)
 
-# 1. Main Log
-main_handler = RotatingFileHandler(log_dir / 'sniper.log', maxBytes=10*1024*1024, backupCount=5)
+# 1. Main Log — INFO level (DEBUG hot-path lines are filtered out here so
+# logs/sniper/ stays small). Cap reduced 10MB x5 -> 10MB x3 (30MB total).
+main_handler = RotatingFileHandler(log_dir / 'sniper.log', maxBytes=10*1024*1024, backupCount=3)
 main_handler.setFormatter(log_formatter)
 main_handler.setLevel(logging.INFO)
 logger.addHandler(main_handler)
