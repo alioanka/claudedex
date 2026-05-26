@@ -385,8 +385,17 @@ class AnalyticsRoutes:
         total_pnl = 0.0
         total_trades = 0
         per_module = {}
+        # Dedupe by table: `solana_trading` and `solana_strategies` both map
+        # to `solana_trades` (solana_strategies is a helper dir, not a running
+        # module), so iterating every _module_tables entry would DOUBLE-count
+        # Solana PnL + trade count in the portfolio total. Count each physical
+        # table once.
+        seen_tables = set()
         async with self.db.pool.acquire() as conn:
             for module_name, (table, pnl_col) in self._module_tables.items():
+                if table in seen_tables:
+                    continue
+                seen_tables.add(table)
                 try:
                     c = self._cols(table)
                     row = await conn.fetchrow(
