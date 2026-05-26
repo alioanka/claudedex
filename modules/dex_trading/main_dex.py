@@ -9,6 +9,7 @@ import asyncio
 import signal
 import sys
 import os
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 import logging
@@ -979,12 +980,54 @@ class TradingBotApplication:
                 if self.engine:
                     stats = await self.engine.get_stats()
                     self.logger.info(f"📊 Status: {stats}")
+                    # Heartbeat: stamp a fresh dex_runtime_stats row so the
+                    # standalone dashboard can tell a LIVE-but-idle engine apart
+                    # from a dead one (mirrors sniper/arbitrage runtime_stats).
+                    # Fail-soft — a DB hiccup must never crash the loop.
+                    await self._persist_heartbeat(stats)
 
                 await asyncio.sleep(60)
 
             except Exception as e:
                 self.logger.error(f"Error in status reporter: {e}")
                 await asyncio.sleep(60)
+
+    async def _persist_heartbeat(self, stats=None):
+        """UPSERT a single-row liveness heartbeat into dex_runtime_stats.
+
+        Written every ~60s from _status_reporter. The only REQUIRED field is a
+        fresh updated_at (read by the dashboard /api/modules DEX freshness
+        fallback); `stats` carries optional diagnostics. Fail-soft: any error is
+        logged at debug and swallowed so the trading loop never dies on a DB
+        hiccup. Mirrors EVMArbitrageEngine._persist_runtime_stats.
+        """
+        if not self.db_manager or not getattr(self.db_manager, 'pool', None):
+            return
+        try:
+            snapshot = {
+                'wallet_address': self.wallet_address,
+                'dry_run': bool(getattr(self, 'is_dry_run', True)),
+                'open_positions': (
+                    len(self.engine.active_positions)
+                    if self.engine and getattr(self.engine, 'active_positions', None)
+                    else 0
+                ),
+            }
+            if isinstance(stats, dict):
+                snapshot['engine_stats'] = stats
+            async with self.db_manager.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO dex_runtime_stats (id, updated_at, stats)
+                    VALUES (1, NOW(), $1::jsonb)
+                    ON CONFLICT (id) DO UPDATE
+                    SET updated_at = NOW(), stats = EXCLUDED.stats
+                    """,
+                    json.dumps(snapshot, default=str),
+                )
+        except Exception as e:
+            # Pure observability; never block trading.
+            self.logger.debug(f"_persist_heartbeat failed (non-fatal): {e}")
 
     async def _shutdown_monitor(self):
         """Monitor for shutdown signal"""

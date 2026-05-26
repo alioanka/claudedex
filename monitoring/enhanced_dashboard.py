@@ -1867,11 +1867,29 @@ class DashboardEndpoints:
 
         # DEX: when the dashboard runs in-process with the engine we can use
         # self.engine; but the dashboard usually runs as a SEPARATE process
-        # (engine is None there). FAILURE 1(a) fix: fall back to a recent
-        # `trades` row (last 2h) as the cross-process heartbeat, mirroring
-        # the COPY proxy. Without this, DEX always showed "ENABLED (no
-        # health)" on the standalone dashboard even while live.
+        # (engine is None there). Two cross-process signals — either is enough:
+        #   1. dex_runtime_stats freshness — the DEX subprocess UPSERTs a
+        #      single heartbeat row (id=1) every ~60s in
+        #      main_dex._status_reporter. If the row is < 150s old (2.5x the
+        #      60s write interval) the engine is alive, even when idle (no
+        #      recent trade). This is the PRIMARY signal and mirrors the ARB
+        #      arbitrage_runtime_stats / sniper_runtime_stats freshness checks.
+        #   2. a recent `trades` row (last 2h) — kept as a SECONDARY proxy for
+        #      older subprocesses that predate the heartbeat table.
+        # Before signal (1), a LIVE-but-idle DEX always showed "ENABLED (no
+        # health)" because health was inferred purely from trade activity.
         dex_running_flag = bool(dex_enabled and self.engine is not None)
+        if dex_enabled and not dex_running_flag and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int
+                        FROM dex_runtime_stats WHERE id = 1
+                    """)
+                    if age is not None and age <= 150:
+                        dex_running_flag = True
+            except Exception:
+                pass
         if dex_enabled and not dex_running_flag and self.db and getattr(self.db, 'pool', None):
             try:
                 async with self.db.pool.acquire() as conn:
