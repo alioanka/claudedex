@@ -807,7 +807,18 @@ class TradingBotEngine:
                 price=pair.get('price_usd', 0),
                 liquidity=pair.get('liquidity_usd', 0),
                 volume_24h=pair.get('volume_24h', 0),
-                risk_score=risk_score if risk_score else RiskScore(overall_risk=0.5),
+                # SAFETY FIX (Wave-8 DEFECT 1): worst-case risk on a missing
+                # assessment, NOT a neutral 0.5. (The scorer above already
+                # rejects when risk_score is falsy, so this branch is normally
+                # unreachable — but the old `RiskScore(overall_risk=0.5)` call
+                # was itself a latent bug: `overall_risk` is a read-only @property,
+                # not a constructor arg, so it would have raised TypeError. We
+                # build a real all-1.0 worst-case RiskScore here instead.)
+                risk_score=risk_score if risk_score else RiskScore(
+                    liquidity_risk=1.0, developer_risk=1.0, contract_risk=1.0,
+                    volume_risk=1.0, holder_risk=1.0, social_risk=1.0,
+                    technical_risk=1.0, market_risk=1.0, confidence=0.0,
+                ),
                 ml_confidence=score,
                 pump_probability=score * 0.8,
                 rug_probability=0.2,
@@ -3449,6 +3460,14 @@ class TradingBotEngine:
                 }
             
             # Risk score (20% weight) - Adjusted to balance weights
+            # SAFETY FIX (Wave-8 DEFECT 1): a missing/failed risk assessment is
+            # NOT "absent" — it means we could not rule out a honeypot/rug. The
+            # previous code only added the risk term `if risk_score`, which
+            # DROPPED the 0.20 weight from the denominator on failure, so a token
+            # we could not safety-check normalized HIGHER than a token with known
+            # moderate risk. We now treat unknown risk as WORST-CASE and reject
+            # outright: in DRY_RUN data-collection mode an unverifiable safety
+            # signal must bias the decision to "do not enter", never reward it.
             if risk_score and hasattr(risk_score, 'overall_risk'):
                 risk_component = 1.0 - risk_score.overall_risk
                 score += risk_component * 0.20
@@ -3456,6 +3475,13 @@ class TradingBotEngine:
                 score_breakdown['risk'] = {
                     'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
                 }
+            else:
+                logger.warning(
+                    "      ❌ REJECTED: risk assessment unavailable/failed "
+                    "(treated as worst-case — cannot verify token is not a "
+                    "honeypot/rug)"
+                )
+                return 0.0
             
             # Age bonus (5% weight) - Remains the same
             age_hours = pair.get('age_hours', 999)
