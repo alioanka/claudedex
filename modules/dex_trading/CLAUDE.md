@@ -164,12 +164,19 @@ loosened — every change can only make a gate stricter or more honest.
   to the same row, so they converge (last-writer-wins). Fail-soft: a bad load
   logs and leaves `active_positions` untouched — never crashes startup.
 
-- **Same-pattern follow-ups (Wave-9, NOT fixed here):** the "ML fabricated /
-  risk-failure rewarded" pattern likely also exists in sniper/solana/copy entry
-  scoring — to be audited separately. Engine placeholder stubs remain known
-  stubs: `_check_developer_reputation` (returns 0.5), `_analyze_liquidity_depth`,
-  `_check_smart_contract` (returns `verified=True`), `_analyze_holder_distribution`,
-  `_extract_features` (returns `np.random.rand(10)`, unused by the new ML path).
+- **Same-pattern follow-ups — RESOLVED in Wave-9.** The "ML fabricated /
+  risk-failure rewarded" pattern was audited in sniper/solana/copy and found
+  ABSENT in all three (commit `50e37ea`; see `docs/agents/PM_FINAL_WAVE9.md`).
+  The engine placeholder stubs were made honest (commit `37e2cfe`):
+  `_check_smart_contract` now returns `verified=False` / `status='unknown'`
+  (was a false `verified=True` safety signal) and the consuming gate default was
+  hardened to `False`; `_analyze_holder_distribution` returns
+  `{'concentrated': None, 'status': 'unknown'}`; the random-feature stub
+  `_extract_features` (returned `np.random.rand(10)`, zero live callers) was
+  DELETED. `_check_developer_reputation` stays a neutral `0.5` no-op (no gate
+  reads it) and is labelled unimplemented. Remaining open item: the real ML
+  ensemble stays in honest `heuristic_fallback` until trained artifacts exist —
+  see `ml/CLAUDE.md` for the activation runbook + the retrain-pipeline gap.
 
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
