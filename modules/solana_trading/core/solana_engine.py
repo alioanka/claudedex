@@ -467,9 +467,17 @@ class JupiterClient:
                 if resp.status == 200:
                     data = await resp.json()
                     pairs = data.get('pairs', [])
-                    if pairs:
-                        # Get the pair with highest liquidity
-                        best_pair = max(pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
+                    # Issue 10: only consider pairs where the queried mint is the
+                    # BASE token; DexScreener priceUsd is the base-token price, so
+                    # a quote-side match returns the WRONG token's price (the
+                    # $6788 ORCA exit bug).
+                    own_pairs = [
+                        p for p in pairs
+                        if (p.get('baseToken', {}).get('address') or '').lower() == token_mint.lower()
+                    ]
+                    if own_pairs:
+                        # Get the (base-token) pair with highest liquidity
+                        best_pair = max(own_pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
                         price = float(best_pair.get('priceUsd', 0))
                         if price > 0:
                             self._price_cache[token_mint] = {'price': price, 'source': 'dexscreener'}
@@ -522,9 +530,19 @@ class JupiterClient:
             async with session.get(price_api_url, params=params, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if 'data' in data and token_mint in data['data']:
+                    # Issue 10: Jupiter Price v3 dropped the legacy
+                    # {"data": {<mint>: {"price": ...}}} envelope; it now returns a
+                    # flat {<mint>: {"usdPrice": ...}} object. The old parser only
+                    # matched the envelope, so this fallback silently returned None
+                    # and never contributed a price. Tolerate both shapes and both
+                    # field names so the fallback actually works.
+                    price_data = None
+                    if isinstance(data.get('data'), dict) and token_mint in data['data']:
                         price_data = data['data'][token_mint]
-                        price = float(price_data.get('price', 0))
+                    elif isinstance(data.get(token_mint), dict):
+                        price_data = data[token_mint]
+                    if isinstance(price_data, dict):
+                        price = float(price_data.get('usdPrice') or price_data.get('price') or 0)
                         if price > 0:
                             self._price_cache[token_mint] = {'price': price, 'source': 'jupiter'}
                             self._price_cache_time[token_mint] = datetime.now()
@@ -864,8 +882,26 @@ class PumpFunMonitor:
                     if not pairs:
                         return None
 
-                    # Get the pair with highest liquidity
-                    best_pair = max(pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
+                    # Issue 10: DexScreener `priceUsd` is the price of the pair's
+                    # BASE token. When the queried mint appears only as the QUOTE
+                    # side (e.g. SOMETOKEN/ORCA), the highest-liquidity pair's
+                    # priceUsd is SOMETOKEN's price — thousands of dollars — not
+                    # ours. Restrict to pairs where our mint is the base token so
+                    # priceUsd always refers to the token we asked about. This is
+                    # the root cause of the $6788 ORCA exit / +495424% PnL.
+                    own_pairs = [
+                        p for p in pairs
+                        if (p.get('baseToken', {}).get('address') or '').lower() == token_address.lower()
+                    ]
+                    if not own_pairs:
+                        logger.debug(
+                            f"DexScreener: {token_address[:8]} only appears as quote token — "
+                            f"no base-token pair, skipping (avoids wrong-token price)"
+                        )
+                        return None
+
+                    # Get the (base-token) pair with highest liquidity
+                    best_pair = max(own_pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
 
                     price = float(best_pair.get('priceUsd', 0) or 0)
                     liquidity = float(best_pair.get('liquidity', {}).get('usd', 0) or 0)
