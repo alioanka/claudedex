@@ -167,6 +167,37 @@ class TelegramBotController:
 
     async def initialize(self):
         """Initialize the Telegram bot controller"""
+        # Carry-over C: __init__ resolves the token via the SYNCHRONOUS
+        # secrets.get(), which short-circuits the DB lookup when called from
+        # inside a running event loop (secrets_manager._get_from_database_sync
+        # "use get_async() in async context" guard). Operators who store the
+        # token only in the encrypted secure_credentials DB row therefore got
+        # a None token here. Since initialize() IS async, re-resolve any
+        # missing field via get_async so AI / Arbitrage / Copy / Futures all
+        # behave the same without each caller having to pre-warm the cache.
+        if secrets is not None and (not self.bot_token or not self.chat_id):
+            try:
+                if self.db_pool:
+                    secrets.initialize(self.db_pool)
+                if not self.bot_token:
+                    self.bot_token = await secrets.get_async(
+                        'TELEGRAM_BOT_TOKEN', log_access=False
+                    ) or os.getenv('TELEGRAM_BOT_TOKEN')
+                if not self.chat_id:
+                    self.chat_id = await secrets.get_async(
+                        'TELEGRAM_CHAT_ID', log_access=False
+                    ) or os.getenv('TELEGRAM_CHAT_ID')
+                if not self.admin_chat_ids:
+                    admin_ids = await secrets.get_async(
+                        'TELEGRAM_ADMIN_IDS', log_access=False
+                    ) or os.getenv('TELEGRAM_ADMIN_IDS', '')
+                    if admin_ids:
+                        self.admin_chat_ids = [i.strip() for i in admin_ids.split(',')]
+                    if self.chat_id:
+                        self.admin_chat_ids.append(self.chat_id)
+            except Exception as e:
+                logger.debug(f"Telegram async credential resolve skipped: {e}")
+
         if not self.bot_token:
             logger.warning("TELEGRAM_BOT_TOKEN not set - Telegram commands disabled")
             return False
