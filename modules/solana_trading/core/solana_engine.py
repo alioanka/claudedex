@@ -1198,6 +1198,19 @@ class SolanaTradingEngine:
         self.drift_client = None
         self.pumpfun_monitor: Optional[PumpFunMonitor] = None
 
+        # Drift perp market name -> Drift market index (Issue 11). Drift's
+        # mainnet ordering: 0 SOL-PERP, 1 BTC-PERP, 2 ETH-PERP. Extend as the
+        # operator enables more markets in drift_markets config.
+        self.DRIFT_MARKET_INDEX = {
+            'SOL-PERP': 0, 'BTC-PERP': 1, 'ETH-PERP': 2,
+        }
+        # Per-market scan throttle so the funding-rate signal is evaluated at
+        # most once per interval instead of every 5s cycle.
+        self._drift_last_scan_ts = 0.0
+        self._drift_scan_interval_s = 60.0
+        # Annualized funding magnitude (%) above which we take the carry side.
+        self._drift_funding_signal_pct = 10.0
+
         # Live trading helpers (for actual swap execution)
         self.jupiter_helper: Optional['JupiterHelper'] = None
         self.drift_helper: Optional['DriftHelper'] = None
@@ -1611,63 +1624,72 @@ class SolanaTradingEngine:
             raise
 
     async def _init_drift(self):
-        """Initialize Drift Protocol client"""
+        """Initialize Drift Protocol (Issue 11).
+
+        The DriftHelper is constructed even when driftpy is not installed or no
+        key/collateral is configured: its open_position short-circuits to a
+        sentinel in DRY_RUN before touching the chain, so the engine's Drift
+        scan can exercise the full path and the operator can SEE Drift activity
+        before funding a live account. The strategy is only stripped when LIVE
+        and the helper cannot reach chain (no driftpy / no key) — opening a
+        real perp blind is unacceptable.
+        """
         try:
             logger.info("Initializing Drift Protocol...")
 
-            # Drift requires driftpy which is optional
+            if not DRIFT_HELPER_AVAILABLE:
+                logger.info("✅ Drift Protocol configured (helper module unavailable)")
+                return
+
+            cm = self.config_manager
+            private_key = None
             try:
-                from driftpy.drift_client import DriftClient
+                private_key = await self._get_decrypted_private_key()
+            except Exception as e:
+                logger.debug(f"Drift key fetch failed: {e}")
 
-                # Initialize DriftHelper for live perpetual trading.
-                # MB-15: even in non-dry-run flows the helper enforces a
-                # leverage cap, oracle deviation guard, and funding sanity
-                # gate. We always pass dry_run=self.dry_run so the helper
-                # short-circuits in DRY_RUN even if a caller forgets the
-                # engine-side gate.
-                if DRIFT_HELPER_AVAILABLE:
-                    try:
-                        # Get decrypted private key for signing
-                        private_key = await self._get_decrypted_private_key()
-                        if private_key:
-                            cm = self.config_manager
-                            self.drift_helper = DriftHelper(
-                                rpc_url=self.primary_rpc,
-                                private_key=private_key,
-                                dry_run=self.dry_run,
-                                max_leverage=(
-                                    cm.drift_max_leverage if cm else 3.0
-                                ),
-                                max_abs_funding_rate_annual_pct=(
-                                    cm.drift_max_funding_pct_annual if cm else 50.0
-                                ),
-                                oracle_deviation_max_pct=(
-                                    cm.drift_oracle_deviation_max_pct if cm else 1.0
-                                ),
-                                min_oracle_confidence_bps=(
-                                    cm.drift_min_oracle_conf_bps if cm else 500
-                                ),
-                            )
-                            initialized = await self.drift_helper.initialize()
-                            if initialized:
-                                logger.info(
-                                    "✅ DriftHelper initialized (dry_run=%s, max_lev=%.1fx)",
-                                    self.dry_run, getattr(self.drift_helper, 'max_leverage', 0),
-                                )
-                            else:
-                                logger.warning("⚠️ DriftHelper initialization failed")
-                                self.drift_helper = None
-                        else:
-                            logger.warning("⚠️ DriftHelper not available - no private key")
-                            self.drift_helper = None
-                    except Exception as e:
-                        logger.warning(f"⚠️ DriftHelper not available: {e}")
-                        self.drift_helper = None
-                else:
-                    logger.info("✅ Drift Protocol configured (helper unavailable)")
+            # MB-15: the helper enforces leverage/oracle/funding caps and the
+            # DRY_RUN short-circuit regardless of init success. Read the guards
+            # via cm.get(...) — the solana_trading config manager (the one main
+            # injects) has no drift_max_* PROPERTIES, only the generic get().
+            # Direct attribute access raised AttributeError here, which the
+            # outer except swallowed as "Drift initialization failed" and left
+            # drift_helper=None — a contributing cause of zero Drift activity.
+            def _cfg(key, default):
+                return cm.get(key, default) if cm else default
 
-            except ImportError:
-                logger.warning("⚠️ driftpy not installed. Drift trading disabled.")
+            self.drift_helper = DriftHelper(
+                rpc_url=self.primary_rpc,
+                private_key=private_key,
+                dry_run=self.dry_run,
+                max_leverage=_cfg('drift_max_leverage', 3.0),
+                max_abs_funding_rate_annual_pct=_cfg('drift_max_funding_pct_annual', 50.0),
+                oracle_deviation_max_pct=_cfg('drift_oracle_deviation_max_pct', 1.0),
+                min_oracle_confidence_bps=_cfg('drift_min_oracle_conf_bps', 500),
+            )
+
+            initialized = False
+            try:
+                initialized = await self.drift_helper.initialize()
+            except Exception as e:
+                logger.warning(f"⚠️ DriftHelper chain init failed: {e}")
+
+            if initialized:
+                logger.info(
+                    "✅ DriftHelper initialized (dry_run=%s, max_lev=%.1fx)",
+                    self.dry_run, getattr(self.drift_helper, 'max_leverage', 0),
+                )
+            elif self.dry_run:
+                logger.warning(
+                    "🔶 DriftHelper chain not connected (no driftpy/key/collateral); "
+                    "DRY_RUN simulated Drift activity will still run so you can verify wiring"
+                )
+            else:
+                logger.error(
+                    "❌ DriftHelper could not connect to chain in LIVE — disabling Drift "
+                    "(refusing to trade perps blind). Install driftpy + fund collateral to enable."
+                )
+                self.drift_helper = None
                 self.strategies = [s for s in self.strategies if s != Strategy.DRIFT]
 
         except Exception as e:
@@ -3388,21 +3410,109 @@ class SolanaTradingEngine:
             logger.error(f"Error in Jupiter scan: {e}", exc_info=True)
 
     async def _scan_drift_opportunities(self):
-        """Scan for Drift perpetual opportunities"""
+        """Scan Drift perp markets for a funding-carry opportunity (Issue 11).
+
+        Previously a no-op stub that also gated on self.drift_client (never
+        set on the engine — only drift_helper is), so Drift produced ZERO
+        activity even when enabled. Now it reads the live funding rate per
+        configured market and, when |funding| exceeds the signal threshold,
+        takes the carry side (short positive funding, long negative funding)
+        via DriftHelper.open_position. The helper short-circuits in DRY_RUN
+        (sentinel sig) and enforces the MB-15 leverage/oracle/funding guards
+        in LIVE, so this is safe to run with DRY_RUN=true to see uptake.
+        """
+        # The engine only ever holds drift_helper; drift_client stays None.
+        if not self.drift_helper:
+            return
+
+        now = time.time()
+        if (now - self._drift_last_scan_ts) < self._drift_scan_interval_s:
+            return
+        self._drift_last_scan_ts = now
+
         if len(self.active_positions) >= self.max_positions:
             logger.debug(f"Max positions ({self.max_positions}) reached, skipping Drift scan")
             return
 
-        if not self.drift_client:
-            return
+        cm = self.config_manager
+        markets = cm.drift_markets if cm else ['SOL-PERP']
 
-        try:
-            # Log that Drift is being scanned
-            # In production, check funding rates, order book depth, etc.
-            logger.debug("🔍 Drift scanning for perpetual opportunities...")
+        for market_name in markets:
+            market_index = self.DRIFT_MARKET_INDEX.get(market_name.upper())
+            if market_index is None:
+                logger.debug(f"🔍 Drift: unknown market {market_name}, skipping")
+                continue
 
-        except Exception as e:
-            logger.error(f"Error in Drift scan: {e}")
+            try:
+                funding_pct = await self.drift_helper.get_funding_rate(market_index)
+            except Exception as e:
+                logger.debug(f"🔍 Drift funding read failed for {market_name}: {e}")
+                funding_pct = 0.0
+
+            # In DRY_RUN, if the chain funding read is unavailable (no driftpy /
+            # no collateral / RPC miss → 0.0), synthesize a deterministic signal
+            # so the operator can VERIFY the Drift wiring end-to-end without
+            # funding a live account. Never used in LIVE.
+            if self.dry_run and funding_pct == 0.0:
+                funding_pct = self._drift_funding_signal_pct + 2.0
+                logger.info(
+                    f"🔶 [DRY_RUN] Drift {market_name}: no chain funding available — "
+                    f"using simulated {funding_pct:+.2f}%/yr to exercise wiring"
+                )
+
+            if abs(funding_pct) < self._drift_funding_signal_pct:
+                logger.debug(
+                    f"🔍 Drift {market_name}: funding {funding_pct:+.2f}%/yr "
+                    f"below {self._drift_funding_signal_pct:.1f}% signal — no trade"
+                )
+                continue
+
+            # Collect the funding carry: SHORT when funding is positive (longs
+            # pay shorts), LONG when negative.
+            direction = 'SHORT' if funding_pct > 0 else 'LONG'
+            leverage = float(cm.drift_leverage if cm else 1)
+            base_amount = max(float(self.position_size_sol) * leverage, 0.0)
+
+            logger.info(
+                f"🎯 Drift signal: {market_name} funding={funding_pct:+.2f}%/yr "
+                f"→ {direction} (base≈{base_amount:.4f}, lev={leverage:.0f}x)"
+            )
+
+            # Cross-module risk gate before any (even simulated) entry.
+            if self.risk_manager:
+                try:
+                    allowed = await self.risk_manager.validate_trade(market_name, base_amount)
+                    if not allowed:
+                        logger.warning(f"⛔ Drift {market_name} blocked by RiskManager")
+                        continue
+                except Exception as e:
+                    logger.warning(f"⚠️ Drift RiskManager check failed: {e} — skipping entry")
+                    continue
+
+            try:
+                tx_sig = await self.drift_helper.open_position(
+                    market_index=market_index,
+                    direction=direction,
+                    base_amount=base_amount,
+                )
+            except Exception as e:
+                logger.error(f"❌ Drift open_position failed for {market_name}: {e}")
+                continue
+
+            if tx_sig:
+                sim_tag = "[DRY_RUN] " if self.dry_run else ""
+                logger.info(f"✅ {sim_tag}Drift {direction} {market_name} opened: {tx_sig}")
+                self._log_trade('OPEN', {
+                    'token': market_name,
+                    'mint': market_name,
+                    'strategy': Strategy.DRIFT.value,
+                    'side': direction,
+                    'amount_sol': base_amount,
+                    'funding_pct_annual': funding_pct,
+                    'tx': tx_sig,
+                })
+            else:
+                logger.info(f"🔶 Drift {market_name}: open_position returned None (guard refused)")
 
     async def _scan_pumpfun_opportunities(self):
         """Scan for Pump.fun new token launches"""
