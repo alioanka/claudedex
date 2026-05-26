@@ -29,6 +29,27 @@ Solana spot trading via Jupiter aggregator with trailing-stop ladder, plus optio
 ## Primary risk-policy gate
 - Cross-module: `core.risk_manager.RiskManager.validate_trade(token_mint, amount_sol)` called in `_open_position` at `solana_engine.py:~3296` immediately before every Jupiter swap broadcast. Injected via `set_risk_manager()` from `main_solana.py`; engine is fail-soft if `RiskManager` construction fails (logs a warning, continues without the gate). Only entries are gated; exits always allowed.
 - Per-module local: position-count ceiling + per-strategy SL/TP percent enforced inside the engine's close-path.
+## Drift perp strategy — setup & usage guide
+**What it is.** Drift Protocol is an on-chain perpetual-futures DEX on Solana. The module trades a funding-carry signal: when a market's annualized funding rate exceeds a threshold it takes the side that COLLECTS funding (SHORT when funding is positive — longs pay shorts — LONG when negative). Wiring lives in `solana_engine.py` `_init_drift` / `_scan_drift_opportunities`; the on-chain SDK calls are in `modules/solana_strategies/drift_helper.py` (`DriftHelper`).
+
+**Dependencies / collateral.**
+- `pip install driftpy` (optional dep; without it Drift runs in DRY_RUN-simulated mode only and cannot trade live).
+- A funded Drift user account: deposit USDC collateral to the Drift sub-account owned by the wallet behind `SOLANA_MODULE_PRIVATE_KEY` (see "Wallet / Account identity"). No collateral -> the leverage guard refuses every entry (account_value=0 fail-closed).
+- Uses the same wallet/keypair as Jupiter spot — no separate Drift wallet.
+
+**Config keys (DB-backed, `solana_drift` section).**
+- `drift_enabled` (default `False`) — toggles the strategy into the run loop.
+- `drift_markets` (default `SOL-PERP,BTC-PERP,ETH-PERP`) — comma list; engine maps names to Drift indices via `DRIFT_MARKET_INDEX` (SOL-PERP=0, BTC-PERP=1, ETH-PERP=2).
+- `drift_leverage` (default 5) — multiplier applied to `position_size_sol` for the perp base size.
+- MB-15 client-side guards (read via `cm.get()`): `drift_max_leverage` (3.0), `drift_max_funding_pct_annual` (50.0), `drift_oracle_deviation_max_pct` (1.0), `drift_min_oracle_conf_bps` (500). All four fail CLOSED inside `DriftHelper.open_position`.
+- Scan tunables (engine constants): `_drift_scan_interval_s` (60s per-market throttle), `_drift_funding_signal_pct` (10%/yr signal threshold).
+
+**How to enable.** Set `drift_enabled=true` (and the desired `drift_markets`) in DB config; ensure `SOLANA_MODULE_ENABLED=true`. Keep `DRY_RUN=true` until verified.
+
+**How to verify it's working (DRY_RUN).** Watch `logs/solana_trading/`. On startup you should see `🔶 DriftHelper chain not connected ... DRY_RUN simulated Drift activity will still run` (no driftpy/collateral) or `✅ DriftHelper initialized`. Then once per `_drift_scan_interval_s` per market: a `🎯 Drift signal: <market> funding=...` line followed by `✅ [DRY_RUN] Drift <SHORT|LONG> <market> opened: DRY_RUN_DRIFT_...`. In DRY_RUN, if chain funding is unavailable the engine synthesizes a funding value (logged `🔶 [DRY_RUN] ... using simulated ...%/yr`) so the path runs end-to-end without a funded account. Entries are gated by `RiskManager.validate_trade` and the killswitch/pause file.
+
+**Going live.** Install driftpy, deposit USDC collateral, confirm `✅ DriftHelper initialized` (NOT the "chain not connected" warning), then flip the module to LIVE. In LIVE the helper enforces all four MB-15 guards and the engine disables Drift entirely if it cannot reach chain (refuses to trade perps blind). Exit/close of perp legs is `DriftHelper.close_position(market_index)` (opposite-side market order); the spot trailing-stop ladder does NOT manage perp exits.
+
 ## Live-trade readiness
 AMBER → GREEN candidate (Jupiter spot; pending production verification). MB-06..MB-10 closed (decimals, co-signers, priority fee, restart reconciliation, DRY_RUN gate); secrets_manager wiring (`8b4ee7d`) and pool_engine sweep (`a21ec41`) landed. Campaign wave-2 additions:
 - **MB-06 residuals (`09a5c85`)** — `_get_token_balance` now resolves decimals on-chain via `core.units.get_spl_decimals` + parsed `tokenAmount.decimals`; the emergency-close path no longer hardcodes `(10 ** 6)` for the Jupiter sell amount.
