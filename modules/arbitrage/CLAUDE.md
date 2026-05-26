@@ -10,6 +10,20 @@ Spatial (cross-DEX) and triangular EVM arbitrage with flash-loan funding (Aave V
 - `rpc_url` — overrides `PoolEngine` selection when set
 - `min_profit_spread` — minimum profit gate before broadcast (accepts fraction `0.005` or percent `0.5`; wired wave-2 A2-06)
 - `gas_budget_usd_per_hour` — hourly rolling cap on USD gas spend per engine; new executions are refused once exceeded (default `$50`; wave-2 A2-07)
+## Wallet / Account identity
+All three chain engines (`ETHArbitrageEngine` / `ARBArbitrageEngine` / `BaseArbitrageEngine`) share ONE signer wallet:
+- Private key: secrets-manager key `PRIVATE_KEY` (DB-backed via `security/secrets_manager`, Fernet-decrypted in `_get_decrypted_key`; env `PRIVATE_KEY` fallback). The stored `WALLET_ADDRESS` is IGNORED — the address is always DERIVED from the private key in `initialize()` (`eth_account.Account.from_key`) into `self.wallet_address`. So ETH/ARB/Base all sign from the SAME EOA; fund that one address with native gas on each chain.
+- Receiver (flash-loan callback) contract, per chain (resolved via secrets_manager first, env fallback):
+  - ETH: `FLASH_LOAN_RECEIVER_CONTRACT_ETH` (fallback `FLASH_LOAN_RECEIVER_CONTRACT`)
+  - ARB: `FLASH_LOAN_RECEIVER_CONTRACT_ARB`
+  - Base: `FLASH_LOAN_RECEIVER_CONTRACT_BASE`
+  The EOA must be the owner of the receiver contract on each chain (it signs + pays gas; the contract receives the Aave callback).
+- Surfaced for the dashboard: `arbitrage_runtime_stats.stats.wallet_address` + `.chain` (public address only, never the key). Visible per chain via `/api/arbitrage/diagnostics`. `null` until `initialize()` runs.
+
+## Positions / close path (issue 6)
+Spatial arbitrage is ATOMIC: each opportunity is a single flash-loan tx (borrow -> buy leg -> sell leg -> repay) that is all-or-nothing. The engine holds NO standing/closeable positions and exposes no `open_position`/`close_position`/`get_positions`. Every fill is written to `arbitrage_trades` with `status='closed'` and `entry_timestamp == exit_timestamp` at write time (`arbitrage_engine.py` ~line 2579). A reverted tx leaves no position — only burnt gas.
+- DASHBOARD ACTION (for dashboard agent): the `/api/arbitrage/positions` endpoint reads `arbitrage_positions WHERE status='open'`, but the engine NEVER writes that table, so it always returns `[]`. The `positions_arbitrage.html` close buttons POST to `/api/arbitrage/position/close` and `/api/arbitrage/positions/close-all` which are NOT registered routes (404). Recommend HIDING/disabling the arbitrage close buttons rather than wiring a no-op close path. There is no failed-leg residue to clean up (atomic revert).
+
 ## Kill switch
 - Global: `logs/.killswitch` (written by `scripts/emergency_stop.py` or `/api/bot/emergency-exit`; polled by BaseModule subprocesses via `core.dry_run.start_killswitch_poller`).
 - Per-module: `logs/.pause_arbitrage` (written by dashboard pause/resume; read by `core.dry_run.is_module_paused`).
