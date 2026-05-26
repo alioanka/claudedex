@@ -228,6 +228,31 @@ class FuturesStrategyConfig(BaseModel):
     # rejecting single-indicator setups. Set 0 to disable.
     min_signal_confluence_count: int = 2
 
+    # FUT-RM-19 (Wave 7): fee + funding aware minimum-edge gate.
+    # The -$59.99 @ 39% loss was dominated by fee/funding bleed: at 39% win
+    # rate the strategy churns trades whose first realistic target (TP1) does
+    # not clear round-trip taker fees (Bybit 0.06% × 2 = 0.12%) + slippage +
+    # adverse funding. Before opening, the engine computes:
+    #   net_edge_pct = TP1_distance_pct
+    #                  - 2*taker_fee_pct - slippage_pct - funding_drag_pct
+    # and refuses entry unless net_edge_pct >= min_net_edge_pct. This directly
+    # subtracts costs from the expected move (the working-rule edge formula:
+    # funding*notional - taker_fees*2 - slippage - liquidation_premium). Set
+    # min_net_edge_pct=0 to disable the gate (NOT recommended for live).
+    min_edge_gate_enabled: bool = True
+    min_net_edge_pct: float = 0.30        # TP1 must beat costs by >= 0.30%
+    edge_slippage_pct: float = 0.05       # modeled round-trip slippage (price %)
+    # funding_drag_pct is computed live from the current funding rate when the
+    # price_client exposes it; this is the conservative fallback used when the
+    # funding rate is unavailable (per-interval, expressed as price %).
+    edge_funding_fallback_pct: float = 0.05
+
+    # FUT-RM-20 (Wave 7): one-entry-per-candle throttle. Scanning every 30s on
+    # a 15m candle re-evaluates the SAME bar ~30 times; without this the engine
+    # can fire repeatedly into the same chop. When enabled, a symbol that was
+    # scanned/entered within the current signal-timeframe candle is skipped.
+    one_entry_per_candle: bool = True
+
     # Additional filters for trade quality
     require_trend_alignment: bool = True  # Trade only in direction of trend
     require_volume_confirmation: bool = True  # Require above-average volume
@@ -748,6 +773,13 @@ class FuturesConfigManager:
             'cooldown_minutes': FuturesConfigType.STRATEGY,
             'require_trend_alignment': FuturesConfigType.STRATEGY,
             'require_volume_confirmation': FuturesConfigType.STRATEGY,
+            'min_signal_confluence_count': FuturesConfigType.STRATEGY,
+            # FUT-RM-19/20 (Wave 7): edge gate + per-candle throttle
+            'min_edge_gate_enabled': FuturesConfigType.STRATEGY,
+            'min_net_edge_pct': FuturesConfigType.STRATEGY,
+            'edge_slippage_pct': FuturesConfigType.STRATEGY,
+            'edge_funding_fallback_pct': FuturesConfigType.STRATEGY,
+            'one_entry_per_candle': FuturesConfigType.STRATEGY,
             # Risk - new market filters
             'require_trend_confirmation': FuturesConfigType.RISK,
             'min_volume_multiplier': FuturesConfigType.RISK,

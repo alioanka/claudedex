@@ -380,6 +380,18 @@ class FuturesTradingEngine:
             self.min_signal_confluence_count = int(getattr(
                 strategy_config, 'min_signal_confluence_count', 2
             ))
+            # FUT-RM-19 (Wave 7): fee + funding aware minimum-edge gate
+            self.min_edge_gate_enabled = bool(getattr(
+                strategy_config, 'min_edge_gate_enabled', True))
+            self.min_net_edge_pct = float(getattr(
+                strategy_config, 'min_net_edge_pct', 0.30))
+            self.edge_slippage_pct = float(getattr(
+                strategy_config, 'edge_slippage_pct', 0.05))
+            self.edge_funding_fallback_pct = float(getattr(
+                strategy_config, 'edge_funding_fallback_pct', 0.05))
+            # FUT-RM-20 (Wave 7): one-entry-per-candle throttle
+            self.one_entry_per_candle = bool(getattr(
+                strategy_config, 'one_entry_per_candle', True))
             self.verbose_signals = strategy_config.verbose_signals
 
         else:
@@ -415,6 +427,12 @@ class FuturesTradingEngine:
             self.min_signal_score = 3  # Lower threshold for more signals
             # FUT-RM-15 (Wave 5): multi-indicator confluence gate (fallback)
             self.min_signal_confluence_count = 2
+            # FUT-RM-19/20 (Wave 7) fallback defaults
+            self.min_edge_gate_enabled = True
+            self.min_net_edge_pct = 0.30
+            self.edge_slippage_pct = 0.05
+            self.edge_funding_fallback_pct = 0.05
+            self.one_entry_per_candle = True
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
 
@@ -431,6 +449,11 @@ class FuturesTradingEngine:
 
         # Cooldowns (symbol -> next_trade_time)
         self.symbol_cooldowns: Dict[str, datetime] = {}
+
+        # FUT-RM-20 (Wave 7): one-entry-per-candle throttle.
+        # symbol -> the candle-open timestamp we last entered on. Prevents the
+        # 30s scan loop from firing repeatedly into the same 15m bar.
+        self._last_entry_candle: Dict[str, datetime] = {}
 
         # Exchange client
         self.exchange_client = None
@@ -1135,6 +1158,21 @@ class FuturesTradingEngine:
                         remaining = (self.symbol_cooldowns[symbol] - datetime.now()).seconds
                         if self.verbose_signals:
                             logger.debug(f"  {symbol}: Skipped - cooldown ({remaining}s remaining)")
+                        continue
+
+                # FUT-RM-20 (Wave 7): one-entry-per-candle throttle. The 30s
+                # scan loop re-evaluates the same 15m bar ~30 times; without
+                # this we can re-enter the same chop repeatedly. Skip if we
+                # already entered this symbol within the current candle.
+                if getattr(self, 'one_entry_per_candle', True):
+                    cur_candle = self._current_candle_open()
+                    last_candle = self._last_entry_candle.get(symbol)
+                    if last_candle is not None and last_candle == cur_candle:
+                        if self.verbose_signals:
+                            logger.debug(
+                                f"  {symbol}: Skipped - already entered this candle "
+                                f"({self.signal_timeframe})"
+                            )
                         continue
 
                 # Check if symbol exists on exchange
@@ -1941,6 +1979,28 @@ class FuturesTradingEngine:
                 self.stop_loss_pct = _orig_sl_pct
                 self.tp1_pct, self.tp2_pct, self.tp3_pct, self.tp4_pct = _orig_tps
 
+            # FUT-RM-19 (Wave 7): fee + funding aware minimum-edge gate.
+            # Refuse entries whose first realistic target (TP1 distance) does
+            # not clear round-trip costs by min_net_edge_pct. This is the
+            # working-rule edge formula: TP1 - 2*taker_fee - slippage -
+            # funding_drag. Cheap; runs before the heavier validator. No order
+            # is placed if it fails, so it is inherently DRY_RUN-safe.
+            if getattr(self, 'min_edge_gate_enabled', True):
+                tp1_dist_pct = float(tp_levels[0]['pct']) if tp_levels else float(self.take_profit_pct)
+                edge = await self._compute_net_edge_pct(symbol, side, tp1_dist_pct)
+                if edge['net_edge_pct'] < float(self.min_net_edge_pct):
+                    msg = (
+                        f"⏭️  FUT-RM-19 edge gate refused {side.value.upper()} "
+                        f"{symbol}: net_edge={edge['net_edge_pct']:.3f}% < "
+                        f"min {self.min_net_edge_pct:.3f}% "
+                        f"(TP1={tp1_dist_pct:.2f}% fees={edge['fee_pct']:.3f}% "
+                        f"slip={edge['slippage_pct']:.3f}% "
+                        f"funding={edge['funding_pct']:+.3f}%)"
+                    )
+                    logger.warning(msg)
+                    self._alert_edge_gate_breach(symbol, side, edge, tp1_dist_pct)
+                    return
+
             if side == TradeSide.LONG:
                 stop_loss_price = current_price * (1 - sl_pct / 100)
                 take_profit_price = tp_levels[0]['price'] if tp_levels else current_price * (1 + self.take_profit_pct / 100)
@@ -2099,6 +2159,9 @@ class FuturesTradingEngine:
             # Add to active positions
             self.active_positions[symbol] = position
             self.risk_metrics.current_exposure += notional
+            # FUT-RM-20 (Wave 7): mark this symbol as entered for the current
+            # candle so the one-entry-per-candle throttle won't re-fire on it.
+            self._last_entry_candle[symbol] = self._current_candle_open()
 
             # Log trade entry with SL/TP details (captured by TradeLogFilter for futures_trades.log)
             logger.info(f"✅ Position opened: {symbol} {side.value.upper()}")
@@ -2355,6 +2418,104 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.debug(f"funding rate fetch failed for {symbol}: {e}")
             return None
+
+    def _current_candle_open(self) -> datetime:
+        """FUT-RM-20 (Wave 7): floor `now` to the open of the current
+        signal-timeframe candle. Used by the one-entry-per-candle throttle so
+        all scans within a single bar map to the same key."""
+        tf = str(getattr(self, 'signal_timeframe', '15m')).strip().lower()
+        unit = 'm'
+        qty = 15
+        # Only parse if it's a well-formed <int><unit> string; anything else
+        # falls back to a safe 15m bucket (avoids a degenerate giant bucket).
+        if len(tf) >= 2 and tf[-1] in ('m', 'h', 'd') and tf[:-1].isdigit():
+            unit = tf[-1]
+            qty = int(tf[:-1])
+        seconds = qty * {'m': 60, 'h': 3600, 'd': 86400}[unit]
+        seconds = max(60, seconds)
+        now = datetime.now()
+        epoch = now.timestamp()
+        floored = epoch - (epoch % seconds)
+        return datetime.fromtimestamp(floored)
+
+    async def _compute_net_edge_pct(
+        self, symbol: str, side: TradeSide, tp1_dist_pct: float
+    ) -> Dict[str, float]:
+        """FUT-RM-19 (Wave 7): expected net edge of a prospective entry, in
+        price-% terms, after subtracting all the costs that ate the operator's
+        -$59.99 @ 39% book.
+
+            net_edge_pct = tp1_dist_pct
+                           - 2 * taker_fee_pct     (round-trip taker fees)
+                           - slippage_pct          (modeled, both legs)
+                           - funding_drag_pct      (adverse only; favorable=0)
+
+        funding_drag is the per-interval funding rate (as a price %) only when
+        it works AGAINST the position direction — a LONG pays positive funding,
+        a SHORT pays negative funding. Favorable funding is floored at 0 here
+        (we do not credit it as edge; that would encourage funding-chasing
+        entries). When the live rate is unavailable we use the conservative
+        edge_funding_fallback_pct so the gate never fails open into free
+        trading. Note tp1_dist_pct is the *price* move to TP1, NOT leveraged —
+        fees/funding are also charged on notional, so comparing in price-%
+        terms is apples-to-apples (leverage scales both sides equally).
+        """
+        # Round-trip taker fee as a price percentage of notional.
+        taker = self.BINANCE_TAKER_FEE if self.exchange == 'binance' else self.BYBIT_TAKER_FEE
+        fee_pct = taker * 2 * 100.0
+        slippage_pct = float(getattr(self, 'edge_slippage_pct', 0.05))
+
+        # Funding drag: only count it when it works against us.
+        funding_pct = float(getattr(self, 'edge_funding_fallback_pct', 0.05))
+        try:
+            rate = await self._get_funding_rate_cached(symbol)
+            if rate is not None:
+                rate_pct = float(rate) * 100.0  # per-interval, as price %
+                if side == TradeSide.LONG:
+                    # LONG pays when funding > 0; favorable when < 0 -> 0 drag.
+                    funding_pct = max(0.0, rate_pct)
+                else:
+                    # SHORT pays when funding < 0.
+                    funding_pct = max(0.0, -rate_pct)
+        except Exception as e:
+            logger.debug(f"edge funding lookup failed for {symbol}: {e}")
+
+        net_edge_pct = tp1_dist_pct - fee_pct - slippage_pct - funding_pct
+        return {
+            'tp1_dist_pct': tp1_dist_pct,
+            'fee_pct': fee_pct,
+            'slippage_pct': slippage_pct,
+            'funding_pct': funding_pct,
+            'net_edge_pct': net_edge_pct,
+        }
+
+    def _alert_edge_gate_breach(
+        self, symbol: str, side: TradeSide, edge: Dict[str, float], tp1_dist_pct: float
+    ) -> None:
+        """FUT-RM-19: surface an edge-gate rejection via monitoring/alerts.py.
+        Best-effort + lazy import so the engine import stays clean and a
+        missing/uninitialized alerts module never blocks the gate (which has
+        already logged + returned). Uses AlertManager.send_alert(alert_type,
+        message, priority) — fired on the running loop via ensure_future so
+        the _open_position caller is not awaited-on here."""
+        try:
+            from monitoring.alerts import AlertManager
+            mgr = getattr(self, '_alert_manager', None)
+            if mgr is None:
+                mgr = AlertManager()
+                self._alert_manager = mgr  # cache one instance
+            side_str = side.value.upper() if hasattr(side, 'value') else str(side)
+            detail = (
+                f"[futures] FUT-RM-19 edge gate: {side_str} {symbol} rejected — "
+                f"net_edge={edge['net_edge_pct']:.3f}% < min {self.min_net_edge_pct:.3f}% "
+                f"(TP1={tp1_dist_pct:.2f}% fee={edge['fee_pct']:.3f}% "
+                f"slip={edge['slippage_pct']:.3f}% funding={edge['funding_pct']:+.3f}%)"
+            )
+            asyncio.ensure_future(
+                mgr.send_alert('futures_edge_gate', detail, 'low')
+            )
+        except Exception as e:
+            logger.debug(f"edge-gate alert dispatch failed (non-fatal): {e}")
 
     async def _auto_deleverage_if_needed(self) -> bool:
         """FUT-RM-10 (Wave 3): wire the unused should_auto_deleverage() check.
