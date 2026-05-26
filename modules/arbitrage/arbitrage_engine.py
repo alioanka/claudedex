@@ -1211,6 +1211,12 @@ class EVMArbitrageEngine:
                 'min_profit_threshold_base': float(self._min_profit_threshold_base),
                 'chain_id': self.chain_id,
                 'chain_name': self.chain_name,
+                # Wallet identity (issue 15): surface the resolved public signer
+                # address + chain so the dashboard can show the operator WHICH
+                # wallet to fund per chain. Never the private key. None until
+                # initialize() derives it from the PRIVATE_KEY secret.
+                'wallet_address': self.wallet_address,
+                'chain': self.chain_name,
                 'realized_slip_keys': len(self._realized_slip_cache),
                 'realized_slip_trusted_keys': sum(
                     1 for v in self._realized_slip_cache.values()
