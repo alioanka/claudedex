@@ -128,6 +128,9 @@ class SniperEngine:
         # Emergency brake against runaway position accumulation
         # (DRY_RUN stress test hit 10k+ positions in 22h).
         self.max_active_positions = 500
+        # Per-cap-slot gas/fee buffer (USD) used by the funding recommendation
+        # surfaced for the operator. Conservative default; DB-overridable.
+        self.gas_buffer_usd = 0.50
         # SNIPE-RM-12: per-position max hold. 0 = disabled (keep
         # back-compat with existing deployments that have no
         # max_hold_minutes row in config_settings).
@@ -238,6 +241,8 @@ class SniperEngine:
                             self.max_active_positions = int(val) if val else 500
                         elif key == 'max_hold_minutes':
                             self.max_hold_minutes = int(val) if val else 0
+                        elif key == 'gas_buffer_usd':
+                            self.gas_buffer_usd = float(val) if val else 0.50
                         elif key == 'sniper_pyth_feeds_enabled':
                             self.sniper_pyth_feeds_enabled = (
                                 val.lower() in ('true', '1', 'yes') if val else True
@@ -695,6 +700,27 @@ class SniperEngine:
             except Exception:
                 snapshot['active_positions_effective'] = snapshot['active_positions']
 
+            # Funding guidance (issue 12). Surface the USD notional already
+            # committed to open positions plus a recommended wallet balance so
+            # the operator gets a concrete number to fund for LIVE. Math is
+            # documented in modules/sniper/CLAUDE.md.
+            try:
+                funding = await self._compute_funding_recommendation()
+                snapshot.update(funding)
+            except Exception as e:
+                logger.debug(f"funding recommendation failed (non-fatal): {e}")
+
+            # Wallet identity (issue 15). Public address only — NEVER the key.
+            # Sniper Solana shares SOLANA_MODULE_WALLET with the solana_trading
+            # module; EVM uses WALLET_ADDRESS / EVM_WALLET_ADDRESS.
+            snapshot['wallet_address'] = (
+                getattr(self, 'solana_wallet', None)
+                or getattr(self, 'evm_wallet', None)
+                or None
+            )
+            snapshot['solana_wallet_address'] = getattr(self, 'solana_wallet', None) or None
+            snapshot['evm_wallet_address'] = getattr(self, 'evm_wallet', None) or None
+
             import json as _json
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
@@ -706,6 +732,57 @@ class SniperEngine:
         except Exception as e:
             # Pure observability — never block trading
             logger.debug(f"_persist_runtime_stats failed (non-fatal): {e}")
+
+    async def _compute_funding_recommendation(self) -> Dict:
+        """Compute open notional + recommended wallet funding (issue 12).
+
+        open_notional_usd       = SUM(entry_usd) over open sniper_trades rows.
+        recommended_funding_usd = open_notional_usd
+                                  + headroom to fill the remaining cap slots
+                                    at the average open-position entry size
+                                  + a flat per-slot gas buffer.
+
+        Gas buffer is per *cap slot* (max_active_positions), not per current
+        open count, because the operator must fund for the worst case where
+        the cap fully fills. Solana priority-fee + base-fee is tiny (~$0.01),
+        EVM snipe gas is larger; we use a conservative SNIPER_GAS_BUFFER_USD
+        per slot (default $0.50, DB-overridable). Fail-soft to zeros.
+        """
+        result = {
+            'open_notional_usd': 0.0,
+            'avg_entry_usd': 0.0,
+            'recommended_funding_usd': 0.0,
+            'gas_buffer_usd_per_slot': float(getattr(self, 'gas_buffer_usd', 0.50)),
+        }
+        if not self.db_pool:
+            return result
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT COUNT(*) AS n, COALESCE(SUM(entry_usd), 0) AS total, "
+                    "COALESCE(AVG(entry_usd), 0) AS avg FROM sniper_trades "
+                    "WHERE status = 'open'"
+                )
+            open_count = int(row['n'] or 0)
+            open_notional = float(row['total'] or 0)
+            avg_entry = float(row['avg'] or 0)
+            # If no open rows yet, size headroom off the configured trade size.
+            if avg_entry <= 0:
+                avg_entry = float(self.trade_amount)
+            cap = int(self.max_active_positions)
+            remaining_slots = max(0, cap - open_count)
+            gas_per_slot = float(getattr(self, 'gas_buffer_usd', 0.50))
+            recommended = (
+                open_notional
+                + remaining_slots * avg_entry
+                + cap * gas_per_slot
+            )
+            result['open_notional_usd'] = round(open_notional, 2)
+            result['avg_entry_usd'] = round(avg_entry, 4)
+            result['recommended_funding_usd'] = round(recommended, 2)
+        except Exception as e:
+            logger.debug(f"_compute_funding_recommendation DB error: {e}")
+        return result
 
     async def _process_targets(self):
         """Execute buy orders for pending targets"""
