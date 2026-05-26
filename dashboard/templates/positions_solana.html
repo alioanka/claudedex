@@ -377,7 +377,8 @@ async function closeSolanaPosition(mint, symbol) {
     try {
         const response = await fetch('/api/solana/close-position', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin',
             body: JSON.stringify({mint: mint})
         });
 
@@ -403,7 +404,8 @@ async function closeAllPositions() {
     try {
         const response = await fetch('/api/solana/close-all-positions', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin'
         });
 
         const result = await response.json();

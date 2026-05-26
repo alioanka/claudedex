@@ -932,7 +932,8 @@ async function closePosition(tokenAddress) {
     try {
         const response = await fetch('/api/sniper/position/close', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin',
             body: JSON.stringify({ symbol: tokenAddress })
         });
 
@@ -952,7 +953,11 @@ async function closeAllPositions() {
     if (!confirm('Close ALL positions?')) return;
 
     try {
-        const response = await fetch('/api/sniper/positions/close-all', { method: 'POST' });
+        const response = await fetch('/api/sniper/positions/close-all', {
+            method: 'POST',
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin'
+        });
         const data = await response.json();
         alert(data.message || 'Closed all positions');
     } catch (e) {

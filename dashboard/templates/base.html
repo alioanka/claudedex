@@ -556,6 +556,25 @@
         <a href="/orchestrator" style="color:#1a1a1a; text-decoration:underline; margin-left:12px;">View trips</a>
     </div>
     <script>
+    // Global CSRF helper (MB-27 double-submit cookie). The dashboard's CSRF
+    // middleware (auth/csrf.py) 403s any POST/PUT/DELETE/PATCH whose
+    // X-CSRF-Token header does not match the csrf_token cookie. Define this
+    // once on window so every page (including module close buttons) echoes
+    // the cookie token. Fixes issue 9 (Solana close "CSRF token missing or
+    // invalid") and issue 6 (Solana/Futures/Sniper close buttons).
+    if (typeof window.withCsrfHeaders !== 'function') {
+        window.withCsrfHeaders = function (method, extra) {
+            const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+            const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            const mutating = ['POST', 'PUT', 'DELETE', 'PATCH'];
+            if (m && (method === undefined || mutating.indexOf(String(method).toUpperCase()) !== -1)) {
+                headers['X-CSRF-Token'] = decodeURIComponent(m[1]);
+            }
+            return headers;
+        };
+    }
+    </script>
+    <script>
     (function () {
         async function checkBreakerAlerts() {
             try {
