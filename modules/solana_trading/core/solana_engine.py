@@ -1144,6 +1144,19 @@ class SolanaTradingEngine:
         self.wallet = None
         self.wallet_pubkey = None
 
+        # Wallet-balance fetch throttle + fail-soft cache (Issue 22).
+        # Health/metrics endpoints can be polled many times per second; an
+        # uncached RPC get_balance per request was producing millions of
+        # "Error getting wallet balance:" log lines on RPC failure. We cache
+        # the last good value, throttle the poll, and exponentially back off
+        # error logging so the flood is impossible.
+        self._wallet_balance_cache_sol = 0.0
+        self._wallet_balance_cache_ts = 0.0
+        self._wallet_balance_ttl_s = 15.0          # min seconds between RPC reads
+        self._wallet_balance_error_streak = 0
+        self._wallet_balance_last_err_log = 0.0
+        self._wallet_balance_err_log_interval_s = 30.0  # cap error log rate
+
         # Strategy clients (price/quote APIs)
         self.jupiter_client: Optional[JupiterClient] = None
         self.drift_client = None
@@ -1658,19 +1671,53 @@ class SolanaTradingEngine:
         except Exception as e:
             logger.error(f"Pump.fun initialization failed: {e}")
 
-    async def _get_wallet_balance(self) -> float:
-        """Get wallet SOL balance"""
+    async def _get_wallet_balance(self, *, force: bool = False) -> float:
+        """Get wallet SOL balance (throttled + fail-soft, Issue 22).
+
+        Caches the last good balance for `_wallet_balance_ttl_s`; returns the
+        cached value within the TTL so high-frequency health/metrics polls do
+        not generate one RPC call (and one potential error line) each. On RPC
+        failure we keep returning the last good balance and rate-limit the
+        error log (logging type + repr so empty-str exceptions stay
+        diagnosable). `force=True` bypasses the TTL for pre-trade checks.
+        """
+        now = time.time()
+
+        if self.wallet_pubkey is None or self.client is None:
+            return self._wallet_balance_cache_sol
+
+        # Serve from cache inside the TTL window unless a caller forces a read.
+        if not force and (now - self._wallet_balance_cache_ts) < self._wallet_balance_ttl_s:
+            return self._wallet_balance_cache_sol
+
         try:
             from solders.pubkey import Pubkey
 
             pubkey = Pubkey.from_string(self.wallet_pubkey)
             response = await self.client.get_balance(pubkey)
             if response.value is not None:
-                return response.value / self.LAMPORTS_PER_SOL
-            return 0.0
+                self._wallet_balance_cache_sol = response.value / self.LAMPORTS_PER_SOL
+            self._wallet_balance_cache_ts = now
+            self._wallet_balance_error_streak = 0
+            return self._wallet_balance_cache_sol
         except Exception as e:
-            logger.error(f"Error getting wallet balance: {e}")
-            return 0.0
+            # Push out the next RPC attempt so a hard-down endpoint does not get
+            # hammered every call: back off the cache timestamp into the future.
+            self._wallet_balance_error_streak += 1
+            backoff = min(self._wallet_balance_ttl_s * self._wallet_balance_error_streak, 120.0)
+            self._wallet_balance_cache_ts = now - self._wallet_balance_ttl_s + backoff
+
+            # Rate-limit the error log; include TYPE + repr so an empty str(e)
+            # (the symptom from the VPS flood) is still diagnosable.
+            if (now - self._wallet_balance_last_err_log) >= self._wallet_balance_err_log_interval_s:
+                self._wallet_balance_last_err_log = now
+                logger.error(
+                    f"Error getting wallet balance "
+                    f"(streak={self._wallet_balance_error_streak}): "
+                    f"{type(e).__name__}: {e!r}"
+                )
+            # Fail-soft: keep serving last good balance, never crash the loop.
+            return self._wallet_balance_cache_sol
 
     async def _ml_rug_probability(
         self,
@@ -2905,8 +2952,13 @@ class SolanaTradingEngine:
         last_check_time = trailing.get('last_check_time', time.time())
         time_since_last_check = time.time() - last_check_time
 
-        # Calculate decline from last check
-        if last_price > 0 and time_since_last_check > 0:
+        # Calculate decline from last check.
+        # Guard on current_price > 0: a zero/None price is a FEED FAILURE
+        # (Jupiter/Birdeye quote miss), not a real crash. Without this guard a
+        # single bad read yields decline_pct == 100% and fires "RAPID CRASH
+        # DETECTED" every cycle (last_price is never updated because we return
+        # before line 3030), which is the repeated-firing symptom on the VPS.
+        if last_price > 0 and current_price > 0 and time_since_last_check > 0:
             decline_pct = ((last_price - current_price) / last_price) * 100
 
             # EMERGENCY EXIT CRITERIA:
@@ -3780,7 +3832,7 @@ class SolanaTradingEngine:
             else:
                 # Check wallet balance before executing swap
                 try:
-                    wallet_balance = await self._get_wallet_balance()
+                    wallet_balance = await self._get_wallet_balance(force=True)
                     # Need enough SOL for swap amount plus gas (0.01 SOL buffer)
                     min_required = amount_sol + 0.01
                     if wallet_balance < min_required:
