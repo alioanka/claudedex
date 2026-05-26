@@ -9792,7 +9792,7 @@ class DashboardEndpoints:
                                        rt.get('active_positions', 0)) or 0
                             )
                             stats['runtime_stats_age_seconds'] = int(
-                                (datetime.now() - runtime_row['updated_at']).total_seconds()
+                                (datetime.now(timezone.utc) - _as_utc(runtime_row['updated_at'])).total_seconds()
                             ) if runtime_row['updated_at'] else None
                     except Exception as rt_err:
                         logger.debug(f"sniper_runtime_stats read failed (non-fatal): {rt_err}")
@@ -11418,7 +11418,7 @@ class DashboardEndpoints:
 
                     # Skip very recent positions (less than 1 hour old)
                     if pos['entry_timestamp']:
-                        age_hours = (datetime.now() - pos['entry_timestamp']).total_seconds() / 3600
+                        age_hours = (datetime.now(timezone.utc) - _as_utc(pos['entry_timestamp'])).total_seconds() / 3600
                         if age_hours < 1:
                             continue
 
@@ -13413,7 +13413,7 @@ class DashboardEndpoints:
                     if latest:
                         score = float(latest['score'])
                         if enabled and latest.get('timestamp'):
-                            age = (datetime.now() - latest['timestamp']).total_seconds()
+                            age = (datetime.now(timezone.utc) - _as_utc(latest['timestamp'])).total_seconds()
                             if age <= 1800:
                                 stats['status'] = 'Running'
                                 stats['status_reason'] = f'last tick {int(age)}s ago'
