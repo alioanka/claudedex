@@ -813,6 +813,17 @@ class CopyTradingEngine(BaseModule):
                 )
 
             await self.executor.initialize()
+            # Adopt the executor's async-resolved Solana RPC (issue 17b):
+            # the engine's __init__ resolves solana_rpc_url synchronously
+            # BEFORE the db_pool/secrets bootstrap, so it can't see the
+            # DB-stored Helius key. The executor resolves it correctly in
+            # its async initialize(); the engine's _monitor_solana_wallets
+            # reads self.solana_rpc_url, so mirror the resolved value here.
+            if getattr(self.executor, 'solana_rpc_url', None):
+                self.solana_rpc_url = self.executor.solana_rpc_url
+            # Surface the resolved PUBLIC execution wallet addresses to the
+            # dashboard (issue 15). Public addresses only; fail-soft.
+            await self._persist_execution_wallets()
             await self._load_settings()
             return True
         except Exception as e:
@@ -2491,6 +2502,58 @@ class CopyTradingEngine(BaseModule):
 
         except Exception as e:
             logger.debug(f"Error updating wallet stats: {e}")
+
+    def get_execution_wallets(self) -> Dict[str, Optional[str]]:
+        """Return the bot's OWN execution wallet PUBLIC addresses per chain
+        (issue 15 wallet identity). These are the wallets that broadcast the
+        mirrored trades — distinct from the leader `targets` being copied.
+
+        NEVER returns private keys/keypairs — public addresses only. Values
+        are None until executor.initialize() resolves them from secrets.
+
+        Sources:
+          - EVM:    secrets key WALLET_ADDRESS / private key PRIVATE_KEY
+          - Solana: secrets key SOLANA_MODULE_WALLET / keypair
+                    SOLANA_MODULE_PRIVATE_KEY
+        """
+        evm = getattr(self.executor, 'evm_wallet', None) if self.executor else None
+        sol = getattr(self.executor, 'solana_wallet', None) if self.executor else None
+        return {
+            'evm': {
+                'address': evm,
+                'address_secret_key': 'WALLET_ADDRESS',
+                'private_key_secret_key': 'PRIVATE_KEY',
+            },
+            'solana': {
+                'address': sol,
+                'address_secret_key': 'SOLANA_MODULE_WALLET',
+                'private_key_secret_key': 'SOLANA_MODULE_PRIVATE_KEY',
+            },
+        }
+
+    async def _persist_execution_wallets(self) -> None:
+        """Persist the resolved PUBLIC execution addresses to
+        config_settings(config_type='copytrading_diagnostics') so the
+        dashboard can show the operator WHICH wallet funds copy trades on
+        each chain. Public addresses only — never the key. Fail-soft."""
+        if not self.db_pool:
+            return
+        wallets = self.get_execution_wallets()
+        try:
+            async with self.db_pool.acquire() as conn:
+                for key, addr in (
+                    ('evm_execution_wallet', wallets['evm']['address']),
+                    ('solana_execution_wallet', wallets['solana']['address']),
+                ):
+                    await conn.execute(
+                        "INSERT INTO config_settings (config_type, key, value) "
+                        "VALUES ('copytrading_diagnostics', $1, $2) "
+                        "ON CONFLICT (config_type, key) DO UPDATE SET value = $2",
+                        key, addr or '',
+                    )
+        except Exception as e:
+            # Pure observability; never block the engine.
+            logger.debug(f"_persist_execution_wallets failed (non-fatal): {e}")
 
     async def get_positions(self) -> List[Dict]:
         """Return open copy-trade positions from the DB.
