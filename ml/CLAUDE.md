@@ -32,7 +32,8 @@ which mirrors `extract_features` field-for-field.
 
 `EnsemblePredictor.retrain(training_data)` now **reindexes the training
 DataFrame to `ENSEMBLE_FEATURE_NAMES` before fitting** the scaler and models,
-and persists `feature_names.json` in that same canonical order. This makes
+and persists the feature list (as `models/features.json`) in that same
+canonical order. This makes
 train-time and inference-time feature order match *by construction*. If you
 add/remove/reorder a feature in `extract_features`, update
 `ENSEMBLE_FEATURE_NAMES` in lock-step and retrain (old artifacts are invalid).
@@ -49,7 +50,7 @@ As of Wave-9, `scripts/retrain_models.py` trains three *separate* models
 `ml/models/` with names like `latest` / `volume_validator_latest.pkl`. It
 **never** constructs `EnsemblePredictor` and **never** writes the artifacts the
 engine reads (`models/scaler.pkl`, `models/xgboost_rug.pkl`,
-`models/feature_names.json`, ...). Two consequences:
+`models/features.json`, ...). Two consequences:
 
 - **Path mismatch:** retrain → `ml/models/`; ensemble reads → `models/`.
 - **Model mismatch:** running today's `retrain_models.py` does NOT flip
@@ -76,7 +77,8 @@ gates ensemble activation.
    ```
    `save_models()` writes `models/{xgboost_rug,xgboost_pump,lightgbm_rug,
    lightgbm_pump,random_forest,gradient_boosting,isolation_forest}.pkl`,
-   `models/scaler.pkl`, and `models/feature_names.json`.
+   `models/scaler.pkl`, and `models/features.json` (the feature-name list, in
+   canonical order — this is the filename `load_models()` reads back).
 3. Restart the DEX module (or any process holding the `TradingBotEngine`) so
    `load_models()` re-reads `models/`.
 4. **Confirm activation:** watch the DEX log for the per-opportunity line
@@ -90,7 +92,7 @@ gates ensemble activation.
 ## Model versioning
 
 Per project rule, any trainer that writes ensemble artifacts must stamp a model
-version in DB. `save_models()` writes `models/feature_names.json` (the schema
+version in DB. `save_models()` writes `models/features.json` (the schema
 fingerprint). When the DB-backed ensemble retrain entrypoint is built, it must
 also record a `model_version` row (e.g. in `config_settings` or a
 `model_registry` table) alongside the artifact write so the dashboard can show
