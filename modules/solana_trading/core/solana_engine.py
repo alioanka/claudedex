@@ -2295,26 +2295,38 @@ class SolanaTradingEngine:
 
         for row in rows:
             mint = row['token_mint']
-            try:
-                decimals = await get_spl_decimals(mint)
-            except Exception:
-                decimals = 6  # safe fallback for the balance call only
 
-            try:
-                balance = await self._get_token_balance(mint, decimals)
-            except Exception as e:
-                logger.warning(
-                    f"Reconcile: balance fetch failed for {mint[:8]}: {e} — leaving row, skipping restore"
-                )
-                continue
+            # Issue 8: a simulated (DRY_RUN) position has NO on-chain footprint
+            # by definition, so the on-chain balance is always 0. Reconciling it
+            # against chain state wrongly classified every sim position as a
+            # "phantom" and DELETED it on restart — which is exactly why the
+            # dashboard "Active Positions" pane was empty for 7 open DRY_RUN
+            # positions. Restore sim rows directly from the DB row instead.
+            row_is_simulated = bool(row['is_simulated'])
 
-            if balance <= 0:
-                await self._remove_position_from_db(mint)
-                phantom += 1
-                logger.warning(
-                    f"👻 Phantom position dropped: {row.get('token_symbol') or mint[:8]} (on-chain balance 0)"
-                )
-                continue
+            if row_is_simulated:
+                balance = float(row['amount'] or 0.0)
+            else:
+                try:
+                    decimals = await get_spl_decimals(mint)
+                except Exception:
+                    decimals = 6  # safe fallback for the balance call only
+
+                try:
+                    balance = await self._get_token_balance(mint, decimals)
+                except Exception as e:
+                    logger.warning(
+                        f"Reconcile: balance fetch failed for {mint[:8]}: {e} — leaving row, skipping restore"
+                    )
+                    continue
+
+                if balance <= 0:
+                    await self._remove_position_from_db(mint)
+                    phantom += 1
+                    logger.warning(
+                        f"👻 Phantom position dropped: {row.get('token_symbol') or mint[:8]} (on-chain balance 0)"
+                    )
+                    continue
 
             strategy_name = row['strategy'] or 'jupiter'
             try:
