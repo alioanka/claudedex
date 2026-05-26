@@ -241,14 +241,41 @@ class CopyTradeExecutor:
         timeout = aiohttp.ClientTimeout(total=30)
         self.session = aiohttp.ClientSession(timeout=timeout)
 
-        # Load Solana RPC - PoolEngine first (async ctx), .env preserved as ultimate fallback
-        self.solana_rpc_url = (
-            await RPCProvider.get_rpc('SOLANA_RPC')
-            or os.getenv('SOLANA_RPC_URL')
-        )
-
         # Load all credentials from secrets manager (database/Docker secrets)
         from security.secrets_manager import secrets
+        # Ensure the secrets manager is out of bootstrap mode so the
+        # DB-backed encrypted Helius key resolves (issue 17). Mirrors the
+        # guard in _get_decrypted_key.
+        if self.db_pool and (not secrets._initialized or secrets._db_pool is None or secrets._bootstrap_mode):
+            try:
+                secrets.initialize(self.db_pool)
+            except Exception:
+                pass
+
+        # Resolve Solana RPC. Wave-7 (issue 17b): prefer the Helius
+        # endpoint when a HELIUS_API_KEY is configured (it lives in the
+        # encrypted DB, so resolve it via get_async AFTER db_pool init).
+        # Public RPCs throttle the 15s monitor loop and spam
+        # "Solana RPC rate limited - backing off". Helius (paid) does not.
+        # Fall back: PoolEngine SOLANA_RPC -> .env SOLANA_RPC_URL.
+        helius_key = None
+        try:
+            helius_key = await secrets.get_async('HELIUS_API_KEY', log_access=False)
+        except Exception as e:
+            logger.debug(f"Helius key lookup failed: {e}")
+        if not helius_key:
+            helius_key = os.getenv('HELIUS_API_KEY')
+        self.solana_rpc_url = None
+        if helius_key:
+            self.solana_rpc_url = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+            logger.info("   Solana RPC: using Helius endpoint")
+        if not self.solana_rpc_url:
+            self.solana_rpc_url = (
+                await RPCProvider.get_rpc('SOLANA_RPC')
+                or os.getenv('SOLANA_RPC_URL')
+            )
+            if self.solana_rpc_url:
+                logger.info("   Solana RPC: using PoolEngine/.env fallback (no Helius key)")
 
         # Load Solana credentials from secrets manager
         self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
@@ -1153,12 +1180,18 @@ class CopyTradingEngine(BaseModule):
                         if resp.status == 429:
                             logger.warning("⚠️ Solana RPC rate limited - backing off")
                             try:
-                                await RPCProvider.report_rate_limit('SOLANA_RPC', self.solana_rpc_url, 300)
-                                # Try to get a new RPC endpoint
-                                new_url = await RPCProvider.get_rpc('SOLANA_RPC')
-                                if new_url and new_url != self.solana_rpc_url:
-                                    self.solana_rpc_url = new_url
-                                    logger.info("🔄 Rotated to new Solana RPC")
+                                # Don't rotate AWAY from Helius to a public
+                                # endpoint — Helius is the high-rate provider
+                                # (issue 17b). A public fallback would just
+                                # 429 again. Only rotate when we're already on
+                                # a non-Helius endpoint.
+                                on_helius = 'helius' in (self.solana_rpc_url or '').lower()
+                                if not on_helius:
+                                    await RPCProvider.report_rate_limit('SOLANA_RPC', self.solana_rpc_url, 300)
+                                    new_url = await RPCProvider.get_rpc('SOLANA_RPC')
+                                    if new_url and new_url != self.solana_rpc_url:
+                                        self.solana_rpc_url = new_url
+                                        logger.info("🔄 Rotated to new Solana RPC")
                             except Exception:
                                 pass
                             await asyncio.sleep(30)

@@ -91,31 +91,25 @@ async def main():
     except Exception as e:
         logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
-    # Check for API keys and RPC URLs - use Pool Engine for RPC management
-    try:
-        from security.secrets_manager import secrets
-        etherscan_key = secrets.get('ETHERSCAN_API_KEY', log_access=False)
-        helius_key = secrets.get('HELIUS_API_KEY', log_access=False)
-    except Exception:
-        # Fallback to env if secrets manager unavailable
-        etherscan_key = os.getenv('ETHERSCAN_API_KEY')
-        helius_key = os.getenv('HELIUS_API_KEY')
+    # Wave-7 fix (issue 17a, mirrors AI commit cca8d94): the copy module's
+    # API keys (ETHERSCAN_API_KEY / HELIUS_API_KEY) live in the encrypted
+    # `secure_credentials` DB table, NOT in .env. The previous code read
+    # `secrets.get(...)` HERE — BEFORE the db_pool was created and BEFORE
+    # `secrets.initialize(db_pool)`. The secrets manager was still in
+    # bootstrap mode, so it fell back to os.getenv (None for DB-only ops)
+    # and logged "ETHERSCAN_API_KEY: NOT SET" / "HELIUS_API_KEY: Not set"
+    # even though both were configured. The Solana RPC was likewise
+    # resolved via the public .env fallback (hence the constant
+    # "Solana RPC rate limited" spam) because the Helius key wasn't
+    # available to build the Helius endpoint.
+    #
+    # Resolution: connect the DB FIRST, initialize the secrets manager
+    # with the pool, THEN resolve the keys via get_async (the sync get()
+    # short-circuits inside a running event loop — see secrets_manager
+    # _get_from_database_sync). Only after the Helius key resolves do we
+    # pick the Solana RPC, preferring Helius over any public endpoint.
 
-    # Use Pool Engine for Solana RPC
-    solana_rpc = None
-    if RPCProvider:
-        solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
-    if not solana_rpc:
-        solana_rpc = os.getenv('SOLANA_RPC_URL')
-
-    logger.info(f"   ETHERSCAN_API_KEY: {'Configured' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
-    logger.info(f"   SOLANA_RPC_URL: {'Configured' if solana_rpc else 'NOT SET - Solana monitoring disabled'}")
-    logger.info(f"   HELIUS_API_KEY: {'Configured' if helius_key else 'Not set (optional)'}")
-
-    if not etherscan_key and not solana_rpc:
-        logger.warning("⚠️ No API keys configured - Copy Trading will not monitor any wallets")
-
-    # Init DB - Use Docker secrets or environment
+    # Init DB FIRST - Use Docker secrets or environment
     try:
         from security.docker_secrets import get_database_url
         db_url = get_database_url()
@@ -141,6 +135,45 @@ async def main():
         logger.info("✅ Secrets manager initialized with database")
     except Exception as e:
         logger.warning(f"Could not initialize secrets manager: {e}")
+
+    # Now resolve API keys AFTER the secrets manager has the db_pool, so
+    # the DB-backed encrypted credentials path is taken instead of the
+    # bootstrap-mode os.getenv fallback.
+    etherscan_key = None
+    helius_key = None
+    try:
+        from security.secrets_manager import secrets as _secrets
+        etherscan_key = await _secrets.get_async('ETHERSCAN_API_KEY', log_access=False)
+        helius_key = await _secrets.get_async('HELIUS_API_KEY', log_access=False)
+    except Exception as e:
+        logger.warning(f"   secrets_manager lookup failed: {e}; falling back to env")
+    # .env fallback (gradual-migration support)
+    if not etherscan_key:
+        etherscan_key = os.getenv('ETHERSCAN_API_KEY')
+    if not helius_key:
+        helius_key = os.getenv('HELIUS_API_KEY')
+
+    # Resolve the Solana RPC AFTER the Helius key is known. Prefer Helius
+    # (paid, high-rate) over any public endpoint so the run-loop stops
+    # getting 429-throttled. PoolEngine is initialised later by the
+    # engine; here we build the Helius RPC URL directly from the key.
+    solana_rpc = None
+    if helius_key:
+        solana_rpc = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    if not solana_rpc and RPCProvider:
+        solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+    if not solana_rpc:
+        solana_rpc = os.getenv('SOLANA_RPC_URL')
+
+    rpc_is_helius = bool(helius_key) and bool(solana_rpc) and 'helius' in solana_rpc.lower()
+    logger.info(f"   ETHERSCAN_API_KEY: {'SET' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
+    logger.info(f"   HELIUS_API_KEY: {'SET' if helius_key else 'Not set (optional)'}")
+    logger.info(
+        f"   SOLANA_RPC: {'SET (Helius)' if rpc_is_helius else ('SET (public/fallback)' if solana_rpc else 'NOT SET - Solana monitoring disabled')}"
+    )
+
+    if not etherscan_key and not solana_rpc:
+        logger.warning("⚠️ No API keys configured - Copy Trading will not monitor any wallets")
 
     # Init Config
     config_manager = ConfigManager()
