@@ -79,6 +79,27 @@
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
         gap: 16px;
     }
+    /* ISSUE 15: Funding / Accounts panel */
+    .funding-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 14px;
+    }
+    .funding-card {
+        background: #1e293b; border-radius: 12px; padding: 16px;
+        border: 1px solid #334155;
+    }
+    .funding-card h4 { margin: 0 0 10px 0; font-size: 0.95rem; color: #e2e8f0; }
+    .funding-row { display: flex; justify-content: space-between; gap: 10px; margin: 6px 0; font-size: 0.82rem; }
+    .funding-row .label { color: #94a3b8; white-space: nowrap; }
+    .funding-row .addr {
+        color: #e2e8f0; font-family: monospace; word-break: break-all; text-align: right;
+        cursor: pointer;
+    }
+    .funding-row .addr:hover { color: #60a5fa; }
+    .funding-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; }
+    .funding-badge.ok { background: rgba(16,185,129,0.2); color: #10b981; }
+    .funding-badge.pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
     .module-card {
         background: #1e293b;
         border-radius: 12px;
@@ -274,6 +295,19 @@
         <div class="loading-placeholder" style="grid-column: 1 / -1; text-align: center; padding: 40px; color: #64748b;">
             <i class="fas fa-spinner fa-spin fa-2x"></i>
             <p>Loading modules...</p>
+        </div>
+    </div>
+</div>
+
+<!-- Funding / Accounts Section (ISSUE 15) -->
+<div class="modules-section" id="fundingSection">
+    <div class="section-header">
+        <h2><i class="fas fa-wallet"></i> Funding / Accounts</h2>
+        <span style="color:#64748b;font-size:0.85rem;">Public addresses only — which wallet/exchange funds each module for LIVE</span>
+    </div>
+    <div class="funding-grid" id="fundingGrid">
+        <div class="loading-placeholder" style="grid-column: 1 / -1; text-align:center; padding:24px; color:#64748b;">
+            <i class="fas fa-spinner fa-spin"></i> Loading accounts...
         </div>
     </div>
 </div>
@@ -476,6 +510,7 @@
             await Promise.all([
                 loadPortfolioData(),
                 loadModulesData(),
+                loadFundingAccounts(),
                 loadChartsData()
             ]);
             if (lastEl) lastEl.textContent = attemptTime;
@@ -623,6 +658,64 @@
 
         document.getElementById('activeModules').textContent = `${activeCount}/${ALL_MODULES.length}`;
         document.getElementById('moduleHealth').textContent = activeCount === ALL_MODULES.length ? 'All systems operational' : `${ALL_MODULES.length - activeCount} module(s) offline`;
+    }
+
+    // =============== FUNDING / ACCOUNTS (ISSUE 15) ===============
+    const FUNDING_LABELS = {
+        dex_trading: 'DEX Trading', solana_trading: 'Solana', futures_trading: 'Futures',
+        sniper: 'Sniper', arbitrage: 'Arbitrage', copy_trading: 'Copy Trading',
+        ai_analysis: 'AI Analysis',
+    };
+
+    async function loadFundingAccounts() {
+        try {
+            const res = await fetch('/api/funding/accounts');
+            const data = await res.json();
+            renderFundingAccounts((data.success && data.data && data.data.accounts) || {});
+        } catch (e) {
+            console.error('Error loading funding accounts:', e);
+            renderFundingAccounts({});
+        }
+    }
+
+    function _fundRow(label, value, isAddr) {
+        if (value === undefined || value === null || value === '') return '';
+        const cls = isAddr ? 'addr' : '';
+        const onclick = isAddr ? ` onclick="navigator.clipboard && navigator.clipboard.writeText('${value}')" title="Click to copy"` : '';
+        return `<div class="funding-row"><span class="label">${label}</span><span class="${cls}"${onclick}>${value}</span></div>`;
+    }
+
+    function renderFundingAccounts(accounts) {
+        const grid = document.getElementById('fundingGrid');
+        if (!grid) return;
+        const ids = Object.keys(FUNDING_LABELS);
+        grid.innerHTML = ids.map(id => {
+            const a = accounts[id] || { status: 'not initialized' };
+            const ok = a.status === 'initialized';
+            const badgeCls = ok ? 'ok' : 'pending';
+            let rows = '';
+            // EVM / Solana / generic wallet
+            rows += _fundRow('Wallet', a.wallet_address, true);
+            rows += _fundRow('Solana', a.solana_wallet_address, true);
+            rows += _fundRow('EVM', a.evm_wallet_address, true);
+            rows += _fundRow('EVM', a.evm_execution_wallet, true);
+            rows += _fundRow('Solana', a.solana_execution_wallet, true);
+            // Exchange (futures)
+            rows += _fundRow('Exchange', a.exchange, false);
+            rows += _fundRow('Network', a.network, false);
+            rows += _fundRow('API key', a.api_key_fingerprint, false);
+            rows += _fundRow('Chains', a.chains, false);
+            if (!rows) {
+                rows = `<div class="funding-row"><span class="label">${a.status || 'no account info'}</span></div>`;
+            }
+            return `
+                <div class="funding-card">
+                    <h4>${FUNDING_LABELS[id]}
+                        <span class="funding-badge ${badgeCls}" style="float:right;">${a.status || 'unknown'}</span>
+                    </h4>
+                    ${rows}
+                </div>`;
+        }).join('');
     }
 
     // =============== CHARTS ===============
