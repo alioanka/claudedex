@@ -129,6 +129,41 @@ class AnalyticsRoutes:
             'copy_trading':     ('copytrading_trades', 'profit_loss'),
             'ai_analysis':      ('ai_trades',          'profit_loss'),
         }
+        # Per-table column-name overrides for the DB-fallback queries.
+        # MOST module tables share the canonical column names
+        # (status / entry_timestamp / exit_timestamp / amount / trade_id /
+        # token_address). futures_trades does NOT — it predates that
+        # convention (migration 006): it has no `status` column (it only
+        # ever stores CLOSED trades), uses entry_time/exit_time, stores
+        # quantity in `size` (no `amount`), and keys on `symbol`+`id`
+        # (no trade_id/token_address). Without this remap every futures
+        # fallback query raised "column does not exist", was swallowed by
+        # the per-table try/except, and FUTURES silently showed EMPTY in
+        # /analytics + the all-module portfolio (issues 2/3/7).
+        self._default_cols = {
+            'status_filter': "status='closed'",
+            'entry_ts': 'entry_timestamp',
+            'exit_ts': 'exit_timestamp',
+            'amount': 'amount',
+            'trade_id': 'trade_id',
+            'token': 'token_address',
+        }
+        self._col_overrides = {
+            'futures_trades': {
+                'status_filter': 'TRUE',      # table stores only closed trades
+                'entry_ts': 'entry_time',
+                'exit_ts': 'exit_time',
+                'amount': 'size',
+                'trade_id': 'id',
+                'token': 'symbol',
+            },
+        }
+
+    def _cols(self, table: str) -> dict:
+        """Return the column-name map for `table`, applying overrides."""
+        cols = dict(self._default_cols)
+        cols.update(self._col_overrides.get(table, {}))
+        return cols
 
     def setup_routes(self, app: web.Application):
         """Setup analytics routes"""
@@ -179,10 +214,11 @@ class AnalyticsRoutes:
         if not tbl:
             return self._empty_perf(module_name)
         table, pnl_col = tbl
+        c = self._cols(table)
         async with self.db.pool.acquire() as conn:
             try:
                 rows = await conn.fetch(
-                    f"SELECT {pnl_col} AS pnl FROM {table} WHERE status='closed'"
+                    f"SELECT {pnl_col} AS pnl FROM {table} WHERE {c['status_filter']}"
                 )
             except Exception as e:
                 self.logger.debug(f"_db_perf {table} error: {e}")
@@ -241,12 +277,13 @@ class AnalyticsRoutes:
         if not tbl:
             return {'equity_curve': [], 'start_time': None, 'end_time': None}
         table, pnl_col = tbl
+        c = self._cols(table)
         async with self.db.pool.acquire() as conn:
             try:
                 rows = await conn.fetch(
-                    f"SELECT {pnl_col} AS pnl, exit_timestamp FROM {table} "
-                    f"WHERE status='closed' AND exit_timestamp IS NOT NULL "
-                    f"ORDER BY exit_timestamp"
+                    f"SELECT {pnl_col} AS pnl, {c['exit_ts']} AS exit_timestamp FROM {table} "
+                    f"WHERE {c['status_filter']} AND {c['exit_ts']} IS NOT NULL "
+                    f"ORDER BY {c['exit_ts']}"
                 )
             except Exception as e:
                 self.logger.debug(f"_db_equity {table} error: {e}")
@@ -270,11 +307,12 @@ class AnalyticsRoutes:
         if not tbl:
             return {'dates': [], 'pnl': [], 'cumulative': []}
         table, pnl_col = tbl
+        c = self._cols(table)
         async with self.db.pool.acquire() as conn:
             try:
                 rows = await conn.fetch(
-                    f"SELECT DATE(exit_timestamp) AS d, SUM({pnl_col}) AS p "
-                    f"FROM {table} WHERE status='closed' AND exit_timestamp IS NOT NULL "
+                    f"SELECT DATE({c['exit_ts']}) AS d, SUM({pnl_col}) AS p "
+                    f"FROM {table} WHERE {c['status_filter']} AND {c['exit_ts']} IS NOT NULL "
                     f"GROUP BY d ORDER BY d"
                 )
             except Exception as e:
@@ -295,14 +333,15 @@ class AnalyticsRoutes:
         if not tbl:
             return {'trades': [], 'total': 0, 'limit': limit, 'offset': 0}
         table, pnl_col = tbl
+        c = self._cols(table)
         async with self.db.pool.acquire() as conn:
             try:
                 rows = await conn.fetch(
-                    f"SELECT trade_id, token_address, entry_price, "
-                    f"exit_price, amount, {pnl_col} AS pnl, "
-                    f"entry_timestamp, exit_timestamp "
-                    f"FROM {table} WHERE status='closed' "
-                    f"ORDER BY exit_timestamp DESC NULLS LAST LIMIT $1",
+                    f"SELECT {c['trade_id']} AS trade_id, {c['token']} AS token_address, entry_price, "
+                    f"exit_price, {c['amount']} AS amount, {pnl_col} AS pnl, "
+                    f"{c['entry_ts']} AS entry_timestamp, {c['exit_ts']} AS exit_timestamp "
+                    f"FROM {table} WHERE {c['status_filter']} "
+                    f"ORDER BY {c['exit_ts']} DESC NULLS LAST LIMIT $1",
                     int(limit)
                 )
             except Exception as e:
@@ -349,9 +388,10 @@ class AnalyticsRoutes:
         async with self.db.pool.acquire() as conn:
             for module_name, (table, pnl_col) in self._module_tables.items():
                 try:
+                    c = self._cols(table)
                     row = await conn.fetchrow(
                         f"SELECT COUNT(*) AS n, COALESCE(SUM({pnl_col}), 0) AS p "
-                        f"FROM {table} WHERE status='closed'"
+                        f"FROM {table} WHERE {c['status_filter']}"
                     )
                     if row:
                         n = int(row['n'] or 0)

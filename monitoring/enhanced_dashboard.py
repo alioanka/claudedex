@@ -14662,27 +14662,43 @@ class DashboardEndpoints:
         Each per-table query is wrapped in try/except so a missing table
         (older deployments) does not break the whole endpoint."""
         rows = []
+        # Per-table column overrides. futures_trades (migration 006) predates
+        # the canonical column convention: it has NO `status` column (stores
+        # only closed trades), NO `chain` column (uses exchange/network),
+        # uses entry_time/exit_time (not entry_timestamp/exit_timestamp), and
+        # stores quantity in `size` (no `amount`). Without these overrides the
+        # futures SELECT raised "column does not exist", was swallowed by the
+        # try/except, and FUTURES was silently dropped from chartPnlDist /
+        # Chain ROI / Chain Volume / equity series (issues 2/3/7).
         per_table = [
-            # (table, strategy_label, pnl_col, pnl_multiplier_column, default_chain)
-            ('trades',             'dex',       'profit_loss', None,           None),
-            ('sniper_trades',      'sniper',    'profit_loss', None,           None),
-            ('arbitrage_trades',   'arbitrage', 'profit_loss', None,           None),
-            ('futures_trades',     'futures',   'net_pnl',     None,           'EXCHANGE'),
-            ('copytrading_trades', 'copy',      'profit_loss', None,           None),
-            ('ai_trades',          'ai',        'profit_loss', None,           None),
+            # (table, strategy, pnl_col, default_chain, status_filter,
+            #  chain_expr, entry_ts, exit_ts, amount_expr)
+            ('trades',             'dex',       'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+            ('sniper_trades',      'sniper',    'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+            ('arbitrage_trades',   'arbitrage', 'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+            ('futures_trades',     'futures',   'net_pnl',     'EXCHANGE',
+             "TRUE", "COALESCE(exchange, 'EXCHANGE')", 'entry_time', 'exit_time', 'COALESCE(size, 0)'),
+            ('copytrading_trades', 'copy',      'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+            ('ai_trades',          'ai',        'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
         ]
-        for table, strat, pnl_col, _mult, default_chain in per_table:
+        for (table, strat, pnl_col, default_chain, status_filter,
+             chain_expr, entry_ts, exit_ts, amount_expr) in per_table:
             try:
                 table_rows = await conn.fetch(f"""
                     SELECT
-                        COALESCE(chain, '{default_chain or "UNKNOWN"}') AS chain,
+                        {chain_expr} AS chain,
                         {pnl_col} AS profit_loss,
-                        entry_timestamp, exit_timestamp,
-                        COALESCE(amount, 0) AS amount,
+                        {entry_ts} AS entry_timestamp, {exit_ts} AS exit_timestamp,
+                        {amount_expr} AS amount,
                         COALESCE(entry_price, 0) AS entry_price,
                         metadata
                     FROM {table}
-                    WHERE status='closed'
+                    WHERE {status_filter}
                 """)
                 for r in table_rows:
                     rows.append({
