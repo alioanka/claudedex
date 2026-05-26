@@ -725,6 +725,145 @@ class TradingBotEngine:
             logger.error(f"Error getting {chain} balance: {e}")
             return 0.0
 
+    def _build_ml_feature_dict(self, pair: Dict, risk_score, patterns) -> Dict:
+        """Map the data we already gathered in _analyze_opportunity into the
+        nested-dict schema EnsemblePredictor.extract_features() consumes.
+
+        This does NOT invent a feature pipeline: it only forwards values the
+        engine already has (DexScreener pair fields + risk sub-scores +
+        pattern flags). Fields we genuinely lack are left at extract_features'
+        own defaults (0 / 50 for RSI) rather than fabricated.
+        """
+        liq = pair.get('liquidity_usd') or pair.get('liquidity') or 0
+        feat = {
+            'price_data': {
+                'current_price': pair.get('price_usd', 0) or 0,
+                'price_change_1h': pair.get('price_change_1h', 0) or 0,
+                'price_change_24h': pair.get('price_change_24h', 0) or 0,
+                'volatility_24h': pair.get('volatility', 0) or 0,
+            },
+            'volume_data': {
+                'volume_24h': pair.get('volume_24h', 0) or 0,
+                'volume_change_24h': pair.get('volume_change_24h', 0) or 0,
+                'buy_volume_ratio': pair.get('buy_sell_ratio', 0) or 0,
+            },
+            'liquidity_data': {
+                'total_liquidity': liq,
+                'liquidity_change_24h': pair.get('liquidity_change_24h', 0) or 0,
+            },
+            'time_data': {
+                'days_since_launch': (pair.get('age_hours', 0) or 0) / 24.0,
+            },
+            'market_data': {
+                'market_cap': pair.get('market_cap', 0) or 0,
+                'fully_diluted_valuation': pair.get('fdv', 0) or 0,
+            },
+        }
+        # Forward the real risk sub-scores when the assessment succeeded.
+        if risk_score is not None and hasattr(risk_score, 'liquidity_risk'):
+            feat['risk_data'] = {
+                'liquidity_risk': getattr(risk_score, 'liquidity_risk', 0) or 0,
+                'developer_risk': getattr(risk_score, 'developer_risk', 0) or 0,
+                'contract_risk': getattr(risk_score, 'contract_risk', 0) or 0,
+                'volume_risk': getattr(risk_score, 'volume_risk', 0) or 0,
+                'holder_risk': getattr(risk_score, 'holder_risk', 0) or 0,
+                'honeypot_probability': getattr(risk_score, 'honeypot_risk', 0) or 0,
+            }
+            feat['holder_data'] = {
+                'top_10_holders_percent': getattr(risk_score, 'top_10_holders_percentage', 0) or 0,
+                'whale_count': getattr(risk_score, 'whale_concentration', 0) or 0,
+                'total_holders': getattr(risk_score, 'unique_holders', 0) or 0,
+            }
+        if isinstance(patterns, dict):
+            feat['pattern_data'] = {
+                'trend_strength': patterns.get('trend_strength', 0) or 0,
+            }
+        return feat
+
+    @staticmethod
+    def _is_trustworthy_ml_result(result: Dict) -> bool:
+        """A prediction is trustworthy only if the ensemble produced it without
+        error AND it is not the degenerate untrained/neutral output.
+
+        EnsemblePredictor.predict_decoupled() returns a {0.5, 0.5, ...} dict
+        with an 'error' key when the (unfitted) RobustScaler.transform raises —
+        which is exactly the state in any environment with no trained model
+        artifacts on disk. We must NOT treat that as a real signal: doing so
+        would re-introduce the fabricated-confidence bug from the other side.
+        """
+        if not isinstance(result, dict):
+            return False
+        if result.get('error'):
+            return False
+        pump = result.get('pump_probability')
+        rug = result.get('rug_probability')
+        conf = result.get('confidence', 0)
+        if pump is None or rug is None:
+            return False
+        # All-neutral 0.5 with floor confidence == untrained passthrough.
+        if abs(pump - 0.5) < 1e-9 and abs(rug - 0.5) < 1e-9 and conf <= 0.1:
+            return False
+        return True
+
+    async def _ml_predict_opportunity(
+        self, pair: Dict, risk_score, patterns, heuristic_score: float
+    ) -> Dict:
+        """Consult EnsemblePredictor for REAL ml_confidence/pump/rug.
+
+        Fail-soft + HONEST labeling (Wave-8 DEFECT 2): if the ensemble is
+        unavailable / untrained / errors, fall back to the heuristic but mark
+        ml_source='heuristic_fallback' and DO NOT fabricate an optimistic
+        rug_probability. The heuristic fallback derives rug_probability from
+        the heuristic score (low score -> higher implied rug risk) instead of
+        the old flat 0.2 constant that silently passed the 0.5 rug gate.
+
+        Returns a dict with: ml_confidence, pump_probability, rug_probability,
+        expected_return, ml_source, ml_meta.
+        """
+        token = pair.get('token_address', '')
+        chain = pair.get('chain', 'ethereum')
+        try:
+            predictor = getattr(self, 'ensemble_predictor', None)
+            if predictor is not None and hasattr(predictor, 'predict_decoupled'):
+                feat = self._build_ml_feature_dict(pair, risk_score, patterns)
+                result = await predictor.predict_decoupled(token, chain, feat)
+                if self._is_trustworthy_ml_result(result):
+                    return {
+                        'ml_confidence': float(result.get('confidence', 0.0)),
+                        'pump_probability': float(result['pump_probability']),
+                        'rug_probability': float(result['rug_probability']),
+                        'expected_return': float(result.get('expected_return', 0.0)),
+                        'ml_source': 'ensemble',
+                        'ml_meta': {
+                            'model_agreements': result.get('model_agreements', {}),
+                            'risk_adjusted_score': result.get('risk_adjusted_score'),
+                        },
+                    }
+                logger.info(
+                    "   ℹ️ ML ensemble unavailable/untrained for "
+                    f"{pair.get('token_symbol', token[:10])} "
+                    f"(reason={result.get('error', 'neutral-passthrough')}) "
+                    "— using HEURISTIC fallback (not a real ML signal)"
+                )
+        except Exception as e:
+            logger.warning(f"   ⚠️ ML ensemble prediction failed: {e} — heuristic fallback")
+
+        # ---- honest heuristic fallback -----------------------------------
+        # rug_probability is NOT a flat optimistic constant: a weak heuristic
+        # score implies more uncertainty, so map it inversely and clamp so a
+        # genuinely strong heuristic still has to clear the 0.5 rug gate on its
+        # own merit rather than being handed a free 0.2.
+        hs = max(0.0, min(1.0, float(heuristic_score)))
+        rug_prob = max(0.25, min(0.6, 0.6 - 0.4 * hs))
+        return {
+            'ml_confidence': hs,
+            'pump_probability': hs * 0.8,
+            'rug_probability': rug_prob,
+            'expected_return': hs * 100,
+            'ml_source': 'heuristic_fallback',
+            'ml_meta': {'note': 'no trained ensemble available in this environment'},
+        }
+
     async def _analyze_opportunity(self, pair: Dict) -> Optional[TradingOpportunity]:
         """
         Comprehensive analysis of a trading opportunity
@@ -798,6 +937,18 @@ class TradingBotEngine:
                 opportunity_score=score
             )
 
+            # 🆕 Wave-8 DEFECT 2: consult the REAL ML ensemble for
+            # ml_confidence/pump/rug instead of fabricating them from the
+            # heuristic. Fail-soft + honestly labeled (ml_source).
+            ml = await self._ml_predict_opportunity(
+                pair=pair, risk_score=risk_score, patterns=patterns,
+                heuristic_score=score,
+            )
+            logger.info(
+                f"   🤖 ML[{ml['ml_source']}] conf={ml['ml_confidence']:.3f} "
+                f"pump={ml['pump_probability']:.3f} rug={ml['rug_probability']:.3f}"
+            )
+
             # 🆕 CRITICAL FIX: Create opportunity FIRST (needed for strategy selection)
             # Create a temporary opportunity for strategy selection
             temp_opportunity = TradingOpportunity(
@@ -819,10 +970,10 @@ class TradingBotEngine:
                     volume_risk=1.0, holder_risk=1.0, social_risk=1.0,
                     technical_risk=1.0, market_risk=1.0, confidence=0.0,
                 ),
-                ml_confidence=score,
-                pump_probability=score * 0.8,
-                rug_probability=0.2,
-                expected_return=score * 100,
+                ml_confidence=ml['ml_confidence'],
+                pump_probability=ml['pump_probability'],
+                rug_probability=ml['rug_probability'],
+                expected_return=ml['expected_return'],
                 recommended_position_size=position_size,
                 entry_strategy='momentum',  # Temporary, will be updated
                 metadata={
@@ -833,7 +984,13 @@ class TradingBotEngine:
                     'liquidity_depth': liquidity_depth,
                     'contract_safety': contract_safety,
                     'holder_distribution': holder_dist,
-                    'token_symbol': token_symbol
+                    'token_symbol': token_symbol,
+                    # Wave-8 DEFECT 2: honest provenance of the ML numbers above
+                    # so DRY_RUN audit can tell a real ensemble signal from a
+                    # heuristic fallback. NEVER reports a fake high ml_confidence.
+                    'ml_source': ml['ml_source'],
+                    'ml_meta': ml['ml_meta'],
+                    'heuristic_score': score,
                 },
                 timestamp=datetime.utcnow()
             )
