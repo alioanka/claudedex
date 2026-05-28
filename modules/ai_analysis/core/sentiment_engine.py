@@ -528,6 +528,21 @@ class SentimentEngine:
                     trades_executed,
                 )
                 self._last_tick_at = datetime.utcnow()
+                # Wave-11 FIX 4: per-cycle heartbeat into ai_runtime_stats
+                # so the dashboard has an unconditional liveness signal.
+                # Previously the dashboard inferred AI health purely from
+                # sentiment_logs freshness, but that row is only written
+                # when news IS retrieved AND analyzed — the "No news data
+                # retrieved, skipping analysis" path (frequent on quiet
+                # news windows) left the dashboard stuck on "ENABLED (no
+                # health)" for hours. Fires BEFORE the news fetch so a
+                # CryptoCompare outage doesn't suppress the heartbeat.
+                # Fail-soft: a DB hiccup must never crash the loop.
+                await self._persist_ai_heartbeat(
+                    cycle=cycle_count,
+                    trades=trades_executed,
+                    provider_count=_provider_count,
+                )
                 # Reload settings occasionally
                 await self._load_settings()
 
@@ -1230,6 +1245,57 @@ class SentimentEngine:
                 )
         except Exception as e:
             prov_logger.error(f"Failed to store {provider} log: {e}")
+
+    async def _persist_ai_heartbeat(
+        self,
+        *,
+        cycle: int,
+        trades: int,
+        provider_count: int,
+    ) -> None:
+        """UPSERT a single-row liveness heartbeat into ai_runtime_stats
+        (Wave-11 FIX 4). The only REQUIRED field is a fresh updated_at;
+        `stats` carries optional diagnostics. Mirrors the dex/sniper/arb
+        runtime_stats pattern. Fail-soft — never blocks the loop.
+
+        AI delegates execution to FUTURES per Wave-7 (executor delegation
+        through canonical BinanceFuturesExecutor); we flag that in the
+        snapshot via `delegates_to='futures'` so the dashboard can stop
+        treating AI as if it owned a wallet of its own.
+        """
+        if not self.db_pool:
+            return
+        try:
+            import json as _json
+            snapshot = {
+                'delegates_to': 'futures',
+                'cycle': int(cycle),
+                'trades_executed': int(trades),
+                'provider_count': int(provider_count),
+                'has_openai': bool(self.openai_api_key),
+                'has_anthropic': bool(self.anthropic_api_key),
+                'direct_trading': bool(getattr(self, 'direct_trading', False)),
+                'dry_run': bool(getattr(self, 'dry_run', True)),
+                'active_positions': len(getattr(self, 'active_positions', {}) or {}),
+                'last_skip_reason': getattr(self, '_last_skip_reason', None),
+                'last_signal_at': (
+                    getattr(self, '_last_signal_at', None).isoformat() + 'Z'
+                    if getattr(self, '_last_signal_at', None) else None
+                ),
+            }
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO ai_runtime_stats (id, updated_at, stats)
+                    VALUES (1, NOW(), $1::jsonb)
+                    ON CONFLICT (id) DO UPDATE
+                    SET updated_at = NOW(), stats = EXCLUDED.stats
+                    """,
+                    _json.dumps(snapshot, default=str),
+                )
+        except Exception as e:
+            # Pure observability; never block the AI loop.
+            logger.debug(f"_persist_ai_heartbeat failed (non-fatal): {e}")
 
     async def _store_sentiment(self, score: float):
         """Log sentiment score to database"""
