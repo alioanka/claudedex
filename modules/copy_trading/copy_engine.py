@@ -179,6 +179,12 @@ class CopyTradeExecutor:
         self.solana_wallet = None
         self.evm_private_key = None
         self.evm_wallet = None
+        # PM Wave-11: surfaced to dashboard via _persist_execution_wallets
+        # so the funding panel renders the same WARNING badge it already
+        # shows for DEX when the stored WALLET_ADDRESS secret has gone
+        # stale vs PRIVATE_KEY derivation. Defaults are safe (no warning).
+        self.stored_evm_wallet = None
+        self.wallet_address_secret_mismatch = False
         self.web3_provider = None
 
     def set_risk_manager(self, risk_manager) -> None:
@@ -298,12 +304,16 @@ class CopyTradeExecutor:
                 derived_evm = Account.from_key(_pk).address
             except Exception as e:
                 logger.debug(f"copy EVM wallet derivation failed: {e}")
+        # Remember stored address regardless of derivation outcome so the
+        # dashboard can display BOTH addresses (derived + stale).
+        self.stored_evm_wallet = stored_evm or None
         if derived_evm:
             self.evm_wallet = derived_evm
             if stored_evm and stored_evm.lower() != derived_evm.lower():
                 # Stale stored secret. Surface masked-address CRITICAL
                 # so the operator updates it; copies still broadcast
                 # from the derived (correct) address.
+                self.wallet_address_secret_mismatch = True
                 stored_mask = (stored_evm[:6] + "..." + stored_evm[-4:]) if len(stored_evm) >= 10 else "***"
                 derived_mask = derived_evm[:6] + "..." + derived_evm[-4:]
                 logger.critical(
@@ -312,6 +322,8 @@ class CopyTradeExecutor:
                     "secret — funding the stored address would lose money.",
                     stored_mask, derived_mask,
                 )
+            else:
+                self.wallet_address_secret_mismatch = False
         else:
             # No PRIVATE_KEY: last-resort fallback to stored address.
             # copy_evm_swap will refuse the trade without a private key,
@@ -2585,11 +2597,23 @@ class CopyTradingEngine(BaseModule):
         wallets = self.get_execution_wallets()
         evm_addr = wallets['evm']['address']
         sol_addr = wallets['solana']['address']
+        # PM Wave-11: also surface the stored-vs-derived mismatch so the
+        # dashboard's funding panel renders the same WARNING badge it
+        # already shows for DEX. Dashboard reads these two extra keys at
+        # monitoring/enhanced_dashboard.py:~14673 (see comment "if the
+        # copy_engine ever starts persisting it the same way DEX does").
+        # Set on the executor by Wave-11 commit 6fb1f50 wallet-derivation
+        # block — read defensively in case those attrs are absent.
+        _exec = getattr(self, 'executor', None)
+        stored_evm = getattr(_exec, 'stored_evm_wallet', None) if _exec else None
+        evm_mismatch = bool(getattr(_exec, 'wallet_address_secret_mismatch', False)) if _exec else False
         try:
             async with self.db_pool.acquire() as conn:
                 for key, addr in (
                     ('evm_execution_wallet', evm_addr),
                     ('solana_execution_wallet', sol_addr),
+                    ('evm_wallet_address_stored', stored_evm or ''),
+                    ('wallet_address_secret_mismatch', 'true' if evm_mismatch else 'false'),
                 ):
                     await conn.execute(
                         "INSERT INTO config_settings (config_type, key, value) "
