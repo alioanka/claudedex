@@ -281,9 +281,42 @@ class CopyTradeExecutor:
         self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
         self.solana_wallet = secrets.get('SOLANA_MODULE_WALLET') or os.getenv('SOLANA_MODULE_WALLET')
 
-        # Load EVM credentials from secrets manager
+        # Load EVM credentials from secrets manager. Wave-11 FIX 3
+        # (mirrors DEX FIX 1): ALWAYS derive the public address from the
+        # decrypted PRIVATE_KEY. The stored WALLET_ADDRESS secret is
+        # reference-only — when the operator rotates the key but not the
+        # address row, the stored value becomes stale and funding it in
+        # LIVE mode would lose money. The derived address is the
+        # authoritative funding identity for copy trades.
         self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY')
-        self.evm_wallet = secrets.get('WALLET_ADDRESS') or os.getenv('WALLET_ADDRESS')
+        stored_evm = secrets.get('WALLET_ADDRESS') or os.getenv('WALLET_ADDRESS')
+        derived_evm = None
+        if self.evm_private_key:
+            try:
+                from eth_account import Account
+                _pk = self.evm_private_key if self.evm_private_key.startswith('0x') else f'0x{self.evm_private_key}'
+                derived_evm = Account.from_key(_pk).address
+            except Exception as e:
+                logger.debug(f"copy EVM wallet derivation failed: {e}")
+        if derived_evm:
+            self.evm_wallet = derived_evm
+            if stored_evm and stored_evm.lower() != derived_evm.lower():
+                # Stale stored secret. Surface masked-address CRITICAL
+                # so the operator updates it; copies still broadcast
+                # from the derived (correct) address.
+                stored_mask = (stored_evm[:6] + "..." + stored_evm[-4:]) if len(stored_evm) >= 10 else "***"
+                derived_mask = derived_evm[:6] + "..." + derived_evm[-4:]
+                logger.critical(
+                    "COPY WALLET_ADDRESS secret mismatch: stored=%s vs derived=%s. "
+                    "Using DERIVED (PRIVATE_KEY is authoritative). Update the stored "
+                    "secret — funding the stored address would lose money.",
+                    stored_mask, derived_mask,
+                )
+        else:
+            # No PRIVATE_KEY: last-resort fallback to stored address.
+            # copy_evm_swap will refuse the trade without a private key,
+            # so this is reference-only.
+            self.evm_wallet = stored_evm
 
         # Load Web3 provider. RPCProvider is already imported module-level
         # at line 27; re-importing here would shadow it as a local var and
@@ -2535,15 +2568,28 @@ class CopyTradingEngine(BaseModule):
         """Persist the resolved PUBLIC execution addresses to
         config_settings(config_type='copytrading_diagnostics') so the
         dashboard can show the operator WHICH wallet funds copy trades on
-        each chain. Public addresses only — never the key. Fail-soft."""
+        each chain. Public addresses only — never the key. Fail-soft.
+
+        Wave-11 FIX 3: error logging promoted from debug -> warning so a
+        DB error (the reason the operator's funding panel showed
+        "Copy Trading: wallets not resolved yet") is visible in
+        logs/copy_trading/. Also adds a masked-address confirmation log
+        line on success so the operator can verify both wallets
+        surfaced. Idempotent on the SQL side (ON CONFLICT DO UPDATE)."""
         if not self.db_pool:
+            logger.warning(
+                "_persist_execution_wallets: db_pool=None, copy wallets "
+                "will NOT be visible on the dashboard funding panel"
+            )
             return
         wallets = self.get_execution_wallets()
+        evm_addr = wallets['evm']['address']
+        sol_addr = wallets['solana']['address']
         try:
             async with self.db_pool.acquire() as conn:
                 for key, addr in (
-                    ('evm_execution_wallet', wallets['evm']['address']),
-                    ('solana_execution_wallet', wallets['solana']['address']),
+                    ('evm_execution_wallet', evm_addr),
+                    ('solana_execution_wallet', sol_addr),
                 ):
                     await conn.execute(
                         "INSERT INTO config_settings (config_type, key, value) "
@@ -2551,9 +2597,18 @@ class CopyTradingEngine(BaseModule):
                         "ON CONFLICT (config_type, key) DO UPDATE SET value = $2",
                         key, addr or '',
                     )
+            evm_mask = (evm_addr[:6] + "..." + evm_addr[-4:]) if evm_addr else "none"
+            sol_mask = (sol_addr[:6] + "..." + sol_addr[-4:]) if sol_addr else "none"
+            logger.info(
+                f"🔑 Copy execution wallets surfaced: evm={evm_mask} solana={sol_mask}"
+            )
         except Exception as e:
-            # Pure observability; never block the engine.
-            logger.debug(f"_persist_execution_wallets failed (non-fatal): {e}")
+            # Explicit warning so the operator sees this in logs when the
+            # dashboard funding panel reads "wallets not resolved yet".
+            logger.warning(
+                f"_persist_execution_wallets failed: {e} — dashboard funding "
+                "panel will show 'wallets not resolved yet' until next call"
+            )
 
     async def get_positions(self) -> List[Dict]:
         """Return open copy-trade positions from the DB.
