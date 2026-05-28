@@ -211,7 +211,18 @@ class DEXHealthServer:
             'timestamp': datetime.now().isoformat(),
             'engine_running': self.app.engine is not None,
             # Public EVM address only (issue 15) — never the private key.
+            # Wave-11 FIX 1: this is the address DERIVED from PRIVATE_KEY
+            # (the authoritative funding address). When it disagrees with
+            # the stored WALLET_ADDRESS secret the dashboard sees
+            # `wallet_address_secret_mismatch=true` and the stored value
+            # alongside for operator correction. Funding the derived
+            # address is always correct; funding the stored address when
+            # mismatched would lose money.
             'wallet_address': getattr(self.app, 'wallet_address', None),
+            'wallet_address_secret_mismatch': bool(
+                getattr(self.app, 'wallet_address_secret_mismatch', False)
+            ),
+            'wallet_address_stored': getattr(self.app, 'wallet_address_stored', None),
             'dry_run': getattr(self.app, 'is_dry_run', True),
         }
         return web.json_response(health)
@@ -386,6 +397,13 @@ class TradingBotApplication:
         self.position_service = None
         # Resolved public EVM wallet address (issue 15) — set in initialize().
         self.wallet_address = None
+        # Wave-11 FIX 1: surfaced when the operator's stored WALLET_ADDRESS
+        # secret does NOT match the address derived from PRIVATE_KEY. The
+        # derived address always wins (safety: funding the stale stored
+        # address would lose money), but the dashboard needs to see the
+        # discrepancy so the operator can correct the stored secret.
+        self.wallet_address_secret_mismatch = False
+        self.wallet_address_stored = None
         self.is_dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # DEX Health server port (for standalone dashboard communication)
@@ -810,20 +828,66 @@ class TradingBotApplication:
             raise ValueError(f"Missing required environment variables: {missing}")
 
     def _resolve_wallet_address(self, private_key, configured_address):
-        """Return the public EVM address. Prefer an explicitly configured
-        WALLET_ADDRESS; otherwise derive from the (decrypted) private key.
-        Never logs or returns the private key. Returns None on failure."""
+        """Return the public EVM address.
+
+        Wave-11 FIX 1 (critical safety): ALWAYS derive from the decrypted
+        PRIVATE_KEY — that is the authoritative funding address (ARB Wave-7
+        pattern, `arbitrage_engine.py:_get_decrypted_key` + derivation in
+        `initialize()`). The stored WALLET_ADDRESS secret is reference-only:
+        when it disagrees with the derived address, the derived address
+        wins and `wallet_address_secret_mismatch` is set so the dashboard
+        can flag the stale secret. Funding the stale stored address would
+        lose money.
+
+        Only when PRIVATE_KEY is missing entirely do we fall back to the
+        stored WALLET_ADDRESS (operator-managed funding mode), with a
+        warning log so the operator knows derivation was bypassed.
+
+        Never logs or returns the private key; mismatch warnings mask all
+        addresses to the last 4 chars.
+        """
+        # Always remember what the operator stored so the dashboard can show
+        # the discrepancy if any.
+        self.wallet_address_stored = configured_address or None
+
+        derived = None
+        if private_key:
+            try:
+                from eth_account import Account
+                key = private_key if private_key.startswith('0x') else f'0x{private_key}'
+                derived = Account.from_key(key).address
+            except Exception as e:
+                self.logger.debug(f"wallet address derivation failed: {e}")
+                derived = None
+
+        if derived:
+            if configured_address and configured_address.lower() != derived.lower():
+                # CRITICAL: stored secret is stale. Funding the stored
+                # address would lose money. Prefer derived, surface warning.
+                self.wallet_address_secret_mismatch = True
+                stored_mask = (configured_address[:6] + "..." + configured_address[-4:]) if len(configured_address) >= 10 else "***"
+                derived_mask = derived[:6] + "..." + derived[-4:]
+                self.logger.critical(
+                    "WALLET_ADDRESS secret mismatch: stored=%s vs derived=%s. "
+                    "Using DERIVED address (PRIVATE_KEY is authoritative). "
+                    "Update the stored WALLET_ADDRESS secret to match — funding the "
+                    "stored address would lose money.",
+                    stored_mask, derived_mask,
+                )
+            else:
+                self.wallet_address_secret_mismatch = False
+            return derived
+
+        # No private key: last-resort fallback to the stored address. The
+        # operator must manage funding manually because we cannot sign txs.
         if configured_address:
+            self.logger.warning(
+                "PRIVATE_KEY missing; falling back to stored WALLET_ADDRESS "
+                "as a reference-only value. Live signing is impossible "
+                "without PRIVATE_KEY — operator-managed funding mode."
+            )
             return configured_address
-        if not private_key:
-            return None
-        try:
-            from eth_account import Account
-            key = private_key if private_key.startswith('0x') else f'0x{private_key}'
-            return Account.from_key(key).address
-        except Exception as e:
-            self.logger.debug(f"wallet address derivation failed: {e}")
-            return None
+        return None
 
     async def _position_monitor(self):
         """Monitor positions separately to ensure it's running"""
@@ -1007,6 +1071,10 @@ class TradingBotApplication:
         try:
             snapshot = {
                 'wallet_address': self.wallet_address,
+                'wallet_address_secret_mismatch': bool(
+                    getattr(self, 'wallet_address_secret_mismatch', False)
+                ),
+                'wallet_address_stored': getattr(self, 'wallet_address_stored', None),
                 'dry_run': bool(getattr(self, 'is_dry_run', True)),
                 'open_positions': (
                     len(self.engine.active_positions)
