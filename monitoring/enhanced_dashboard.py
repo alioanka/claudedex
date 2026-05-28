@@ -213,6 +213,17 @@ class DashboardEndpoints:
         # operator hammers refresh.
         self._token_price_cache: Dict[str, tuple] = {}
 
+        # Wave-11 FIX 1: /api/dashboard/charts/full response cache.
+        # The endpoint previously fetched every closed trade across 7 module
+        # tables (~400K rows for an active operator) and produced a 22 MB
+        # JSON in ~76s, blocking the event loop and triggering orchestrator
+        # restarts. We now cap rows per-table, exclude noisy modules
+        # (sniper / arbitrage) that have their own dashboards, downsample
+        # time-series to <=500 points, and cache the assembled response for
+        # 45s keyed on (since_days, granularity).
+        self._charts_cache: Dict[tuple, tuple] = {}
+        self._charts_cache_ttl_s: int = 45
+
         # Authentication
         self.auth_service = None
         self.auth_enabled = False
@@ -14677,7 +14688,8 @@ class DashboardEndpoints:
             logger.error(f"Error getting aggregated balances: {e}")
             return web.json_response({'error': str(e)}, status=500)
 
-    async def _unified_closed_trades(self, conn):
+    async def _unified_closed_trades(self, conn, *, since=None, per_table_limit=5000,
+                                     include_noisy=False):
         """FAILURE A (charts): SNIPER trades live in `sniper_trades`, ARBITRAGE
         in `arbitrage_trades`, FUTURES in `futures_trades`, SOLANA in
         `solana_trades`, COPY in `copytrading_trades`, AI in `ai_trades`, and
@@ -14685,6 +14697,13 @@ class DashboardEndpoints:
         Analytics cards were querying only `trades` so an operator running
         only SNIPER+ARBITRAGE saw "No data yet" on 12 of 15 cards despite
         having 10000+ sniper trades in the DB.
+
+        Wave-11 FIX 1: bounded — accepts ``since`` (datetime, UTC) and
+        ``per_table_limit`` (int) to keep the unified rowset small enough
+        for the event loop. SNIPER and ARBITRAGE tables are excluded by
+        default (``include_noisy=False``) because (a) they generate ~400K
+        rows on an active deployment, dwarfing every other module on the
+        unified chart, and (b) both have their own per-module dashboards.
 
         Returns a list of dict-rows with normalized columns:
           strategy, chain, profit_loss, entry_timestamp, exit_timestamp,
@@ -14702,24 +14721,36 @@ class DashboardEndpoints:
         # Chain ROI / Chain Volume / equity series (issues 2/3/7).
         per_table = [
             # (table, strategy, pnl_col, default_chain, status_filter,
-            #  chain_expr, entry_ts, exit_ts, amount_expr)
+            #  chain_expr, entry_ts, exit_ts, amount_expr, noisy)
             ('trades',             'dex',       'profit_loss', None,
-             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', False),
             ('sniper_trades',      'sniper',    'profit_loss', None,
-             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', True),
             ('arbitrage_trades',   'arbitrage', 'profit_loss', None,
-             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', True),
             ('futures_trades',     'futures',   'net_pnl',     'EXCHANGE',
-             "TRUE", "COALESCE(exchange, 'EXCHANGE')", 'entry_time', 'exit_time', 'COALESCE(size, 0)'),
+             "TRUE", "COALESCE(exchange, 'EXCHANGE')", 'entry_time', 'exit_time', 'COALESCE(size, 0)', False),
             ('copytrading_trades', 'copy',      'profit_loss', None,
-             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', False),
             ('ai_trades',          'ai',        'profit_loss', None,
-             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)'),
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', False),
         ]
         for (table, strat, pnl_col, default_chain, status_filter,
-             chain_expr, entry_ts, exit_ts, amount_expr) in per_table:
+             chain_expr, entry_ts, exit_ts, amount_expr, noisy) in per_table:
+            if noisy and not include_noisy:
+                continue
             try:
-                table_rows = await conn.fetch(f"""
+                params = []
+                where_clauses = [status_filter]
+                if since is not None:
+                    params.append(since)
+                    # exit_ts may be NULL for not-yet-closed rows; status filter
+                    # already gates on 'closed', but be defensive against NULLs.
+                    where_clauses.append(f"{exit_ts} >= ${len(params)}")
+                # Per-table LIMIT after ORDER BY exit_ts DESC keeps the
+                # heaviest tables (sniper/arb if noisy=True) bounded to
+                # ``per_table_limit`` rows — protects the event loop.
+                sql = f"""
                     SELECT
                         {chain_expr} AS chain,
                         {pnl_col} AS profit_loss,
@@ -14728,8 +14759,11 @@ class DashboardEndpoints:
                         COALESCE(entry_price, 0) AS entry_price,
                         metadata
                     FROM {table}
-                    WHERE {status_filter}
-                """)
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY {exit_ts} DESC NULLS LAST
+                    LIMIT {int(per_table_limit)}
+                """
+                table_rows = await conn.fetch(sql, *params)
                 for r in table_rows:
                     rows.append({
                         'strategy': strat,
@@ -14750,7 +14784,12 @@ class DashboardEndpoints:
         # Solana is special — PnL is in SOL, multiply by spot to compare in USD.
         try:
             sol_price = await self._get_sol_usd_price()
-            solana_rows = await conn.fetch("""
+            sol_params = []
+            sol_where = ["status='closed'"]
+            if since is not None:
+                sol_params.append(since)
+                sol_where.append(f"exit_timestamp >= ${len(sol_params)}")
+            sol_sql = f"""
                 SELECT
                     COALESCE(chain, 'SOLANA') AS chain,
                     pnl_sol AS profit_loss,
@@ -14759,8 +14798,11 @@ class DashboardEndpoints:
                     COALESCE(entry_price, 0) AS entry_price,
                     metadata
                 FROM solana_trades
-                WHERE status='closed'
-            """)
+                WHERE {' AND '.join(sol_where)}
+                ORDER BY exit_timestamp DESC NULLS LAST
+                LIMIT {int(per_table_limit)}
+            """
+            solana_rows = await conn.fetch(sol_sql, *sol_params)
             for r in solana_rows:
                 rows.append({
                     'strategy': 'solana',
@@ -14776,19 +14818,94 @@ class DashboardEndpoints:
             logger.debug(f"_unified_closed_trades: solana_trades skipped: {e}")
         return rows
 
+    @staticmethod
+    def _downsample_series(labels, values, max_points: int = 500):
+        """Wave-11 FIX 1 helper: cap a (labels, values) pair to
+        ``max_points`` entries via uniform-stride bucketing. Each kept
+        label/value is the LAST one in its bucket — for monotonic series
+        like equity-curve cumulative-pnl that preserves the running
+        endpoint of every bucket (no smoothing artefacts on the line).
+        Returns (labels, values) unchanged if already at/under cap.
+        """
+        n = len(values)
+        if n <= max_points or max_points <= 0:
+            return labels, values
+        stride = n / float(max_points)
+        out_labels = []
+        out_values = []
+        for i in range(max_points):
+            idx = min(n - 1, int((i + 1) * stride) - 1)
+            out_labels.append(labels[idx])
+            out_values.append(values[idx])
+        return out_labels, out_values
+
     async def api_get_full_dashboard_charts(self, request):
-        """Get real data for all full dashboard charts"""
+        """Get real data for all full dashboard charts.
+
+        Wave-11 FIX 1 caps (in-place defaults; query-string overridable):
+          - ``?since_days`` (int, default 7): only closed trades with
+            ``exit_timestamp >= now - since_days`` are included.
+          - ``?per_table_limit`` (int, default 5000, max 20000): SQL LIMIT
+            applied to each per-module table (ORDER BY exit_ts DESC).
+          - ``?include_noisy`` (0/1, default 0): when 1, sniper + arbitrage
+            tables are joined too. Off by default because they generate
+            ~400K rows on active deployments and have their own
+            per-module dashboards.
+          - Equity-curve / drawdown series are downsampled to at most 500
+            points via uniform-stride bucketing (was: one point per trade,
+            yielding 100k+ point lines that froze the browser).
+          - Response cached for ``self._charts_cache_ttl_s`` (45s) keyed
+            on (since_days, per_table_limit, include_noisy).
+          - Response-size guard: if assembled JSON > 5 MB the per-series
+            arrays are truncated to their last 500 elements and a
+            ``_truncated`` flag is set. Hard ceiling: ~5 MB.
+
+        Pre-fix this endpoint returned ~22 MB in ~76s and pegged the
+        event loop, triggering orchestrator restarts. Post-fix target is
+        <500 KB and <2s.
+        """
         try:
+            # --- Parse + clamp request knobs ---
+            qs = request.rel_url.query
+            try:
+                since_days = max(1, min(int(qs.get('since_days', '7')), 365))
+            except (TypeError, ValueError):
+                since_days = 7
+            try:
+                per_table_limit = max(100, min(int(qs.get('per_table_limit', '5000')), 20000))
+            except (TypeError, ValueError):
+                per_table_limit = 5000
+            include_noisy = qs.get('include_noisy', '0') in ('1', 'true', 'True')
+            cache_key = (since_days, per_table_limit, include_noisy)
+
+            # --- In-process response cache ---
+            now_ts = datetime.utcnow()
+            cached = self._charts_cache.get(cache_key)
+            if cached is not None:
+                payload, cached_at = cached
+                if (now_ts - cached_at).total_seconds() < self._charts_cache_ttl_s:
+                    return web.json_response(payload)
+
             charts = {}
 
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
+            since_dt = now_ts - timedelta(days=since_days)
+
             async with self.db.pool.acquire() as conn:
                 # FAILURE A (charts): unify closed-trade rows across every
                 # module-specific table so cards reflect ALL modules, not
                 # just legacy DEX rows in `trades`.
-                unified = await self._unified_closed_trades(conn)
+                # Wave-11 FIX 1: bounded by ``since`` + ``per_table_limit``
+                # and skips noisy modules by default — cuts ~400K rows
+                # down to a few thousand.
+                unified = await self._unified_closed_trades(
+                    conn,
+                    since=since_dt,
+                    per_table_limit=per_table_limit,
+                    include_noisy=include_noisy,
+                )
 
                 # 1. PnL Distribution (Win/Loss) — spans every module.
                 pnl_values = [r['profit_loss'] for r in unified if r['profit_loss'] is not None]
@@ -15009,6 +15126,12 @@ class DashboardEndpoints:
                     equity_data.append(initial_balance + cum_pnl)
                     equity_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d'))
 
+                # Wave-11 FIX 1: cap to 500 points (was: 1 point per trade,
+                # i.e. 100k+ points → 22 MB response + frozen browser).
+                equity_labels, equity_data = self._downsample_series(
+                    equity_labels, equity_data, max_points=500
+                )
+
                 charts['chartEquity'] = {
                     'labels': equity_labels,
                     'datasets': [{'label': 'Equity', 'data': equity_data, 'borderColor': '#3b82f6', 'fill': True}]
@@ -15077,6 +15200,11 @@ class DashboardEndpoints:
                     dd = ((peak - running) / peak * 100) if peak > 0 else 0
                     drawdown_data.append(round(dd, 2))
                     drawdown_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d') if r['exit_timestamp'] else '')
+
+                # Wave-11 FIX 1: cap drawdown series to 500 points too.
+                drawdown_labels, drawdown_data = self._downsample_series(
+                    drawdown_labels, drawdown_data, max_points=500
+                )
 
                 charts['chartDrawdown'] = {
                     'labels': drawdown_labels if drawdown_labels else ['No Data'],
@@ -15162,7 +15290,56 @@ class DashboardEndpoints:
                     }]
                 }
 
-            return web.json_response({'success': True, 'data': charts})
+            payload = {
+                'success': True,
+                'data': charts,
+                'meta': {
+                    'since_days': since_days,
+                    'per_table_limit': per_table_limit,
+                    'include_noisy': include_noisy,
+                    'unified_row_count': len(unified),
+                    'generated_at': now_ts.isoformat() + 'Z',
+                    'cache_ttl_s': self._charts_cache_ttl_s,
+                },
+            }
+
+            # Wave-11 FIX 1: response-size guard. Anything >5 MB indicates a
+            # series escaped downsampling; truncate every dataset.data[] to
+            # its last 500 elements and mark the response.
+            try:
+                serialized = json.dumps(payload, default=str)
+                size = len(serialized.encode('utf-8'))
+                if size > 2 * 1024 * 1024:
+                    logger.warning(
+                        f"api_get_full_dashboard_charts: payload {size/1e6:.1f} MB "
+                        f"exceeds 2 MB advisory cap (unified rows={len(unified)})"
+                    )
+                if size > 5 * 1024 * 1024:
+                    for ck, cv in charts.items():
+                        labels = cv.get('labels') if isinstance(cv, dict) else None
+                        if isinstance(labels, list) and len(labels) > 500:
+                            cv['labels'] = labels[-500:]
+                        for ds in (cv.get('datasets') or []) if isinstance(cv, dict) else []:
+                            data = ds.get('data')
+                            if isinstance(data, list) and len(data) > 500:
+                                ds['data'] = data[-500:]
+                    payload['meta']['_truncated'] = True
+                    logger.error(
+                        f"api_get_full_dashboard_charts: HARD truncation "
+                        f"applied — payload was {size/1e6:.1f} MB > 5 MB ceiling"
+                    )
+            except Exception as guard_err:
+                logger.debug(f"charts size-guard skipped: {guard_err}")
+
+            # Populate cache (45s TTL) so repeated polls don't re-query.
+            self._charts_cache[cache_key] = (payload, now_ts)
+            # Cap cache cardinality so query-string fuzzing can't blow RAM.
+            if len(self._charts_cache) > 32:
+                # Drop the oldest entry by cached_at.
+                oldest_key = min(self._charts_cache, key=lambda k: self._charts_cache[k][1])
+                self._charts_cache.pop(oldest_key, None)
+
+            return web.json_response(payload)
         except Exception as e:
             logger.error(f"Error getting full dashboard charts: {e}")
             return web.json_response({'success': False, 'error': str(e)})
