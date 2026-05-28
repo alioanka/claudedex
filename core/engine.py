@@ -7,7 +7,7 @@ import uuid
 import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 from dataclasses import dataclass, field
 import json
@@ -142,6 +142,19 @@ class TradingOpportunity:
 
         return 0.01  # Default 1%
 
+def _as_utc(dt):
+    """Normalize a datetime to UTC-aware. Naive values are assumed UTC.
+
+    Wave-11: positions restored by _load_state come from TIMESTAMPTZ (aware),
+    while in-process datetime.now() values are naive. Mixing them in
+    subtraction raises TypeError, so every (now - entry_time) arithmetic on
+    DB-sourced datetimes must route both sides through this helper.
+    """
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
 @dataclass
 class ClosedPositionRecord:
     """Track recently closed positions for cooldown"""
@@ -149,10 +162,10 @@ class ClosedPositionRecord:
     closed_at: datetime
     reason: str
     pnl: float
-    
+
     def is_cooled_down(self, cooldown_minutes: int = 60) -> bool:
         """Check if cooldown period has elapsed"""
-        elapsed = (datetime.now() - self.closed_at).total_seconds() / 60
+        elapsed = (datetime.now(timezone.utc) - _as_utc(self.closed_at)).total_seconds() / 60
         return elapsed >= cooldown_minutes
 
 class TradingBotEngine:
@@ -1052,7 +1065,7 @@ class TradingBotEngine:
             if token_address in self.recently_closed:
                 record = self.recently_closed[token_address]
                 if not record.is_cooled_down(self.cooldown_minutes):
-                    elapsed = (datetime.now() - record.closed_at).total_seconds() / 60
+                    elapsed = (datetime.now(timezone.utc) - _as_utc(record.closed_at)).total_seconds() / 60
                     remaining = self.cooldown_minutes - elapsed
                     logger.warning(
                         f"❄️ COOLDOWN ACTIVE for {token_symbol}: "
@@ -1680,7 +1693,7 @@ class TradingBotEngine:
                             position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
 
                             # Calculate holding time
-                            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                            holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
 
                             logger.info(
                                 f"  📈 {position_symbol} - "
@@ -1714,9 +1727,9 @@ class TradingBotEngine:
                             failures = position.get('_price_fetch_failures', 0) + 1
                             position['_price_fetch_failures'] = failures
 
-                            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                            holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
                             last_price_update = position.get('_last_price_update', position['entry_time'])
-                            time_since_price = (datetime.now() - last_price_update).total_seconds() / 60
+                            time_since_price = (datetime.now(timezone.utc) - _as_utc(last_price_update)).total_seconds() / 60
 
                             logger.warning(
                                 f"  ⚠️ PRICE FETCH FAILED for {position_symbol} "
@@ -1804,7 +1817,7 @@ class TradingBotEngine:
                 for pos in positions_snapshot:
                     entry_time = pos.get('entry_time')
                     if entry_time:
-                        holding_mins = (datetime.now() - entry_time).total_seconds() / 60
+                        holding_mins = (datetime.now(timezone.utc) - _as_utc(entry_time)).total_seconds() / 60
                         if holding_mins < 5:  # Position is less than 5 minutes old
                             has_new_positions = True
                             break
@@ -1990,7 +2003,7 @@ class TradingBotEngine:
         try:
             # Get position details
             pnl_percentage = position.get('pnl_percentage', 0)
-            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60  # minutes
+            holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60  # minutes
             
             # 1. Take profit hit (default 30%)
             take_profit = position.get('take_profit_percentage', 0.3) * 100
@@ -2101,7 +2114,7 @@ class TradingBotEngine:
                 
                 final_pnl = (current_price - entry_price) * amount
                 pnl_percentage = float((current_price - entry_price) / entry_price * 100)
-                holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
                 
                 logger.info(f"📝 DRY RUN - CLOSING POSITION:")
                 logger.info(f"   Token: {token_symbol}")
@@ -2347,7 +2360,7 @@ class TradingBotEngine:
                 )
 
                 # Backfill DB + ML outcome on real-execution close (mirrors dry-run branch)
-                holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
                 try:
                     trade_id = position.get('trade_id')
                     if not trade_id:
