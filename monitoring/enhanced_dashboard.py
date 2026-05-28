@@ -2029,11 +2029,38 @@ class DashboardEndpoints:
                         ai_running = True
         except Exception:
             pass
-        # FAILURE 1(a) fix: AI has no health-port server reachable here.
-        # Mirror api_get_ai_stats' heartbeat: the AI subprocess writes a
-        # sentiment_logs row roughly every analysis cycle (~5-15 min); a row
-        # in the last 30 min means it is alive. NOW()-timestamp is computed
-        # in SQL so no naive/aware datetime comparison happens in Python.
+        # Wave-11 FIX A (primary signal): the AI subprocess UPSERTs a
+        # per-cycle heartbeat into `ai_runtime_stats` (id=1) every analysis
+        # cycle (~15 min / 900s). When the row is < 30 min (2x cycle) old
+        # the subprocess is alive — even when it had nothing to delegate
+        # this cycle (no sentiment_logs row written). Pure SQL freshness
+        # so no naive/aware datetime risk. Guarded by `to_regclass` so the
+        # dashboard does not 500 on a VPS that hasn't applied migration
+        # 033 yet — instead it leaves a MIGRATION_MISSING hint that
+        # surfaces below (ai_runtime_stats_status).
+        ai_runtime_stats_status = None  # None | 'present' | 'missing'
+        if not ai_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    has_table = await conn.fetchval(
+                        "SELECT to_regclass('public.ai_runtime_stats') IS NOT NULL"
+                    )
+                    if has_table:
+                        ai_runtime_stats_status = 'present'
+                        age = await conn.fetchval("""
+                            SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int
+                            FROM ai_runtime_stats WHERE id = 1
+                        """)
+                        if age is not None and age <= 1800:
+                            ai_running = True
+                    else:
+                        ai_runtime_stats_status = 'missing'
+            except Exception:
+                pass
+
+        # Secondary fallback: pre-migration-033 deployments — sentiment_logs
+        # row in the last 30 min still counts as alive. NOW()-timestamp is
+        # computed in SQL so no naive/aware datetime risk.
         if not ai_running and self.db and getattr(self.db, 'pool', None):
             try:
                 async with self.db.pool.acquire() as conn:
@@ -2050,18 +2077,31 @@ class DashboardEndpoints:
         if self.db and self.db_pool:
             try:
                 async with self.db_pool.acquire() as conn:
-                    # Sniper trades
+                    # Sniper trades — Wave-11 FIX C: SQL aggregates. Operator
+                    # dashboards were capped at total_trades=10000 because the
+                    # previous code did `SELECT ... LIMIT 10000` then `len()`
+                    # in Python. With ~391K rows in an active deployment the
+                    # cap silently truncated total/positions and biased win_rate
+                    # toward the most-recent 10K. COUNT(*) / SUM / FILTER let
+                    # Postgres do the aggregation — no row-set is materialized
+                    # in the event loop and the numbers reflect the full table.
                     try:
-                        sniper_trades = await conn.fetch("""
-                            SELECT profit_loss, status FROM sniper_trades ORDER BY entry_timestamp DESC LIMIT 10000
+                        srow = await conn.fetchrow("""
+                            SELECT
+                                COUNT(*) AS total,
+                                COUNT(*) FILTER (WHERE status='open') AS positions,
+                                COUNT(*) FILTER (WHERE status='closed') AS closed,
+                                COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins,
+                                COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl
+                            FROM sniper_trades
                         """)
-                        if sniper_trades:
-                            closed = [t for t in sniper_trades if t['status'] == 'closed']
-                            sniper_metrics['total_trades'] = len(sniper_trades)
-                            sniper_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in closed)
-                            wins = [t for t in closed if float(t['profit_loss'] or 0) > 0]
-                            sniper_metrics['win_rate'] = (len(wins) / len(closed) * 100) if closed else 0
-                            sniper_metrics['positions'] = len([t for t in sniper_trades if t['status'] == 'open'])
+                        if srow and (srow['total'] or 0) > 0:
+                            sniper_metrics['total_trades'] = int(srow['total'] or 0)
+                            sniper_metrics['positions'] = int(srow['positions'] or 0)
+                            sniper_metrics['pnl'] = float(srow['pnl'] or 0)
+                            closed_n = int(srow['closed'] or 0)
+                            wins_n = int(srow['wins'] or 0)
+                            sniper_metrics['win_rate'] = (wins_n / closed_n * 100) if closed_n else 0
                     except Exception:
                         pass
 
@@ -2227,6 +2267,18 @@ class DashboardEndpoints:
                         'metrics': ai_metrics,
                         'historical': not ai_enabled,
                         'effective_dry_run': ai_dry,
+                        # Wave-11 FIX A: surface a clear hint when migration 033
+                        # hasn't been applied yet so the operator knows WHY the
+                        # AI cell may still read "ENABLED (no health)" — the
+                        # heartbeat table doesn't exist. Only set when missing
+                        # so the field is otherwise absent and the UI can hide
+                        # the badge on healthy deployments.
+                        **({'migration_hint':
+                            'MIGRATION_MISSING — run migration 033 '
+                            '(ai_runtime_stats) so the dashboard can see '
+                            'AI per-cycle heartbeats; falling back to '
+                            'sentiment_logs freshness.'}
+                           if ai_runtime_stats_status == 'missing' else {}),
                     }
                 }
             }
@@ -14440,11 +14492,27 @@ class DashboardEndpoints:
         accounts['dex_trading'] = _entry('evm_wallet')
         if dex_h:
             addr = dex_h.get('wallet_address')
+            # Wave-11 FIX B: DEX subprocess flags `wallet_address_secret_mismatch`
+            # when the stored WALLET_ADDRESS secret doesn't match the address
+            # derived from PRIVATE_KEY. Bot uses the derived (correct) address;
+            # the stale stored secret is silently shadowed but should still be
+            # surfaced as a WARNING so the operator can update or remove it.
+            mismatch = bool(dex_h.get('wallet_address_secret_mismatch'))
+            stored = dex_h.get('wallet_address_stored')
             accounts['dex_trading'].update(
                 wallet_address=addr or None,
                 chains='ETH/BSC/Polygon/Arbitrum/Base (shared EOA)',
                 status='initialized' if addr else 'no wallet_address on /health',
+                wallet_address_secret_mismatch=mismatch,
             )
+            if mismatch:
+                accounts['dex_trading']['wallet_address_stored'] = stored or None
+                accounts['dex_trading']['warning'] = (
+                    'Stored WALLET_ADDRESS secret is stale and does not match '
+                    'PRIVATE_KEY derivation — bot uses the derived address; '
+                    'please update or remove the stored secret to silence '
+                    'this warning.'
+                )
 
         sol_h = await _probe_health('SOLANA_HEALTH_PORT', 8082)
         accounts['solana_trading'] = _entry('solana_wallet')
@@ -14452,8 +14520,33 @@ class DashboardEndpoints:
             addr = sol_h.get('wallet_address')
             accounts['solana_trading'].update(
                 wallet_address=addr or None,
+                secret_source='SOLANA_MODULE_WALLET',
                 status='initialized' if addr else 'no wallet_address on /health',
             )
+
+        # Wave-11 FIX B (1): DEX-on-Solana wallet is a SEPARATE keypair from the
+        # solana_trading module's. The operator's credentials page exposes both
+        # SOLANA_MODULE_WALLET (used by `solana_trading`, shown above) and
+        # SOLANA_WALLET (used by DEX-on-Solana). The Funding panel previously
+        # rendered only one Solana row, which made the second wallet invisible
+        # to operators trying to know which address to fund for DEX-on-Solana.
+        # Read the public address from secrets (never the private key).
+        dex_sol_addr = None
+        try:
+            from security.secrets_manager import secrets as _secrets
+            dex_sol_addr = _secrets.get('SOLANA_WALLET', log_access=False)
+        except Exception:
+            pass
+        if not dex_sol_addr:
+            dex_sol_addr = os.getenv('SOLANA_WALLET') or None
+        accounts['dex_solana'] = _entry(
+            'solana_wallet',
+            label='DEX-Solana (separate from solana_trading)',
+            secret_source='SOLANA_WALLET',
+            wallet_address=dex_sol_addr,
+            status=('initialized' if dex_sol_addr
+                    else 'no SOLANA_WALLET secret set'),
+        )
 
         fut_h = await _probe_health('FUTURES_HEALTH_PORT', 8081)
         accounts['futures_trading'] = _entry('exchange')
@@ -14474,7 +14567,16 @@ class DashboardEndpoints:
         if self.db and getattr(self.db, 'pool', None):
             try:
                 async with self.db.pool.acquire() as conn:
-                    # SNIPER
+                    # SNIPER. Wave-11 FIX D: the Wave-11 engine agent fixed
+                    # the getattr-on-wrong-object bug that prevented these
+                    # fields from being persisted; the keys below are now
+                    # reliably populated. Render BOTH solana_ and evm_ lines
+                    # whenever each is set (the dashboard previously hid
+                    # one when only the other was populated). The Solana
+                    # wallet here is the SAME keypair as the solana_trading
+                    # module (SOLANA_MODULE_WALLET — see
+                    # modules/sniper/core/sniper_engine.py:734), surfaced
+                    # for operator clarity.
                     try:
                         row = await conn.fetchrow(
                             "SELECT stats FROM sniper_runtime_stats WHERE id = 1")
@@ -14482,16 +14584,56 @@ class DashboardEndpoints:
                             st = row['stats']
                             if isinstance(st, str):
                                 st = json.loads(st)
+                            sol_w = st.get('solana_wallet_address') or None
+                            evm_w = st.get('evm_wallet_address') or None
+                            primary = st.get('wallet_address') or None
                             accounts['sniper'].update(
-                                wallet_address=st.get('wallet_address') or None,
-                                solana_wallet_address=st.get('solana_wallet_address') or None,
-                                evm_wallet_address=st.get('evm_wallet_address') or None,
-                                status='initialized' if (st.get('wallet_address')
-                                    or st.get('solana_wallet_address')
-                                    or st.get('evm_wallet_address')) else 'no wallet in runtime stats',
+                                wallet_address=primary,
+                                solana_wallet_address=sol_w,
+                                evm_wallet_address=evm_w,
+                                status='initialized' if (primary or sol_w or evm_w)
+                                       else 'no wallet in runtime stats',
                             )
+                            if sol_w:
+                                accounts['sniper']['solana_wallet_note'] = (
+                                    'same keypair as solana_trading module '
+                                    '(SOLANA_MODULE_WALLET)'
+                                )
                     except Exception as e:
                         logger.debug(f"funding: sniper read failed: {e}")
+                    # DEX fallback: if /health didn't answer, still surface
+                    # `wallet_address_secret_mismatch` from dex_runtime_stats
+                    # so the WARNING badge renders cross-process too.
+                    try:
+                        if (not accounts['dex_trading'].get('wallet_address_secret_mismatch')
+                                and not accounts['dex_trading'].get('wallet_address')):
+                            drow = await conn.fetchrow(
+                                "SELECT stats FROM dex_runtime_stats WHERE id = 1")
+                            if drow and drow['stats']:
+                                ds = drow['stats']
+                                if isinstance(ds, str):
+                                    ds = json.loads(ds)
+                                d_addr = ds.get('wallet_address') or None
+                                d_mismatch = bool(ds.get('wallet_address_secret_mismatch'))
+                                d_stored = ds.get('wallet_address_stored')
+                                if d_addr:
+                                    accounts['dex_trading'].update(
+                                        wallet_address=d_addr,
+                                        chains='ETH/BSC/Polygon/Arbitrum/Base (shared EOA)',
+                                        status='initialized',
+                                        wallet_address_secret_mismatch=d_mismatch,
+                                    )
+                                if d_mismatch:
+                                    accounts['dex_trading']['wallet_address_stored'] = d_stored or None
+                                    accounts['dex_trading']['warning'] = (
+                                        'Stored WALLET_ADDRESS secret is stale '
+                                        'and does not match PRIVATE_KEY '
+                                        'derivation — bot uses the derived '
+                                        'address; please update or remove the '
+                                        'stored secret to silence this warning.'
+                                    )
+                    except Exception as e:
+                        logger.debug(f"funding: dex_runtime_stats read failed: {e}")
                     # ARBITRAGE — one EOA shared across chains; report it + chains
                     try:
                         arows = await conn.fetch(
@@ -14516,21 +14658,43 @@ class DashboardEndpoints:
                             )
                     except Exception as e:
                         logger.debug(f"funding: arbitrage read failed: {e}")
-                    # COPY — public execution wallets persisted to config_settings
+                    # COPY — public execution wallets persisted to config_settings.
+                    # Wave-11 FIX B: also pick up an optional stored-secret
+                    # mismatch flag (key='wallet_address_secret_mismatch') if
+                    # the copy_engine ever starts persisting it the same way
+                    # DEX does — render the same WARNING badge so the operator
+                    # has one consistent surface for "stored secret is stale".
                     try:
                         crows = await conn.fetch(
                             "SELECT key, value FROM config_settings "
                             "WHERE config_type = 'copytrading_diagnostics' "
-                            "AND key IN ('evm_execution_wallet','solana_execution_wallet')")
+                            "AND key IN ('evm_execution_wallet',"
+                            "'solana_execution_wallet',"
+                            "'evm_wallet_address_stored',"
+                            "'wallet_address_secret_mismatch')")
                         cmap = {r['key']: (r['value'] or None) for r in crows}
                         if crows:
                             evm = cmap.get('evm_execution_wallet') or None
                             sol = cmap.get('solana_execution_wallet') or None
+                            mismatch_raw = (cmap.get('wallet_address_secret_mismatch') or '').lower()
+                            cmismatch = mismatch_raw in ('true', '1', 'yes')
                             accounts['copy_trading'].update(
                                 evm_execution_wallet=evm,
                                 solana_execution_wallet=sol,
                                 status='initialized' if (evm or sol) else 'wallets not resolved yet',
+                                wallet_address_secret_mismatch=cmismatch,
                             )
+                            if cmismatch:
+                                accounts['copy_trading']['wallet_address_stored'] = (
+                                    cmap.get('evm_wallet_address_stored') or None
+                                )
+                                accounts['copy_trading']['warning'] = (
+                                    'Stored WALLET_ADDRESS secret is stale '
+                                    'and does not match PRIVATE_KEY '
+                                    'derivation — bot uses the derived '
+                                    'address; please update or remove the '
+                                    'stored secret to silence this warning.'
+                                )
                     except Exception as e:
                         logger.debug(f"funding: copy read failed: {e}")
             except Exception as e:
