@@ -11,6 +11,7 @@ import asyncio
 import logging
 import os
 import json
+import random
 import aiohttp
 from web3 import Web3
 from typing import Dict, List, Optional, Tuple
@@ -1664,6 +1665,12 @@ class EVMArbitrageEngine:
                 if token_in and token_out:
                     await self._check_arb_opportunity(token_in, token_out, token_in_symbol, token_out_symbol)
 
+                # W11 FIX 2: successful scan iter -> clear any prior 429 streak
+                # so a transient rate-limit doesn't keep us in long-backoff mode
+                # once the provider recovers.
+                if getattr(self, '_rate_limit_streak', 0) > 0:
+                    self._rate_limit_streak = 0
+
                 # Move to next pair (round-robin)
                 pair_index = (pair_index + 1) % len(self.arb_pairs)
 
@@ -1694,7 +1701,52 @@ class EVMArbitrageEngine:
                     await self._persist_runtime_stats()
                 except Exception:
                     pass
-                await asyncio.sleep(5)
+                # W11 FIX 2: jittered exponential backoff on 429 / rate-limit
+                # so we stop hammering low-tier RPCs (dRPC public Base tier
+                # is the worst offender). Escalates 30s -> 60s -> 120s ->
+                # 300s as consecutive 429s pile up; resets to baseline on
+                # any successful loop iter. Also reports to pool_engine so
+                # the endpoint is demoted in the rotation.
+                err_str = str(e).lower()
+                is_rate_limited = (
+                    '429' in err_str
+                    or 'too many requests' in err_str
+                    or 'rate limit' in err_str
+                )
+                if is_rate_limited:
+                    self._rate_limit_streak = getattr(self, '_rate_limit_streak', 0) + 1
+                    backoff_ladder = [30, 60, 120, 300]
+                    base_sleep = backoff_ladder[min(self._rate_limit_streak - 1, len(backoff_ladder) - 1)]
+                    jitter = random.uniform(0, base_sleep * 0.2)
+                    sleep_s = base_sleep + jitter
+                    self.logger.warning(
+                        f"⚠️ [{self.chain_name.upper()}] RPC 429 streak #{self._rate_limit_streak} "
+                        f"- backing off {sleep_s:.0f}s. Consider provisioning a higher-tier "
+                        f"RPC (Alchemy/Infura/Quicknode) for {self.chain_name} and adding it to "
+                        f"{self.RPC_ENV_KEY}/{self.RPC_PROVIDER_KEY} in pool_engine."
+                    )
+                    # Best-effort: tell pool_engine the URL is rate-limited so
+                    # rotation can demote it. Fail-soft on any import / lookup.
+                    try:
+                        from config.pool_engine import get_pool
+                        pe = await get_pool()
+                        if pe and self.rpc_url:
+                            await pe.report_rate_limit(
+                                self.RPC_PROVIDER_KEY,
+                                self.rpc_url.split(',')[0],
+                                duration_seconds=int(sleep_s),
+                                error_message=str(e)[:200],
+                            )
+                    except Exception:
+                        pass
+                    await asyncio.sleep(sleep_s)
+                else:
+                    # Reset streak on non-rate-limit errors so a single 429
+                    # followed by an unrelated transient doesn't keep us in
+                    # long-backoff mode.
+                    if getattr(self, '_rate_limit_streak', 0) > 0:
+                        self._rate_limit_streak = 0
+                    await asyncio.sleep(5)
 
     async def _log_stats_if_needed(self):
         """Log statistics every 5 minutes with spread visibility"""

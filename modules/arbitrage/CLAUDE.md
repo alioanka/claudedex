@@ -57,6 +57,10 @@ Triangular path remains entry-disabled by atomic-receiver guard — explicit sco
   - `last_tick_at` — ISO timestamp stamped at the top of every scan iteration in `run()`. A fresh `last_tick_at` with a stale `updated_at` means the engine is alive but its persist call is wedged.
   - `last_error` / `last_error_at` — error type + truncated message captured inside the run-loop `except`. Surfaces the actual cause (AttributeError, RPC drop, pool exhausted, ...) on the very next `/api/arbitrage/diagnostics` poll, no log-tailing required.
   - Persisted once at engine startup (startup-marker write) before the first 5-min `_log_stats_if_needed` tick, so a freshly-restarted engine is visible to the API within seconds rather than 5 minutes.
+## Wave-11 fixes (2026-05-28)
+- **`self.chain` AttributeError** — single typo in the SLOW-SCAN warning at `arbitrage_engine.py:1754` referenced `self.chain` instead of the canonical `self.chain_name` set in `EVMArbitrageEngine.__init__`. ARB log spammed every few seconds. Renamed to `self.chain_name`.
+- **Base RPC 429 / dRPC rate-limit** — when the engine's run-loop exception path sees `429` / `Too Many Requests` / `rate limit` in the error string, it now applies **jittered exponential backoff** (30s -> 60s -> 120s -> 300s) keyed off a `_rate_limit_streak` counter, AND calls `pool_engine.report_rate_limit(...)` so the offending URL is demoted in rotation. Streak resets to zero on any successful scan iter. Operator-facing log line names the chain and points at `RPC_ENV_KEY` / `RPC_PROVIDER_KEY` so the fix (provision an Alchemy/Infura/Quicknode key for Base and add it via the pool_engine .env load) is obvious. No new env key REQUIREMENTS — if no better RPC is configured, the engine just slows down instead of hammering.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/ARBITRAGE_*.md` (smartcontract / quant / analyst).
 - Wave-2 audit: `docs/agents/reports/ARBITRAGE_CAMPAIGN.md`.

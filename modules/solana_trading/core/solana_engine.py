@@ -62,7 +62,7 @@ import asyncio
 import logging
 import time
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from enum import Enum
 import os
@@ -143,6 +143,20 @@ class TokenInfo:
     liquidity_usd: float = 0.0
     volume_24h: float = 0.0
     price_change_24h: float = 0.0
+
+
+def _as_utc(dt):
+    """Normalize a datetime to UTC-aware. Naive values are assumed UTC.
+
+    Wave-11: positions/trades reconstructed from solana_positions/_trades
+    rows carry TIMESTAMPTZ (tz-aware) opened_at, while in-process opens
+    use naive datetime.utcnow(). Subtracting the two raises TypeError, so
+    every arithmetic involving opened_at/closed_at must route through this
+    helper.
+    """
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
 @dataclass
@@ -2472,7 +2486,7 @@ class SolanaTradingEngine:
                     trade.close_reason,
                     trade.opened_at,
                     trade.closed_at,
-                    int((trade.closed_at - trade.opened_at).total_seconds()),
+                    int((_as_utc(trade.closed_at) - _as_utc(trade.opened_at)).total_seconds()),
                     trade.is_simulated,
                     self.sol_price_usd,
                     None  # metadata - can be extended later
@@ -2868,7 +2882,7 @@ class SolanaTradingEngine:
             return "take_profit"
 
         # Time-based exits (use UTC for consistency with opened_at)
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
 
         # Jupiter time-based auto exit - IMPROVED: only exit if profitable or past max time
         if position.strategy == Strategy.JUPITER:
@@ -2977,7 +2991,7 @@ class SolanaTradingEngine:
 
         # ============ MAX HOLD TIME CHECK (before trailing logic) ============
         # Force-close pump.fun positions held beyond max time regardless of trailing state
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
         max_hold_seconds = 7200  # 2 hours default
         if self.config_manager:
             max_hold_seconds = self.config_manager.get('pumpfun_max_hold_seconds', 7200)
@@ -3034,7 +3048,7 @@ class SolanaTradingEngine:
             # EMERGENCY EXIT CRITERIA:
             # 1. Price dropped >40% since last check (rapid crash)
             # 2. OR price dropped >30% AND we've held for <5 minutes (new position crashing fast)
-            time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+            time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
 
             if decline_pct >= 40:
                 logger.error(f"🚨 RAPID CRASH DETECTED: {position.token_symbol} dropped {decline_pct:.1f}% since last check!")
@@ -3049,7 +3063,7 @@ class SolanaTradingEngine:
                             mint=position.token_mint,
                             symbol=position.token_symbol,
                             drop_pct=decline_pct,
-                            time_seconds=int((datetime.utcnow() - position.opened_at).total_seconds())
+                            time_seconds=int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds())
                         )
                         # Force immediate database sync
                         await self.scam_blacklist._sync_to_db()
@@ -3158,7 +3172,7 @@ class SolanaTradingEngine:
             tier0_sl_pct = self.config_manager.pumpfun_tier0_sl
 
         # Time-based stop widening: In first 2 minutes, use wider SL to handle initial volatility
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
         early_volatility_window = 120  # 2 minutes
         if time_held < early_volatility_window:
             # Use slightly wider SL in early period (add 5% buffer)
@@ -3274,7 +3288,7 @@ class SolanaTradingEngine:
             return "partial_exit_tier5"
 
         # Log trailing status periodically (every 30 seconds)
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
         if int(time_held) % 30 == 0 and current_gain_pct > 10:
             logger.info(
                 f"📊 {position.token_symbol}: Gain={current_gain_pct:.1f}% Peak={peak_gain_pct:.1f}% "
@@ -4541,7 +4555,7 @@ class SolanaTradingEngine:
                 pnl_pct=pnl_pct,
                 entry_time=position.opened_at,
                 exit_time=datetime.now(),
-                duration_seconds=int((datetime.now() - position.opened_at).total_seconds()),
+                duration_seconds=int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()),
                 is_simulated=position.is_simulated
             )
             self.pnl_tracker.record_trade(trade_record)
@@ -4602,7 +4616,7 @@ class SolanaTradingEngine:
             logger.info(f"   Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL")
 
             # Calculate duration
-            duration_seconds = int((datetime.utcnow() - position.opened_at).total_seconds())
+            duration_seconds = int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds())
 
             # Log trade to separate trade file
             self._log_trade('CLOSE', {
