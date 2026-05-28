@@ -578,7 +578,10 @@ class SolanaTradingApplication:
             # Initialize Telegram controller for remote control (credentials from secrets manager)
             if get_telegram_controller:
                 try:
-                    self.telegram_controller = get_telegram_controller(self.db_pool)
+                    # Wave-11 FIX 2: tag the controller with module_name so the
+                    # singleton's start_polling() can gate against TELEGRAM_POLL_OWNER
+                    # and avoid 409 Conflict spam on the shared bot token.
+                    self.telegram_controller = get_telegram_controller(self.db_pool, module_name='solana')
                     if await self.telegram_controller.initialize():
                         # Register Solana engine for remote control
                         self.telegram_controller.register_module(

@@ -188,7 +188,8 @@ async def main():
     telegram_controller = None
     if get_telegram_controller:
         try:
-            telegram_controller = get_telegram_controller(db_pool)
+            # Wave-11 FIX 2: tag with module_name so start_polling honors TELEGRAM_POLL_OWNER.
+            telegram_controller = get_telegram_controller(db_pool, module_name='ai')
             if await telegram_controller.initialize():
                 telegram_controller.register_module(
                     name='ai_analysis',

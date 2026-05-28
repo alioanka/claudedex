@@ -74,11 +74,29 @@ class TelegramBotController:
     - Update configuration remotely
     """
 
-    def __init__(self, db_pool=None):
+    def __init__(self, db_pool=None, module_name: Optional[str] = None):
         self.db_pool = db_pool
         self.bot_token = None
         self.chat_id = None
         self.admin_chat_ids: List[str] = []  # Authorized admin chat IDs
+
+        # Wave-11 FIX 2: Telegram allows ONE getUpdates poller per token.
+        # Wave-7/8 fixed token resolution in every module, with the side
+        # effect that AI / Copy / Futures / Solana / Sniper / Arbitrage / DEX
+        # ALL started polling the same token and Telegram now rejects the
+        # losers with "409 Conflict: terminated by other getUpdates
+        # request". To preserve sendMessage-style notifications from every
+        # module while keeping exactly one poller, we tag each controller
+        # instance with its ``module_name`` and only the module matching
+        # ``TELEGRAM_POLL_OWNER`` (env, default "dashboard") will actually
+        # run the long-poll loop. Every other module's start_polling() is
+        # a no-op. Fail-soft: if module_name is None we fall back to
+        # ``CLAUDEDEX_MODULE_NAME`` env or, if that's unset, run polling
+        # only when no owner is configured at all.
+        self.module_name = (module_name
+                            or os.getenv('CLAUDEDEX_MODULE_NAME')
+                            or '').strip().lower()
+        self.poll_owner = os.getenv('TELEGRAM_POLL_OWNER', 'dashboard').strip().lower()
 
         # Load credentials from secrets manager (database-backed)
         if secrets:
@@ -219,13 +237,39 @@ class TelegramBotController:
         return False
 
     async def start_polling(self):
-        """Start polling for Telegram commands"""
+        """Start polling for Telegram commands.
+
+        Wave-11 FIX 2: only the module whose ``module_name`` matches the
+        ``TELEGRAM_POLL_OWNER`` env (default ``"dashboard"``) is allowed to
+        run the getUpdates long-poll. Every other caller's start_polling()
+        is a fail-soft no-op so notification sendMessage from each module
+        keeps working without producing 409 Conflict spam on shared
+        tokens. To grant polling to a different module set
+        TELEGRAM_POLL_OWNER=<module_name>; modules without a name
+        configured will not poll (safe default).
+        """
         if not self.bot_token:
+            return
+
+        # Polling ownership gate.
+        if not self.module_name:
+            logger.info(
+                "Telegram polling skipped (no module_name set on controller; "
+                "set CLAUDEDEX_MODULE_NAME or pass module_name=)"
+            )
+            return
+        if self.module_name != self.poll_owner:
+            logger.info(
+                f"Telegram polling skipped: module={self.module_name!r} is not "
+                f"TELEGRAM_POLL_OWNER={self.poll_owner!r} (sendMessage still works)"
+            )
             return
 
         self.is_running = True
         self._polling_task = asyncio.create_task(self._poll_updates())
-        logger.info("Telegram command polling started")
+        logger.info(
+            f"Telegram command polling started (owner={self.module_name!r})"
+        )
 
     async def stop_polling(self):
         """Stop polling for commands"""
@@ -847,9 +891,19 @@ class TelegramBotController:
 _telegram_controller: Optional[TelegramBotController] = None
 
 
-def get_telegram_controller(db_pool=None) -> TelegramBotController:
-    """Get or create the Telegram controller singleton"""
+def get_telegram_controller(db_pool=None, module_name: Optional[str] = None) -> TelegramBotController:
+    """Get or create the Telegram controller singleton.
+
+    Wave-11 FIX 2: ``module_name`` tags the controller so that
+    ``start_polling()`` can gate against ``TELEGRAM_POLL_OWNER`` and
+    avoid the Telegram "409 Conflict" spam that happens when multiple
+    subprocesses long-poll the same bot token. Each module's main_*.py
+    should pass its own name (e.g. ``module_name='copy'``).
+    """
     global _telegram_controller
     if _telegram_controller is None:
-        _telegram_controller = TelegramBotController(db_pool)
+        _telegram_controller = TelegramBotController(db_pool, module_name=module_name)
+    elif module_name and not _telegram_controller.module_name:
+        # First-known-name wins; later calls don't downgrade ownership.
+        _telegram_controller.module_name = module_name.strip().lower()
     return _telegram_controller

@@ -779,7 +779,9 @@ class FuturesTradingApplication:
                         self.logger.debug(
                             f"Telegram secret pre-warm skipped (non-fatal): {_warm_err}"
                         )
-                    self.telegram_controller = get_telegram_controller(self.db_pool)
+                    # Wave-11 FIX 2: tag with module_name so the singleton's
+                    # start_polling() honors TELEGRAM_POLL_OWNER (default dashboard).
+                    self.telegram_controller = get_telegram_controller(self.db_pool, module_name='futures')
                     if await self.telegram_controller.initialize():
                         self.telegram_controller.register_module(
                             name='futures',
