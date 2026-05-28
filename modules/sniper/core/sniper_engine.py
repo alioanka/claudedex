@@ -200,6 +200,26 @@ class SniperEngine:
 
         logger.info("✅ Sniper Engine initialized")
 
+        # Wave-11 FIX 2: surface wallets to the dashboard funding panel
+        # IMMEDIATELY at the end of initialize(), not only on the first
+        # _log_stats_if_needed window flip (which can be 1+ min away on a
+        # quiet listener) and not only on the first trade. The
+        # TradeExecutor.initialize() above resolved evm_wallet /
+        # solana_wallet from secrets; persist that snapshot now so the
+        # dashboard stops showing "no wallet in runtime stats" the
+        # instant the subprocess is up. Idempotent (UPSERT id=1); the
+        # run()-loop seed at line 319 then overwrites with full counters.
+        try:
+            await self._persist_runtime_stats()
+            _exec = getattr(self, 'executor', None)
+            sol = getattr(_exec, 'solana_wallet', None) if _exec else None
+            evm = getattr(_exec, 'evm_wallet', None) if _exec else None
+            sol_mask = (sol[:6] + "..." + sol[-4:]) if sol else "none"
+            evm_mask = (evm[:6] + "..." + evm[-4:]) if evm else "none"
+            logger.info(f"🔑 Sniper wallets surfaced: solana={sol_mask} evm={evm_mask}")
+        except Exception as e:
+            logger.debug(f"initial wallet surfacing failed (non-fatal): {e}")
+
     async def _load_settings(self):
         """Load settings from database"""
         try:
@@ -713,13 +733,18 @@ class SniperEngine:
             # Wallet identity (issue 15). Public address only — NEVER the key.
             # Sniper Solana shares SOLANA_MODULE_WALLET with the solana_trading
             # module; EVM uses WALLET_ADDRESS / EVM_WALLET_ADDRESS.
-            snapshot['wallet_address'] = (
-                getattr(self, 'solana_wallet', None)
-                or getattr(self, 'evm_wallet', None)
-                or None
-            )
-            snapshot['solana_wallet_address'] = getattr(self, 'solana_wallet', None) or None
-            snapshot['evm_wallet_address'] = getattr(self, 'evm_wallet', None) or None
+            #
+            # Wave-11 FIX 2: the wallet addresses live on `self.executor`
+            # (TradeExecutor.{solana_wallet,evm_wallet}), NOT on the engine
+            # itself — the previous `getattr(self, 'solana_wallet', ...)`
+            # always returned None and the dashboard funding panel showed
+            # "Sniper: no wallet in runtime stats". Read through executor.
+            _exec = getattr(self, 'executor', None)
+            sol_wallet = getattr(_exec, 'solana_wallet', None) if _exec else None
+            evm_wallet = getattr(_exec, 'evm_wallet', None) if _exec else None
+            snapshot['wallet_address'] = sol_wallet or evm_wallet or None
+            snapshot['solana_wallet_address'] = sol_wallet or None
+            snapshot['evm_wallet_address'] = evm_wallet or None
 
             import json as _json
             async with self.db_pool.acquire() as conn:
