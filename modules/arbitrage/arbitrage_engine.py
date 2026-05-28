@@ -1751,7 +1751,7 @@ class EVMArbitrageEngine:
                             # Reduce RPC calls since pools clearly have no activity
                             if self._stale_spread_count >= 6 and self._best_spread_seen < 0:
                                 self.logger.warning(
-                                    f"   💤 SLOW-SCAN MODE: 30min+ stale negative spreads on {self.chain} "
+                                    f"   💤 SLOW-SCAN MODE: 30min+ stale negative spreads on {self.chain_name} "
                                     f"- reducing scan frequency to conserve RPC quota"
                                 )
                                 # Double the scan interval (tracked via attribute)
