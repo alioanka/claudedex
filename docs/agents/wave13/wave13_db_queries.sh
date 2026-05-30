@@ -41,7 +41,8 @@ run_dex() {
 run_futures() {
   section "FUTURES (Agent 3)"
   PG -c "\d futures_trades"
-  PG -c "SELECT symbol, count(*) AS trades, round(avg(pnl_usd),2) AS avg_pnl, round(sum(pnl_usd),2) AS total_pnl, round(100.0*sum(case when pnl_usd>0 then 1 end)/count(*),1) AS win_pct, round(avg(fee_paid_usd),4) AS avg_fee_usd, round(avg(funding_paid_usd),4) AS avg_funding_usd, round(avg(hold_time_minutes),1) AS avg_hold_min, round(avg(leverage),1) AS avg_leverage FROM futures_trades WHERE closed_at>=now()-interval '30 days' GROUP BY symbol ORDER BY total_pnl DESC;"
+  # NOTE: live schema uses net_pnl/pnl/fees/duration_seconds/exit_time (no pnl_usd/funding columns)
+  PG -c "SELECT symbol, count(*) AS trades, round(avg(net_pnl),2) AS avg_net_pnl, round(sum(net_pnl),2) AS total_net_pnl, round(100.0*sum(case when net_pnl>0 then 1 end)/count(*),1) AS win_pct, round(avg(fees),4) AS avg_fees, round(avg(duration_seconds)/60.0,1) AS avg_hold_min, round(avg(leverage),1) AS avg_lev, round(sum(net_pnl) FILTER (WHERE is_simulated),2) AS sim_pnl, round(sum(net_pnl) FILTER (WHERE NOT is_simulated),2) AS live_pnl FROM futures_trades WHERE exit_time>=now()-interval '30 days' GROUP BY symbol ORDER BY total_net_pnl DESC;"
 }
 
 run_sniper() {
