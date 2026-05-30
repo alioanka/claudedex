@@ -31,9 +31,9 @@
                                 </div>
 
                                 <div class="mb-3">
-                                    <label class="form-label">Confidence Threshold (%)</label>
-                                    <input type="number" class="form-control" id="confidence_threshold" min="0" max="100">
-                                    <div class="form-text">Minimum sentiment score (0-100) to trigger a trade.</div>
+                                    <label class="form-label">Confidence Threshold (decimal 0.0 – 1.0)</label>
+                                    <input type="number" class="form-control" id="confidence_threshold" min="0" max="1" step="0.01">
+                                    <div class="form-text">Minimum sentiment score (decimal, e.g. 0.35) to trigger a trade. Default: 0.35. Live LLM scores cluster 0.30–0.40 — values above 0.50 will block most trades.</div>
                                 </div>
 
                                 <div class="mb-3">
@@ -60,11 +60,25 @@
                                 <div class="mb-3">
                                     <label class="form-label"><i class="fas fa-brain me-2"></i>AI Provider</label>
                                     <select class="form-select" id="ai_provider">
-                                        <option value="openai">OpenAI (GPT-3.5 Turbo)</option>
-                                        <option value="claude">Anthropic (Claude 3 Haiku)</option>
+                                        <option value="openai">OpenAI</option>
+                                        <option value="claude">Anthropic (Claude)</option>
                                         <option value="both">Both (Average Score)</option>
                                     </select>
-                                    <div class="form-text">Select which AI model(s) to use for sentiment analysis. Using "Both" will call both APIs and average the sentiment scores.</div>
+                                    <div class="form-text">Select which AI model(s) to use for sentiment analysis. "Both" calls both APIs and averages scores.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Claude Model ID
+                                        <span id="claude-health-badge" class="badge ms-2" style="font-size:0.7rem;display:none;"></span>
+                                    </label>
+                                    <input type="text" class="form-control font-monospace" id="claude_model" placeholder="claude-3-5-sonnet-20241022">
+                                    <div class="form-text">Anthropic model snapshot (e.g. <code>claude-3-5-sonnet-20241022</code>). Default: <code>claude-3-5-sonnet-20241022</code>. Avoid <code>-latest</code> aliases — they return 404 on some plans.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">OpenAI Model ID</label>
+                                    <input type="text" class="form-control font-monospace" id="openai_model" placeholder="gpt-4o-mini">
+                                    <div class="form-text">OpenAI model name (e.g. <code>gpt-4o-mini</code>). Default: <code>gpt-4o-mini</code>.</div>
                                 </div>
 
                                 <div class="mb-3">
@@ -727,7 +741,10 @@
 </div>
 
 <script>
-    document.addEventListener('DOMContentLoaded', loadSettings);
+    document.addEventListener('DOMContentLoaded', function() {
+        loadSettings();
+        loadClaudeModelHealth();
+    });
 
     async function loadSettings() {
         try {
@@ -739,14 +756,20 @@
                 // Basic settings
                 document.getElementById('direct_trading').checked = settings.direct_trading === true;
                 // dry_run owned by DryRunWidget banner.
-                document.getElementById('confidence_threshold').value = settings.confidence_threshold || 85;
+                // confidence_threshold is stored as a decimal (0.0-1.0).
+                // Guard against legacy percentage values (>1) stored in old DBs.
+                var ct = parseFloat(settings.confidence_threshold || 0.35);
+                if (ct > 1) ct = ct / 100;  // migrate legacy % → decimal
+                document.getElementById('confidence_threshold').value = ct.toFixed(2);
                 document.getElementById('trade_amount_usd').value = settings.trade_amount_usd || 50;
                 document.getElementById('trading_pair').value = settings.trading_pair || 'BTCUSDT';
                 document.getElementById('sentiment_source').value = settings.sentiment_source || 'news';
                 document.getElementById('analysis_interval').value = settings.analysis_interval || 15;
 
-                // AI Provider
+                // AI Provider + model IDs
                 document.getElementById('ai_provider').value = settings.ai_provider || 'openai';
+                document.getElementById('claude_model').value = settings.claude_model || 'claude-3-5-sonnet-20241022';
+                document.getElementById('openai_model').value = settings.openai_model || 'gpt-4o-mini';
 
                 // Exit strategy settings
                 document.getElementById('take_profit_pct').value = settings.take_profit_pct || 5;
@@ -836,8 +859,10 @@
             sentiment_source: document.getElementById('sentiment_source').value,
             analysis_interval: parseInt(document.getElementById('analysis_interval').value),
 
-            // AI Provider
+            // AI Provider + model IDs
             ai_provider: document.getElementById('ai_provider').value,
+            claude_model: document.getElementById('claude_model').value.trim() || 'claude-3-5-sonnet-20241022',
+            openai_model: document.getElementById('openai_model').value.trim() || 'gpt-4o-mini',
 
             // Exit strategy settings
             take_profit_pct: parseFloat(document.getElementById('take_profit_pct').value),
@@ -899,6 +924,32 @@
         } catch (error) {
             console.error('Error saving settings:', error);
             alert('Error saving settings');
+        }
+    }
+
+    async function loadClaudeModelHealth() {
+        const badge = document.getElementById('claude-health-badge');
+        if (!badge) return;
+        try {
+            const r = await fetch('/api/ai/model-health');
+            const d = await r.json();
+            if (!d.success) return;
+            badge.style.display = 'inline-block';
+            if (d.status === 'green') {
+                badge.className = 'badge ms-2 bg-success';
+                badge.textContent = 'Model OK';
+                badge.title = d.detail;
+            } else if (d.status === 'red') {
+                badge.className = 'badge ms-2 bg-danger';
+                badge.textContent = 'Model 404';
+                badge.title = d.detail;
+            } else {
+                badge.className = 'badge ms-2 bg-secondary';
+                badge.textContent = 'No data';
+                badge.title = d.detail;
+            }
+        } catch (e) {
+            // health badge is non-critical — ignore network errors
         }
     }
 </script>

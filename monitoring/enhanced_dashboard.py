@@ -1045,6 +1045,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
         self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
         self.app.router.add_get('/api/ai/logs', self.api_get_ai_logs)
+        self.app.router.add_get('/api/ai/model-health', self.api_get_ai_model_health)
         # A6 E2: confidence-calibration reliability diagram + Brier score.
         # Source: ai_confidence_calibration (migration 023).
         self.app.router.add_get('/api/ai/calibration', self.api_get_ai_calibration)
@@ -13843,7 +13844,14 @@ class DashboardEndpoints:
                 # Basic settings
                 'direct_trading': False,
                 'dry_run': True,
-                'confidence_threshold': 85,
+                # confidence_threshold is a decimal (0.0-1.0).
+                # Default 0.35 — wave-13 agent-8 fix: old default 0.50
+                # blocked all trades (live LLM scores cluster 0.30-0.40).
+                'confidence_threshold': 0.35,
+                # LLM model IDs — DB-backed so operators can hot-swap without
+                # restarting the module. Match wave-13 agent-8 defaults.
+                'claude_model': 'claude-3-5-sonnet-20241022',
+                'openai_model': 'gpt-4o-mini',
                 'trade_amount_usd': 50,
                 'trading_pair': 'BTCUSDT',
                 'sentiment_source': 'news',
@@ -13922,6 +13930,57 @@ class DashboardEndpoints:
             return web.json_response({'success': True, 'message': 'Settings saved'})
         except Exception as e:
             return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_get_ai_model_health(self, request):
+        """Claude model health badge endpoint.
+
+        Returns green if the last 10 Anthropic calls all returned HTTP 200,
+        red if any returned 404 with not_found_error (wrong model ID).
+        Source: ai_analysis_logs table, columns (model, success, error_code,
+        provider). Falls back to 'unknown' if the table is absent or empty.
+        """
+        try:
+            status = 'unknown'
+            detail = 'no data'
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    table_exists = await conn.fetchval("""
+                        SELECT EXISTS (
+                            SELECT FROM information_schema.tables
+                            WHERE table_name = 'ai_analysis_logs'
+                        )
+                    """)
+                    if table_exists:
+                        rows = await conn.fetch("""
+                            SELECT success, error_code
+                            FROM ai_analysis_logs
+                            WHERE provider ILIKE '%anthropic%'
+                               OR provider ILIKE '%claude%'
+                            ORDER BY created_at DESC
+                            LIMIT 10
+                        """)
+                        if not rows:
+                            status = 'unknown'
+                            detail = 'no Anthropic calls recorded yet'
+                        else:
+                            bad = [r for r in rows
+                                   if not r['success']
+                                   and (r['error_code'] or '') == 'not_found_error']
+                            if bad:
+                                status = 'red'
+                                detail = (f'{len(bad)} of last {len(rows)} calls returned '
+                                          'not_found_error — check claude_model setting')
+                            else:
+                                status = 'green'
+                                detail = f'last {len(rows)} Anthropic calls all OK'
+                    else:
+                        status = 'unknown'
+                        detail = 'ai_analysis_logs table not found'
+            return web.json_response({'success': True, 'status': status, 'detail': detail})
+        except Exception as e:
+            logger.error(f"api_get_ai_model_health error: {e}")
+            return web.json_response({'success': False, 'status': 'unknown',
+                                      'detail': str(e)})
 
     async def api_get_ai_logs(self, request):
         """Get detailed OpenAI API logs from database"""
