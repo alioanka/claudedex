@@ -169,10 +169,24 @@ async def migrate_database():
                     # Execute the migration
                     await conn.execute(sql)
 
-                    # Record migration in tracking table
+                    # Record migration in tracking table.
+                    # ON CONFLICT guard: the bot's internal runner
+                    # (data/migration_manager.py) tracks applied migrations in a
+                    # SEPARATE table (schema_migrations) and the container
+                    # entrypoint runs it on startup. When an operator then runs
+                    # this script manually, an idempotent migration body succeeds
+                    # but the bare INSERT here would raise a duplicate-key error
+                    # on migrations_version_key if this version was recorded by a
+                    # prior partial run — which the entrypoint turns into a hard
+                    # exit(1), preventing the bot from starting. DO UPDATE keeps
+                    # the row's checksum/applied_at fresh and makes re-runs safe.
                     await conn.execute("""
                         INSERT INTO migrations (version, description, checksum)
                         VALUES ($1, $2, $3)
+                        ON CONFLICT (version) DO UPDATE
+                        SET description = EXCLUDED.description,
+                            checksum = EXCLUDED.checksum,
+                            applied_at = NOW()
                     """, version, f"Migration from {migration_file.name}", checksum)
 
                 print(f"  ✅ Applied successfully (checksum: {checksum})")
