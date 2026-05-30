@@ -153,6 +153,35 @@ class Endpoint:
             return False
         return True
 
+    @property
+    def is_soft_usable(self) -> bool:
+        """
+        True iff the endpoint is enabled and not hard-disabled/permanently-unhealthy.
+
+        Used as a last-resort fallback when ALL endpoints in a pool are rate-limited
+        or transiently unhealthy.  We pick the one whose rate-limit expires soonest
+        rather than returning None and starving callers entirely.
+        """
+        if not self.is_enabled:
+            return False
+        if self.status == EndpointStatus.DISABLED:
+            return False
+        # Permanently unhealthy (>= 10 consecutive failures) is still hard-blocked
+        if self.status == EndpointStatus.UNHEALTHY and self.consecutive_failures >= 10:
+            return False
+        return True
+
+    @property
+    def seconds_until_available(self) -> float:
+        """Seconds until this endpoint becomes available (0 if already available)."""
+        if self.is_available:
+            return 0.0
+        if self.status == EndpointStatus.RATE_LIMITED and self.rate_limit_until:
+            now = datetime.now(self.rate_limit_until.tzinfo)
+            remaining = (self.rate_limit_until - now).total_seconds()
+            return max(0.0, remaining)
+        return float('inf')
+
     def get_effective_url(self) -> str:
         """Get URL with API key if applicable"""
         if self.api_key:
@@ -178,10 +207,18 @@ class ProviderEndpoints:
         return sorted(available, key=lambda e: (e.priority, -e.health_score))
 
     def get_next_endpoint(self) -> Optional[Endpoint]:
-        """Get next available endpoint using weighted round-robin"""
+        """
+        Get next available endpoint using weighted round-robin.
+
+        If no endpoint is fully available (all are rate-limited / transiently
+        unhealthy), fall back to the least-penalized soft-usable endpoint so
+        callers never receive None when at least one recoverable endpoint exists.
+        """
         available = self.get_available_endpoints()
         if not available:
-            return None
+            # Last-resort: pick the soft-usable endpoint with the soonest
+            # rate-limit expiry rather than returning None and starving callers.
+            return self._get_least_penalized_fallback()
 
         # Use weighted random selection among top priority endpoints
         top_priority = available[0].priority
@@ -203,6 +240,17 @@ class ProviderEndpoints:
                 return endpoint
 
         return top_tier[-1]
+
+    def _get_least_penalized_fallback(self) -> Optional[Endpoint]:
+        """
+        When all endpoints are temporarily unavailable, return the one closest
+        to recovery (smallest `seconds_until_available`).  Hard-disabled and
+        permanently-unhealthy endpoints are excluded via `is_soft_usable`.
+        """
+        candidates = [e for e in self.endpoints if e.is_soft_usable]
+        if not candidates:
+            return None
+        return min(candidates, key=lambda e: e.seconds_until_available)
 
 
 class PoolEngine:
@@ -569,14 +617,27 @@ class PoolEngine:
 
         endpoint = provider.get_next_endpoint()
         if not endpoint:
-            logger.warning(f"No available endpoints for: {provider_type}")
+            # All endpoints are hard-disabled or permanently unhealthy; .env is last resort.
+            logger.warning(f"No available endpoints for: {provider_type} (all hard-blocked)")
             return self._get_env_fallback(provider_type)
 
-        # Log selection to full logger
-        full_logger.debug(
-            f"SELECTED: {provider_type} -> {endpoint.name} "
-            f"(priority={endpoint.priority}, health={endpoint.health_score:.1f})"
-        )
+        available_count = len(provider.get_available_endpoints())
+        if available_count == 0:
+            # Soft fallback: endpoint is rate-limited but will recover — log clearly.
+            secs = endpoint.seconds_until_available
+            logger.warning(
+                f"All {provider_type} endpoints rate-limited; using least-penalized "
+                f"'{endpoint.name}' (recovers in {secs:.0f}s)"
+            )
+            rate_limit_logger.warning(
+                f"STARVED {provider_type}: returning '{endpoint.name}' "
+                f"despite rate-limit (soonest recovery {secs:.0f}s)"
+            )
+        else:
+            full_logger.debug(
+                f"SELECTED: {provider_type} -> {endpoint.name} "
+                f"(priority={endpoint.priority}, health={endpoint.health_score:.1f})"
+            )
 
         return endpoint.get_effective_url()
 
@@ -668,7 +729,16 @@ class PoolEngine:
         if not endpoint:
             return
 
-        duration = duration_seconds or self._default_rate_limit_duration
+        # If the caller supplied a concrete duration (e.g. parsed from Retry-After header)
+        # honour it exactly; otherwise use exponential back-off so repeated 429s from the
+        # same endpoint cool down progressively (cap at 30 min).
+        if duration_seconds:
+            duration = duration_seconds
+        else:
+            # Exponential: base * 2^(count-1), capped at 1800 s (30 min)
+            base = self._default_rate_limit_duration  # 300 s
+            duration = min(base * (2 ** max(0, endpoint.rate_limit_count)), 1800)
+
         endpoint.status = EndpointStatus.RATE_LIMITED
         endpoint.rate_limit_until = datetime.utcnow() + timedelta(seconds=duration)
         endpoint.rate_limit_count += 1
@@ -680,7 +750,8 @@ class PoolEngine:
 
         rate_limit_msg = (
             f"Rate limited: {provider_type} - {endpoint.name} "
-            f"(until {endpoint.rate_limit_until}, count={endpoint.rate_limit_count}, priority: {endpoint.priority})"
+            f"(until {endpoint.rate_limit_until}, duration={duration}s, "
+            f"count={endpoint.rate_limit_count}, priority: {endpoint.priority})"
         )
         logger.warning(rate_limit_msg)
         rate_limit_logger.info(rate_limit_msg)
