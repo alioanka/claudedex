@@ -851,25 +851,183 @@ class SentimentEngine:
         return max(-1.0, min(1.0, val))
 
     async def _fetch_news(self) -> List[str]:
-        """Fetch latest crypto news headlines from public API"""
-        headlines: List[str] = []
+        """Fetch latest crypto news headlines from public API.
+
+        Wave-12 FIX 1 — until 2026-01, this function depended on a single
+        unauthenticated GET to `min-api.cryptocompare.com` with the default
+        aiohttp User-Agent. CryptoCompare started 403-ing those requests
+        from datacenter IPs (logged as "Host not in allowlist"), so every
+        cycle silently retrieved 0 headlines and skipped the LLM call.
+        The downstream symptom on the dashboard is "Offline / 0 signals /
+        last activity 31.01.2026" — see modules/ai_analysis/CLAUDE.md.
+
+        Fix shape:
+        - Send a real browser User-Agent so CryptoCompare's edge accepts us.
+        - Try CryptoCompare; if it 403s OR returns 0 items, fall through
+          to CryptoPanic (optional `AI_NEWS_KEY` via secrets manager / env;
+          if missing, query the public no-auth endpoint).
+        - Last resort: CoinDesk RSS (no key, no UA gate).
+        - Always log a `WARNING` with the URL + HTTP status on a non-200
+          so the operator can diagnose at-a-glance from `ai.log`.
+        - Return `[]` only after ALL sources fail; logging makes the
+          failure visible.
+        """
+        # Resolve the optional CryptoPanic key once per call. Secrets
+        # manager is preferred (encrypted DB row), env is the fallback.
+        cryptopanic_key: Optional[str] = None
         try:
-            # Using CryptoCompare News API (public free tier) as an example
-            url = "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        data = await resp.json()
-                        articles = data.get('Data', [])[:10] # Get top 10
-                        # MB-21: sanitize each title before it can reach the LLM.
-                        for a in articles:
-                            s = self._sanitize_headline(a.get('title'))
+            from security.secrets_manager import secrets
+            try:
+                cryptopanic_key = await secrets.get_async('AI_NEWS_KEY')
+            except Exception:
+                # Sync fallback (legitimate when secrets bootstrap not done).
+                cryptopanic_key = secrets.get('AI_NEWS_KEY') if hasattr(secrets, 'get') else None
+        except Exception:
+            cryptopanic_key = None
+        if not cryptopanic_key:
+            cryptopanic_key = os.getenv('AI_NEWS_KEY') or os.getenv('CRYPTOPANIC_KEY')
+
+        # CryptoCompare's edge rejects requests with no UA / aiohttp's
+        # default UA from datacenter IPs. A real-browser UA is enough to
+        # restore the 200; we are not pretending to be a person, just not
+        # advertising as a script.
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+            ),
+            "Accept": "application/json",
+        }
+        timeout = aiohttp.ClientTimeout(total=10)
+
+        sources: List[Dict] = [
+            {
+                "name": "cryptocompare",
+                "url": "https://min-api.cryptocompare.com/data/v2/news/?lang=EN",
+                "kind": "cryptocompare_json",
+            },
+        ]
+        if cryptopanic_key:
+            sources.append({
+                "name": "cryptopanic_auth",
+                "url": (
+                    "https://cryptopanic.com/api/v1/posts/"
+                    f"?auth_token={cryptopanic_key}&public=true&kind=news"
+                ),
+                "kind": "cryptopanic_json",
+            })
+        else:
+            # Public (no-auth) CryptoPanic endpoint — rate-limited but
+            # works without a key.
+            sources.append({
+                "name": "cryptopanic_public",
+                "url": "https://cryptopanic.com/api/v1/posts/?public=true&kind=news",
+                "kind": "cryptopanic_json",
+            })
+        sources.append({
+            "name": "coindesk_rss",
+            "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+            "kind": "rss",
+        })
+
+        last_error_summary = ""
+        for src in sources:
+            url = src["url"]
+            kind = src["kind"]
+            name = src["name"]
+            try:
+                async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+                    async with session.get(url) as resp:
+                        status = resp.status
+                        if status != 200:
+                            # Make the failure visible — was previously
+                            # logger.debug, which is why the broken state
+                            # hid for ~4 months.
+                            body_peek = ""
+                            try:
+                                body_peek = (await resp.text())[:200]
+                            except Exception:
+                                pass
+                            logger.warning(
+                                f"📰 News source {name} returned HTTP {status}: "
+                                f"{url} (body[:200]={body_peek!r})"
+                            )
+                            last_error_summary = f"{name}=HTTP{status}"
+                            continue
+                        if kind == "rss":
+                            body = await resp.text()
+                            titles = self._parse_rss_titles(body, limit=10)
+                        else:
+                            data = await resp.json(content_type=None)
+                            if kind == "cryptocompare_json":
+                                articles = (data or {}).get('Data', []) or []
+                                titles = [a.get('title') for a in articles[:10]]
+                            elif kind == "cryptopanic_json":
+                                results = (data or {}).get('results', []) or []
+                                titles = [a.get('title') for a in results[:10]]
+                            else:
+                                titles = []
+
+                        headlines: List[str] = []
+                        for t in titles:
+                            s = self._sanitize_headline(t)
                             if s:
                                 headlines.append(s)
-        except Exception as e:
-            logger.debug(f"Failed to fetch news: {e}")
+                        if headlines:
+                            logger.debug(
+                                f"📰 Fetched {len(headlines)} headlines from {name}"
+                            )
+                            return headlines
+                        # 200 but parser found nothing — keep trying.
+                        logger.warning(
+                            f"📰 News source {name} returned HTTP 200 but 0 "
+                            f"parseable headlines (url={url})"
+                        )
+                        last_error_summary = f"{name}=empty"
+            except Exception as e:
+                # Network/JSON/timeout errors; try the next source.
+                logger.warning(f"📰 News source {name} fetch raised: {type(e).__name__}: {e}")
+                last_error_summary = f"{name}={type(e).__name__}"
+                continue
 
-        return headlines
+        # All sources exhausted. Tell the operator concretely so they
+        # don't go another 4 months staring at "skipping analysis".
+        logger.warning(
+            "📰 _fetch_news exhausted all sources; returning empty. "
+            f"last_error={last_error_summary or 'unknown'}. "
+            "If AI_NEWS_KEY is unconfigured, the public CryptoPanic endpoint "
+            "is rate-limited; consider setting AI_NEWS_KEY in secrets / .env."
+        )
+        return []
+
+    def _parse_rss_titles(self, body: str, limit: int = 10) -> List[str]:
+        """Bare-bones <title> extractor for RSS (no XML lib dependency).
+
+        Skips the channel-level title (always the feed name) and returns
+        up to `limit` item titles. Handles both CDATA-wrapped and plain
+        bodies. We don't need a full RSS parser — we only need the
+        headlines to feed the LLM.
+        """
+        if not body:
+            return []
+        titles: List[str] = []
+        try:
+            # Match every <title>...</title> on its own. The first hit is
+            # the channel name; drop it.
+            raw = re.findall(r'<title>(.*?)</title>', body, flags=re.S | re.I)
+            if raw:
+                raw = raw[1:]  # drop channel title
+            for t in raw:
+                # Unwrap CDATA if present, collapse whitespace.
+                m = re.match(r'\s*<!\[CDATA\[(.*?)\]\]>\s*$', t, flags=re.S)
+                clean = (m.group(1) if m else t).strip()
+                if clean:
+                    titles.append(clean)
+                if len(titles) >= limit:
+                    break
+        except Exception:
+            pass
+        return titles
 
     async def _analyze_with_llm(self, texts: List[str]) -> float:
         """Send headlines to OpenAI and get a sentiment score (-1 to 1)."""
