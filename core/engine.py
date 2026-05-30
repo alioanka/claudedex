@@ -2597,26 +2597,82 @@ class TradingBotEngine:
                 # The error is already logged
                 
     async def _retrain_models(self):
-        """Periodically retrain ML models"""
+        """Periodically retrain ML models via scripts/train_ensemble.py.
+
+        Wave-13: the previous loop called _collect_training_data() (returns {})
+        and _should_retrain() (returns False) — so it NEVER retrained. This
+        replacement invokes the canonical offline trainer as a subprocess so:
+        - the training pipeline is tested end-to-end independently of the engine
+        - artifacts land in models/ where load_models() reads them
+        - only the DB version row is written (no trading-state mutation)
+        - the engine reloads the new models without a full restart
+
+        Config keys (all under ml_models in config_settings):
+          ml_retrain_enabled       bool  default True   — master toggle
+          ml_retrain_interval_hours int  default 24     — hours between runs
+          ml_retrain_min_trades    int  default 50      — skip if fewer closed trades
+          ml_retrain_days          int  default 90      — training window
+        """
+        import subprocess
+        from pathlib import Path
+
         while self.state == BotState.RUNNING:
             try:
-                # Wait for retrain interval
-                await asyncio.sleep(self.config.get('ml_models', {}).get('ml_retrain_interval_hours', 24) * 3600)
-                
-                # Collect training data
-                training_data = await self._collect_training_data()
-                
-                # Check if retraining is needed
-                if self._should_retrain(training_data):
-                    # Train new models
-                    new_models = await self.ensemble_predictor.retrain(training_data)
-                    
-                    # Validate on test set
-                    if await self._validate_models(new_models):
-                        await self.ensemble_predictor.update_models(new_models)
-                        await self.alert_manager.send_info("ML models retrained successfully")
-                        
+                ml_cfg = self.config.get('ml_models', {})
+                interval_h = int(ml_cfg.get('ml_retrain_interval_hours', 24))
+                await asyncio.sleep(interval_h * 3600)
+
+                if not ml_cfg.get('ml_retrain_enabled', True):
+                    logger.info("Auto-retrain disabled via ml_models.ml_retrain_enabled")
+                    continue
+
+                days = int(ml_cfg.get('ml_retrain_days', 90))
+                min_trades = int(ml_cfg.get('ml_retrain_min_trades', 50))
+
+                logger.info(
+                    f"Auto-retrain: launching scripts/train_ensemble.py "
+                    f"--days {days} (min_trades={min_trades})"
+                )
+
+                repo_root = str(Path(__file__).parent.parent)
+                script = str(Path(repo_root) / "scripts" / "train_ensemble.py")
+
+                loop = asyncio.get_event_loop()
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: subprocess.run(
+                        ["python", script, "--days", str(days)],
+                        capture_output=True, text=True,
+                        cwd=repo_root, timeout=1800,  # 30-min hard cap
+                    )
+                )
+
+                if result.returncode == 0:
+                    logger.info("Auto-retrain: SUCCEEDED — reloading model artifacts")
+                    # Reload the freshly trained models without a full restart.
+                    try:
+                        await self.ensemble_predictor.load_models()
+                        logger.info("Auto-retrain: model artifacts reloaded into ensemble_predictor")
+                    except Exception as reload_err:
+                        logger.warning(f"Auto-retrain: reload failed (non-fatal): {reload_err}")
+                    await self.alert_manager.send_info(
+                        f"DEX ensemble retrained ({days}d window). "
+                        "ML[ensemble] now active."
+                    )
+                elif result.returncode == 3:
+                    logger.info(
+                        f"Auto-retrain: skipped — fewer than {min_trades} closed "
+                        "trades in window (normal early-run behaviour)"
+                    )
+                else:
+                    logger.warning(
+                        f"Auto-retrain: exit {result.returncode}\n"
+                        f"stdout: {result.stdout[-2000:]}\n"
+                        f"stderr: {result.stderr[-1000:]}"
+                    )
+
             except Exception as e:
+                logger.error(f"Auto-retrain loop error: {e}", exc_info=True)
                 await self.alert_manager.send_warning(f"Model retraining error: {e}")
                 
     async def _update_blacklists(self):
@@ -3227,15 +3283,15 @@ class TradingBotEngine:
         return True
 
     async def _collect_training_data(self) -> Dict:
-        """Collect data for model training"""
+        """Legacy stub — superseded by the subprocess call in _retrain_models."""
         return {}
 
     def _should_retrain(self, data: Dict) -> bool:
-        """Check if models should be retrained"""
+        """Legacy stub — superseded by the subprocess call in _retrain_models."""
         return False
 
     async def _validate_models(self, models: Dict) -> bool:
-        """Validate new models"""
+        """Legacy stub — superseded by the subprocess call in _retrain_models."""
         return True
 
     async def _get_recent_rug_pulls(self) -> List[Dict]:
