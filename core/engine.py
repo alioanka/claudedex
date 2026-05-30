@@ -3717,15 +3717,38 @@ class TradingBotEngine:
             liquidity_usd = pair.get('liquidity_usd') or pair.get('liquidity') or 0
             if liquidity_usd > 0:
                 volume_to_liq_ratio = volume_24h / liquidity_usd if liquidity_usd > 0 else 0
-                if volume_to_liq_ratio < 2.0:
-                    logger.info(f"   ❌ REJECTED: Low volume/liquidity ratio ({volume_to_liq_ratio:.1f}x)")
+
+                # Wave-13 fix: the previous 2.0x hard-reject killed ~100% of real
+                # opportunities. Typical active DEX pairs run 0.1x-1.0x vol/liq;
+                # 2.0x means the full pool turns over twice per day (extreme).
+                # We now use a CONFIG-tunable soft threshold (default 0.05x = 5%
+                # daily turnover) to reject ghost pools with zero activity. Active
+                # pairs are scored on the ratio continuously, blended into liq bucket.
+                min_vol_liq_ratio = self.config.get('trading', {}).get(
+                    'min_vol_liq_ratio', 0.05
+                )
+                if volume_to_liq_ratio < min_vol_liq_ratio:
+                    logger.info(
+                        f"   ❌ REJECTED: Ghost pool — vol/liq ratio "
+                        f"({volume_to_liq_ratio:.3f}x) < min {min_vol_liq_ratio:.3f}x "
+                        f"(vol=${volume_24h:,.0f}, liq=${liquidity_usd:,.0f})"
+                    )
                     return 0.0
 
-                liq_score = min(liquidity_usd / 50000, 1.0)
+                # Score: liq depth (60%) + turnover activity (40%), both [0,1].
+                # Turnover saturates at 2.0x (extremely active).
+                liq_depth_score = min(liquidity_usd / 50000, 1.0)
+                turnover_score = min(volume_to_liq_ratio / 2.0, 1.0)
+                liq_score = 0.6 * liq_depth_score + 0.4 * turnover_score
+
                 score += liq_score * 0.35
                 weights += 0.35
                 score_breakdown['liquidity'] = {
-                    'score': liq_score, 'weight': 0.35, 'contribution': liq_score * 0.35, 'raw_value': liquidity_usd
+                    'score': liq_score, 'weight': 0.35, 'contribution': liq_score * 0.35,
+                    'raw_value': liquidity_usd,
+                    'vol_liq_ratio': round(volume_to_liq_ratio, 3),
+                    'liq_depth_score': round(liq_depth_score, 3),
+                    'turnover_score': round(turnover_score, 3),
                 }
             
             # Price change score (10% weight) - Reduced weight, less emphasis on initial pump
@@ -3756,6 +3779,12 @@ class TradingBotEngine:
                     'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
                 }
             else:
+                # Wave-13 fix: a missing/failed risk assessment is NOT absent — it
+                # means we could not rule out a honeypot/rug. The previous code
+                # dropped the 0.20 weight from the denominator on failure, so an
+                # un-safety-checkable token NORMALIZED HIGHER than a token with
+                # known moderate risk. We now reject outright: an unverifiable
+                # honeypot/rug signal must never raise the score.
                 logger.warning(
                     "      ❌ REJECTED: risk assessment unavailable/failed "
                     "(treated as worst-case — cannot verify token is not a "

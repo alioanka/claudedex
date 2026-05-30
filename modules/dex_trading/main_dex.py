@@ -513,7 +513,13 @@ class TradingBotApplication:
 
             self._validate_environment()
 
-            self.db_manager = DatabaseManager(self.config.get_config(ConfigType.DATABASE).dict())
+            def _model_to_dict(model):
+                """Pydantic v1/v2 compatible model -> dict helper."""
+                if hasattr(model, 'model_dump'):
+                    return model.model_dump()
+                return model.dict()
+
+            self.db_manager = DatabaseManager(_model_to_dict(self.config.get_config(ConfigType.DATABASE)))
             self.cache_manager = CacheManager({'REDIS_URL': os.getenv('REDIS_URL', 'redis://redis:6379/0')})
 
             # Create a nested config dictionary from the config manager
@@ -521,7 +527,7 @@ class TradingBotApplication:
             for config_type in ConfigType:
                 config_model = self.config.get_config(config_type)
                 if config_model:
-                    nested_config[config_type.value] = config_model.dict()
+                    nested_config[config_type.value] = _model_to_dict(config_model)
 
             self.portfolio_manager = PortfolioManager(nested_config)
             self.order_manager = OrderManager(nested_config)
@@ -592,7 +598,7 @@ class TradingBotApplication:
             for config_type in ConfigType:
                 config_model = self.config.get_config(config_type)
                 if config_model:
-                    nested_config[config_type.value] = config_model.dict()
+                    nested_config[config_type.value] = _model_to_dict(config_model)
 
             # Update managers with fresh database config
             if hasattr(self, 'portfolio_manager'):
