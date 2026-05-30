@@ -113,6 +113,10 @@ class SniperEngine:
         self.solana_listener = None
         self.token_safety = None
         self.executor = None
+        # Wave-13: cross-module RiskManager gate (injected from main_sniper.py).
+        # None when not wired -- engine runs without the gate (DRY_RUN, tests).
+        # Only the entry leg is gated; exits are always allowed.
+        self.risk_manager = None
 
         # Settings (loaded from DB)
         self.dry_run = True
@@ -168,6 +172,17 @@ class SniperEngine:
         # active position per tick.
         self._mint_price_cache: Dict[str, tuple] = {}  # token -> (price, ts)
         self._mint_price_ttl = timedelta(seconds=15)
+
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject a core.risk_manager.RiskManager instance (Wave-13).
+
+        Called from main_sniper.py after the DB pool is ready. Pattern matches
+        arbitrage_engine.py and solana_engine.py. If construction fails the
+        caller logs a warning and leaves self.risk_manager=None so the engine
+        runs without the cross-module gate (fail-soft, consistent with SOLANA /
+        ARB / COPY usage).
+        """
+        self.risk_manager = risk_manager
 
     async def initialize(self):
         """Initialize sniper components"""
@@ -874,6 +889,36 @@ class SniperEngine:
             if self.dry_run and token_address:
                 seed = int(hashlib.sha256(("size:" + token_address).encode()).hexdigest()[:16], 16)
                 entry_amount = self.trade_amount * (0.8 + (random.Random(seed).random() * 0.4))
+
+            # Wave-13: cross-module RiskManager gate (entry-only, same pattern as
+            # SOLANA/ARB/COPY). Skipped when risk_manager is None (DRY_RUN paths,
+            # tests, or failed construction at startup). validate_trade failure
+            # refuses the snipe but does NOT count as a safety-check error.
+            if self.risk_manager is not None:
+                try:
+                    allowed, reason = await self.risk_manager.validate_trade(
+                        token_address, entry_amount
+                    )
+                    if not allowed:
+                        logger.warning(
+                            f"⛔ Sniper entry blocked by RiskManager: "
+                            f"{token_address} amount={entry_amount:.4f} reason={reason}"
+                        )
+                        data['status'] = 'failed'
+                        data['error'] = f'risk_manager:{reason}'
+                        if timing:
+                            timing.stamp('t_broadcast_done')
+                            timing.outcome = 'rejected_risk_manager'
+                            try:
+                                timing.emit()
+                            except Exception:
+                                pass
+                        self.pending_targets.pop(token_address, None)
+                        return
+                except Exception as rm_exc:
+                    logger.warning(
+                        f"validate_trade raised: {rm_exc}; continuing without RiskManager gate"
+                    )
 
             # Execute buy using the trade executor
             result = await self.executor.execute_buy(

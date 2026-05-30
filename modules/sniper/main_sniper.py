@@ -163,6 +163,19 @@ async def main():
 
     engine = SniperEngine(config, config_manager, db_pool)
 
+    # Wave-13: inject cross-module RiskManager (entry-only gate, consistent with
+    # SOLANA/ARB/COPY pattern). Fail-soft: if construction fails the engine runs
+    # without the gate, which is safe because TokenSafetyChecker still runs locally.
+    try:
+        from core.risk_manager import RiskManager
+        risk_manager = RiskManager(config={}, config_manager=config_manager)
+        engine.set_risk_manager(risk_manager)
+        logger.info("✅ RiskManager wired into Sniper engine")
+    except Exception as e:
+        logger.warning(
+            f"RiskManager init failed (engine will run without cross-module gate): {e}"
+        )
+
     try:
         await engine.initialize()
         logger.info("✅ Sniper Engine initialized successfully")
