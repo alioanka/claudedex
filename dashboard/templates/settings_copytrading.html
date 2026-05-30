@@ -46,6 +46,42 @@
                                     <input type="number" class="form-control" id="slippage" min="1" max="50" value="5">
                                     <div class="form-text">Maximum acceptable slippage for copy trades.</div>
                                 </div>
+
+                                <hr class="my-3">
+                                <h6 class="text-uppercase text-muted mb-3">Leader Probation</h6>
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="copy_probation_gate_enabled">
+                                    <label class="form-check-label" for="copy_probation_gate_enabled">Enable Probation Gate</label>
+                                    <div class="form-text">Automatically bench leaders whose score drops below the threshold.</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Probation Score Threshold</label>
+                                    <input type="number" class="form-control" id="copy_probation_score_threshold" min="0" max="100" step="1" value="40">
+                                    <div class="form-text">Leaders scoring below this value are put on probation. Default: 40.</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Probation Loss Threshold (%)</label>
+                                    <input type="number" class="form-control" id="copy_probation_loss_pct_threshold" min="-100" max="0" step="1" value="-15">
+                                    <div class="form-text">Leaders with 30d PnL below this % are probation candidates. Default: -15.</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Probation Duration (Days)</label>
+                                    <input type="number" class="form-control" id="copy_probation_days" min="1" max="90" step="1" value="7">
+                                    <div class="form-text">How many days a probated leader must wait before being re-evaluated. Default: 7.</div>
+                                </div>
+
+                                <hr class="my-3">
+                                <h6 class="text-uppercase text-muted mb-3">Cross-Module Exposure</h6>
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="copy_cross_module_exposure_check_enabled">
+                                    <label class="form-check-label" for="copy_cross_module_exposure_check_enabled">Enable Exposure Cap</label>
+                                    <div class="form-text">Block new copy trades when total open exposure (across all modules) exceeds the cap.</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Exposure Cap (USD)</label>
+                                    <input type="number" class="form-control" id="copy_cross_module_exposure_cap_usd" min="0" step="50" value="500">
+                                    <div class="form-text">Maximum total open USD exposure allowed before new copy trades are blocked. Default: $500.</div>
+                                </div>
                             </div>
 
                             <div class="col-md-6">
@@ -322,6 +358,14 @@
                 document.getElementById('copy_ratio').value = settings.copy_ratio || 10;
                 document.getElementById('slippage').value = settings.slippage || 5;
                 document.getElementById('target_wallets').value = (settings.target_wallets || []).join('\n');
+                // Probation knobs
+                document.getElementById('copy_probation_gate_enabled').checked = settings.copy_probation_gate_enabled !== false;
+                document.getElementById('copy_probation_score_threshold').value = settings.copy_probation_score_threshold != null ? settings.copy_probation_score_threshold : 40;
+                document.getElementById('copy_probation_loss_pct_threshold').value = settings.copy_probation_loss_pct_threshold != null ? settings.copy_probation_loss_pct_threshold : -15;
+                document.getElementById('copy_probation_days').value = settings.copy_probation_days != null ? settings.copy_probation_days : 7;
+                // Cross-module exposure knobs
+                document.getElementById('copy_cross_module_exposure_check_enabled').checked = settings.copy_cross_module_exposure_check_enabled === true;
+                document.getElementById('copy_cross_module_exposure_cap_usd').value = settings.copy_cross_module_exposure_cap_usd != null ? settings.copy_cross_module_exposure_cap_usd : 500;
             }
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -336,7 +380,15 @@
             max_copy_amount: parseFloat(document.getElementById('max_copy_amount').value),
             copy_ratio: parseFloat(document.getElementById('copy_ratio').value),
             slippage: parseFloat(document.getElementById('slippage').value),
-            target_wallets: wallets
+            target_wallets: wallets,
+            // Probation knobs (wave-13 agent-7)
+            copy_probation_gate_enabled: document.getElementById('copy_probation_gate_enabled').checked,
+            copy_probation_score_threshold: parseFloat(document.getElementById('copy_probation_score_threshold').value),
+            copy_probation_loss_pct_threshold: parseFloat(document.getElementById('copy_probation_loss_pct_threshold').value),
+            copy_probation_days: parseInt(document.getElementById('copy_probation_days').value),
+            // Cross-module exposure knobs (wave-13 agent-7)
+            copy_cross_module_exposure_check_enabled: document.getElementById('copy_cross_module_exposure_check_enabled').checked,
+            copy_cross_module_exposure_cap_usd: parseFloat(document.getElementById('copy_cross_module_exposure_cap_usd').value),
         };
 
         try {

@@ -250,6 +250,9 @@
         container.innerHTML =
             '<div class="loading-state"><div class="loading-spinner"></div>' +
             '<p>Loading scored leaders...</p></div>';
+        // Fetch slippage data in parallel with leaders so p50/p95 is ready
+        // before renderLeaders() is called. Non-blocking — errors are silenced.
+        await loadSlippage();
         try {
             var resp = await fetch('/api/copytrading/leaders?' + params.toString());
             var data = await resp.json();
@@ -274,13 +277,43 @@
         }
     }
 
+    // Slippage map: wallet_address -> {p50_delay_ms, p95_delay_ms, sample_count}
+    // Populated by loadSlippage() called concurrently with loadLeaders().
+    var _slippageMap = {};
+
+    async function loadSlippage() {
+        try {
+            var r = await fetch('/api/copytrading/slippage?limit=200');
+            if (!r.ok) return;
+            var d = await r.json();
+            if (d.success && Array.isArray(d.leaders)) {
+                d.leaders.forEach(function(s) {
+                    if (s.wallet_address) _slippageMap[s.wallet_address] = s;
+                });
+            }
+        } catch (e) {
+            // non-critical — slippage columns degrade to '—'
+        }
+    }
+
+    function fmtDelayMs(ms) {
+        if (ms == null || !isFinite(Number(ms))) return '<span style="color:var(--text-secondary)">—</span>';
+        var v = Math.round(Number(ms));
+        // green < 500ms, neutral < 1500ms, red >= 1500ms (>1 Solana block)
+        var cls = v < 500 ? 'positive' : v < 1500 ? '' : 'negative';
+        return '<span class="' + cls + '">' + v + 'ms</span>';
+    }
+
     function renderLeaders(leaders) {
         var html = '<div class="table-responsive"><table class="leader-table"><thead><tr>' +
             '<th>Rank</th><th>Chain</th><th>Wallet</th><th>Source</th>' +
             '<th>Score</th><th>Kelly</th><th>PnL 30d</th><th>Sharpe</th>' +
             '<th>Hit Rate</th><th>Hold</th><th>Max DD</th><th>Trades 30d</th>' +
+            '<th title="Median copy-execution delay (7d window)">p50 Delay</th>' +
+            '<th title="p95 copy-execution delay (7d window). Leaders above 1500ms are unprofitable to mirror.">p95 Delay</th>' +
             '<th>Last Scored</th><th>Action</th></tr></thead><tbody>';
         leaders.forEach(function(l, i) {
+            var slip = _slippageMap[l.wallet_address] || {};
             html += '<tr>' +
                 '<td>#' + (i + 1) + '</td>' +
                 '<td>' + (l.chain || '—') + '</td>' +
@@ -297,6 +330,8 @@
                 '<td>' + fmtHold(l.avg_hold_seconds) + '</td>' +
                 '<td>' + (l.max_drawdown_pct != null ? (Number(l.max_drawdown_pct) * 100).toFixed(1) + '%' : '—') + '</td>' +
                 '<td>' + (l.trade_count_30d || 0) + '</td>' +
+                '<td>' + fmtDelayMs(slip.p50_delay_ms) + '</td>' +
+                '<td>' + fmtDelayMs(slip.p95_delay_ms) + '</td>' +
                 '<td>' + (l.last_scored_at ? window.formatLocalDateTime(l.last_scored_at) : '—') + '</td>' +
                 '<td><button class="btn btn-success" type="button" data-addr="' +
                     l.wallet_address + '" data-action="track">' +

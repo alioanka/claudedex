@@ -12506,7 +12506,16 @@ class DashboardEndpoints:
                 'enabled': False,
                 'max_copy_amount': 100,
                 'copy_ratio': 10,
-                'target_wallets': []
+                'target_wallets': [],
+                # Probation system knobs (wave-13 agent-7 handoff) — consumed by
+                # copy_engine.py via ConfigManager. Defaults match migration 026.
+                'copy_probation_gate_enabled': True,
+                'copy_probation_score_threshold': 40.0,
+                'copy_probation_loss_pct_threshold': -15.0,
+                'copy_probation_days': 7,
+                # Cross-module exposure knobs (wave-13 agent-7 handoff)
+                'copy_cross_module_exposure_check_enabled': False,
+                'copy_cross_module_exposure_cap_usd': 500.0,
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
