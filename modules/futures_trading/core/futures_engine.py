@@ -989,7 +989,17 @@ class FuturesTradingEngine:
         try:
             # 1. Check risk limits
             if not self.risk_metrics.can_trade:
-                logger.warning(f"⚠️ Trading paused - Risk limit reached (Daily PnL: ${self.risk_metrics.daily_pnl:.2f})")
+                # Wave-13 FUT-RM-22: throttle to once per 5 min — this fires every
+                # cycle (every 30s × 18 symbols) when at daily-loss limit, flooding
+                # the log with WARNING noise.
+                _now = datetime.now()
+                _last_paused = getattr(self, '_last_paused_log_at', None)
+                if _last_paused is None or (_now - _last_paused).total_seconds() >= 300:
+                    logger.warning(
+                        f"Trading paused — daily risk limit reached "
+                        f"(Daily PnL: ${self.risk_metrics.daily_pnl:.2f})"
+                    )
+                    self._last_paused_log_at = _now
                 return
 
             # 2. Monitor existing positions
@@ -1260,11 +1270,20 @@ class FuturesTradingEngine:
                         if self.verbose_signals:
                             logger.info(f"     ⚠️ Trend filter: Bearish signal but trend is {signals.trend}")
 
+                # Wave-13 FUT-RM-22: volume_ok is DIAGNOSTIC ONLY — not a gate.
+                # Live data shows volume_ratio of 0.17x–0.76x across 18 symbols;
+                # a hard 0.80x block kills 100% of signals. Volume is already
+                # factored into the signed score via volume_signal (+2/0/-2).
+                # We log below-threshold events but never block entry.
                 if hasattr(self, 'min_volume_multiplier') and self.min_volume_multiplier > 0:
                     if signals.volume_ratio < self.min_volume_multiplier:
-                        volume_ok = False
+                        volume_ok = False  # informational only — NOT blocking
                         if self.verbose_signals:
-                            logger.info(f"     ⚠️ Volume filter: {signals.volume_ratio:.2f}x < required {self.min_volume_multiplier:.2f}x")
+                            logger.info(
+                                f"     ℹ️  Volume below threshold: {signals.volume_ratio:.2f}x "
+                                f"(ref {self.min_volume_multiplier:.2f}x) — "
+                                f"diagnostic only, entry not blocked"
+                            )
 
                 # FUT-RM-21 (Wave 7): regime gate. The signal stack mixes
                 # mean-reversion (RSI extremes) with trend-following (BB
@@ -1344,9 +1363,9 @@ class FuturesTradingEngine:
                                 f"bearish indicators agree (min {confluence_min})"
                             )
 
-                # All filters must pass
+                # All filters must pass — volume_ok intentionally excluded (diagnostic only)
                 all_filters_ok = (
-                    trend_ok and volume_ok and momentum_ok
+                    trend_ok and momentum_ok
                     and signals_aligned and confluence_ok and regime_ok
                 )
 
@@ -1363,8 +1382,9 @@ class FuturesTradingEngine:
                         if not all_filters_ok:
                             logger.info(
                                 f"     ❌ REJECTED: Quality filters failed "
-                                f"(trend={trend_ok}, volume={volume_ok}, momentum={momentum_ok}, "
+                                f"(trend={trend_ok}, momentum={momentum_ok}, "
                                 f"aligned={signals_aligned}, confluence={confluence_ok}, regime={regime_ok})"
+                                f" | volume_ratio={signals.volume_ratio:.2f}x [diagnostic]"
                             )
                         elif signal_score > 0:
                             logger.info(f"     ❌ REJECTED: Bullish but weak (score {signal_score} < {self.min_signal_score})")
@@ -2120,11 +2140,11 @@ class FuturesTradingEngine:
                         available_capital=self.capital_allocation,
                     )
                 except Exception as e:
-                    logger.warning(f"Risk validator raised: {e}; refusing entry")
+                    logger.error(f"Risk validator raised: {e}; refusing entry")
                     return
                 if not validation.get('allowed', True):
-                    logger.warning(
-                        f"Risk manager rejected entry for {symbol}: "
+                    logger.info(
+                        f"     ⏭️  Risk gate: {symbol} rejected — "
                         f"{validation.get('reason', 'no reason given')}"
                     )
                     return

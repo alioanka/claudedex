@@ -588,7 +588,12 @@ class FuturesTradingApplication:
             position_config = self.config_manager.get_position()
 
             self.logger.info(f"Exchange: {general_config.exchange.upper()}")
-            self.logger.info(f"Testnet: {general_config.testnet}")
+            # Wave-13: clarify this is the raw DB value — engine applies
+            # env/DRY_RUN override precedence before live-trading decisions.
+            self.logger.info(
+                f"Testnet (DB config): {general_config.testnet} "
+                f"— engine resolves final value via env/DRY_RUN precedence"
+            )
             self.logger.info(f"Leverage: {leverage_config.default_leverage}x")
             self.logger.info(f"Max Positions: {position_config.max_positions}")
 
