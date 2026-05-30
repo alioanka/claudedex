@@ -283,9 +283,75 @@ class CopyTradeExecutor:
             if self.solana_rpc_url:
                 logger.info("   Solana RPC: using PoolEngine/.env fallback (no Helius key)")
 
-        # Load Solana credentials from secrets manager
+        # Load Solana credentials from secrets manager.
+        # Wave-13 FIX (copy_engine.py:288 punch-list): ALWAYS derive the
+        # public wallet address from the decrypted SOLANA_MODULE_PRIVATE_KEY
+        # so the Jupiter swap payload uses the correct signer pubkey even when
+        # SOLANA_MODULE_WALLET is absent / stale in secrets DB. Mirrors the
+        # EVM derivation block below and the pattern used by sniper/solana
+        # modules. The main_copy.py post-init workaround is now redundant
+        # for fresh starts but remains as a belt-and-suspenders guard for any
+        # CopyTradeExecutor built outside the normal engine path.
         self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
-        self.solana_wallet = secrets.get('SOLANA_MODULE_WALLET') or os.getenv('SOLANA_MODULE_WALLET')
+        _stored_sol_wallet = secrets.get('SOLANA_MODULE_WALLET') or os.getenv('SOLANA_MODULE_WALLET')
+        _derived_sol_wallet = None
+        if self.solana_private_key:
+            try:
+                from solders.keypair import Keypair as _SoldersKP
+                import base58 as _b58
+                import json as _jmod
+                _pk_raw = self.solana_private_key
+                _sol_bytes = None
+                if _pk_raw.startswith('['):
+                    try:
+                        _sol_bytes = bytes(_jmod.loads(_pk_raw))
+                    except Exception:
+                        pass
+                if _sol_bytes is None:
+                    try:
+                        _sol_bytes = _b58.b58decode(_pk_raw)
+                    except Exception:
+                        pass
+                if _sol_bytes is None:
+                    try:
+                        _sol_bytes = bytes.fromhex(_pk_raw)
+                    except Exception:
+                        pass
+                if _sol_bytes is not None:
+                    _sol_kp = None
+                    if len(_sol_bytes) == 64:
+                        _sol_kp = _SoldersKP.from_bytes(_sol_bytes)
+                    elif len(_sol_bytes) == 32:
+                        _sol_kp = _SoldersKP.from_seed(_sol_bytes)
+                    if _sol_kp is not None:
+                        _derived_sol_wallet = str(_sol_kp.pubkey())
+            except Exception as _sol_err:
+                logger.debug(f"copy Solana wallet derivation in executor.initialize failed: {_sol_err}")
+
+        if _derived_sol_wallet:
+            self.solana_wallet = _derived_sol_wallet
+            if _stored_sol_wallet and _stored_sol_wallet != _derived_sol_wallet:
+                _s_mask = (_stored_sol_wallet[:6] + "..." + _stored_sol_wallet[-4:]) if len(_stored_sol_wallet) >= 10 else "***"
+                _d_mask = _derived_sol_wallet[:6] + "..." + _derived_sol_wallet[-4:]
+                logger.warning(
+                    "COPY SOLANA_MODULE_WALLET secret mismatch: stored=%s derived=%s. "
+                    "Using DERIVED (SOLANA_MODULE_PRIVATE_KEY is authoritative). "
+                    "Update the stored secret to suppress this warning.",
+                    _s_mask, _d_mask,
+                )
+            else:
+                _d_mask = _derived_sol_wallet[:6] + "..." + _derived_sol_wallet[-4:]
+                logger.info(f"   Solana execution wallet derived from PK: {_d_mask}")
+        else:
+            # Derivation unavailable (solders not installed, or no PK). Fall
+            # back to the stored secret. copy_solana_swap will refuse live
+            # txs if solana_wallet remains None.
+            self.solana_wallet = _stored_sol_wallet
+            if not self.solana_wallet:
+                logger.warning(
+                    "copy executor: Solana wallet could not be derived from PK "
+                    "and SOLANA_MODULE_WALLET secret is not set — Solana copies disabled"
+                )
 
         # Load EVM credentials from secrets manager. Wave-11 FIX 3
         # (mirrors DEX FIX 1): ALWAYS derive the public address from the
