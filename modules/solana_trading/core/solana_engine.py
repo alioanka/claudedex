@@ -2509,6 +2509,17 @@ class SolanaTradingEngine:
             return
 
         try:
+            # Sanity-cap pnl_pct: values outside [-100, 2000]% indicate a price
+            # feed bug (e.g. pre-Wave-7 DexScreener wrong-token price that produced
+            # +495424% rows). Clamp before writing so analytics are not poisoned.
+            raw_pnl_pct = trade.pnl_pct
+            pnl_pct_clamped = max(-100.0, min(2000.0, float(raw_pnl_pct or 0)))
+            if pnl_pct_clamped != raw_pnl_pct:
+                logger.warning(
+                    f"pnl_pct out of range for {trade.token_symbol}: "
+                    f"{raw_pnl_pct:.2f}% -> clamped to {pnl_pct_clamped:.2f}%"
+                )
+
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
                     INSERT INTO solana_trades (
@@ -2519,18 +2530,18 @@ class SolanaTradingEngine:
                         sol_price_usd, metadata
                     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
                 """,
-                    trade.trade_id,  # Fixed: was 'trade.id', correct attribute is 'trade_id'
+                    trade.trade_id,
                     trade.token_symbol,
                     trade.token_mint,
                     trade.strategy.value if hasattr(trade.strategy, 'value') else str(trade.strategy),
                     'long',  # Solana trades are always long
                     trade.entry_price,
                     trade.exit_price,
-                    trade.amount,  # This is now value_sol (SOL amount used for trade)
-                    getattr(trade, 'amount_tokens', None),  # Token amount if available
+                    trade.amount,
+                    getattr(trade, 'amount_tokens', None),
                     trade.pnl_sol,
                     trade.pnl_usd if hasattr(trade, 'pnl_usd') else (trade.pnl_sol * self.sol_price_usd),
-                    trade.pnl_pct,
+                    pnl_pct_clamped,
                     trade.fees if hasattr(trade, 'fees') else 0,
                     trade.close_reason,
                     _as_utc(trade.opened_at),
