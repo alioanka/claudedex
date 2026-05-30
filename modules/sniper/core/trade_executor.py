@@ -215,14 +215,101 @@ class TradeExecutor:
         self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY') or await self._get_decrypted_key('EVM_PRIVATE_KEY')
         self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
 
-        # Get wallet addresses from secrets manager
+        # Get STORED wallet addresses from secrets manager (reference-only;
+        # the derived addresses below are the authoritative funding identity).
         try:
             from security.secrets_manager import secrets
-            self.evm_wallet = secrets.get('WALLET_ADDRESS', log_access=False) or secrets.get('EVM_WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
-            self.solana_wallet = secrets.get('SOLANA_MODULE_WALLET', log_access=False) or os.getenv('SOLANA_MODULE_WALLET')
+            stored_evm = secrets.get('WALLET_ADDRESS', log_access=False) or secrets.get('EVM_WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
+            stored_sol = secrets.get('SOLANA_MODULE_WALLET', log_access=False) or os.getenv('SOLANA_MODULE_WALLET')
         except Exception:
-            self.evm_wallet = os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
-            self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
+            stored_evm = os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
+            stored_sol = os.getenv('SOLANA_MODULE_WALLET')
+        self.stored_evm_wallet = stored_evm or None
+        self.stored_solana_wallet = stored_sol or None
+
+        # Wave-12 FIX 1: ALWAYS derive both public addresses from the
+        # decrypted private keys (mirrors DEX FIX 1 / Copy FIX 3 Wave-11
+        # pattern). The stored *_WALLET secrets were silently None for
+        # operators who funded only the PK, leaving `solana_wallet` /
+        # `evm_wallet` falsy and the sniper runtime-stats snapshot showing
+        # `solana=none evm=none` on the dashboard funding panel. The
+        # derived address is the authoritative funding identity; the
+        # stored secret is compared and a CRITICAL masked-address warning
+        # is logged on mismatch (funding the stale stored address in LIVE
+        # mode would lose money).
+        derived_evm = None
+        if self.evm_private_key:
+            try:
+                from eth_account import Account
+                _pk = self.evm_private_key if self.evm_private_key.startswith('0x') else f'0x{self.evm_private_key}'
+                derived_evm = Account.from_key(_pk).address
+            except Exception as e:
+                logger.debug(f"sniper EVM wallet derivation failed: {e}")
+        derived_sol = None
+        if self.solana_private_key:
+            try:
+                from solders.keypair import Keypair
+                import base58
+                pk = self.solana_private_key
+                key_bytes = None
+                if pk.startswith('['):
+                    try:
+                        key_bytes = bytes(json.loads(pk))
+                    except Exception:
+                        pass
+                if key_bytes is None:
+                    try:
+                        key_bytes = base58.b58decode(pk)
+                    except Exception:
+                        pass
+                if key_bytes is None:
+                    try:
+                        key_bytes = bytes.fromhex(pk)
+                    except Exception:
+                        pass
+                if key_bytes is not None:
+                    if len(key_bytes) == 64:
+                        kp = Keypair.from_bytes(key_bytes)
+                    elif len(key_bytes) == 32:
+                        kp = Keypair.from_seed(key_bytes)
+                    else:
+                        kp = None
+                    if kp is not None:
+                        derived_sol = str(kp.pubkey())
+            except Exception as e:
+                logger.debug(f"sniper Solana wallet derivation failed: {e}")
+
+        # Mismatch detection (logged at CRITICAL with masked addresses).
+        self.wallet_address_secret_mismatch = False
+        self.solana_wallet_secret_mismatch = False
+        if derived_evm:
+            self.evm_wallet = derived_evm
+            if stored_evm and stored_evm.lower() != derived_evm.lower():
+                self.wallet_address_secret_mismatch = True
+                stored_mask = (stored_evm[:6] + "..." + stored_evm[-4:]) if len(stored_evm) >= 10 else "***"
+                derived_mask = derived_evm[:6] + "..." + derived_evm[-4:]
+                logger.critical(
+                    "SNIPER WALLET_ADDRESS mismatch: stored=%s vs derived=%s. "
+                    "Using DERIVED (PRIVATE_KEY authoritative). Update stored "
+                    "secret — funding the stored address would lose money.",
+                    stored_mask, derived_mask,
+                )
+        else:
+            self.evm_wallet = stored_evm or None
+        if derived_sol:
+            self.solana_wallet = derived_sol
+            if stored_sol and stored_sol != derived_sol:
+                self.solana_wallet_secret_mismatch = True
+                stored_mask = (stored_sol[:6] + "..." + stored_sol[-4:]) if len(stored_sol) >= 10 else "***"
+                derived_mask = derived_sol[:6] + "..." + derived_sol[-4:]
+                logger.critical(
+                    "SNIPER SOLANA_MODULE_WALLET mismatch: stored=%s vs derived=%s. "
+                    "Using DERIVED (SOLANA_MODULE_PRIVATE_KEY authoritative). "
+                    "Update stored secret — funding the stored address would lose money.",
+                    stored_mask, derived_mask,
+                )
+        else:
+            self.solana_wallet = stored_sol or None
 
         # DRY_RUN check
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
