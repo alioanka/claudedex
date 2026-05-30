@@ -159,6 +159,42 @@ def _as_utc(dt):
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
+def _json_safe(obj):
+    """Recursively convert a value into a JSON-serializable equivalent.
+
+    Wave-12 FIX 3: explicit datetime -> ISO-8601 string conversion (every
+    `datetime.now()` ingested into Position.metadata via the DexScreener /
+    pump.fun listener token dicts at solana_engine.py:704 and :1059
+    blew up `json.dumps(position.metadata)` in `_save_position_to_db`,
+    losing position-recovery metadata on every new open). Also handles
+    Decimal, UUID, set, and dataclass-shaped objects so sibling persist /
+    log sites are robust against the same class of bug. Preferred over
+    `json.dumps(..., default=str)` because the conversion is explicit and
+    the ISO format is round-trippable.
+    """
+    from decimal import Decimal as _Decimal
+    from uuid import UUID as _UUID
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, datetime):
+        return _as_utc(obj).isoformat() if obj.tzinfo is not None else (obj.replace(tzinfo=timezone.utc).isoformat())
+    if isinstance(obj, _Decimal):
+        return str(obj)
+    if isinstance(obj, _UUID):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set, frozenset)):
+        return [_json_safe(v) for v in obj]
+    # Enum (e.g. Strategy / TradeSide) — fall through to .value
+    if hasattr(obj, 'value') and not callable(obj.value):
+        try:
+            return _json_safe(obj.value)
+        except Exception:
+            pass
+    return str(obj)
+
+
 @dataclass
 class Position:
     """Active trading position"""
@@ -2117,7 +2153,12 @@ class SolanaTradingEngine:
                 'mode': 'DRY_RUN' if self.dry_run else 'LIVE',
                 **details
             }
-            trade_logger.info(json.dumps(trade_info))
+            # Wave-12 FIX 3 sibling: `details` may carry datetime /
+            # Decimal / Enum values from the caller (Position fields,
+            # listener token dicts) — route through _json_safe so a
+            # caller surprise can't silently swallow trade logs via the
+            # try/except below.
+            trade_logger.info(json.dumps(_json_safe(trade_info)))
         except Exception as e:
             logger.debug(f"Error logging trade: {e}")
 
@@ -2189,7 +2230,15 @@ class SolanaTradingEngine:
                     position.entry_price, position.amount, position.value_sol,
                     position.stop_loss, position.take_profit, position.is_simulated,
                     position.tx_signature, position.opened_at,
-                    json.dumps(position.metadata) if position.metadata else None,
+                    # Wave-12 FIX 3: route through _json_safe so the
+                    # `created_at: datetime.now()` injected by the
+                    # DexScreener listener token dicts (lines :739 / :1094)
+                    # is converted to an ISO-8601 string instead of
+                    # raising "Object of type datetime is not JSON
+                    # serializable" — every new open used to silently
+                    # lose its metadata persistence under the prior
+                    # `json.dumps(position.metadata)` call.
+                    json.dumps(_json_safe(position.metadata)) if position.metadata else None,
                 )
         except Exception as e:
             logger.warning(f"Failed to persist position {position.token_symbol}: {e}")
