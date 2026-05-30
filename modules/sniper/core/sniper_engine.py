@@ -1038,7 +1038,20 @@ class SniperEngine:
                     if entry_price <= 0 or amount_held <= 0:
                         continue
 
-                    # Get current price (simplified - in production use DEX price feeds)
+                    # entry_price is stored as native-per-token (SOL/ETH per
+                    # token) but _get_token_price returns USD per token.
+                    # Comparing them directly produces absurd PnL%
+                    # (the "+594089%" lines in Wave-12 logs). Derive a
+                    # USD-denominated entry price from entry_usd / amount_held
+                    # so both legs are in the same unit.
+                    entry_usd_total = data.get('entry_usd', 0) or 0
+                    entry_price_usd = (
+                        entry_usd_total / amount_held
+                        if entry_usd_total > 0 and amount_held > 0
+                        else 0
+                    )
+
+                    # Get current price (USD per token)
                     current_price = await self._get_token_price(address, chain)
 
                     if current_price is None or current_price <= 0:
@@ -1055,21 +1068,56 @@ class SniperEngine:
                             )
                         continue
 
-                    # Calculate P&L
-                    pnl_pct = ((current_price - entry_price) / entry_price) * 100
+                    # Calculate P&L using USD-denominated prices (same unit on
+                    # both legs). Falls back to native-unit comparison only when
+                    # entry_usd is missing (shouldn't happen post-fix).
+                    if entry_price_usd > 0:
+                        pnl_pct = ((current_price - entry_price_usd) / entry_price_usd) * 100
+                    else:
+                        pnl_pct = ((current_price - entry_price) / entry_price) * 100
+
+                    # Phantom-price guard: |pnl_pct| > 200 means the price
+                    # source returned a stale or wrong-unit value. In DRY_RUN,
+                    # route through the modeled synthetic close instead of
+                    # triggering a false TP/SL. In LIVE, log and skip — do NOT
+                    # act on bad data.
+                    _PHANTOM_THRESHOLD = 200.0
+                    if abs(pnl_pct) > _PHANTOM_THRESHOLD:
+                        dry = self.dry_run or os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+                        if dry:
+                            logger.warning(
+                                f"phantom-price {address[:8]}... "
+                                f"entry_usd={entry_price_usd:.8f} "
+                                f"current={current_price:.8f} "
+                                f"pnl={pnl_pct:+.2f}%; synthetic close"
+                            )
+                            await self._close_position_synthetic(
+                                data, reason='phantom_price_dry_run'
+                            )
+                        else:
+                            logger.warning(
+                                f"LIVE phantom-price skipped {address[:8]}... "
+                                f"pnl={pnl_pct:+.2f}% > +/-{_PHANTOM_THRESHOLD}% "
+                                f"— price source may be wrong unit or stale"
+                            )
+                        continue
 
                     # Log status periodically
                     if check_count % 60 == 0:  # Every minute
-                        logger.info(f"📊 Position: {address[:8]}... | Entry: {entry_price:.8f} | Current: {current_price:.8f} | P&L: {pnl_pct:+.2f}%")
+                        logger.info(
+                            f"Position: {address[:8]}... | "
+                            f"Entry: ${entry_price_usd:.8f} | "
+                            f"Current: ${current_price:.8f} | P&L: {pnl_pct:+.2f}%"
+                        )
 
                     # Check take profit
                     if pnl_pct >= take_profit_pct:
-                        logger.info(f"🎯 TAKE PROFIT triggered for {address[:8]}... (+{pnl_pct:.2f}%)")
+                        logger.info(f"TAKE PROFIT triggered for {address[:8]}... ({pnl_pct:+.2f}%)")
                         await self._exit_position(data, 'TAKE_PROFIT')
 
                     # Check stop loss
                     elif pnl_pct <= stop_loss_pct:
-                        logger.warning(f"🛑 STOP LOSS triggered for {address[:8]}... ({pnl_pct:.2f}%)")
+                        logger.warning(f"STOP LOSS triggered for {address[:8]}... ({pnl_pct:.2f}%)")
                         await self._exit_position(data, 'STOP_LOSS')
 
                     # SNIPE-RM-12: time-stop. Some snipes neither hit
