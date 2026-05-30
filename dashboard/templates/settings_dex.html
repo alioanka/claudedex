@@ -94,7 +94,14 @@
     </div>
     <div id="trading-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
-        <div class="card-body" id="trading-settings-form"></div>
+        <div class="card-body">
+            <div id="trading-settings-form"></div>
+            <div class="alert alert-info mt-2" style="font-size:0.82em;">
+                <strong>Wave-13 key:</strong> <code>min_vol_liq_ratio</code> (float, default: 0.05) —
+                minimum 24h-volume/liquidity ratio to allow a pair into scoring. Ghost pools (0 volume)
+                are blocked; active pairs typically run 0.1–1.0. If this key is missing, seed it via DB.
+            </div>
+        </div>
     </div>
     <div id="strategies-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">Trading Strategies Configuration</h3></div>
@@ -118,7 +125,23 @@
     </div>
     <div id="ml_models-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">ML Models Configuration</h3></div>
-        <div class="card-body" id="ml_models-settings-form"></div>
+        <div class="card-body">
+            <!-- Ensemble status banner (wave-13 agent-2 handoff) -->
+            <div class="alert alert-info mb-3" id="ensemble-status-banner" style="font-size:0.85em;">
+                <i class="fas fa-spinner fa-spin me-1"></i> Checking ML ensemble status...
+            </div>
+            <div id="ml_models-settings-form"></div>
+            <hr>
+            <div class="alert alert-warning mt-3" style="font-size:0.82em;">
+                <strong>Wave-13 new keys:</strong> The following config keys were added by the wave-13 ML agent.
+                If they do not appear above, seed them via the admin DB query or a migration:<br>
+                <code>ml_retrain_enabled</code> (bool, default: true),
+                <code>ml_retrain_interval_hours</code> (int, default: 24),
+                <code>ml_retrain_days</code> (int, default: 90),
+                <code>ml_retrain_min_trades</code> (int, default: 50),
+                <code>ensemble_version</code> (string, updated by retrain script).
+            </div>
+        </div>
     </div>
     <div id="feature_flags-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">Feature Flags</h3></div>
@@ -209,5 +232,29 @@
 {% block extra_js %}
 <script src="/static/js/settings.js?v=4"></script>
 <script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
-<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('dex'); });</script>
+<script>document.addEventListener('DOMContentLoaded', function () {
+    DryRunWidget.init('dex');
+    // Wave-13: surface ensemble_version from ml_models config.
+    // Reads from /api/settings/all after settingsManager has loaded it.
+    setTimeout(async function() {
+        var banner = document.getElementById('ensemble-status-banner');
+        if (!banner) return;
+        try {
+            var r = await fetch('/api/settings/all');
+            var d = await r.json();
+            var ver = d.data && d.data.ml_models && d.data.ml_models.ensemble_version
+                ? d.data.ml_models.ensemble_version.value : null;
+            if (ver) {
+                banner.className = 'alert alert-success mb-3';
+                banner.innerHTML = '<i class="fas fa-check-circle me-1"></i> Ensemble trained — version: <strong>' + ver + '</strong>';
+            } else {
+                banner.className = 'alert alert-warning mb-3';
+                banner.innerHTML = '<i class="fas fa-exclamation-triangle me-1"></i> Ensemble not yet trained. Run <code>python scripts/train_ensemble.py --days 90</code> after 50+ closed trades. Until then, the engine uses <em>heuristic_fallback</em>.';
+            }
+        } catch(e) {
+            banner.className = 'alert alert-secondary mb-3';
+            banner.innerHTML = 'Could not load ensemble status.';
+        }
+    }, 1500);
+});</script>
 {% endblock %}

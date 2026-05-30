@@ -780,6 +780,7 @@ function renderEndpointCard(endpoint) {
                         <strong>${endpoint.name}</strong>
                         <span class="status-badge ${statusClass}">${endpoint.status}</span>
                         ${endpoint.is_enabled ? '' : '<span class="badge bg-secondary">Disabled</span>'}
+                        ${(endpoint.priority || 0) > 150 ? '<span class="badge bg-warning text-dark" title="Fallback tier: priority > 150 (free/public endpoint, lower quality)"><i class="fas fa-layer-group me-1"></i>fallback</span>' : ''}
                     </div>
                     <div class="endpoint-url" title="${endpoint.url}">${maskUrl(endpoint.url)}</div>
                     <div class="d-flex gap-4 mt-2 small text-muted">

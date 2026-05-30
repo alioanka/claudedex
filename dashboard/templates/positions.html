@@ -73,13 +73,14 @@
                         <th>ROI</th>
                         <th>Stop Loss</th>
                         <th>Take Profit</th>
+                        <th>ML Source</th>
                         <th>Duration</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
                 <tbody id="positionsTableBody">
                     <tr>
-                        <td colspan="11" class="text-center">
+                        <td colspan="12" class="text-center">
                             <div class="spinner"></div>
                         </td>
                     </tr>
@@ -302,6 +303,15 @@ function displayPositions(positions) {
                 </td>
                 <td>${pos.stop_loss || pos.metadata?.stop_loss ? formatPrice(pos.stop_loss || pos.metadata?.stop_loss) : '-'}</td>
                 <td>${pos.take_profit || pos.metadata?.take_profit ? formatPrice(pos.take_profit || pos.metadata?.take_profit) : '-'}</td>
+                <td>${(() => {
+                    const src = pos.metadata?.ml_source || pos.ml_source || '';
+                    if (!src) return '<span style="color:var(--text-muted,#6b7280)">—</span>';
+                    const isEnsemble = src === 'ensemble';
+                    const style = isEnsemble
+                        ? 'background:rgba(16,185,129,0.15);color:#10b981'
+                        : 'background:rgba(107,114,128,0.15);color:#9ca3af';
+                    return '<span style="display:inline-block;padding:2px 7px;border-radius:9px;font-size:0.7rem;font-weight:600;' + style + '">' + src + '</span>';
+                })()}</td>
                 <td>${durationText}</td>
                 <td>
                     <button class="btn btn-sm btn-icon btn-secondary" onclick="viewPositionDetails('${pos.id}')" title="View Details">
