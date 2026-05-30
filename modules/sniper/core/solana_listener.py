@@ -566,10 +566,50 @@ class SolanaListener:
                     t.cancel()
                 return
             except Exception as e:
-                logger.warning(
-                    f"WSS disconnect: {type(e).__name__}: {e}; "
-                    f"reconnecting in {backoff:.1f}s"
+                err_str = str(e)
+                err_type = type(e).__name__
+                # Detect rate-limit (HTTP 429) and connection-refused (503)
+                # style closures. websockets surfaces these as
+                # RejectHandshake / ConnectionClosedError with the HTTP
+                # status code in the message.
+                is_rate_limit = (
+                    '429' in err_str
+                    or '503' in err_str
+                    or 'Too Many Requests' in err_str
+                    or 'rate limit' in err_str.lower()
                 )
+                if is_rate_limit:
+                    logger.warning(
+                        f"WSS rate-limited ({err_type}): {err_str[:120]}; "
+                        f"reporting to RPCProvider and reconnecting in {backoff:.1f}s"
+                    )
+                    self._stats['wss_rate_limits'] = (
+                        self._stats.get('wss_rate_limits', 0) + 1
+                    )
+                    # Report to pool_engine so it marks this endpoint as
+                    # rate-limited and rotates to the next one.
+                    try:
+                        from config.rpc_provider import RPCProvider
+                        await RPCProvider.report_rate_limit(
+                            'SOLANA_RPC', self.rpc_url, 300
+                        )
+                        new_url = await RPCProvider.get_rpc('SOLANA_RPC')
+                        if new_url and new_url != self.rpc_url:
+                            # Re-derive WSS URL from the new HTTP endpoint.
+                            self.rpc_url = new_url
+                            new_wss = self._infer_wss_url()
+                            if new_wss:
+                                self.wss_url = new_wss
+                                logger.info(
+                                    f"WSS rotated to new endpoint: {self.wss_url[:60]}"
+                                )
+                    except Exception as rpc_err:
+                        logger.debug(f"WSS RPC rotation failed: {rpc_err}")
+                else:
+                    logger.warning(
+                        f"WSS disconnect ({err_type}): {err_str[:120]}; "
+                        f"reconnecting in {backoff:.1f}s"
+                    )
                 try:
                     await asyncio.sleep(backoff)
                 except asyncio.CancelledError:
