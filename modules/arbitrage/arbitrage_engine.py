@@ -297,11 +297,22 @@ TOKENS_BASE = {
 # ═══════════════════════════════════════════════════════════════════════════════
 # ARBITRAGE PAIRS PER CHAIN
 # ═══════════════════════════════════════════════════════════════════════════════
+# WAVE-13 FIX: All pairs MUST have WETH as token_out (the borrow/repay asset).
+# Spatial-arb model: borrow WETH -> buy token_in on cheapest DEX ->
+# sell token_in for WETH on most expensive DEX -> repay WETH + Aave fee.
+# Any pair where token_out != 'WETH' passed borrow_amount (ETH wei, ~10^18)
+# as getAmountsOut amountIn for a 6-decimal asset (USDC/USDT), equivalent to
+# querying 10^12 tokens worth, which reverts or returns 0 -> weth_returned ~= 0
+# -> spread = (0 - borrow_amount) / borrow_amount = -1.0 = -10000 bps.
+# This was the root cause of all -10005 / -10003 bps near-miss log entries.
+# ('WETH','X') pairs are wrong direction: X would be borrow asset, not WETH.
+# Fix: invert ('WETH','X') -> ('X','WETH'). Drop stablecoin-only pairs
+# (USDC/USDT etc.) which require a USDC flash loan, not WETH.
 ARB_PAIRS_ETHEREUM = [
-    # High liquidity pairs with verified V2 liquidity on Uniswap/SushiSwap
-    ('WETH', 'USDC'),
-    ('WETH', 'USDT'),
-    ('WETH', 'DAI'),
+    # Format: (intermediate_token, 'WETH') -- borrow WETH, arb intermediate
+    ('USDC', 'WETH'),   # was ('WETH', 'USDC') - inverted to correct direction
+    ('USDT', 'WETH'),   # was ('WETH', 'USDT') - inverted
+    ('DAI', 'WETH'),    # was ('WETH', 'DAI') - inverted
     ('WBTC', 'WETH'),
 
     # Major DeFi tokens with good V2 liquidity
@@ -311,78 +322,52 @@ ARB_PAIRS_ETHEREUM = [
     ('SUSHI', 'WETH'),
     ('CRV', 'WETH'),
 
-    # Stablecoin pairs (low volatility but consistent)
-    ('USDC', 'USDT'),
-    ('USDC', 'DAI'),
-    ('DAI', 'USDT'),
-
-    # NOTE: Removed low-liquidity or problematic pairs:
-    # ('MATIC', 'WETH'),  # Most liquidity on Polygon now
-    # ('SNX', 'WETH'),    # Low V2 liquidity
-    # ('COMP', 'WETH'),   # Low V2 liquidity
-    # ('MKR', 'WETH'),    # Low V2 liquidity
-    # ('BAL', 'WETH'),    # Most liquidity on Balancer V2
-    # ('YFI', 'WETH'),    # Low V2 liquidity
-    # ('GRT', 'WETH'),    # Can have reverts on some DEXs
-    # ('ENS', 'WETH'),    # Low V2 liquidity
-    # ('SHIB', 'WETH'),   # High slippage, fee-on-transfer issues
-    # ('PEPE', 'WETH'),   # High slippage
-    # ('LDO', 'WETH'),    # Low V2 liquidity
+    # NOTE: Stablecoin-only pairs require USDC flash loan, not WETH -- removed:
+    # ('USDC', 'USDT'), ('USDC', 'DAI'), ('DAI', 'USDT')
+    # NOTE: Low-liquidity pairs excluded:
+    # ('MATIC','WETH'), ('SNX','WETH'), ('COMP','WETH'), ('MKR','WETH'),
+    # ('BAL','WETH'), ('YFI','WETH'), ('GRT','WETH'), ('ENS','WETH'),
+    # ('SHIB','WETH'), ('PEPE','WETH'), ('LDO','WETH')
 ]
 
 ARB_PAIRS_ARBITRUM = [
-    # High liquidity pairs (verified on SushiSwap, Camelot, Zyberswap)
-    ('WETH', 'USDC'),
-    ('WETH', 'USDT'),
-    ('WETH', 'DAI'),
+    # Format: (intermediate_token, 'WETH') -- borrow WETH, arb intermediate
+    ('USDC', 'WETH'),   # was ('WETH', 'USDC') - inverted
+    ('USDT', 'WETH'),   # was ('WETH', 'USDT') - inverted
+    ('DAI', 'WETH'),    # was ('WETH', 'DAI') - inverted
     ('WBTC', 'WETH'),
-    ('ARB', 'WETH'),       # Native ARB token - high volume
-    ('ARB', 'USDC'),       # ARB/stablecoin
+    ('ARB', 'WETH'),    # Native ARB token - high volume
 
     # Native Arbitrum DeFi tokens with verified V2 liquidity
-    ('GMX', 'WETH'),       # GMX - major Arbitrum protocol
-
-    # NOTE: Some tokens removed due to liquidity issues on V2 routers:
-    # ('MAGIC', 'WETH'),   # Low V2 liquidity
-    # ('RDNT', 'WETH'),    # Low V2 liquidity
-    # ('PENDLE', 'WETH'),  # Low V2 liquidity
+    ('GMX', 'WETH'),    # GMX - major Arbitrum protocol
 
     # Bridged DeFi tokens with liquidity
     ('LINK', 'WETH'),
 
-    # NOTE: These have low V2 liquidity on Arbitrum:
-    # ('UNI', 'WETH'),
-    # ('AAVE', 'WETH'),
-    # ('CRV', 'WETH'),
-    # ('SUSHI', 'WETH'),
-
-    # Stablecoin pairs (good for low-risk arb)
-    ('USDC', 'USDT'),
-    ('USDC', 'DAI'),
+    # NOTE: ('ARB','USDC') removed - USDC is not WETH, causes -100% spread bug
+    # NOTE: ('USDC','USDT'), ('USDC','DAI') removed - stablecoin pairs need USDC flash loan
+    # NOTE: ('MAGIC','WETH'), ('RDNT','WETH'), ('PENDLE','WETH') - low V2 liquidity
+    # NOTE: ('UNI','WETH'), ('AAVE','WETH'), ('CRV','WETH'), ('SUSHI','WETH') - low liquidity
 ]
 
 ARB_PAIRS_BASE = [
-    # High liquidity pairs (verified on SushiSwap, BaseSwap, SwapBased)
-    ('WETH', 'USDC'),
-    ('WETH', 'USDbC'),     # Bridged USDC
-    ('WETH', 'DAI'),
-    ('cbETH', 'WETH'),     # Coinbase ETH - good liquidity
+    # Format: (intermediate_token, 'WETH') -- borrow WETH, arb intermediate
+    ('USDC', 'WETH'),    # was ('WETH', 'USDC') - inverted
+    ('USDbC', 'WETH'),   # was ('WETH', 'USDbC') - inverted
+    ('DAI', 'WETH'),     # was ('WETH', 'DAI') - inverted
+    ('cbETH', 'WETH'),   # Coinbase ETH - good liquidity
 
-    # NOTE: rETH has very low liquidity on Base V2 DEXs - removed to avoid errors
-    # ('rETH', 'WETH'),    # Rocket Pool ETH - NO LIQUIDITY on Base V2 DEXs
+    # NOTE: rETH removed - no liquidity on Base V2 DEXs
 
     # Native Base tokens with verified liquidity
-    ('AERO', 'WETH'),      # Aerodrome - major Base DEX token
-    ('AERO', 'USDC'),
+    ('AERO', 'WETH'),    # Aerodrome - major Base DEX token
 
-    # Meme tokens - only include if they have DEX liquidity
-    # ('BRETT', 'WETH'),   # Check liquidity before enabling
-    ('DEGEN', 'WETH'),     # DEGEN has liquidity on some DEXs
-    # ('TOSHI', 'WETH'),   # Check liquidity before enabling
+    # Meme tokens with liquidity
+    ('DEGEN', 'WETH'),
 
-    # Stablecoin pairs (low volatility but consistent)
-    ('USDC', 'USDbC'),     # Native vs bridged USDC - low risk arb
-    ('USDC', 'DAI'),
+    # NOTE: ('AERO','USDC') removed - USDC is not WETH, causes -100% spread bug
+    # NOTE: ('BRETT','WETH'), ('TOSHI','WETH') - check liquidity before enabling
+    # NOTE: ('USDC','USDbC'), ('USDC','DAI') removed - stablecoin pairs need USDC flash loan
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1893,6 +1878,18 @@ class EVMArbitrageEngine:
             # Ensure addresses are checksummed for web3.py compatibility
             token_checksum = Web3.to_checksum_address(token_in)  # The token being arbitraged
             weth_checksum = Web3.to_checksum_address(token_out)  # WETH (borrow asset)
+
+            # WAVE-13 GUARD: token_out MUST be the WETH address for this chain.
+            # If it is not, borrow_amount (ETH wei) is compared against a non-WETH
+            # return value, producing a nonsensical -100% spread. Reject early.
+            chain_weth = self.tokens.get('WETH', '')
+            if chain_weth and weth_checksum.lower() != chain_weth.lower():
+                self.logger.warning(
+                    f"[arb-config] Pair {token_symbol}/{token_out_symbol} has non-WETH "
+                    f"borrow asset {token_out_symbol} -- skipping (requires USDC flash loan). "
+                    f"Fix: use ('{token_symbol}', 'WETH') pair format."
+                )
+                return False
 
             # ============================================================
             # STEP 1: Query BUY direction - WETH → token (how much token can we buy?)
