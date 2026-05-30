@@ -22,7 +22,21 @@ Run-from-dashboard: the dashboard runs independently on port 8080 and does NOT r
 - `logs/.killswitch` — flag file written by `scripts/emergency_stop.py` or the dashboard's `/api/bot/emergency-exit`. Polled by every BaseModule subprocess via `core.dry_run.start_killswitch_poller`.
 - `core/risk_manager.py` — `RiskManager.validate_trade(token, amount)`. Called by ARB, AI, SOLANA (entry-only), and COPY_TRADING (BUY-only) execution paths before broadcast. FUTURES has its own `FuturesRiskManager.validate_new_position`.
 - `config/pool_engine.py` — `PoolEngine.get_endpoint(provider_type)` is the single source of RPC URLs across all on-chain modules.
+## Wave-13 status (2026-05-30)
+| Module | Wave-13 changes |
+|---|---|
+| DEX | AMBER→GREEN: BUG P0 scoring fixed (vol/liq threshold 2.0→0.05, was blocking 100% of candidates); ML ensemble wired (artifacts needed); auto-retrain loop fixed; EVM chain discovery strategy-4 added. Mig 036 seeds min_vol_liq_ratio + ml_retrain keys. |
+| ARBITRAGE | AMBER→GREEN: -10005bps bug fixed (19/31 pairs had wrong direction, WETH borrow vs non-WETH token — now 22 valid pairs). Pair-direction runtime guard added. |
+| SOLANA | AMBER→GREEN: datetime tz crash fixed in _save_trade_to_db; pnl_pct clamped to [-100,2000]% at write. Mig 034 alters timestamps to TIMESTAMPTZ. |
+| SNIPER | AMBER→GREEN: absurd PnL bug fixed (USD/native unit mismatch in monitor); WSS 429 detection + RPC rotation. Mig 037 adds compound index + max_hold_minutes seed. Wave-13 PM: RiskManager wired (entry-only, fail-soft). |
+| FUTURES | AMBER→GREEN: volume gate demoted to diagnostic-only (was blocking 100% of signals at 0.80x threshold vs live 0.17-0.76x range); log noise fixed; testnet log clarified. |
+| AI | AMBER→GREEN: Claude model 404 fixed (haiku-latest→sonnet-20241022, now DB-configurable); dead news source dropped; confidence threshold lowered 0.50→0.35 to match observed signal distribution. |
+| COPY_TRADING | AMBER→GREEN: Solana wallet derived from PK at executor source (was None → Jupiter 400); EVM V3+aggregator + Solana Orca/Meteora detection added (was missing 22 method IDs and 11 DEX programs). |
+| DASHBOARD | AMBER→GREEN: DEX ml_source badge + ensemble version; copy probation/exposure knobs; AI model IDs + confidence decimal fix + health badge; pool fallback tier badge. |
+| INFRA | AMBER→GREEN: pool_engine anti-starvation fallback + exp backoff; secrets_manager idempotent re-init; migration 035 seeds Solana/BASE/FANTOM public RPC fallbacks. |
 ## See also
 - Phase 1 module audits: `docs/agents/reports/<MODULE>_*.md`
+- Wave-13 module reports: `docs/agents/wave13/agent_*.md`
+- Wave-14 backlog: `docs/agents/wave13/WAVE14_BACKLOG.md`
 - Master backlog: `docs/agents/MASTER_BACKLOG.md`
 - Multi-agent plan: `docs/agents/PLAN.md`
