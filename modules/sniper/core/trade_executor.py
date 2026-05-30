@@ -982,7 +982,46 @@ class TradeExecutor:
         chain: str,
         amount_in: float
     ) -> TradeResult:
-        """Simulate a sell order (DRY RUN)"""
+        """Simulate a sell order (DRY RUN).
+
+        Wave-12 FIX 3 — the operator surfaced `+696226.17%` /
+        `+471681.10%` / `+762621.15%` TAKE PROFIT log lines on fresh
+        Pump.fun mints. Root cause is upstream of this function: the
+        engine's monitor (`SniperEngine._monitor_active_snipes`) divides
+        a non-zero but stale `current_price` by an `entry_price` derived
+        from a fabricated 1e6 buy quote and produces an unbounded
+        `pnl_pct`, which is then logged BEFORE control reaches us. We
+        don't own `sniper_engine.py` this wave (concurrent agent), so we
+        cannot touch that log line or the monitor's comparison itself.
+        What we DO own and have hardened here:
+
+        1. Hard cap the simulated `move` factor at +200% (`move <= 3.0`)
+           and -99% (`move >= 0.01`) so the `amount_out` we return —
+           and therefore the `profit_loss_pct` that `_log_exit_to_db`
+           later computes for the DB row — can never exceed ±200%
+           regardless of how broken the engine's monitor-side
+           comparison was. This is the DB-side sanity guard.
+        2. The DB row PnL is `(move - 1) * 100`% by construction because
+           the buy leg minted `amount_in_native * 1e6` tokens at
+           `entry_price = sol_price / 1e6` and the sell returns
+           `amount_in_native * move` SOL; so clamping `move` ∈
+           [0.01, 3.0] guarantees DB `profit_loss_pct` ∈ [-99%, +200%].
+        3. Wave-7 distribution (55% loss / 30% chop / 15% winner)
+           preserved — the winner bucket's upper tail is the only
+           thing trimmed (was +250% -> now +200%).
+
+        This is the "missing code path" for the Wave-7 cap: the engine-
+        side monitor reads its current_price from Pyth/Jupiter/Birdeye
+        and computes `pnl_pct` directly from that, bypassing
+        `_model_dry_run_exit_pct` whenever the upstream price source
+        returns *any* non-zero value (even a wildly stale one). The
+        clean fix lives in `sniper_engine.py`'s monitor (treat
+        `|pnl_pct| > 200` as a phantom-price signal and reroute through
+        the synthetic-close path); that change is the concurrent agent's
+        scope. Until they ship it, this clamp ensures the DB row stays
+        honest even if the LOG line is briefly noisy. See
+        `modules/sniper/CLAUDE.md` for the full Wave-12 note.
+        """
         logger.info(f"🧪 [DRY RUN] Simulating SELL: {amount_in} tokens -> {chain.upper()}")
 
         await asyncio.sleep(0.5)
@@ -1004,7 +1043,28 @@ class TradeExecutor:
         elif roll < 0.85:
             move = 1.0 + rng.uniform(-0.08, 0.12)  # chop
         else:
-            move = 1.0 + rng.uniform(0.20, 2.50)   # winner: +20%..+250%
+            # Winner: +20%..+200%. Was +20%..+250% pre-Wave-12; tightened
+            # so the DB-side `profit_loss_pct` cannot exceed +200% even
+            # if the engine's monitor produced a phantom-price TAKE PROFIT.
+            move = 1.0 + rng.uniform(0.20, 2.00)
+        # Belt-and-suspenders ±200%/-99% clamp on the simulated move.
+        # `_log_exit_to_db` computes `profit_loss_pct = (exit_usd/entry_usd - 1)*100`
+        # and `exit_usd ≈ entry_usd * move` for DRY_RUN, so this directly
+        # bounds the DB row's profit_loss_pct to [-99%, +200%]. Hard cap
+        # exists as a sanity guard for the operator-reported +696226%
+        # phantom-price case.
+        if move > 3.0:
+            logger.warning(
+                f"🧪 [DRY RUN] sim_sell move {move:.2f} > 3.0 cap "
+                f"({token_address[:8]}); clamping to +200%."
+            )
+            move = 3.0
+        if move < 0.01:
+            logger.warning(
+                f"🧪 [DRY RUN] sim_sell move {move:.4f} < 0.01 floor "
+                f"({token_address[:8]}); clamping to -99%."
+            )
+            move = 0.01
         simulated_output = amount_in / 1000000 * move
 
         logger.info(f"🧪 [DRY RUN] Simulated SELL complete: {simulated_output} {chain.upper()}")

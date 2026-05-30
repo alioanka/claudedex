@@ -342,6 +342,50 @@ Phase-2 data collection — NOT touched).
   the "DRY_RUN simulation" section above — they don't masquerade as model
   output and feed no entry gate.
 
+## Wave-12 sim-exit ±200% PnL cap (2026-05-29)
+Operator reported `+696226% TAKE PROFIT triggered` log lines on fresh
+Pump.fun mints (`logs/sniper/sniper.log.1`, 2026-05-28 21:26). Root
+cause is upstream of the sim exit: `SniperEngine._monitor_active_snipes`
+divides a non-zero-but-stale `current_price` (Jupiter/Pyth/Birdeye
+returned *any* number, even one orders of magnitude off the real curve)
+by an `entry_price` derived from the `_simulate_buy` 1e6 multiplier
+(`entry_price = sol_price / 1e6` per token), producing an unbounded
+`pnl_pct`. The +696226% line at `sniper_engine.py:1067` is emitted
+BEFORE the simulator runs.
+
+The clean fix is engine-side: in `_monitor_active_snipes`, treat
+`|pnl_pct| > 200` as a phantom-price signal under DRY_RUN and reroute
+through `_close_position_synthetic` (which uses the Wave-7 distribution
+honestly). That sits in `sniper_engine.py` and is owned by the SNIPER
+agent — NOT shipped in this wave.
+
+What WAS shipped in Wave-12 (DB-side sanity guard inside
+`trade_executor.py::_simulate_sell`):
+- Winner-bucket cap tightened from +250% to +200% (`rng.uniform(0.20,
+  2.00)` was `(0.20, 2.50)`).
+- Hard `move ∈ [0.01, 3.0]` clamp added; out-of-range values are
+  WARN-logged and clamped. Guarantees the DB row's `profit_loss_pct`
+  ∈ [-99%, +200%] regardless of engine-side log discrepancies.
+- Wave-7 distribution shape (55% loss / 30% chop / 15% winner)
+  preserved otherwise.
+- Loss-floor 0.01 ensures we never produce `amount_out=0` -> the
+  closer's -100% trap fixed in copy_engine.py never triggers here.
+
+Why the cap exists in the simulator rather than the monitor: this
+wave's agent does NOT own `sniper_engine.py`. The simulator is the
+narrowest place to bound `result.amount_out`, which is what
+`_log_exit_to_db` reads to compute `exit_usd = native_received *
+native_price` and `profit_loss_pct`. So even when the engine's monitor
+fires TAKE_PROFIT prematurely on a phantom price, the persisted DB
+row will record a bounded `profit_loss_pct ∈ [-99%, +200%]`.
+
+Operator next step: the LOG-LINE log discrepancy (the +696226% string
+in `sniper.log`) survives this fix because that string is emitted
+BEFORE the simulator runs. The sniper agent should pair-fix the
+monitor in `sniper_engine.py:1059-1067` next wave.
+
+Commit: this Wave-12 sim-cap.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.
