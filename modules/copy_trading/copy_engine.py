@@ -1429,8 +1429,14 @@ class CopyTradingEngine(BaseModule):
                                 if tx_hash in self._known_tx_hashes:
                                     continue
 
-                                # Check if recent (last minute)
-                                if int(tx['timeStamp']) > time.time() - 60:
+                                # Check if recent (last 90 seconds).
+                                # Window was 60s but Etherscan can lag
+                                # up to ~30s and the monitor polls every
+                                # 15s, so a leader tx at T=0 could arrive
+                                # at T=44s (15s poll + 29s Etherscan lag)
+                                # which is still within 90s. Duplicates
+                                # are prevented by _known_tx_hashes.
+                                if int(tx['timeStamp']) > time.time() - 90:
                                     self._remember_tx_hash(tx_hash)
                                     # Add chain info to tx for analysis
                                     tx['_chain'] = chain_name
@@ -1864,13 +1870,46 @@ class CopyTradingEngine(BaseModule):
                 return False
 
             method_id = input_data[:10]
-            # Common DEX Router methods
+            # Wave-13: expanded DEX Router method map.
+            # V2 AMMs: Uniswap V2, PancakeSwap V2, QuickSwap V2
+            # V3 AMMs: Uniswap V3 exactInputSingle / exactInput /
+            #          exactOutputSingle / exactOutput and multicall
+            #          (the most common Uni V3 dispatch wrapper)
+            # Aggregators: 1inch v4/v5 swap, 0x fillQuote, Paraswap
+            # All are ETH-in / token-out or token-in / ETH-out paths.
+            # The is_buy direction uses 'ForTokens' suffix detection;
+            # for V3 / aggregator methods direction is derived below.
             SWAP_METHODS = {
+                # Uniswap V2 / V2-compatible
                 '0x7ff36ab5': 'swapExactETHForTokens',
                 '0xb6f9de95': 'swapExactETHForTokensSupportingFeeOnTransferTokens',
                 '0x18cbafe5': 'swapExactTokensForETH',
                 '0x38ed1739': 'swapExactTokensForTokens',
                 '0x5c11d795': 'swapExactTokensForTokensSupportingFeeOnTransferTokens',
+                '0xfb3bdb41': 'swapETHForExactTokens',
+                '0x4a25d94a': 'swapTokensForExactETH',
+                # Uniswap V3 single-hop exact-in
+                '0x414bf389': 'exactInputSingle',
+                # Uniswap V3 multi-hop exact-in
+                '0xc04b8d59': 'exactInput',
+                # Uniswap V3 single-hop exact-out
+                '0xdb3e2198': 'exactOutputSingle',
+                # Uniswap V3 multi-hop exact-out
+                '0xf28c0498': 'exactOutput',
+                # Uniswap V3 multicall (common dispatch wrapper)
+                '0xac9650d8': 'multicall',
+                '0x5ae401dc': 'multicall_v2',
+                # 1inch v4 / v5 aggregation router
+                '0xe449022e': 'uniswapV3Swap',
+                '0x12aa3caf': 'swap',          # 1inch aggregationRouterV5
+                '0x2e95b6c8': 'fillOrderTo',   # 1inch LimitOrderProtocol
+                # 0x Protocol ExchangeProxy
+                '0xd9627aa4': 'sellToUniswap',
+                '0x6af479b2': 'sellTokenForEthToUniswapV3',
+                '0x803ba26d': 'sellEthForTokenToUniswapV3',
+                # Paraswap v5
+                '0x54e3f31b': 'simpleSwap',
+                '0xa94e78ef': 'megaSwap',
             }
 
             if method_id in SWAP_METHODS:
@@ -1931,10 +1970,38 @@ class CopyTradingEngine(BaseModule):
             input_data = source_tx.get('input', '')
             original_value = int(source_tx.get('value', 0))
 
-            # Detect trade direction based on method name
-            # BUY: swapExactETHForTokens, swapETHForExactTokens
-            # SELL: swapExactTokensForETH, swapTokensForExactETH
-            is_buy = 'ForTokens' in method_name
+            # Detect trade direction. Wave-13: V2 AMMs use the method
+            # name to distinguish direction ('ForTokens' = BUY); V3 and
+            # aggregator methods (exactInputSingle, multicall, swap, etc.)
+            # use native-ETH value: if value > 0 the leader sent ETH →
+            # buying tokens. If value == 0 the leader sent tokens → selling.
+            # BUY: swapExactETHForTokens, swapETHForExactTokens (V2)
+            #      exactInputSingle / exactInput / exactOutputSingle /
+            #      exactOutput / multicall / swap when value > 0 (V3+agg)
+            # SELL: swapExactTokensForETH, swapTokensForExactETH (V2)
+            #       V3/agg methods when value == 0
+            _V2_BUY_NAMES = {
+                'swapExactETHForTokens',
+                'swapExactETHForTokensSupportingFeeOnTransferTokens',
+                'swapETHForExactTokens',
+                'exactInputSingle',   # ETH-in is detected by value>0 below
+                'exactOutputSingle',
+            }
+            _V2_SELL_NAMES = {
+                'swapExactTokensForETH',
+                'swapTokensForExactETH',
+                'swapExactTokensForTokensSupportingFeeOnTransferTokens',
+            }
+            if method_name in _V2_BUY_NAMES or 'ForTokens' in method_name:
+                is_buy = True
+            elif method_name in _V2_SELL_NAMES or 'ForETH' in method_name:
+                is_buy = False
+            else:
+                # V3 / aggregator: use tx value as the signal. A non-zero
+                # msg.value means the leader sent ETH (buy). value==0 means
+                # the leader sent an ERC-20 (sell). Fail-safe to BUY so we
+                # don't miss entries; stablecoin guard below catches USDC/WETH.
+                is_buy = original_value > 0
             side = 'buy' if is_buy else 'sell'
 
             # Calculate copy amount (ratio of original).
@@ -2236,25 +2303,74 @@ class CopyTradingEngine(BaseModule):
                     if not tx:
                         return False
 
-                    # Check if it's a swap transaction
-                    # Look for Jupiter, Raydium, or other DEX programs
-                    DEX_PROGRAMS = [
+                    # Check if it's a swap transaction.
+                    # Wave-13: expanded DEX program list. Previously only
+                    # Jupiter v4/v6 + Raydium V4/CPMM were detected, missing
+                    # Orca (Whirlpool), Meteora, Phoenix, Lifinity and Raydium
+                    # CLMM -- combined these handle ~40% of Solana DEX volume.
+                    # The set is checked as a membership test O(1); adding a
+                    # new program ID here is the only change needed for future
+                    # DEXes. innerInstructions are scanned in addition to the
+                    # top-level instructions because Jupiter and Meteora bundle
+                    # their swap calls one level deep.
+                    DEX_PROGRAMS = {
+                        # Jupiter aggregator (by far the most common)
                         'JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4',   # Jupiter v6
                         'JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB',   # Jupiter v4
-                        '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8', # Raydium V4
+                        'JUP3c2Uh3WA4Ng34tw6kPd2G4C5BB21Xo1jigKvsKUM',   # Jupiter v3
+                        # Raydium (AMM + CLMM + CPMM)
+                        '675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8',  # Raydium V4
                         'CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK',  # Raydium CPMM
-                    ]
+                        'cjZmBEP64PBnkBDsVjBJbzHuP4jSJXpRqVzC3GC1Fh3',   # Raydium CLMM
+                        # Orca Whirlpool (second-largest Solana DEX)
+                        'whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc',   # Orca Whirlpool
+                        'DjVE6JNiYqPL2QXyCUUh8rNjHrbz9hXHNYt99MQ59qw1', # Orca classic
+                        # Meteora DLMM + Dynamic AMM
+                        'LBUZKhRxPF3XUpBCjp4YzTKgLLjgMHJMKuY1cHXmhQE',  # Meteora DLMM
+                        'M2mx93ekt1fmXSVkTrUL9xVFHkmME8HTUi5Cyc5aF7K',   # Meteora AMM
+                        'Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EkAW7vA',   # Meteora pools v2
+                        # Phoenix (order-book DEX, increasingly used by whales)
+                        'PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY',   # Phoenix v1
+                        # Lifinity AMM
+                        'EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S',  # Lifinity v2
+                    }
 
-                    # Get instructions from transaction
+                    # Get instructions from transaction (top-level and
+                    # inner). Jupiter v6, Meteora, and some aggregators
+                    # dispatch their actual swap program call one level
+                    # deep inside innerInstructions -- scanning only
+                    # message.instructions misses those txs entirely.
                     message = tx.get('transaction', {}).get('message', {})
                     instructions = message.get('instructions', [])
+                    meta_inner = (tx.get('meta') or {}).get('innerInstructions') or []
 
                     is_swap = False
+                    # Check top-level instructions
                     for instr in instructions:
                         program_id = instr.get('programId', '')
                         if program_id in DEX_PROGRAMS:
                             is_swap = True
                             break
+                    # Check inner instructions if not found yet
+                    if not is_swap:
+                        for inner_group in meta_inner:
+                            for instr in (inner_group.get('instructions') or []):
+                                program_id = instr.get('programId', '')
+                                if program_id in DEX_PROGRAMS:
+                                    is_swap = True
+                                    break
+                            if is_swap:
+                                break
+
+                    if not is_swap:
+                        self._log_replay_decision(
+                            chain='solana', wallet=wallet, tx_hash=signature,
+                            decision='skipped', reason='not_a_swap',
+                            extra={'program_ids': [
+                                i.get('programId', '')[:16]
+                                for i in (instructions or [])[:4]
+                            ]},
+                        )
 
                     if is_swap:
                         # Update cooldown before executing
