@@ -215,6 +215,77 @@ async def main():
         # Surface the failure here so the operator can read the actual
         # error from logs/copy_trading/copy_trading.log instead of
         # spelunking the engine's own logger.
+
+        # Wave-12 FIX 2: derive the Solana execution pubkey from
+        # SOLANA_MODULE_PRIVATE_KEY BEFORE engine.start() so
+        # _persist_execution_wallets surfaces it on the dashboard funding
+        # panel instead of "solana=none". The same class of bug as DEX /
+        # Sniper / Copy EVM (Wave-11 FIX 1 / 3 / Wave-12 FIX 1): the
+        # stored SOLANA_MODULE_WALLET secret was None for the operator,
+        # so copy_engine line 288 (`secrets.get('SOLANA_MODULE_WALLET') or
+        # os.getenv(...)`) resolved to None even with a valid PK. We can't
+        # edit copy_engine.py (concurrent agent owns it), so we run
+        # engine.initialize() here (idempotent), derive the pubkey from
+        # the executor's already-decrypted solana_private_key, write it
+        # into executor.solana_wallet, then re-call
+        # _persist_execution_wallets so the dashboard reads the resolved
+        # address. engine.start() will skip re-init since executor is
+        # non-None. Public address only — keypair never logged. Mask
+        # logged addresses to first6...last4.
+        if not await engine.initialize():
+            err = getattr(engine, 'error_message', None) or 'unknown (check engine.initialize)'
+            logger.error(f"❌ Copy Trading engine.initialize() returned False: {err}")
+            logger.error("   The subprocess will exit. Check upstream config / db / secrets.")
+            return
+        try:
+            _exec = getattr(engine, 'executor', None)
+            _pk = getattr(_exec, 'solana_private_key', None) if _exec else None
+            _existing = getattr(_exec, 'solana_wallet', None) if _exec else None
+            if _exec is not None and _pk and not _existing:
+                derived_sol = None
+                try:
+                    from solders.keypair import Keypair
+                    import base58
+                    key_bytes = None
+                    if _pk.startswith('['):
+                        try:
+                            import json as _json
+                            key_bytes = bytes(_json.loads(_pk))
+                        except Exception:
+                            pass
+                    if key_bytes is None:
+                        try:
+                            key_bytes = base58.b58decode(_pk)
+                        except Exception:
+                            pass
+                    if key_bytes is None:
+                        try:
+                            key_bytes = bytes.fromhex(_pk)
+                        except Exception:
+                            pass
+                    if key_bytes is not None:
+                        if len(key_bytes) == 64:
+                            kp = Keypair.from_bytes(key_bytes)
+                        elif len(key_bytes) == 32:
+                            kp = Keypair.from_seed(key_bytes)
+                        else:
+                            kp = None
+                        if kp is not None:
+                            derived_sol = str(kp.pubkey())
+                except Exception as e:
+                    logger.debug(f"copy Solana wallet derivation failed: {e}")
+                if derived_sol:
+                    _exec.solana_wallet = derived_sol
+                    mask = derived_sol[:6] + "..." + derived_sol[-4:]
+                    logger.info(f"🔑 Copy Solana wallet derived from PK: {mask}")
+                    # Re-surface to dashboard so funding panel updates.
+                    try:
+                        await engine._persist_execution_wallets()
+                    except Exception as e:
+                        logger.warning(f"re-persist execution wallets failed: {e}")
+        except Exception as e:
+            logger.warning(f"Copy Solana wallet derivation block failed (non-fatal): {e}")
+
         logger.info("🚀 Copy Trading Engine starting — entering main loop")
         result = await engine.start()
         if not result:
