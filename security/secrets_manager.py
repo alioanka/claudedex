@@ -88,6 +88,7 @@ class SecureSecretsManager:
     def __init__(self):
         self._cache: Dict[str, str] = {}
         self._db_pool = None
+        self._db_pool_id: Optional[int] = None   # id() of the last accepted pool object
         self._fernet: Optional[Fernet] = None
         self._initialized = False
         self._initialization_lock = threading.Lock()
@@ -120,24 +121,43 @@ class SecureSecretsManager:
 
         Returns:
             bool: True if initialization successful
+
+        Idempotency rules (prevents churn when multiple modules call this):
+        - Already initialized with no pool and no pool supplied → no-op.
+        - Already initialized with the SAME pool object → no-op (identity check
+          via id() prevents repeated cache-clearing on every module startup).
+        - Different (new) pool object supplied → upgrade from bootstrap mode;
+          clear stale env-sourced cache entries so DB values take precedence.
+        - Already has DB pool and called with no pool → no-op (don't downgrade).
         """
         with self._initialization_lock:
-            # Clear cache on re-initialization to remove stale encrypted values
-            if db_pool and self._initialized:
-                logger.info("Re-initializing secrets manager with database - clearing cache")
+            new_pool_id = id(db_pool) if db_pool is not None else None
+
+            # Fast-path: nothing changed
+            if self._initialized:
+                if db_pool is None:
+                    # No upgrade requested; already initialized
+                    return True
+                if new_pool_id == self._db_pool_id:
+                    # Same pool object — no work to do
+                    logger.debug("Secrets manager already initialized with this pool (no-op)")
+                    return True
+                # A genuinely different pool was supplied (e.g. reconnect after crash).
+                # Clear stale cache so DB-backed values are re-fetched.
+                logger.info(
+                    "Secrets manager pool upgraded — clearing cache to pick up DB values"
+                )
                 self._cache.clear()
                 self._source_map.clear()
 
-            if self._initialized and not db_pool:
-                return True
-
             try:
-                # Step 1: Initialize encryption
+                # Step 1: Initialize encryption (idempotent internally)
                 self._init_encryption()
 
                 # Step 2: Set up database connection if provided
                 if db_pool:
                     self._db_pool = db_pool
+                    self._db_pool_id = new_pool_id
                     self._bootstrap_mode = False
                     logger.info("Secrets manager initialized with database backend")
                 else:
