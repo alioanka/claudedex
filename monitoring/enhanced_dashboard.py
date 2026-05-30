@@ -4501,20 +4501,33 @@ class DashboardEndpoints:
             winning_trades_count = 0
 
             # Get DEX data from database
-            if self.db:
+            # Wave-12 FIX 4(a): the previous path called get_recent_trades(limit=1000)
+            # which silently capped the DEX bucket at 1000 rows AND co-mingled
+            # rows that any module (sniper/AI/solana) may have written into the
+            # legacy `trades` table. Operator saw 779 dashboard-total vs 834 DEX
+            # alone — that gap = cap + cross-module contamination. Query the
+            # `trades` table directly, exclude Solana (already counted in
+            # solana bucket below), and skip cross-module strategies so DEX is
+            # a clean SUM. No 1000 cap.
+            if self.db and getattr(self.db, 'pool', None):
                 try:
-                    # Get all trades for P&L calculation
-                    trades = await self.db.get_recent_trades(limit=1000)
-                    closed_trades = [t for t in trades if t.get('status') == 'closed' and t.get('profit_loss') is not None]
-
-                    total_pnl = sum(float(t.get('profit_loss', 0)) for t in closed_trades)
-                    total_trades = len(closed_trades)
-
-                    # Calculate win rate
-                    winning_trades_count = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
-
+                    async with self.db.pool.acquire() as conn:
+                        dex_row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed') AS trades,
+                              COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins
+                            FROM trades
+                            WHERE UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')
+                              AND COALESCE(strategy,'') NOT IN
+                                  ('sniper','copy_trading','copytrading','ai','ai_analysis','arbitrage')
+                        """)
+                        if dex_row:
+                            total_pnl = float(dex_row['pnl'] or 0)
+                            total_trades = int(dex_row['trades'] or 0)
+                            winning_trades_count = int(dex_row['wins'] or 0)
                 except Exception as e:
-                    logger.warning(f"Error getting data from database: {e}")
+                    logger.warning(f"Error getting DEX data from database: {e}")
 
             # Get DEX open positions from ENGINE
             if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
@@ -7517,8 +7530,10 @@ class DashboardEndpoints:
 
         Checks multiple sources for position data:
         1. Running Solana module health endpoint
-        2. positions table with chain='SOLANA'
-        3. solana_trades table for trades without exit (open positions)
+        2. solana_positions table (authoritative open-position store; rows
+           are inserted on open, deleted on close — no status column)
+        3. positions table with chain='SOLANA'
+        4. solana_trades table for trades without exit (open positions)
         """
         positions = []
 
@@ -7537,8 +7552,51 @@ class DashboardEndpoints:
         if not positions and self.db_pool:
             try:
                 async with self.db_pool.acquire() as conn:
-                    # First try the positions table
-                    rows = await conn.fetch("""
+                    # PREFERRED: solana_positions is the authoritative
+                    # open-position store written by solana_engine on
+                    # _save_position_to_db and deleted on close. No
+                    # status column — row presence == OPEN.
+                    try:
+                        sp_rows = await conn.fetch("""
+                            SELECT
+                                position_id, token_mint, token_symbol, strategy,
+                                entry_price, amount, value_sol, stop_loss,
+                                take_profit, is_simulated, tx_signature, opened_at
+                            FROM solana_positions
+                            ORDER BY opened_at DESC
+                        """)
+                        for row in sp_rows:
+                            entry_price = float(row['entry_price'] or 0)
+                            positions.append({
+                                'position_id': row['position_id'],
+                                'token': row['token_symbol'],
+                                'token_symbol': row['token_symbol'],
+                                'token_address': row['token_mint'],
+                                'mint': row['token_mint'],
+                                'strategy': row['strategy'] or 'pumpfun',
+                                'entry_price': entry_price,
+                                'current_price': entry_price,
+                                'amount_sol': float(row['value_sol'] or 0),
+                                'token_amount': float(row['amount'] or 0),
+                                'current_value_sol': float(row['value_sol'] or 0),
+                                'stop_loss': float(row['stop_loss'] or 0),
+                                'take_profit': float(row['take_profit'] or 0),
+                                'unrealized_pnl': 0,
+                                'unrealized_pnl_usd': 0,
+                                'pnl_pct': 0,
+                                'pnl_percent': 0,
+                                'opened_at': row['opened_at'].isoformat() if row['opened_at'] else '',
+                                'status': 'open',
+                                'is_simulated': row['is_simulated'],
+                                'tx_signature': row['tx_signature'],
+                                'source': 'solana_positions'
+                            })
+                    except Exception as sp_err:
+                        logger.debug(f"Could not fetch from solana_positions: {sp_err}")
+
+                    # Secondary fallback: generic positions table
+                    if not positions:
+                        rows = await conn.fetch("""
                         SELECT
                             position_id, token_symbol, token_address, strategy,
                             entry_price, current_price, amount, usd_value,
@@ -7548,23 +7606,23 @@ class DashboardEndpoints:
                         WHERE chain = 'SOLANA' AND status = 'open'
                         ORDER BY opened_at DESC
                     """)
-                    for row in rows:
-                        positions.append({
-                            'position_id': row['position_id'],
-                            'token': row['token_symbol'],
-                            'token_symbol': row['token_symbol'],
-                            'token_address': row['token_address'],
-                            'strategy': row['strategy'] or 'pumpfun',
-                            'entry_price': float(row['entry_price'] or 0),
-                            'current_price': float(row['current_price'] or row['entry_price'] or 0),
-                            'amount_sol': float(row['amount'] or 0),
-                            'usd_value': float(row['usd_value'] or 0),
-                            'unrealized_pnl': float(row['unrealized_pnl'] or 0),
-                            'pnl_pct': float(row['unrealized_pnl_percentage'] or 0),
-                            'opened_at': row['opened_at'].isoformat() if row['opened_at'] else '',
-                            'status': row['status'],
-                            'source': 'database'
-                        })
+                        for row in rows:
+                            positions.append({
+                                'position_id': row['position_id'],
+                                'token': row['token_symbol'],
+                                'token_symbol': row['token_symbol'],
+                                'token_address': row['token_address'],
+                                'strategy': row['strategy'] or 'pumpfun',
+                                'entry_price': float(row['entry_price'] or 0),
+                                'current_price': float(row['current_price'] or row['entry_price'] or 0),
+                                'amount_sol': float(row['amount'] or 0),
+                                'usd_value': float(row['usd_value'] or 0),
+                                'unrealized_pnl': float(row['unrealized_pnl'] or 0),
+                                'pnl_pct': float(row['unrealized_pnl_percentage'] or 0),
+                                'opened_at': row['opened_at'].isoformat() if row['opened_at'] else '',
+                                'status': row['status'],
+                                'source': 'database'
+                            })
 
                     # Also check solana_trades for entries without exit
                     if not positions:
@@ -10178,13 +10236,25 @@ class DashboardEndpoints:
         Numeric/Decimal fields are explicitly cast to JSON-safe primitives so a
         single Decimal column does not blow up json_response for the whole batch
         (which previously surfaced as "0 of 0" on /sniper/trades).
+
+        Wave-12 FIX 3: accept either self.db.pool OR self.db_pool — some
+        bootstrap paths leave self.db unset while self.db_pool is attached
+        directly, which previously returned an empty list to /sniper/trades
+        despite 439k rows in sniper_trades.
         """
         trades = []
         try:
             # Cap limit to 5000 so a misbehaving client cannot OOM the dashboard.
-            limit = max(1, min(int(request.query.get('limit', 100)), 5000))
-            if self.db:
-                async with self.db.pool.acquire() as conn:
+            # Default raised from 100 -> 2000 to match the template request and
+            # avoid silently truncating 439k -> 100 when a caller forgets ?limit.
+            limit = max(1, min(int(request.query.get('limit', 2000)), 5000))
+            pool = None
+            if getattr(self, 'db', None) and getattr(self.db, 'pool', None):
+                pool = self.db.pool
+            elif getattr(self, 'db_pool', None):
+                pool = self.db_pool
+            if pool is not None:
+                async with pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
                             trade_id, token_address, chain, side, entry_price, exit_price,
