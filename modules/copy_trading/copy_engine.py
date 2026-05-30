@@ -672,29 +672,203 @@ class CopyTradeExecutor:
         return None
 
     async def _simulate_solana_swap(self, input_mint: str, output_mint: str, amount: int) -> Dict:
-        """Simulate Solana swap"""
+        """Simulate Solana swap.
+
+        Wave-12 FIX 2 — when this simulator is called for a SELL
+        (input_mint = the SPL token; output_mint = WSOL), the caller in
+        `_execute_solana_copy_trade` passes `amount_lamports=1` as a
+        placeholder because we hold ZERO real SPL in DRY_RUN. The
+        previous simulator echoed that 1-lamport value back, and
+        `_log_copy_trade` then computed `usd_value = 1/1e9 * sol_price ≈
+        $2e-7`, producing a fabricated -100% PnL on every closed copy.
+
+        Fix: detect the SELL direction (input_mint != WSOL_MINT) and
+        compute realistic SOL proceeds by re-quoting the token at its
+        current USD price (Jupiter Price v3, same source we use to
+        populate metadata.tokens_received on BUY), multiplying by the
+        tokens_received recorded on the matching open position, and
+        converting USD -> SOL -> lamports. Returns that lamport value
+        in the `amount` field so the rest of the logging pipeline
+        computes a realistic exit USD without further surgery.
+
+        Fail-soft hierarchy:
+        1. Tokens_received known + live Jupiter price -> realistic.
+        2. Live price unavailable but entry_usd known -> exit_usd =
+           entry_usd (0% PnL placeholder, NEVER -100%). Marks
+           `sim_sell_no_price=True` in the returned `metadata` so
+           _log_copy_trade can stamp it for forensic clarity.
+        3. Neither known -> return the original placeholder but with
+           `sim_sell_no_price=True` so the closer skips the -100% trap.
+        """
         import hashlib
         fake_hash = hashlib.sha256(f"{input_mint}{output_mint}{datetime.now().timestamp()}".encode()).hexdigest()
-        logger.info(f"🧪 [DRY RUN] Simulated Solana swap: {amount} lamports")
+
+        is_sell = (input_mint != WSOL_MINT) and (output_mint == WSOL_MINT)
+        simulated_amount = amount
+        sim_meta: Dict = {'sim_sell_no_price': False, 'sim_price_source': None}
+
+        if is_sell:
+            token_mint = input_mint
+            tokens_held: Optional[float] = None
+            entry_usd: Optional[float] = None
+            try:
+                if self.db_pool is not None:
+                    async with self.db_pool.acquire() as conn:
+                        row = await conn.fetchrow(
+                            "SELECT entry_usd, "
+                            "       (metadata::jsonb->>'tokens_received')::float8 AS tokens_received "
+                            "FROM copytrading_trades "
+                            "WHERE token_address = $1 AND status = 'open' AND side = 'buy' "
+                            "ORDER BY entry_timestamp ASC LIMIT 1",
+                            token_mint,
+                        )
+                        if row:
+                            entry_usd = float(row['entry_usd']) if row['entry_usd'] is not None else None
+                            tokens_held = float(row['tokens_received']) if row['tokens_received'] is not None else None
+            except Exception as e:
+                logger.debug(f"sim_sell DB lookup failed for {token_mint[:10]}: {e}")
+
+            # Resolve current per-token USD price. Same Jupiter Price v3
+            # source the dashboard's "Now" column uses, with last-known
+            # cached fallback inside PriceFetcher equivalent.
+            current_usd_per_token: Optional[float] = None
+            try:
+                from urllib.parse import quote_plus
+                timeout = aiohttp.ClientTimeout(total=5)
+                url = f"https://api.jup.ag/price/v3?ids={quote_plus(token_mint)}"
+                async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with session.get(url) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            payload = data.get('data') if isinstance(data, dict) and 'data' in data else data
+                            row = payload.get(token_mint) if isinstance(payload, dict) else None
+                            if isinstance(row, dict):
+                                price_raw = row.get('usdPrice') or row.get('price') or row.get('usd') or 0
+                                try:
+                                    p = float(price_raw)
+                                    if p > 0:
+                                        current_usd_per_token = p
+                                        sim_meta['sim_price_source'] = 'jupiter_v3'
+                                except (TypeError, ValueError):
+                                    pass
+                        else:
+                            logger.debug(
+                                f"sim_sell Jupiter v3 status {resp.status} for {token_mint[:10]}"
+                            )
+            except Exception as e:
+                logger.debug(f"sim_sell Jupiter v3 fetch failed for {token_mint[:10]}: {e}")
+
+            # Resolve SOL USD price for the lamports conversion.
+            sol_usd = 0.0
+            try:
+                sol_usd = await self.price_fetcher.get_price('sol')
+            except Exception:
+                sol_usd = 0.0
+
+            exit_usd_sim: Optional[float] = None
+            if tokens_held and current_usd_per_token and tokens_held > 0:
+                exit_usd_sim = float(tokens_held) * float(current_usd_per_token)
+            elif entry_usd is not None and entry_usd > 0:
+                # No live price: fall back to entry value (0% PnL) so we
+                # don't fabricate -100%. Flagged for forensics.
+                exit_usd_sim = float(entry_usd)
+                sim_meta['sim_sell_no_price'] = True
+                sim_meta['sim_price_source'] = 'fallback_entry_usd'
+            else:
+                # Neither tokens nor entry — keep the placeholder but
+                # tell the closer not to compute -100%.
+                sim_meta['sim_sell_no_price'] = True
+
+            if exit_usd_sim is not None and sol_usd > 0:
+                simulated_amount = max(1, int(round(exit_usd_sim / sol_usd * 1e9)))
+                logger.info(
+                    f"🧪 [DRY RUN] Simulated Solana SELL: token={token_mint[:10]} "
+                    f"exit_usd=${exit_usd_sim:.4f} -> {simulated_amount} lamports "
+                    f"(src={sim_meta['sim_price_source']})"
+                )
+            else:
+                logger.warning(
+                    f"🧪 [DRY RUN] Simulated Solana SELL had NO price source for "
+                    f"{token_mint[:10]}; closer will use entry-as-exit fail-soft "
+                    f"(sim_sell_no_price=True)"
+                )
+        else:
+            logger.info(f"🧪 [DRY RUN] Simulated Solana swap: {simulated_amount} lamports")
+
         return {
             'success': True,
             'tx_hash': f"DRY_RUN_{fake_hash[:16]}",
             'input_mint': input_mint,
             'output_mint': output_mint,
-            'amount': amount
+            'amount': simulated_amount,
+            'sim_metadata': sim_meta,
         }
 
     async def _simulate_evm_swap(self, token: str, amount: int, is_buy: bool) -> Dict:
-        """Simulate EVM swap"""
+        """Simulate EVM swap.
+
+        Wave-12 FIX 2 (EVM mirror) — same -100% trap exists on the EVM
+        SELL path in principle (caller would pass a tiny placeholder
+        amount because we hold no real ERC-20 in DRY_RUN). We don't have
+        a free EVM price oracle on hand the way Jupiter v3 covers Solana,
+        so the fail-soft path is "exit_usd = entry_usd" for any SELL with
+        a matching open position. Live BUY simulator unchanged.
+        """
         import hashlib
         fake_hash = hashlib.sha256(f"{token}{amount}{datetime.now().timestamp()}".encode()).hexdigest()
         side = "BUY" if is_buy else "SELL"
-        logger.info(f"🧪 [DRY RUN] Simulated EVM {side}: {amount} wei")
+        simulated_amount = amount
+        sim_meta: Dict = {'sim_sell_no_price': False, 'sim_price_source': None}
+
+        if not is_buy:
+            entry_usd: Optional[float] = None
+            try:
+                if self.db_pool is not None:
+                    async with self.db_pool.acquire() as conn:
+                        row = await conn.fetchrow(
+                            "SELECT entry_usd FROM copytrading_trades "
+                            "WHERE token_address = $1 AND status = 'open' AND side = 'buy' "
+                            "ORDER BY entry_timestamp ASC LIMIT 1",
+                            token,
+                        )
+                        if row and row['entry_usd'] is not None:
+                            entry_usd = float(row['entry_usd'])
+            except Exception as e:
+                logger.debug(f"sim_sell DB lookup failed for {token[:10]}: {e}")
+
+            eth_usd = 0.0
+            try:
+                eth_usd = await self.price_fetcher.get_price('eth')
+            except Exception:
+                eth_usd = 0.0
+
+            if entry_usd is not None and entry_usd > 0 and eth_usd > 0:
+                # Fail-soft entry-as-exit so PnL is 0% not -100%. We
+                # don't have a free per-token EVM price source wired
+                # here; flagging this for the dashboard.
+                simulated_amount = max(1, int(round(entry_usd / eth_usd * 1e18)))
+                sim_meta['sim_sell_no_price'] = True
+                sim_meta['sim_price_source'] = 'fallback_entry_usd'
+                logger.info(
+                    f"🧪 [DRY RUN] Simulated EVM SELL: token={token[:10]} "
+                    f"exit_usd≈${entry_usd:.4f} -> {simulated_amount} wei "
+                    f"(src=fallback_entry_usd)"
+                )
+            else:
+                sim_meta['sim_sell_no_price'] = True
+                logger.warning(
+                    f"🧪 [DRY RUN] Simulated EVM SELL had NO entry basis "
+                    f"for {token[:10]}; closer will fail-soft (sim_sell_no_price=True)"
+                )
+        else:
+            logger.info(f"🧪 [DRY RUN] Simulated EVM {side}: {amount} wei")
+
         return {
             'success': True,
             'tx_hash': f"DRY_RUN_{fake_hash[:16]}",
             'token': token,
-            'amount': amount
+            'amount': simulated_amount,
+            'sim_metadata': sim_meta,
         }
 
 
@@ -2378,9 +2552,28 @@ class CopyTradingEngine(BaseModule):
                     """, source_wallet or 'unknown', token_addr)
 
                     if open_trade:
-                        # Found matching open position - close it with P&L
+                        # Found matching open position - close it with P&L.
+                        # Wave-12 FIX 2: when the DRY_RUN SELL simulator
+                        # could not source a real per-token price (flagged
+                        # via result.sim_metadata.sim_sell_no_price), we
+                        # fail SOFT — use entry_usd as exit_usd so the
+                        # dashboard records a 0% PnL row labelled
+                        # `sim_sell_no_price=true` instead of a fabricated
+                        # -100%. This was the operator-reported root cause
+                        # of every closed copy showing $0 exit / -100%.
                         entry_usd = float(open_trade['entry_usd'])
-                        exit_usd = usd_value
+                        sim_meta = result.get('sim_metadata') or {}
+                        sim_no_price = bool(sim_meta.get('sim_sell_no_price'))
+                        if self.dry_run and sim_no_price and (usd_value <= 0 or usd_value < entry_usd * 0.001):
+                            # Fail-soft path: pretend we got entry value back.
+                            exit_usd = entry_usd
+                            logger.info(
+                                f"🧪 [DRY RUN] Sim SELL had no price feed for "
+                                f"{token_addr[:16]}; recording entry-as-exit "
+                                f"(0% PnL placeholder, NOT a real -100%)."
+                            )
+                        else:
+                            exit_usd = usd_value
                         profit_loss = exit_usd - entry_usd
                         profit_loss_pct = ((exit_usd / entry_usd) - 1) * 100 if entry_usd > 0 else 0
 
