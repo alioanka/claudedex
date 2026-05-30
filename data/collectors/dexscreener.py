@@ -262,8 +262,10 @@ class DexScreenerCollector:
                     print(f"  Found {len(boosted_data) if isinstance(boosted_data, list) else 1} boosted tokens")
                     
                     tokens_list = boosted_data if isinstance(boosted_data, list) else [boosted_data]
-                    
-                    for boost in tokens_list[:10]:
+
+                    # Wave-13: scan up to 30 (was 10) so EVM chains get coverage
+                    # even when Solana dominates the top-10 boost slots.
+                    for boost in tokens_list[:30]:
                         try:
                             # ✅ Normalize token chain too
                             token_chain = self._normalize_chain(boost.get('chainId', ''))
@@ -397,7 +399,37 @@ class DexScreenerCollector:
                         continue
             
             print(f"  Strategy 3 (Search): {len(new_pairs)} pairs")
-            
+
+            # STRATEGY 4 (wave-13): DexScreener token-ranking endpoint.
+            # Strategies 1+2 scan global boosts (Solana dominates those lists
+            # so EVM chains return 0 pairs). Strategy 3 searches by quote-token
+            # name but the results are mostly old established pools that fail the
+            # max_age_hours filter. Strategy 4 fetches the top-ranked pairs on
+            # the requested chain directly, filtered to recent tokens only.
+            if len(new_pairs) < 10:
+                try:
+                    # /latest/dex/pairs/{chain} returns the most active pairs for
+                    # that chain. We filter to only new ones (< max_age_hours).
+                    rank_data = await self._make_request(
+                        f"/latest/dex/pairs/{chain}",
+                        params={'limit': 50}
+                    )
+                    if rank_data and 'pairs' in rank_data:
+                        for pair_data in rank_data['pairs'][:50]:
+                            pair = self._parse_pair(pair_data)
+                            if pair and self._filter_pair(pair):
+                                pair_dict = self._pair_to_dict(pair)
+                                if pair_dict['pair_address'] not in seen_addresses:
+                                    new_pairs.append(pair_dict)
+                                    seen_addresses.add(pair_dict['pair_address'])
+                                    self.stats['pairs_found'] += 1
+                                    if len(new_pairs) >= limit:
+                                        break
+                except Exception as e:
+                    print(f"  Strategy 4 (DexScreener pairs/{chain}) failed: {e}")
+
+            print(f"  Strategy 4 (Chain pairs): {len(new_pairs)} pairs")
+
             # Sort by volume (highest first)
             new_pairs.sort(key=lambda p: p.get('volume_24h', 0), reverse=True)
             
