@@ -285,9 +285,14 @@ class SentimentEngine:
         # model tier, causing a silent fallback to OpenAI. Both IDs are now
         # loaded from DB (keys 'claude_model' / 'openai_model' in ai_config)
         # so operators can target whatever model their API plan supports.
-        # Default: claude-3-5-sonnet-20241022 (broadly available dated snapshot).
+        # Default: claude-haiku-4-5-20251001 — confirmed available on the live
+        # API plan (Wave-13 diagnostic via scripts/check_anthropic.py). The
+        # claude-3-x snapshots are RETIRED on this account; only the Claude 4.x
+        # family is reachable. Haiku 4.5 is the cheapest/fastest 4.x tier, well
+        # suited to short headline-sentiment classification at high cycle
+        # frequency under the daily budget.
         # Operators must verify: see DB-QUERY block in wave13/agent_8_ai.md.
-        self._claude_model: str = "claude-3-5-sonnet-20241022"
+        self._claude_model: str = "claude-haiku-4-5-20251001"
         self._openai_model: str = "gpt-4o-mini"
         # Wave-13: set True after a 404/not_found probe so we WARN loudly
         # once rather than spam the log every cycle.
