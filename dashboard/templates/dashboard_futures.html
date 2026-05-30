@@ -1362,7 +1362,8 @@ async function closeFuturesPosition(symbol) {
     try {
         const response = await fetch('/api/futures/position/close', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin',
             body: JSON.stringify({ symbol })
         });
         const data = await response.json();
@@ -1393,7 +1394,11 @@ async function closeAllPositions() {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
-        const response = await fetch('/api/futures/positions/close-all', { method: 'POST' });
+        const response = await fetch('/api/futures/positions/close-all', {
+            method: 'POST',
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin'
+        });
         const data = await response.json();
         if (data.success) {
             alert(data.message);

@@ -706,13 +706,40 @@ async function loadDashboardData() {
 
         // Load live stats from Solana module
         const statsResponse = await fetch('/api/solana/stats');
+        let solanaData = null;
         if (statsResponse.ok) {
             const statsData = await statsResponse.json();
             // API returns {success: true, data: {stats, health}} - extract data object
-            const solanaData = statsData.data || statsData;
+            solanaData = statsData.data || statsData;
             if (solanaData.stats || solanaData.health) {
                 updateStatsDisplay(solanaData);
             }
+        }
+
+        // Wave-12 FIX 2: /api/solana/stats can return 200 with an empty
+        // in-memory positions[] when the engine just restarted but the DB
+        // still has open rows. /api/solana/positions falls back to the
+        // authoritative solana_positions table — re-render the Active
+        // Positions card from that source when the stats payload is empty
+        // but the DB has rows.
+        try {
+            const statsPositions = (solanaData && solanaData.stats && Array.isArray(solanaData.stats.positions))
+                ? solanaData.stats.positions : [];
+            if (statsPositions.length === 0) {
+                const posResp = await fetch('/api/solana/positions');
+                if (posResp.ok) {
+                    const posJson = await posResp.json();
+                    const dbPositions = (posJson && Array.isArray(posJson.positions))
+                        ? posJson.positions : [];
+                    if (dbPositions.length > 0) {
+                        updatePositionsTable(dbPositions);
+                        const activeEl = document.getElementById('active-positions');
+                        if (activeEl) activeEl.textContent = dbPositions.length;
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn('Solana positions DB fallback failed:', e);
         }
 
         // Load trades

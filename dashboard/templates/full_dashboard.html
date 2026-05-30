@@ -544,10 +544,29 @@
                 pnlEl.textContent = formatCurrency(pnl);
                 pnlEl.className = pnl >= 0 ? 'card-value' : 'card-value negative';
 
-                const initial = 400;
-                const pnlPct = initial > 0 ? (pnl / initial * 100) : 0;
+                // Wave-12 FIX 4(b): read starting_balance from the API
+                // (PortfolioConfig.initial_balance, default 400) instead
+                // of hardcoding 400 in the template. Guard against a
+                // tiny / zero base that previously produced absurd
+                // percentages (operator saw +100186.72%). Anything outside
+                // a sane window falls back to showing the absolute P&L only,
+                // so a misconfigured capital field cannot generate a
+                // meaningless 5-digit percentage.
                 const pnlPctEl = document.getElementById('pnlPercent');
-                pnlPctEl.textContent = (pnl >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+                const startingBalance = Number(d.starting_balance) || 0;
+                if (startingBalance >= 1) {
+                    let pnlPct = (pnl / startingBalance) * 100;
+                    // Clamp absurd values — a real bot percentage above
+                    // 10000% over the lifetime is almost certainly a data
+                    // bug, not a real PnL ratio.
+                    if (pnlPct > 10000) pnlPct = 10000;
+                    if (pnlPct < -10000) pnlPct = -10000;
+                    pnlPctEl.textContent = (pnl >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+                    pnlPctEl.title = `Starting balance: $${startingBalance.toFixed(2)}`;
+                } else {
+                    pnlPctEl.textContent = '—';
+                    pnlPctEl.title = 'Starting balance unknown — % hidden';
+                }
                 pnlPctEl.className = pnl >= 0 ? 'card-sub positive' : 'card-sub negative';
 
                 document.getElementById('openPositions').textContent = d.open_positions || 0;
@@ -656,13 +675,48 @@
             grid.appendChild(card);
         });
 
+        // Wave-12 FIX 4(c): list the offline module NAMES in the tooltip
+        // and surface them in the moduleHealth text so the operator can
+        // immediately reconcile "6/7" against the grid below (previously
+        // operator saw all 7 cards green but the count said "1 offline"
+        // with no hint which one). offlineNames is derived from the same
+        // status check that produced activeCount, so the two cannot drift.
+        const offlineNames = [];
+        ALL_MODULES.forEach(mod => {
+            const d = modulesData[mod.id] || {};
+            const s = d.status || 'DISABLED';
+            if (s !== 'ENABLED + RUNNING' && s !== 'DISABLED') {
+                offlineNames.push(mod.name);
+            }
+        });
         document.getElementById('activeModules').textContent = `${activeCount}/${ALL_MODULES.length}`;
-        document.getElementById('moduleHealth').textContent = activeCount === ALL_MODULES.length ? 'All systems operational' : `${ALL_MODULES.length - activeCount} module(s) offline`;
+        const healthEl = document.getElementById('moduleHealth');
+        if (activeCount === ALL_MODULES.length) {
+            healthEl.textContent = 'All systems operational';
+            healthEl.title = '';
+        } else if (offlineNames.length > 0) {
+            healthEl.textContent = `${offlineNames.length} offline: ${offlineNames.join(', ')}`;
+            healthEl.title = offlineNames.join(', ');
+        } else {
+            // activeCount < total but no "ENABLED (no health)" rows —
+            // remainder is DISABLED (intentional). Say so.
+            const disabledCount = ALL_MODULES.length - activeCount;
+            healthEl.textContent = `${disabledCount} disabled`;
+            healthEl.title = 'Set the matching *_MODULE_ENABLED=true to start';
+        }
     }
 
     // =============== FUNDING / ACCOUNTS (ISSUE 15) ===============
+    // Wave-12 FIX 5: include `dex_solana` so the row that
+    // /api/funding/accounts has been emitting since 0824fcd actually
+    // renders. Operator screenshots showed the DEX-Solana wallet missing
+    // because the template iterated only this key map and dex_solana was
+    // absent — the row was structured server-side but never displayed.
+    // Placed right after DEX so it sits next to its parent module.
     const FUNDING_LABELS = {
-        dex_trading: 'DEX Trading', solana_trading: 'Solana', futures_trading: 'Futures',
+        dex_trading: 'DEX Trading',
+        dex_solana: 'DEX-Solana (separate from Solana module)',
+        solana_trading: 'Solana', futures_trading: 'Futures',
         sniper: 'Sniper', arbitrage: 'Arbitrage', copy_trading: 'Copy Trading',
         ai_analysis: 'AI Analysis',
     };
