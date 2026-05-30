@@ -44,13 +44,17 @@ class AIModel(Enum):
     GPT4O_MINI = ("gpt-4o-mini", 0.00015, 0.0006)
     GPT4_TURBO = ("gpt-4-turbo", 0.01, 0.03)
 
-    # Anthropic models — dated snapshots preferred over '-latest' aliases.
-    # claude-3-5-sonnet-20241022: broadly available, good balance of cost/quality.
-    # claude-3-haiku-20240307: cheapest Haiku with wide availability.
-    # claude-3-opus-20240229: most capable, highest cost.
-    CLAUDE_35_SONNET = ("claude-3-5-sonnet-20241022", 0.003, 0.015)
-    CLAUDE_3_HAIKU = ("claude-3-haiku-20240307", 0.00025, 0.00125)
-    CLAUDE_3_OPUS = ("claude-3-opus-20240229", 0.015, 0.075)
+    # Anthropic Claude 4.x family — the 3.x snapshots are retired on the live
+    # API plan (Wave-13 diagnostic confirmed via scripts/check_anthropic.py).
+    # Enum member names are kept stable to avoid churn at call sites; the
+    # model_id strings are what actually hit the API. Operators override the
+    # active model via DB key 'claude_model' in ai_config.
+    #   SONNET -> claude-sonnet-4-5-20250929 (balanced quality/cost)
+    #   HAIKU  -> claude-haiku-4-5-20251001  (cheapest/fastest — default)
+    #   OPUS   -> claude-opus-4-8            (most capable, highest cost)
+    CLAUDE_35_SONNET = ("claude-sonnet-4-5-20250929", 0.003, 0.015)
+    CLAUDE_3_HAIKU = ("claude-haiku-4-5-20251001", 0.001, 0.005)
+    CLAUDE_3_OPUS = ("claude-opus-4-8", 0.015, 0.075)
 
     def __init__(self, model_id: str, input_cost: float, output_cost: float):
         self.model_id = model_id
