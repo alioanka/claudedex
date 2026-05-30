@@ -51,7 +51,11 @@ load_dotenv()
 # ============================================================================
 from logging.handlers import RotatingFileHandler
 
-log_dir = Path("logs/solana")
+# Aligned with main.py's per-subprocess stdout/stderr log dir
+# (self.name "Solana Trading" → logs/solana_trading/). Earlier this
+# was logs/solana/ which left the operator with two parallel dirs
+# for the same module and confused log-tail commands.
+log_dir = Path("logs/solana_trading")
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Create formatters
@@ -538,6 +542,20 @@ class SolanaTradingApplication:
                 db_pool=self.db_pool  # Pass database pool for trade persistence
             )
 
+            # P1 cross-module risk gate. Construct a shared RiskManager
+            # and inject so _open_position can call validate_trade()
+            # before every Jupiter swap broadcast. Fail-soft: if the
+            # construction fails the engine still runs but with no gate.
+            try:
+                from core.risk_manager import RiskManager
+                risk_manager = RiskManager(config={}, config_manager=self.config_manager)
+                self.engine.set_risk_manager(risk_manager)
+                self.logger.info("✅ RiskManager wired into Solana engine")
+            except Exception as e:
+                self.logger.warning(
+                    f"RiskManager init failed (engine will run without cross-module gate): {e}"
+                )
+
             await self.engine.initialize()
 
             self.logger.info("✅ Solana trading engine initialized")
@@ -560,7 +578,10 @@ class SolanaTradingApplication:
             # Initialize Telegram controller for remote control (credentials from secrets manager)
             if get_telegram_controller:
                 try:
-                    self.telegram_controller = get_telegram_controller(self.db_pool)
+                    # Wave-11 FIX 2: tag the controller with module_name so the
+                    # singleton's start_polling() can gate against TELEGRAM_POLL_OWNER
+                    # and avoid 409 Conflict spam on the shared bot token.
+                    self.telegram_controller = get_telegram_controller(self.db_pool, module_name='solana')
                     if await self.telegram_controller.initialize():
                         # Register Solana engine for remote control
                         self.telegram_controller.register_module(
@@ -698,13 +719,14 @@ async def main():
     if args.strategies:
         os.environ['SOLANA_STRATEGIES'] = ','.join(args.strategies)
 
-    # Handle dry-run
-    dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-    is_dry_run = dry_run_env in ('true', '1', 'yes')
-
+    # Per-module DRY_RUN override (Phase 3 A6).
+    # SOLANA_DRY_RUN env beats DRY_RUN; --dry-run CLI beats both.
+    from core.dry_run import resolve_module_dry_run
+    is_dry_run = resolve_module_dry_run('solana', default=True)
     if args.dry_run:
         is_dry_run = True
-
+    # Mirror into DRY_RUN so downstream `os.getenv('DRY_RUN')` in the
+    # engine picks up the resolved value.
     os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
 
     if args.debug:

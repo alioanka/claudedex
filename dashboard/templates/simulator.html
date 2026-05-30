@@ -616,15 +616,33 @@
     }
 
     function updateValidationMetrics(data) {
-        let hasActive = false;
+        // Previously these cards lit up with hardcoded "98.5%" /
+        // "Active" / "Simulated" labels whenever ANY module had
+        // activity — pure window-dressing that lied about real
+        // simulator quality. Replaced with honest reporting that
+        // distinguishes "feature enabled" from "data quality
+        // measured". Audit agent 3 #13.
+        let activeCount = 0;
         MODULES.forEach(m => {
-            if (data[m.id]?.mode || data[m.id]?.status === 'Active') hasActive = true;
+            if (data[m.id]?.mode || data[m.id]?.status === 'Active') activeCount++;
         });
-
-        document.getElementById('priceAccuracy').textContent = hasActive ? '98.5%' : '--';
-        document.getElementById('slippageModel').textContent = hasActive ? 'Active' : '--';
-        document.getElementById('feeEstimation').textContent = hasActive ? 'Active' : '--';
-        document.getElementById('latencySimulation').textContent = hasActive ? 'Simulated' : '--';
+        if (activeCount === 0) {
+            ['priceAccuracy','slippageModel','feeEstimation','latencySimulation']
+                .forEach(id => { const el = document.getElementById(id); if (el) el.textContent = '--'; });
+            return;
+        }
+        // Static feature flags — these reflect whether the simulator
+        // CODE PATH is wired (which it is, on every DRY_RUN module),
+        // not measured fidelity. Until the simulator backfills real
+        // metrics (slippage variance, fill quality vs theoretical),
+        // we surface "Wired" instead of pretending we have numbers.
+        const setText = (id, text) => {
+            const el = document.getElementById(id); if (el) el.textContent = text;
+        };
+        setText('priceAccuracy', `${activeCount}/${MODULES.length} modules`);
+        setText('slippageModel', 'Wired (per-chain bps)');
+        setText('feeEstimation', 'Wired (chain-native)');
+        setText('latencySimulation', 'Wall-clock only');
     }
 
     function updateCharts(data) {

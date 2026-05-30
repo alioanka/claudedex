@@ -865,7 +865,7 @@ async function pauseModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/pause`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         if (response.ok) {
             showToast('Module paused successfully', 'success');
@@ -883,7 +883,7 @@ async function startModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/start`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         if (response.ok) {
             showToast('Module started successfully', 'success');
@@ -901,7 +901,7 @@ async function enableModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/enable`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         if (response.ok) {
             showToast('Module enabled successfully', 'success');
@@ -922,7 +922,7 @@ async function disableModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/disable`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         if (response.ok) {
             showToast('Module disabled successfully', 'success');

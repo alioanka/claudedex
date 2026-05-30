@@ -307,6 +307,48 @@
         font-weight: 600;
     }
 
+    /* Operator-requested 2026-05-21: copy-to-clipboard + Birdeye/Solscan
+       icons inline with the token address; tokens-held + entry/current
+       per-token price block. */
+    .token-actions {
+        display: inline-flex;
+        gap: 4px;
+        margin-left: 4px;
+        vertical-align: middle;
+    }
+    .icon-btn {
+        background: transparent;
+        border: 1px solid var(--border-color);
+        border-radius: 4px;
+        padding: 1px 4px;
+        font-size: 0.7rem;
+        line-height: 1;
+        cursor: pointer;
+        color: var(--text-secondary);
+        text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+    }
+    .icon-btn:hover {
+        color: #8b5cf6;
+        border-color: #8b5cf6;
+        background: rgba(139,92,246,0.08);
+    }
+    .icon-btn.copied {
+        color: #10b981;
+        border-color: #10b981;
+    }
+    .token-meta-row {
+        font-size: 0.65rem;
+        color: var(--text-secondary);
+        margin-top: 2px;
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+    .token-meta-row .meta-label { opacity: 0.7; }
+    .token-meta-row .meta-val { color: var(--text-primary); font-weight: 500; }
+
     .pnl-cell.positive { color: #10b981; }
     .pnl-cell.negative { color: #ef4444; }
 
@@ -419,6 +461,7 @@
     </div>
 
     <!-- Filters -->
+    <div id="tradesOverflowWarn" style="padding:8px 12px;font-size:0.85rem;color:#f59e0b;"></div>
     <div class="filters-section">
         <div class="filters-row">
             <div class="filter-group">
@@ -510,11 +553,18 @@ let countChart = null;
 
 async function loadTrades() {
     try {
-        const response = await fetch('/api/copytrading/trades?limit=2000');
+        const TRADES_LIMIT = 2000;
+        const response = await fetch(`/api/copytrading/trades?limit=${TRADES_LIMIT}`);
         const data = await response.json();
 
         if (data.success && data.trades) {
             allTrades = data.trades;
+            const warn = document.getElementById('tradesOverflowWarn');
+            if (warn) {
+                warn.textContent = (allTrades.length >= TRADES_LIMIT)
+                    ? `⚠ Showing the most recent ${TRADES_LIMIT} trades (cap). Older trades exist but are truncated from this view.`
+                    : '';
+            }
             populateWalletFilter(allTrades);
             applyFilters();
         } else {
@@ -558,8 +608,12 @@ function applyFilters() {
     filteredTrades.sort((a, b) => {
         let aVal = a[sortColumn], bVal = b[sortColumn];
         if (sortColumn === 'timestamp') {
-            aVal = new Date(aVal || 0).getTime();
-            bVal = new Date(bVal || 0).getTime();
+            // Sort by epoch ms parsed as UTC; aVal/bVal are naive
+            // server ISO strings, so route through parseUtcTimestamp.
+            const ad = window.parseUtcTimestamp(aVal);
+            const bd = window.parseUtcTimestamp(bVal);
+            aVal = ad ? ad.getTime() : 0;
+            bVal = bd ? bd.getTime() : 0;
         }
         if (typeof aVal === 'string') aVal = aVal.toLowerCase();
         if (typeof bVal === 'string') bVal = bVal.toLowerCase();
@@ -607,7 +661,11 @@ function updateCharts(trades) {
     const dailyData = {};
     trades.forEach(t => {
         if (t.timestamp) {
-            const date = new Date(t.timestamp).toLocaleDateString('en-CA');
+            // Bucket by operator's local date — parseUtcTimestamp
+            // normalises naive UTC ISO to a Date with the right offset.
+            const _d = window.parseUtcTimestamp(t.timestamp);
+            if (!_d) return;
+            const date = _d.toLocaleDateString('en-CA');
             if (!dailyData[date]) dailyData[date] = { count: 0, pnl: 0 };
             dailyData[date].count++;
             dailyData[date].pnl += (t.profit_loss || 0);
@@ -713,6 +771,48 @@ function renderTrades() {
         const symbol = t.symbol || (t.token_address ? t.token_address.substring(0, 8) : 'Token');
         const initials = symbol.substring(0, 2).toUpperCase();
 
+        // Wave-5: distinguish realized vs live unrealized PnL.
+        // - CLOSED rows: show as $X.XX (realized)
+        // - OPEN rows with live price: show as $X.XX (live)
+        // - OPEN legacy rows (no tokens_received): show "PnL pending"
+        const isOpen = status === 'open';
+        const pnlPending = !!t.pnl_pending;
+        const isLegacyRow = !!t.is_legacy_row;
+        let pnlSuffix = '';
+        let pnlDisplay = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+        if (pnlPending) {
+            pnlDisplay = '<span style="color:#f59e0b;">PnL pending</span>';
+            pnlSuffix = isLegacyRow
+                ? ' <small style="opacity:0.7">(legacy row, run backfill)</small>'
+                : ' <small style="opacity:0.7">(live price unavailable)</small>';
+        } else if (isOpen) {
+            pnlSuffix = ' <small style="opacity:0.7">(live)</small>';
+        } else {
+            pnlSuffix = ' <small style="opacity:0.7">(realized)</small>';
+        }
+
+        // Operator-requested 2026-05-21: tokens-held + entry/current
+        // price + copy/Birdeye/Solscan icons. Falls back to '-' when
+        // the field is missing (legacy rows).
+        const mint = t.token_address || '';
+        const tokensHeld = (t.metadata && t.metadata.tokens_received)
+            || t.tokens_received || t.quantity || t.amount || 0;
+        const entryPx = Number(t.entry_price || 0);
+        const curPx = Number(t.current_price_usd || t.current_price || 0);
+        const isSolanaRow = (t.chain || 'solana').toLowerCase() === 'solana';
+        const birdeyeChain = isSolanaRow ? 'solana' : 'ethereum';
+        const scanHost = isSolanaRow ? 'solscan.io/token' : 'etherscan.io/token';
+        const tokenActions = mint
+            ? `<span class="token-actions">
+                <button class="icon-btn" title="Copy token address"
+                  onclick="copyTokenAddress(event, '${mint}')">&#128203;</button>
+                <a class="icon-btn" title="Open on Birdeye" target="_blank"
+                   href="https://birdeye.so/token/${mint}?chain=${birdeyeChain}">&#128279;</a>
+                <a class="icon-btn" title="Open on Solscan/Etherscan" target="_blank"
+                   href="https://${scanHost}/${mint}">&#128269;</a>
+               </span>`
+            : '';
+
         html += `
             <tr>
                 <td>${t.timestamp ? formatDate(t.timestamp) : '-'}</td>
@@ -720,8 +820,16 @@ function renderTrades() {
                     <div class="token-cell">
                         <div class="token-icon-small">${initials}</div>
                         <div class="token-info-cell">
-                            <h5>${symbol}</h5>
-                            <div class="token-address-small">${t.token_address ? t.token_address.substring(0, 12) + '...' : '-'}</div>
+                            <h5>${symbol}${tokenActions}</h5>
+                            <div class="token-address-small">${mint ? mint.substring(0, 12) + '...' : '-'}</div>
+                            <div class="token-meta-row">
+                                <span><span class="meta-label">Held:</span>
+                                  <span class="meta-val">${tokensHeld ? Number(tokensHeld).toLocaleString(undefined, {maximumFractionDigits: 4}) : '-'}</span></span>
+                                <span><span class="meta-label">Entry:</span>
+                                  <span class="meta-val">${entryPx > 0 ? '$' + entryPx.toFixed(entryPx < 0.01 ? 8 : 6) : '-'}</span></span>
+                                <span><span class="meta-label">Now:</span>
+                                  <span class="meta-val">${curPx > 0 ? '$' + curPx.toFixed(curPx < 0.01 ? 8 : 6) : '-'}</span></span>
+                            </div>
                         </div>
                     </div>
                 </td>
@@ -734,8 +842,8 @@ function renderTrades() {
                 <td><span class="badge badge-${side}">${side.toUpperCase()}</span></td>
                 <td>$${(t.entry_usd || t.usd_value || 0).toFixed(2)}</td>
                 <td class="pnl-cell ${pnlClass}">
-                    ${pnl >= 0 ? '+' : ''}$${Math.abs(pnl).toFixed(2)}
-                    ${t.profit_pct ? '<small>(' + (t.profit_pct >= 0 ? '+' : '') + t.profit_pct.toFixed(1) + '%)</small>' : ''}
+                    ${pnlDisplay}${pnlSuffix}
+                    ${(!pnlPending && t.profit_pct) ? '<br><small>(' + (t.profit_pct >= 0 ? '+' : '') + t.profit_pct.toFixed(1) + '%)</small>' : ''}
                 </td>
                 <td><span class="badge badge-${status}">${status.toUpperCase()}</span></td>
                 <td><span class="badge ${t.dry_run ? 'badge-dry' : 'badge-live'}">${t.dry_run ? 'DRY RUN' : 'LIVE'}</span></td>
@@ -791,7 +899,11 @@ function showEmpty() {
 }
 
 function formatDate(iso) {
-    const d = new Date(iso);
+    // Trade-history "May 20, 07:57 PM" rendering. The server emits
+    // naive UTC ISO strings; parseUtcTimestamp appends 'Z' so the
+    // displayed time matches the operator's wall clock (UTC+3, etc.).
+    const d = window.parseUtcTimestamp(iso);
+    if (!d) return '';
     return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
@@ -822,6 +934,45 @@ function exportCSV() {
     a.download = `copytrading_trades_${new Date().toISOString().split('T')[0]}.csv`;
     a.click();
     URL.revokeObjectURL(url);
+}
+
+// Operator-requested 2026-05-21: copy-to-clipboard helper for token
+// address icon button. Uses the modern clipboard API with a textarea
+// fallback so it works in non-secure contexts (file://, http://localhost
+// over a tunnel, etc.). Flips the button to a check mark for 1.5s on
+// success so the operator gets visual feedback.
+function copyTokenAddress(ev, addr) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const btn = ev.currentTarget;
+    const finish = (ok) => {
+        if (!ok) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = '&#10003;';
+        btn.classList.add('copied');
+        setTimeout(() => {
+            btn.innerHTML = original;
+            btn.classList.remove('copied');
+        }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(addr).then(() => finish(true)).catch(() => {
+            // fallback below
+            const ta = document.createElement('textarea');
+            ta.value = addr;
+            document.body.appendChild(ta);
+            ta.select();
+            try { document.execCommand('copy'); finish(true); } catch (e) { /* noop */ }
+            document.body.removeChild(ta);
+        });
+    } else {
+        const ta = document.createElement('textarea');
+        ta.value = addr;
+        document.body.appendChild(ta);
+        ta.select();
+        try { document.execCommand('copy'); finish(true); } catch (e) { /* noop */ }
+        document.body.removeChild(ta);
+    }
 }
 
 // Load on page load

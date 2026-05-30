@@ -81,7 +81,31 @@ async function loadPerformanceCharts(timeframe) {
     }
 }
 
+// Empty-state overlay shared across the chart factories below.
+// Audit agent 1 #15.
+function _perfRenderEmpty(canvasId, message) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+}
+
+function _perfDataEmpty(data) {
+    if (!data) return true;
+    if (Array.isArray(data) && data.length === 0) return true;
+    if (data.labels && Array.isArray(data.labels) && data.labels.length === 0) return true;
+    return false;
+}
+
 function createEquityCurveChart(data) {
+    if (_perfDataEmpty(data)) { _perfRenderEmpty('equityCurveChart', 'No equity history yet'); return; }
     createChart('equityCurveChart', {
         type: 'line',
         data: {
@@ -109,6 +133,7 @@ function createEquityCurveChart(data) {
 }
 
 function createCumulativePnlChart(data) {
+    if (_perfDataEmpty(data)) { _perfRenderEmpty('cumulativePnlChart', 'No cumulative P&L yet'); return; }
     createChart('cumulativePnlChart', {
         type: 'line',
         data: {
@@ -136,6 +161,7 @@ function createCumulativePnlChart(data) {
 }
 
 function createStrategyChart(data) {
+    if (_perfDataEmpty(data)) { _perfRenderEmpty('strategyChart', 'No strategy breakdown yet'); return; }
     // Map strategy names to be more user-friendly
     const formatStrategyName = (name) => {
         if (!name || name === 'unknown' || name === 'Unknown') {
@@ -167,6 +193,7 @@ function createStrategyChart(data) {
 }
 
 function createWinLossChart(data) {
+    if (_perfDataEmpty(data)) { _perfRenderEmpty('winLossChart', 'No win/loss data yet'); return; }
     createChart('winLossChart', {
         type: 'doughnut',
         data: {
@@ -184,6 +211,7 @@ function createWinLossChart(data) {
 }
 
 function createMonthlyChart(data) {
+    if (_perfDataEmpty(data)) { _perfRenderEmpty('monthlyChart', 'No monthly data yet'); return; }
     createChart('monthlyChart', {
         type: 'bar',
         data: {

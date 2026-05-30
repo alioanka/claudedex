@@ -408,6 +408,25 @@
         --text-secondary: #6b7280;
         --metric-bg: #f3f4f6;
     }
+
+/* 2026-05-21 operator-requested action icons. */
+.token-actions { display: inline-flex; gap: 4px; margin-left: 4px; vertical-align: middle; }
+.icon-btn {
+    background: transparent;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 0.7rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-secondary, #94a3b8);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+.icon-btn:hover { color: #8b5cf6; border-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+.icon-btn.copied { color: #10b981; border-color: #10b981; }
+
 </style>
 {% endblock %}
 
@@ -477,6 +496,7 @@
             <div class="hero-stat-icon"><i class="fas fa-dollar-sign"></i></div>
             <div class="hero-stat-label">Total P&L</div>
             <div class="hero-stat-value" id="stat-pnl">$0.00</div>
+            <div class="hero-stat-sub" id="stat-pnl-sub" style="font-size:0.72em;opacity:0.75;display:none;margin-top:4px"></div>
         </div>
     </div>
 
@@ -544,30 +564,16 @@
         </div>
     </div>
 
-    <!-- Chain Distribution & Win/Loss -->
-    <div class="grid-2">
-        <div class="section-card">
-            <div class="section-header">
-                <div class="section-title">
-                    <i class="fas fa-pie-chart"></i>
-                    Win/Loss Distribution
-                </div>
-            </div>
-            <div class="chart-container" style="height: 220px;">
-                <canvas id="winLossChart"></canvas>
-            </div>
-        </div>
-        <div class="section-card">
-            <div class="section-header">
-                <div class="section-title">
-                    <i class="fas fa-link"></i>
-                    Chain Distribution
-                </div>
-            </div>
-            <div class="chart-container" style="height: 220px;">
-                <canvas id="chainChart"></canvas>
-            </div>
-        </div>
+    <!-- Win/Loss + Chain Distribution charts removed — both render
+         a larger, identical view on /copytrading/performance. Audit
+         agent 2 #18 — duplicating the same two pies on the dashboard
+         and the performance page meant operators paid for two
+         redundant renders per refresh. Performance page link below
+         keeps the workflow obvious. -->
+    <div style="text-align:center;padding:16px;color:var(--text-secondary);font-size:0.875rem;">
+        <a href="/copytrading/performance" style="color:var(--accent);text-decoration:none;">
+            View Win/Loss + Chain distribution on /copytrading/performance →
+        </a>
     </div>
 </div>
 
@@ -586,9 +592,17 @@ async function reconcileTrades() {
         btn.disabled = true;
         btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Reconciling...';
 
+        // CSRF: auth/csrf.py rejects non-GET without X-CSRF-Token.
+        const _csrfHeaders = (typeof window.withCsrfHeaders === 'function')
+            ? window.withCsrfHeaders('POST')
+            : (function () {
+                const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+                return { 'Content-Type': 'application/json', 'X-CSRF-Token': m ? decodeURIComponent(m[1]) : '' };
+            })();
         const response = await fetch('/api/copytrading/reconcile', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: _csrfHeaders,
+            credentials: 'same-origin'
         });
 
         const data = await response.json();
@@ -597,7 +611,35 @@ async function reconcileTrades() {
             const msg = `Reconciled ${data.reconciled || 0} trades. Total P&L: $${(data.total_pnl || 0).toFixed(2)}`;
             alert('✅ ' + msg);
             // Reload dashboard to show updated data
-            loadDashboard();
+            
+// 2026-05-21 operator-requested copy-to-clipboard helper.
+function copyTokenAddress(ev, addr) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const btn = ev.currentTarget;
+    const finish = (ok) => {
+        if (!ok) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = '&#10003;';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.innerHTML = original; btn.classList.remove('copied'); }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(addr).then(() => finish(true)).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = addr; document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); finish(true); } catch (e) {}
+            document.body.removeChild(ta);
+        });
+    } else {
+        const ta = document.createElement('textarea');
+        ta.value = addr; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); finish(true); } catch (e) {}
+        document.body.removeChild(ta);
+    }
+}
+
+loadDashboard();
         } else {
             alert('❌ Reconciliation failed: ' + (data.error || 'Unknown error'));
         }
@@ -616,7 +658,7 @@ async function loadDashboard() {
         const [statsRes, walletsRes, tradesRes] = await Promise.all([
             fetch('/api/copytrading/stats'),
             fetch('/api/copytrading/wallets'),
-            fetch('/api/copytrading/trades?limit=100')
+            fetch('/api/copytrading/trades?limit=2000')
         ]);
 
         const [statsData, walletsData, tradesData] = await Promise.all([
@@ -659,7 +701,9 @@ function updateStats(stats) {
     badge.className = 'status-badge status-' + status.toLowerCase();
     statusText.textContent = status;
 
-    // Update stats
+    // Update stats. DASH-Q-04: if the API reports any simulated trades,
+    // hint at it under the totals so operators don't mistake DRY_RUN
+    // P&L for realized money.
     document.getElementById('stat-wallets').textContent = stats.wallets_tracked || 0;
     document.getElementById('stat-copies').textContent = stats.total_trades || 0;
     document.getElementById('stat-wins').textContent = stats.winning_trades || 0;
@@ -670,8 +714,32 @@ function updateStats(stats) {
 
     const pnl = stats.total_pnl || 0;
     const pnlEl = document.getElementById('stat-pnl');
-    pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+    // Operator complaint: previous template wrote 60+ chars into the
+    // hero card and broke the layout. Keep the headline number short,
+    // move the realized/live/sim breakdown into the tooltip.
+    const realized = stats.realized_pnl || 0;
+    const unrealized = stats.unrealized_pnl || 0;
+    const pendingN = stats.pnl_pending_count || 0;
+    const sim = stats.simulated_trades || 0;
+    const livePnl = stats.live_pnl;
+    const sign = pnl >= 0 ? '+' : '-';
+    const pnlText = `${sign}$${Math.abs(pnl).toFixed(2)}`;
+    const tipLines = [];
+    if (realized !== 0) tipLines.push(`Realized: ${realized >= 0 ? '+' : '-'}$${Math.abs(realized).toFixed(2)}`);
+    if (unrealized !== 0) tipLines.push(`Live (open): ${unrealized >= 0 ? '+' : '-'}$${Math.abs(unrealized).toFixed(2)}`);
+    if (sim > 0 && livePnl !== undefined) {
+        tipLines.push(`Live-only (excl. DRY_RUN): ${livePnl >= 0 ? '+' : '-'}$${Math.abs(livePnl).toFixed(2)}`);
+    }
+    if (pendingN > 0) tipLines.push(`${pendingN} legacy row(s) pending backfill`);
+    pnlEl.textContent = pnlText;
+    pnlEl.title = tipLines.length ? tipLines.join('\n') : 'Total P&L = Realized + Live unrealized';
     pnlEl.className = 'hero-stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
+    // Tiny sub-line for the breakdown — only renders when there's content.
+    const subEl = document.getElementById('stat-pnl-sub');
+    if (subEl) {
+        subEl.textContent = tipLines.length ? tipLines[0] : '';
+        subEl.style.display = tipLines.length ? '' : 'none';
+    }
 }
 
 function updateActivityFeed(trades) {
@@ -694,7 +762,39 @@ function updateActivityFeed(trades) {
         const iconClass = trade.side?.toLowerCase() === 'sell' ? 'sell' : 'buy';
         const icon = trade.side?.toLowerCase() === 'sell' ? 'arrow-down' : 'arrow-up';
         const pnlClass = pnl >= 0 ? 'positive' : 'negative';
-        const timeAgo = trade.timestamp ? formatTimeAgo(new Date(trade.timestamp)) : 'Recently';
+        // window.formatTimeAgo (timezone.js) handles naive UTC ISO by
+        // appending 'Z' before parse — direct new Date(t) would shift
+        // by the operator's UTC offset.
+        const timeAgo = trade.timestamp ? window.formatTimeAgo(trade.timestamp) : 'Recently';
+        // Wave-5: badge live vs realized
+        const isOpen = (trade.status || '').toLowerCase() === 'open';
+        const pnlPending = !!trade.pnl_pending;
+        let pnlLabel = '';
+        if (pnlPending) {
+            pnlLabel = '<small style="opacity:0.7"> pending</small>';
+        } else if (isOpen) {
+            pnlLabel = '<small style="opacity:0.7"> (live)</small>';
+        } else {
+            pnlLabel = '<small style="opacity:0.7"> (realized)</small>';
+        }
+
+        // 2026-05-21: tokens-held + Birdeye/Solscan icons inline.
+        const mint = trade.token_address || '';
+        const isSol = (trade.chain || 'solana').toLowerCase() === 'solana';
+        const birdeyeChain = isSol ? 'solana' : 'ethereum';
+        const scanHost = isSol ? 'solscan.io/token' : 'etherscan.io/token';
+        const tokensHeld = (trade.metadata && trade.metadata.tokens_received)
+            || trade.tokens_received || trade.quantity || 0;
+        const tokenActions = mint
+            ? `<span class="token-actions">
+                <button class="icon-btn" title="Copy token address"
+                  onclick="copyTokenAddress(event, '${mint}')">&#128203;</button>
+                <a class="icon-btn" title="Birdeye" target="_blank"
+                   href="https://birdeye.so/token/${mint}?chain=${birdeyeChain}">&#128279;</a>
+                <a class="icon-btn" title="Solscan/Etherscan" target="_blank"
+                   href="https://${scanHost}/${mint}">&#128269;</a>
+               </span>`
+            : '';
 
         html += `
             <div class="activity-item">
@@ -706,11 +806,12 @@ function updateActivityFeed(trades) {
                         ${(trade.side || 'BUY').toUpperCase()} on ${trade.chain || 'Solana'}
                     </div>
                     <div class="activity-detail">
-                        ${trade.symbol || (trade.token_address ? trade.token_address.substring(0, 12) + '...' : 'Token')}
+                        ${trade.symbol || (mint ? mint.substring(0, 12) + '...' : 'Token')}${tokenActions}
                         &bull; $${(trade.entry_usd || trade.usd_value || 0).toFixed(2)}
+                        ${tokensHeld ? '&bull; <span style="opacity:0.7">' + Number(tokensHeld).toLocaleString(undefined, {maximumFractionDigits: 2}) + ' held</span>' : ''}
                     </div>
                 </div>
-                ${pnl !== 0 ? `<div class="activity-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}</div>` : ''}
+                ${(pnl !== 0 || isOpen) ? `<div class="activity-pnl ${pnlClass}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)}${pnlLabel}</div>` : ''}
                 <div class="activity-time">${timeAgo}</div>
             </div>
         `;
@@ -781,7 +882,11 @@ function updateCharts(trades) {
     const dailyData = {};
     trades.forEach(trade => {
         if (trade.timestamp) {
-            const date = new Date(trade.timestamp).toLocaleDateString('en-CA');
+            // parseUtcTimestamp appends 'Z' so the daily bucket reflects
+            // the operator's local date, not naive-UTC interpreted as local.
+            const _d = window.parseUtcTimestamp(trade.timestamp);
+            const date = _d ? _d.toLocaleDateString('en-CA') : '';
+            if (!date) return;
             if (!dailyData[date]) {
                 dailyData[date] = { copies: 0, pnl: 0, wins: 0, losses: 0, solana: 0, ethereum: 0, bsc: 0 };
             }
@@ -887,8 +992,13 @@ function updateCharts(trades) {
         }
     });
 
-    // Win/Loss Chart
-    const winLossCtx = document.getElementById('winLossChart').getContext('2d');
+    // Win/Loss and Chain Distribution canvases were removed from the
+    // template (audit agent 2 #18 — duplicated /copytrading/performance).
+    // Guard the lookups so this function stays compatible if any
+    // other template references it.
+    const winLossCanvas = document.getElementById('winLossChart');
+    if (!winLossCanvas) return;
+    const winLossCtx = winLossCanvas.getContext('2d');
     if (winLossChart) winLossChart.destroy();
     winLossChart = new Chart(winLossCtx, {
         type: 'doughnut',
@@ -910,8 +1020,10 @@ function updateCharts(trades) {
         }
     });
 
-    // Chain Chart
-    const chainCtx = document.getElementById('chainChart').getContext('2d');
+    // Chain Chart — same removal, same guard.
+    const chainCanvas = document.getElementById('chainChart');
+    if (!chainCanvas) return;
+    const chainCtx = chainCanvas.getContext('2d');
     if (chainChart) chainChart.destroy();
     chainChart = new Chart(chainCtx, {
         type: 'doughnut',
@@ -958,24 +1070,23 @@ function createEmptyCharts() {
     if (copiesChart) copiesChart.destroy();
     copiesChart = new Chart(copiesCtx, { type: 'bar', data: { labels: [], datasets: [] }, options: emptyOptions });
 
-    const winLossCtx = document.getElementById('winLossChart').getContext('2d');
-    if (winLossChart) winLossChart.destroy();
-    winLossChart = new Chart(winLossCtx, { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
-
-    const chainCtx = document.getElementById('chainChart').getContext('2d');
-    if (chainChart) chainChart.destroy();
-    chainChart = new Chart(chainCtx, { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
+    // winLossChart + chainChart canvases removed from template (audit
+    // agent 2 #18). Skip initialization gracefully if the elements
+    // aren't present.
+    const wl = document.getElementById('winLossChart');
+    if (wl) {
+        if (winLossChart) winLossChart.destroy();
+        winLossChart = new Chart(wl.getContext('2d'), { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
+    }
+    const cc = document.getElementById('chainChart');
+    if (cc) {
+        if (chainChart) chainChart.destroy();
+        chainChart = new Chart(cc.getContext('2d'), { type: 'doughnut', data: { labels: [], datasets: [] }, options: emptyOptions });
+    }
 }
 
-function formatTimeAgo(date) {
-    const now = new Date();
-    const diff = now - date;
-
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
-    return Math.floor(diff / 86400000) + 'd ago';
-}
+// formatTimeAgo removed — superseded by window.formatTimeAgo in
+// /static/js/timezone.js (handles naive UTC ISO correctly).
 
 // Load on page load
 loadDashboard();

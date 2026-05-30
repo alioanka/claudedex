@@ -1151,7 +1151,7 @@ def log_trade_entry(
     
     # Ensure handler exists
     if not trades_logger.handlers:
-        log_file = Path("logs/TradingBot_trades.log")
+        log_file = Path("logs/dex_trading/TradingBot_trades.log")
         log_file.parent.mkdir(exist_ok=True)
         
         handler = logging.FileHandler(log_file)
@@ -1215,7 +1215,7 @@ def log_trade_exit(
     
     # Ensure handler exists
     if not trades_logger.handlers:
-        log_file = Path("logs/TradingBot_trades.log")
+        log_file = Path("logs/dex_trading/TradingBot_trades.log")
         log_file.parent.mkdir(exist_ok=True)
         
         handler = logging.FileHandler(log_file)
@@ -1280,7 +1280,7 @@ def log_portfolio_update(
     
     # Ensure handler exists
     if not trades_logger.handlers:
-        log_file = Path("logs/TradingBot_trades.log")
+        log_file = Path("logs/dex_trading/TradingBot_trades.log")
         log_file.parent.mkdir(exist_ok=True)
         
         handler = logging.FileHandler(log_file)

@@ -115,6 +115,20 @@
         color: #9aa0a6;
     }
 
+    /* Stale: env=enabled but runtime stats haven't refreshed in >10 min.
+       Indicates a likely subprocess crash. */
+    .status-stale {
+        background: rgba(245, 158, 11, 0.2);
+        color: #f59e0b;
+    }
+
+    /* Starting: env=enabled but no snapshot yet (subprocess in grace
+       period after boot). Treated as "transient, not unhealthy". */
+    .status-starting {
+        background: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+    }
+
     .module-info {
         margin-bottom: 20px;
         background: #242b3d;
@@ -536,15 +550,27 @@ function updateModuleControlCard(prefix, moduleData) {
     const isEnabled = moduleData.enabled;
     const status = moduleData.status || (isEnabled ? 'RUNNING' : 'DISABLED');
 
+    // Status state for CSS class. Respect the API's `Stale (...)` /
+    // `Online (no snapshot yet)` values so the badge color tells the
+    // truth: green for healthy running, yellow for stale, gray for
+    // disabled. Otherwise a crashed subprocess would still show green.
+    let statusState = 'disabled';
+    if (isEnabled) {
+        const s = (status || '').toLowerCase();
+        if (s.startsWith('stale')) statusState = 'stale';
+        else if (s.includes('no snapshot')) statusState = 'starting';
+        else statusState = 'running';
+    }
+
     // Update card class
     if (card) {
-        card.className = 'module-control-card ' + (isEnabled ? 'running' : 'disabled');
+        card.className = 'module-control-card ' + statusState;
     }
 
     // Update status badge
     if (statusBadge) {
         statusBadge.textContent = status;
-        statusBadge.className = 'module-status-badge status-' + (isEnabled ? 'running' : 'disabled');
+        statusBadge.className = 'module-status-badge status-' + statusState;
     }
 
     // Update Capital display
@@ -586,7 +612,7 @@ async function enableModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/enable`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         const data = await response.json();
 
@@ -609,7 +635,7 @@ async function disableModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/disable`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         const data = await response.json();
 
@@ -628,7 +654,7 @@ async function pauseModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/pause`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         const data = await response.json();
 
@@ -647,7 +673,7 @@ async function startModule(moduleName) {
     try {
         const response = await fetch(`/api/modules/${moduleName}/start`, {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: withCsrfHeaders('POST')
         });
         const data = await response.json();
 

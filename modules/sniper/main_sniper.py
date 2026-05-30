@@ -16,91 +16,24 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 # Load env
 load_dotenv()
 
-# Setup Logging
+# Setup Logging. We write structured logger output to sniper.log /
+# sniper_errors.log under logs/sniper/. Subprocess stdout/stderr are
+# captured and rotated by the parent (main.py RotatingLogFile) into
+# logs/sniper/{stdout,stderr}.log — do NOT install a subprocess-side
+# stderr redirect here or it will double-write to the same path the
+# parent owns.
 log_dir = Path("logs/sniper")
 log_dir.mkdir(parents=True, exist_ok=True)
 
-# Redirect stderr to a rotating file to prevent 100MB+ stderr.log
-class StderrToRotatingFile:
-    """Redirect stderr to a rotating file handler with size-based rotation"""
-    def __init__(self, filepath, max_bytes=5*1024*1024, backup_count=3):
-        self.filepath = Path(filepath)
-        self.max_bytes = max_bytes
-        self.backup_count = backup_count
-        self.original_stderr = sys.stderr
-        self._open_file()
-
-    def _open_file(self):
-        """Open or reopen the file"""
-        self.file = open(self.filepath, 'a', encoding='utf-8')
-
-    def _should_rollover(self):
-        """Check if we should rotate based on file size"""
-        try:
-            return self.filepath.stat().st_size >= self.max_bytes
-        except:
-            return False
-
-    def _do_rollover(self):
-        """Perform the rollover"""
-        try:
-            self.file.close()
-            # Rotate existing backups
-            for i in range(self.backup_count - 1, 0, -1):
-                src = f"{self.filepath}.{i}"
-                dst = f"{self.filepath}.{i + 1}"
-                if Path(src).exists():
-                    Path(src).rename(dst)
-            # Move current to .1
-            if self.filepath.exists():
-                self.filepath.rename(f"{self.filepath}.1")
-            self._open_file()
-        except Exception:
-            pass  # Silently handle rotation errors
-
-    def write(self, message):
-        if message and message.strip():
-            try:
-                self.file.write(message)
-                if self._should_rollover():
-                    self._do_rollover()
-            except:
-                pass
-        # Also write to original stderr for console visibility
-        if self.original_stderr:
-            try:
-                self.original_stderr.write(message)
-            except:
-                pass
-
-    def flush(self):
-        try:
-            self.file.flush()
-        except:
-            pass
-        if self.original_stderr:
-            try:
-                self.original_stderr.flush()
-            except:
-                pass
-
-# Install stderr redirect with rotation (5MB max, 3 backups)
-try:
-    stderr_redirect = StderrToRotatingFile(log_dir / 'stderr.log')
-    sys.stderr = stderr_redirect
-except Exception:
-    pass  # Keep original stderr if redirect fails
-
-# Formatters
 log_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-trade_formatter = logging.Formatter('%(asctime)s - %(message)s')
 
 # Root logger
 logger = logging.getLogger("SniperModule")
 logger.setLevel(logging.INFO)
 
-# 1. Main Log
-main_handler = RotatingFileHandler(log_dir / 'sniper.log', maxBytes=10*1024*1024, backupCount=5)
+# 1. Main Log — INFO level (DEBUG hot-path lines are filtered out here so
+# logs/sniper/ stays small). Cap reduced 10MB x5 -> 10MB x3 (30MB total).
+main_handler = RotatingFileHandler(log_dir / 'sniper.log', maxBytes=10*1024*1024, backupCount=3)
 main_handler.setFormatter(log_formatter)
 main_handler.setLevel(logging.INFO)
 logger.addHandler(main_handler)
@@ -110,14 +43,6 @@ error_handler = RotatingFileHandler(log_dir / 'sniper_errors.log', maxBytes=5*10
 error_handler.setFormatter(log_formatter)
 error_handler.setLevel(logging.ERROR)
 logger.addHandler(error_handler)
-
-# 3. Trades Log
-trade_logger = logging.getLogger("SniperModule.Trades")
-trade_logger.setLevel(logging.INFO)
-trade_logger.propagate = False
-trade_handler = RotatingFileHandler(log_dir / 'sniper_trades.log', maxBytes=10*1024*1024, backupCount=5)
-trade_handler.setFormatter(trade_formatter)
-trade_logger.addHandler(trade_handler)
 
 # Console
 console = logging.StreamHandler()
@@ -146,6 +71,16 @@ async def main():
     logger.info("🔫 Sniper Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
+    # Per-module DRY_RUN override (Phase 3 A2). SNIPER_DRY_RUN env beats
+    # DRY_RUN env. Mirror into DRY_RUN so the engine's internal env
+    # reads pick up the resolved value.
+    try:
+        from core.dry_run import resolve_module_dry_run
+        sniper_dry = resolve_module_dry_run('sniper', default=True)
+        os.environ['DRY_RUN'] = 'true' if sniper_dry else 'false'
+        logger.info(f"   DRY_RUN (resolved per-module): {sniper_dry}")
+    except Exception as e:
+        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
     # Check for RPC URLs - use Pool Engine with fallback
     solana_rpc = None
@@ -241,7 +176,8 @@ async def main():
     telegram_controller = None
     if get_telegram_controller:
         try:
-            telegram_controller = get_telegram_controller(db_pool)
+            # Wave-11 FIX 2: tag with module_name so start_polling honors TELEGRAM_POLL_OWNER.
+            telegram_controller = get_telegram_controller(db_pool, module_name='sniper')
             if await telegram_controller.initialize():
                 telegram_controller.register_module(
                     name='sniper',

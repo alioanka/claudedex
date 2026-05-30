@@ -87,6 +87,12 @@ class TechnicalSignals:
     trend: str = "sideways"  # uptrend, downtrend, sideways
     support_level: float = 0.0
     resistance_level: float = 0.0
+    # FUT-RM-06: Average True Range (14-period). Same price units as the
+    # underlying (quote currency for USDT perps). Zero when there isn't
+    # enough history. Used by _calculate_position_size for risk-parity
+    # sizing across symbols of different volatility.
+    atr: float = 0.0
+    atr_pct: float = 0.0  # atr / last_close (decimal, e.g. 0.025 = 2.5%)
 
     @property
     def overall_signal(self) -> SignalStrength:
@@ -288,10 +294,24 @@ class FuturesTradingEngine:
             self.static_position_pct = getattr(position_config, 'static_position_pct', 15.0)
             self.position_size_usd = position_config.position_size_usd  # Legacy fallback
             self.min_trade_size = getattr(position_config, 'min_trade_size', 10.0)
+            # FUT-RM-06: ATR-based sizing toggles
+            self.atr_sizing_enabled = getattr(position_config, 'atr_sizing_enabled', False)
+            self.atr_risk_pct = getattr(position_config, 'atr_risk_pct', 1.0)
+            self.atr_stop_multiplier = getattr(position_config, 'atr_stop_multiplier', 1.5)
 
             # Leverage settings
             self.leverage = leverage_config.default_leverage
             self.max_leverage = getattr(leverage_config, 'max_leverage', 20)
+            # FUT-RM-07: post-fill ISOLATED-margin verification toggle
+            self.enforce_isolated_margin = getattr(
+                leverage_config, 'enforce_isolated_margin', True
+            )
+            # FUT-RM-07b (Wave 4): emit a high-priority Telegram alert when
+            # the FUT-RM-07 path fires an emergency-close. Fail-soft if
+            # Telegram is not configured (just logs).
+            self.telegram_emergency_close_enabled = getattr(
+                leverage_config, 'telegram_emergency_close_enabled', True
+            )
 
             # Risk settings - SL/TP as price percentages
             self.stop_loss_pct = abs(risk_config.stop_loss_pct)  # Store as positive
@@ -314,6 +334,28 @@ class FuturesTradingEngine:
             # Market condition filters (relaxed defaults for live trading)
             self.require_trend_confirmation = getattr(risk_config, 'require_trend_confirmation', False)
             self.min_volume_multiplier = getattr(risk_config, 'min_volume_multiplier', 0.8)
+            # FUT-RM-21 (Wave 7): hard-block counter-trend entries by regime.
+            self.block_counter_trend_entries = bool(getattr(
+                risk_config, 'block_counter_trend_entries', True))
+
+            # FUT-RM-10 (Wave 3): auto-deleverage on drawdown.
+            self.auto_deleverage_enabled = bool(getattr(
+                risk_config, 'auto_deleverage_enabled', False))
+            self.auto_deleverage_cooldown_seconds = int(getattr(
+                risk_config, 'auto_deleverage_cooldown_seconds', 600))
+            self._auto_deleverage_last_at = None  # datetime of last trigger
+
+            # FUT-RM-16 (Wave 5): ATR-scaled SL/TP. When enabled, the engine
+            # uses signals.atr_pct at entry time to size SL/TP distances per
+            # symbol's actual volatility (see _open_position).
+            self.atr_dynamic_sl_tp_enabled = bool(getattr(
+                risk_config, 'atr_dynamic_sl_tp_enabled', True))
+            self.atr_sl_multiplier = float(getattr(
+                risk_config, 'atr_sl_multiplier', 1.5))
+            self.atr_sl_min_pct = float(getattr(
+                risk_config, 'atr_sl_min_pct', 1.5))
+            self.atr_tp_rr_ratio = float(getattr(
+                risk_config, 'atr_tp_rr_ratio', 2.0))
 
             # Calculate max_daily_loss_usd from percentage and capital
             # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.
@@ -337,6 +379,22 @@ class FuturesTradingEngine:
             self.rsi_weak_oversold = strategy_config.rsi_weak_oversold
             self.rsi_weak_overbought = strategy_config.rsi_weak_overbought
             self.min_signal_score = strategy_config.min_signal_score
+            # FUT-RM-15 (Wave 5): multi-indicator confluence gate count
+            self.min_signal_confluence_count = int(getattr(
+                strategy_config, 'min_signal_confluence_count', 2
+            ))
+            # FUT-RM-19 (Wave 7): fee + funding aware minimum-edge gate
+            self.min_edge_gate_enabled = bool(getattr(
+                strategy_config, 'min_edge_gate_enabled', True))
+            self.min_net_edge_pct = float(getattr(
+                strategy_config, 'min_net_edge_pct', 0.30))
+            self.edge_slippage_pct = float(getattr(
+                strategy_config, 'edge_slippage_pct', 0.05))
+            self.edge_funding_fallback_pct = float(getattr(
+                strategy_config, 'edge_funding_fallback_pct', 0.05))
+            # FUT-RM-20 (Wave 7): one-entry-per-candle throttle
+            self.one_entry_per_candle = bool(getattr(
+                strategy_config, 'one_entry_per_candle', True))
             self.verbose_signals = strategy_config.verbose_signals
 
         else:
@@ -346,7 +404,19 @@ class FuturesTradingEngine:
             self.testnet = True
             self.max_positions = 5
             self.position_size_usd = 100.0
-            self.leverage = 10
+            # FUT-RM-18 (Wave 5): default lowered from 10x to 5x; see migration 031.
+            self.leverage = 5
+            # FUT-RM-06 / FUT-RM-07 fallback defaults
+            self.atr_sizing_enabled = False
+            self.atr_risk_pct = 1.0
+            self.atr_stop_multiplier = 1.5
+            self.enforce_isolated_margin = True
+            self.telegram_emergency_close_enabled = True
+            # FUT-RM-16 (Wave 5): ATR-scaled SL/TP fallback defaults
+            self.atr_dynamic_sl_tp_enabled = True
+            self.atr_sl_multiplier = 1.5
+            self.atr_sl_min_pct = 1.5
+            self.atr_tp_rr_ratio = 2.0
             self.stop_loss_pct = -5.0
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
@@ -358,6 +428,18 @@ class FuturesTradingEngine:
             self.rsi_weak_oversold = 40.0
             self.rsi_weak_overbought = 60.0
             self.min_signal_score = 3  # Lower threshold for more signals
+            # FUT-RM-15 (Wave 5): multi-indicator confluence gate (fallback)
+            self.min_signal_confluence_count = 2
+            # FUT-RM-19/20 (Wave 7) fallback defaults
+            self.min_edge_gate_enabled = True
+            self.min_net_edge_pct = 0.30
+            self.edge_slippage_pct = 0.05
+            self.edge_funding_fallback_pct = 0.05
+            self.one_entry_per_candle = True
+            # FUT-RM-21 (Wave 7) fallback default
+            self.block_counter_trend_entries = True
+            self.require_trend_confirmation = False
+            self.min_volume_multiplier = 0.8
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
 
@@ -374,6 +456,11 @@ class FuturesTradingEngine:
 
         # Cooldowns (symbol -> next_trade_time)
         self.symbol_cooldowns: Dict[str, datetime] = {}
+
+        # FUT-RM-20 (Wave 7): one-entry-per-candle throttle.
+        # symbol -> the candle-open timestamp we last entered on. Prevents the
+        # 30s scan loop from firing repeatedly into the same 15m bar.
+        self._last_entry_candle: Dict[str, datetime] = {}
 
         # Exchange client
         self.exchange_client = None
@@ -393,6 +480,14 @@ class FuturesTradingEngine:
         self._price_cache: Dict[str, Dict] = {}
         self._last_price_update: Dict[str, datetime] = {}
 
+        # FUT-RM-05: funding-rate cache for directional gate.
+        # symbol -> (fraction_rate, fetched_at). Pulled via ccxt
+        # fetch_funding_rate; gated on staleness in _get_funding_rate_cached.
+        self._funding_cache: Dict[str, tuple] = {}
+        # Configurable in seconds; ccxt funding endpoints are heavy so
+        # we re-poll every 5 minutes max (well below the 8h interval).
+        self._funding_cache_ttl_seconds: int = 300
+
         # Stats
         self.total_trades = 0
         self.winning_trades = 0
@@ -409,6 +504,12 @@ class FuturesTradingEngine:
         # Telegram alerts - will be initialized in async initialize() method
         # where we can properly load credentials from secrets manager
         self.telegram_alerts = None
+
+        # ISSUE-15 (Wave 7): non-sensitive identity of the API key in use, so
+        # the operator can tell WHICH account is live without exposing secrets.
+        # Set by _set_api_key_fingerprint() during exchange init. Format:
+        # "****<last4>" (never the full key) or None when no key is loaded.
+        self.api_key_fingerprint: Optional[str] = None
 
         # Logging mode info
         mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
@@ -434,6 +535,20 @@ class FuturesTradingEngine:
         """Inject a FuturesRiskManager. Entry path will call validate_new_position
         before opening a position; rejection logs the reason and aborts entry."""
         self.risk_manager = risk_manager
+
+    def _set_api_key_fingerprint(self, api_key: Optional[str]) -> None:
+        """ISSUE-15: stash a NON-SENSITIVE fingerprint of the active API key
+        (last 4 chars only) so the diagnostics/health surface can show which
+        account is in use. Never stores or returns the full key."""
+        try:
+            if api_key and len(api_key) >= 4:
+                self.api_key_fingerprint = f"****{api_key[-4:]}"
+            elif api_key:
+                self.api_key_fingerprint = "****"
+            else:
+                self.api_key_fingerprint = None
+        except Exception:
+            self.api_key_fingerprint = None
 
     async def initialize(self):
         """Initialize exchange connections and components"""
@@ -607,6 +722,9 @@ class FuturesTradingEngine:
             if not api_key or not api_secret:
                 raise ValueError("BINANCE API keys required")
 
+            # ISSUE-15: record masked fingerprint of the active key.
+            self._set_api_key_fingerprint(api_key)
+
             self.exchange_client = ccxt.binance({
                 'apiKey': api_key,
                 'secret': api_secret,
@@ -708,6 +826,9 @@ class FuturesTradingEngine:
 
             if not api_key or not api_secret:
                 raise ValueError("BYBIT API keys required")
+
+            # ISSUE-15: record masked fingerprint of the active key.
+            self._set_api_key_fingerprint(api_key)
 
             self.exchange_client = ccxt.bybit({
                 'apiKey': api_key,
@@ -888,6 +1009,13 @@ class FuturesTradingEngine:
         if not self.active_positions:
             return
 
+        # FUT-RM-09: refresh the funding-cost snapshot for the widget.
+        # Cheap: UNIQUE constraint upserts within the current hour bucket.
+        try:
+            await self._record_funding_snapshot()
+        except Exception as snap_err:
+            logger.debug(f"funding snapshot skipped: {snap_err}")
+
         for symbol, position in list(self.active_positions.items()):
             try:
                 current_price = await self._get_decision_price(symbol)
@@ -986,7 +1114,11 @@ class FuturesTradingEngine:
         # stop_loss_pct is stored as positive (e.g., 2.0)
         # SL triggers when price moves against position by >= stop_loss_pct
         # Example: if stop_loss_pct=2.0, SL triggers when price drops 2% (for LONG)
-        if position.trailing_stop_price is None and actual_price_change_pct <= -self.stop_loss_pct:
+        # FUT-RM-16 (Wave 5): when ATR-scaled SL was applied at entry, the
+        # position carries its own sl_pct in metadata so we respect the
+        # per-symbol level instead of the engine-wide static one.
+        effective_sl_pct = position.metadata.get('dynamic_sl_pct') or self.stop_loss_pct
+        if position.trailing_stop_price is None and actual_price_change_pct <= -effective_sl_pct:
             return "SL Hit"
 
         # Take profit check (legacy single TP - only if NOT using multiple tp_levels)
@@ -1061,6 +1193,21 @@ class FuturesTradingEngine:
                             logger.debug(f"  {symbol}: Skipped - cooldown ({remaining}s remaining)")
                         continue
 
+                # FUT-RM-20 (Wave 7): one-entry-per-candle throttle. The 30s
+                # scan loop re-evaluates the same 15m bar ~30 times; without
+                # this we can re-enter the same chop repeatedly. Skip if we
+                # already entered this symbol within the current candle.
+                if getattr(self, 'one_entry_per_candle', True):
+                    cur_candle = self._current_candle_open()
+                    last_candle = self._last_entry_candle.get(symbol)
+                    if last_candle is not None and last_candle == cur_candle:
+                        if self.verbose_signals:
+                            logger.debug(
+                                f"  {symbol}: Skipped - already entered this candle "
+                                f"({self.signal_timeframe})"
+                            )
+                        continue
+
                 # Check if symbol exists on exchange
                 if symbol not in self.exchange_client.markets:
                     if self.verbose_signals:
@@ -1119,6 +1266,24 @@ class FuturesTradingEngine:
                         if self.verbose_signals:
                             logger.info(f"     ⚠️ Volume filter: {signals.volume_ratio:.2f}x < required {self.min_volume_multiplier:.2f}x")
 
+                # FUT-RM-21 (Wave 7): regime gate. The signal stack mixes
+                # mean-reversion (RSI extremes) with trend-following (BB
+                # breakout, EMA) additively, so a bullish RSI bounce can clear
+                # the score in a clear downtrend — catching a falling knife.
+                # Hard-block counter-trend entries: no LONG in a downtrend
+                # regime, no SHORT in an uptrend regime. `sideways` stays
+                # tradeable both ways (range mean-reversion is legitimate).
+                regime_ok = True
+                if getattr(self, 'block_counter_trend_entries', True):
+                    if signal_score > 0 and signals.trend == "downtrend":
+                        regime_ok = False
+                        if self.verbose_signals:
+                            logger.info("     ⚠️ Regime gate: bullish signal but regime is DOWNTREND — blocked")
+                    elif signal_score < 0 and signals.trend == "uptrend":
+                        regime_ok = False
+                        if self.verbose_signals:
+                            logger.info("     ⚠️ Regime gate: bearish signal but regime is UPTREND — blocked")
+
                 # MOMENTUM CONFIRMATION: Recent price must move in signal direction
                 momentum_ok = True
                 if signal_score > 0 and signals.price_change_1h < -0.5:
@@ -1145,8 +1310,45 @@ class FuturesTradingEngine:
                     if self.verbose_signals:
                         logger.info(f"     ⚠️ Conflicting signals: RSI overbought but MACD strongly bullish")
 
+                # FUT-RM-15 (Wave 5): multi-indicator CONFLUENCE gate.
+                # Count how many of the 4 directional indicators
+                # (RSI / MACD / Bollinger / EMA — volume is a confirmer, not
+                # a direction-giver) agree with the prospective entry side.
+                # We require >= self.min_signal_confluence_count agreement,
+                # in addition to the existing signed signal_score >=
+                # self.min_signal_score. This blocks single-indicator entries
+                # that just happen to round above the score bar.
+                confluence_min = int(getattr(self, 'min_signal_confluence_count', 0) or 0)
+                directional = (
+                    signals.rsi_signal.value,
+                    signals.macd_signal.value,
+                    signals.bb_signal.value,
+                    signals.ema_signal.value,
+                )
+                bullish_confluence = sum(1 for v in directional if v > 0)
+                bearish_confluence = sum(1 for v in directional if v < 0)
+                confluence_ok = True
+                if confluence_min > 0:
+                    if signal_score > 0 and bullish_confluence < confluence_min:
+                        confluence_ok = False
+                        if self.verbose_signals:
+                            logger.info(
+                                f"     ⚠️ Confluence filter: only {bullish_confluence}/4 "
+                                f"bullish indicators agree (min {confluence_min})"
+                            )
+                    elif signal_score < 0 and bearish_confluence < confluence_min:
+                        confluence_ok = False
+                        if self.verbose_signals:
+                            logger.info(
+                                f"     ⚠️ Confluence filter: only {bearish_confluence}/4 "
+                                f"bearish indicators agree (min {confluence_min})"
+                            )
+
                 # All filters must pass
-                all_filters_ok = trend_ok and volume_ok and momentum_ok and signals_aligned
+                all_filters_ok = (
+                    trend_ok and volume_ok and momentum_ok
+                    and signals_aligned and confluence_ok and regime_ok
+                )
 
                 if signal_score >= self.min_signal_score and all_filters_ok:
                     entry_side = TradeSide.LONG
@@ -1159,7 +1361,11 @@ class FuturesTradingEngine:
                 else:
                     if self.verbose_signals:
                         if not all_filters_ok:
-                            logger.info(f"     ❌ REJECTED: Quality filters failed (trend={trend_ok}, volume={volume_ok}, momentum={momentum_ok}, aligned={signals_aligned})")
+                            logger.info(
+                                f"     ❌ REJECTED: Quality filters failed "
+                                f"(trend={trend_ok}, volume={volume_ok}, momentum={momentum_ok}, "
+                                f"aligned={signals_aligned}, confluence={confluence_ok}, regime={regime_ok})"
+                            )
                         elif signal_score > 0:
                             logger.info(f"     ❌ REJECTED: Bullish but weak (score {signal_score} < {self.min_signal_score})")
                         elif signal_score < 0:
@@ -1216,16 +1422,27 @@ class FuturesTradingEngine:
             signals.macd_signal_line = signal_line
             signals.macd_histogram = histogram
 
+            # Wave-7: score the histogram as a PERCENTAGE of price, not in raw
+            # price units. The old absolute 0.001/0.005 thresholds were
+            # price-scale dependent — they fired on almost every BTC bar and
+            # almost no cheap-alt bar. hist_pct makes the same threshold mean
+            # the same momentum across all symbols. 0.02% = weak cross,
+            # 0.08% = strong momentum (tuned to the prior majors behaviour).
+            last_close_macd = closes[-1] if closes else 0.0
+            hist_pct = (histogram / last_close_macd * 100.0) if last_close_macd > 0 else 0.0
+            macd_weak_thr = 0.02   # % of price for BUY/SELL
+            macd_strong_thr = 0.08  # % of price for STRONG_BUY/STRONG_SELL
+
             if histogram > 0 and macd > signal_line:
-                signals.macd_signal = SignalStrength.BUY if histogram > 0.001 else SignalStrength.NEUTRAL
+                signals.macd_signal = SignalStrength.BUY if hist_pct > macd_weak_thr else SignalStrength.NEUTRAL
             elif histogram < 0 and macd < signal_line:
-                signals.macd_signal = SignalStrength.SELL if histogram < -0.001 else SignalStrength.NEUTRAL
+                signals.macd_signal = SignalStrength.SELL if hist_pct < -macd_weak_thr else SignalStrength.NEUTRAL
 
             # Amplify MACD signal for strong momentum
-            if abs(histogram) > 0.005:
-                if histogram > 0:
+            if abs(hist_pct) > macd_strong_thr:
+                if histogram > 0 and macd > signal_line:
                     signals.macd_signal = SignalStrength.STRONG_BUY
-                else:
+                elif histogram < 0 and macd < signal_line:
                     signals.macd_signal = SignalStrength.STRONG_SELL
 
             # Calculate Volume ratio
@@ -1303,6 +1520,22 @@ class FuturesTradingEngine:
             signals.price_change_1h = ((closes[-1] - closes[-2]) / closes[-2]) * 100 if len(closes) >= 2 else 0
             signals.price_change_24h = ((closes[-1] - closes[-24]) / closes[-24]) * 100 if len(closes) >= 24 else 0
 
+            # FUT-RM-06: ATR (14-period) for per-symbol risk-parity sizing.
+            # Simple mean of TRs over the last 14 bars (close enough to
+            # Wilder for sizing — Wilder undershoots SMA by <5% steady-state).
+            atr_period = 14
+            if len(closes) >= atr_period + 1:
+                trs = []
+                for i in range(1, len(closes)):
+                    h = highs[i]
+                    l = lows[i]
+                    pc = closes[i-1]
+                    tr = max(h - l, abs(h - pc), abs(l - pc))
+                    trs.append(tr)
+                signals.atr = sum(trs[-atr_period:]) / atr_period if trs else 0.0
+                last_close = closes[-1]
+                signals.atr_pct = (signals.atr / last_close) if last_close > 0 else 0.0
+
             # Trend detection
             sma_20 = sum(closes[-20:]) / 20
             sma_50 = sum(closes[-50:]) / 50
@@ -1343,23 +1576,50 @@ class FuturesTradingEngine:
         return rsi
 
     def _calculate_macd(self, closes: List[float]) -> Tuple[float, float, float]:
-        """Calculate MACD (12, 26, 9)"""
-        def ema(data: List[float], period: int) -> float:
-            if len(data) < period:
-                return sum(data) / len(data)
+        """Calculate MACD (12, 26, 9) with a REAL 9-period signal line.
+
+        Pre-Wave-7 this used signal_line = macd_line * 0.9, which made
+        histogram = macd_line * 0.1 — i.e. the histogram was just a fixed
+        fraction of the MACD line, not the MACD-minus-signal crossover the
+        downstream scoring assumes. That broke MACD as a momentum signal:
+        the histogram never reflected an actual signal-line cross, and its
+        magnitude scaled with raw price (huge on BTC, tiny on a $0.50 alt),
+        so the absolute 0.001/0.005 thresholds in _get_technical_signals
+        fired almost-always on majors and almost-never on cheap alts.
+
+        Fix: build the full MACD-line series across the window, then take a
+        true 9-period EMA of it as the signal line. histogram = macd - signal.
+        """
+        def ema_series(data: List[float], period: int) -> List[float]:
+            """Return the EMA value at each step (same length as data)."""
+            if not data:
+                return []
             multiplier = 2 / (period + 1)
-            ema_value = sum(data[:period]) / period
-            for price in data[period:]:
+            seed = min(period, len(data))
+            ema_value = sum(data[:seed]) / seed
+            out: List[float] = [ema_value]
+            for price in data[seed:]:
                 ema_value = (price - ema_value) * multiplier + ema_value
-            return ema_value
+                out.append(ema_value)
+            return out
 
-        ema_12 = ema(closes, 12)
-        ema_26 = ema(closes, 26)
-        macd_line = ema_12 - ema_26
+        if len(closes) < 26:
+            # Not enough history for a meaningful MACD; report flat.
+            return 0.0, 0.0, 0.0
 
-        # For signal line, we'd need historical MACD values
-        # Simplified: use recent EMA as approximation
-        signal_line = macd_line * 0.9  # Simplified approximation
+        ema_12_series = ema_series(closes, 12)
+        ema_26_series = ema_series(closes, 26)
+        # Align the two series on their shared tail so each MACD point uses
+        # the 12- and 26-EMA computed at the same bar.
+        n = min(len(ema_12_series), len(ema_26_series))
+        macd_series = [
+            ema_12_series[-n + i] - ema_26_series[-n + i] for i in range(n)
+        ]
+        macd_line = macd_series[-1]
+
+        # Real 9-period signal line = EMA of the MACD-line series.
+        signal_series = ema_series(macd_series, 9)
+        signal_line = signal_series[-1] if signal_series else macd_line
         histogram = macd_line - signal_line
 
         return macd_line, signal_line, histogram
@@ -1384,8 +1644,38 @@ class FuturesTradingEngine:
 
         Static sizing: Uses fixed percentage of capital
 
+        ATR sizing (FUT-RM-06): Per-symbol risk-parity. The capped dollar
+        risk per trade is held constant; position size scales inversely
+        with ATR. A 5% ATR symbol gets 1/5 the notional of a 1% ATR symbol
+        — same realized $ loss when the price moves stop-multiplier * ATR.
+
         Returns: Position size in USD (notional value before leverage)
         """
+        # FUT-RM-06: ATR-based sizing path (highest priority when enabled
+        # AND we have a usable ATR reading; otherwise fall through to the
+        # existing static / dynamic paths).
+        if (
+            getattr(self, 'atr_sizing_enabled', False)
+            and signals is not None
+            and getattr(signals, 'atr_pct', 0.0) > 0.0
+        ):
+            risk_amount = self.capital_allocation * (self.atr_risk_pct / 100.0)
+            stop_distance_pct = signals.atr_pct * float(self.atr_stop_multiplier)
+            if stop_distance_pct > 0:
+                position_margin = risk_amount / stop_distance_pct
+                notional = position_margin * float(self.leverage)
+                logger.debug(
+                    f"ATR sizing: risk=${risk_amount:.2f} "
+                    f"ATR%={signals.atr_pct*100:.3f} stopMult={self.atr_stop_multiplier} "
+                    f"-> margin=${position_margin:.2f} × {self.leverage}x "
+                    f"= ${notional:.2f}"
+                )
+                if notional > self.max_position_usd:
+                    notional = self.max_position_usd
+                    logger.debug(f"ATR sizing capped at ${self.max_position_usd:.2f}")
+                return notional
+            logger.debug("ATR sizing skipped: stop_distance_pct=0; falling through")
+
         if not self.dynamic_position_sizing:
             # Static position sizing: Capital × Position%
             # Example: $300 × 15% = $45 margin
@@ -1509,9 +1799,22 @@ class FuturesTradingEngine:
                     # After TP1: Move stop loss to breakeven (entry price) - always enabled for safety
                     # After TP2+: Activate trailing stop (only if trailing_stop_enabled)
                     if tp['level'] == 1:
-                        # TP1 hit - move stop to breakeven (always enabled for capital protection)
-                        position.trailing_stop_price = position.entry_price
-                        logger.info(f"🔒 {position.symbol}: Stop moved to breakeven ${position.entry_price:.4f}")
+                        # TP1 hit - move stop to true breakeven INCLUDING
+                        # round-trip fees (FUT-RM-14). Stopping exactly at
+                        # entry_price still pays entry+exit fees, so the
+                        # operator nets a small loss on a "breakeven" stop.
+                        # Buffer = 2 × taker_fee + tiny slippage cushion.
+                        fee_rate = self.BINANCE_TAKER_FEE if self.exchange == 'binance' else self.BYBIT_TAKER_FEE
+                        be_buffer_pct = (2 * fee_rate) + 0.0001  # +1bp cushion
+                        if position.side == TradeSide.LONG:
+                            position.trailing_stop_price = position.entry_price * (1 + be_buffer_pct)
+                        else:  # SHORT
+                            position.trailing_stop_price = position.entry_price * (1 - be_buffer_pct)
+                        logger.info(
+                            f"🔒 {position.symbol}: Stop moved to fee-adjusted breakeven "
+                            f"${position.trailing_stop_price:.4f} (entry ${position.entry_price:.4f}, "
+                            f"buffer {be_buffer_pct*100:.3f}%)"
+                        )
                     elif tp['level'] >= 2 and not position.trailing_stop_active and self.trailing_stop_enabled:
                         # TP2+ hit - activate trailing stop (ONLY if trailing stop is enabled in settings)
                         position.trailing_stop_active = True
@@ -1685,8 +1988,69 @@ class FuturesTradingEngine:
             # Calculate stop loss price (SL% is price move %)
             sl_pct = abs(self.stop_loss_pct)
 
+            # FUT-RM-16 (Wave 5): ATR-scaled SL/TP per symbol. Overrides the
+            # static sl_pct with max(atr_sl_min_pct, atr_sl_multiplier × ATR%)
+            # and rescales TP1..TP4 so TP1 = atr_tp_rr_ratio × SL distance.
+            # TP2/TP3/TP4 keep their relative proportions to TP1 so the
+            # front-loaded size_pct distribution still makes sense.
+            atr_dyn = (
+                getattr(self, 'atr_dynamic_sl_tp_enabled', False)
+                and signals is not None
+                and getattr(signals, 'atr_pct', 0.0) > 0.0
+            )
+            _orig_sl_pct = self.stop_loss_pct
+            _orig_tps = (self.tp1_pct, self.tp2_pct, self.tp3_pct, self.tp4_pct)
+            if atr_dyn:
+                atr_pct = float(signals.atr_pct) * 100.0  # decimal -> %
+                dyn_sl_pct = max(
+                    float(self.atr_sl_min_pct),
+                    float(self.atr_sl_multiplier) * atr_pct,
+                )
+                dyn_tp1_pct = dyn_sl_pct * float(self.atr_tp_rr_ratio)
+                tp1_ratio = dyn_tp1_pct / self.tp1_pct if self.tp1_pct > 0 else 1.0
+                self.stop_loss_pct = dyn_sl_pct
+                self.tp1_pct = dyn_tp1_pct
+                self.tp2_pct = _orig_tps[1] * tp1_ratio
+                self.tp3_pct = _orig_tps[2] * tp1_ratio
+                self.tp4_pct = _orig_tps[3] * tp1_ratio
+                sl_pct = dyn_sl_pct
+                logger.info(
+                    f"FUT-RM-16 ATR SL/TP {symbol}: ATR%={atr_pct:.2f} -> "
+                    f"SL={dyn_sl_pct:.2f}% TP1={dyn_tp1_pct:.2f}% "
+                    f"(R:R={self.atr_tp_rr_ratio:.1f})"
+                )
+
             # Calculate multiple take profit levels
             tp_levels = self._calculate_tp_levels(current_price, side)
+
+            # FUT-RM-16: restore static settings so the next entry recomputes
+            # from the operator's baseline; the position carries its own
+            # tp_levels + stop_loss_price for live monitoring.
+            if atr_dyn:
+                self.stop_loss_pct = _orig_sl_pct
+                self.tp1_pct, self.tp2_pct, self.tp3_pct, self.tp4_pct = _orig_tps
+
+            # FUT-RM-19 (Wave 7): fee + funding aware minimum-edge gate.
+            # Refuse entries whose first realistic target (TP1 distance) does
+            # not clear round-trip costs by min_net_edge_pct. This is the
+            # working-rule edge formula: TP1 - 2*taker_fee - slippage -
+            # funding_drag. Cheap; runs before the heavier validator. No order
+            # is placed if it fails, so it is inherently DRY_RUN-safe.
+            if getattr(self, 'min_edge_gate_enabled', True):
+                tp1_dist_pct = float(tp_levels[0]['pct']) if tp_levels else float(self.take_profit_pct)
+                edge = await self._compute_net_edge_pct(symbol, side, tp1_dist_pct)
+                if edge['net_edge_pct'] < float(self.min_net_edge_pct):
+                    msg = (
+                        f"⏭️  FUT-RM-19 edge gate refused {side.value.upper()} "
+                        f"{symbol}: net_edge={edge['net_edge_pct']:.3f}% < "
+                        f"min {self.min_net_edge_pct:.3f}% "
+                        f"(TP1={tp1_dist_pct:.2f}% fees={edge['fee_pct']:.3f}% "
+                        f"slip={edge['slippage_pct']:.3f}% "
+                        f"funding={edge['funding_pct']:+.3f}%)"
+                    )
+                    logger.warning(msg)
+                    self._alert_edge_gate_breach(symbol, side, edge, tp1_dist_pct)
+                    return
 
             if side == TradeSide.LONG:
                 stop_loss_price = current_price * (1 - sl_pct / 100)
@@ -1703,6 +2067,42 @@ class FuturesTradingEngine:
                 tp_str = f"TP1:${tp_levels[0]['price']:.2f} | TP2:${tp_levels[1]['price']:.2f} | TP3:${tp_levels[2]['price']:.2f} | TP4:${tp_levels[3]['price']:.2f}"
             else:
                 tp_str = f"${take_profit_price:.2f}"
+
+            # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off.
+            # Cheap pre-validator skip; fails open on missing method or error.
+            if self.risk_manager is not None and hasattr(
+                self.risk_manager, 'should_skip_for_cooloff'
+            ):
+                try:
+                    cgate = self.risk_manager.should_skip_for_cooloff(symbol)
+                    if cgate.get('skip'):
+                        logger.warning(
+                            f"⏭️  FUT-RM-17 cool-off refused entry for {symbol}: "
+                            f"{cgate.get('reason')}"
+                        )
+                        return
+                except Exception as e:
+                    logger.debug(f"cooloff gate non-fatal error for {symbol}: {e}")
+
+            # FUT-RM-05: funding-rate directional gate. Cheap, runs before
+            # the heavier validator. None rate -> gate fails open.
+            if self.risk_manager is not None and hasattr(
+                self.risk_manager, 'should_skip_for_funding'
+            ):
+                try:
+                    fund_rate = await self._get_funding_rate_cached(symbol)
+                    fgate = self.risk_manager.should_skip_for_funding(
+                        side=side.value.upper() if hasattr(side, 'value') else str(side),
+                        funding_rate=fund_rate,
+                    )
+                    if fgate.get('skip'):
+                        logger.warning(
+                            f"⏭️  Funding gate refused entry for {symbol}: "
+                            f"{fgate.get('reason')}"
+                        )
+                        return
+                except Exception as e:
+                    logger.debug(f"funding gate non-fatal error for {symbol}: {e}")
 
             # MB-17: cross-module risk gate — refuse to open if validator rejects.
             if self.risk_manager is not None:
@@ -1744,12 +2144,19 @@ class FuturesTradingEngine:
                 liquidation_price=liquidation_price,
                 fees_paid=estimated_fees / 2,  # Entry fee
                 is_simulated=self.dry_run,
-                metadata={'signals': {
-                    'rsi': signals.rsi,
-                    'macd': signals.macd_histogram,
-                    'volume_ratio': signals.volume_ratio,
-                    'trend': signals.trend
-                }},
+                metadata={
+                    'signals': {
+                        'rsi': signals.rsi,
+                        'macd': signals.macd_histogram,
+                        'volume_ratio': signals.volume_ratio,
+                        'trend': signals.trend
+                    },
+                    # FUT-RM-16: stash the SL pct actually used at entry so
+                    # _check_exit_conditions uses the per-symbol level even
+                    # after the engine reverts self.stop_loss_pct for the
+                    # next entry. None when ATR sizing was off.
+                    'dynamic_sl_pct': sl_pct if atr_dyn else None,
+                },
                 tp_levels=tp_levels,
                 original_size=size,
                 highest_price=current_price if side == TradeSide.LONG else None,
@@ -1787,6 +2194,15 @@ class FuturesTradingEngine:
                     if order.get('average'):
                         position.entry_price = float(order['average'])
 
+                    # FUT-RM-07: defense-in-depth on MB-17. set_margin_type
+                    # is called inside open_long/open_short, but a stale
+                    # account-level setting or a Bybit 110026/110043
+                    # idempotency false-positive could land us with a
+                    # CROSS-margin fill. Verify by re-reading the position
+                    # immediately and close on mismatch.
+                    if getattr(self, 'enforce_isolated_margin', True):
+                        await self._verify_isolated_or_close(symbol, side)
+
                 except Exception as e:
                     logger.error(f"❌ Order execution failed: {e}")
                     return
@@ -1794,6 +2210,9 @@ class FuturesTradingEngine:
             # Add to active positions
             self.active_positions[symbol] = position
             self.risk_metrics.current_exposure += notional
+            # FUT-RM-20 (Wave 7): mark this symbol as entered for the current
+            # candle so the one-entry-per-candle throttle won't re-fire on it.
+            self._last_entry_candle[symbol] = self._current_candle_open()
 
             # Log trade entry with SL/TP details (captured by TradeLogFilter for futures_trades.log)
             logger.info(f"✅ Position opened: {symbol} {side.value.upper()}")
@@ -1926,6 +2345,16 @@ class FuturesTradingEngine:
                 self.losing_trades += 1
                 self.risk_metrics.consecutive_losses += 1
 
+            # FUT-RM-17 (Wave 5): notify risk manager so per-symbol cool-off
+            # arms after N consecutive losses on this pair. Best-effort.
+            if self.risk_manager is not None and hasattr(
+                self.risk_manager, 'update_on_trade_close'
+            ):
+                try:
+                    self.risk_manager.update_on_trade_close(net_pnl, symbol=symbol)
+                except Exception as e:
+                    logger.debug(f"risk_manager.update_on_trade_close failed: {e}")
+
             # Remove from active positions
             del self.active_positions[symbol]
 
@@ -2009,6 +2438,464 @@ class FuturesTradingEngine:
             logger.error(f"Error fetching ticker for {symbol}: {e}")
             return None
 
+    async def _get_funding_rate_cached(self, symbol: str) -> Optional[float]:
+        """FUT-RM-05: Return the latest per-interval funding rate as a
+        FRACTION (e.g. 0.0005 = 5 bps) for `symbol`, cached for
+        self._funding_cache_ttl_seconds. Returns None on any failure —
+        the gate fails open on missing data.
+
+        Uses the mainnet price_client when available so DRY_RUN/testnet
+        sessions see real funding numbers (testnet funding is fictional).
+        """
+        try:
+            now = datetime.now()
+            cached = self._funding_cache.get(symbol)
+            if cached:
+                rate, fetched_at = cached
+                age = (now - fetched_at).total_seconds()
+                if age < self._funding_cache_ttl_seconds:
+                    return rate
+            client = self.price_client if self.price_client else self.exchange_client
+            if not client or not hasattr(client, 'fetch_funding_rate'):
+                return None
+            data = await client.fetch_funding_rate(symbol)
+            # ccxt normalizes to {'fundingRate': float, ...}
+            rate = data.get('fundingRate') if isinstance(data, dict) else None
+            if rate is None:
+                return None
+            rate = float(rate)
+            self._funding_cache[symbol] = (rate, now)
+            return rate
+        except Exception as e:
+            logger.debug(f"funding rate fetch failed for {symbol}: {e}")
+            return None
+
+    def _current_candle_open(self) -> datetime:
+        """FUT-RM-20 (Wave 7): floor `now` to the open of the current
+        signal-timeframe candle. Used by the one-entry-per-candle throttle so
+        all scans within a single bar map to the same key."""
+        tf = str(getattr(self, 'signal_timeframe', '15m')).strip().lower()
+        unit = 'm'
+        qty = 15
+        # Only parse if it's a well-formed <int><unit> string; anything else
+        # falls back to a safe 15m bucket (avoids a degenerate giant bucket).
+        if len(tf) >= 2 and tf[-1] in ('m', 'h', 'd') and tf[:-1].isdigit():
+            unit = tf[-1]
+            qty = int(tf[:-1])
+        seconds = qty * {'m': 60, 'h': 3600, 'd': 86400}[unit]
+        seconds = max(60, seconds)
+        now = datetime.now()
+        epoch = now.timestamp()
+        floored = epoch - (epoch % seconds)
+        return datetime.fromtimestamp(floored)
+
+    async def _compute_net_edge_pct(
+        self, symbol: str, side: TradeSide, tp1_dist_pct: float
+    ) -> Dict[str, float]:
+        """FUT-RM-19 (Wave 7): expected net edge of a prospective entry, in
+        price-% terms, after subtracting all the costs that ate the operator's
+        -$59.99 @ 39% book.
+
+            net_edge_pct = tp1_dist_pct
+                           - 2 * taker_fee_pct     (round-trip taker fees)
+                           - slippage_pct          (modeled, both legs)
+                           - funding_drag_pct      (adverse only; favorable=0)
+
+        funding_drag is the per-interval funding rate (as a price %) only when
+        it works AGAINST the position direction — a LONG pays positive funding,
+        a SHORT pays negative funding. Favorable funding is floored at 0 here
+        (we do not credit it as edge; that would encourage funding-chasing
+        entries). When the live rate is unavailable we use the conservative
+        edge_funding_fallback_pct so the gate never fails open into free
+        trading. Note tp1_dist_pct is the *price* move to TP1, NOT leveraged —
+        fees/funding are also charged on notional, so comparing in price-%
+        terms is apples-to-apples (leverage scales both sides equally).
+        """
+        # Round-trip taker fee as a price percentage of notional.
+        taker = self.BINANCE_TAKER_FEE if self.exchange == 'binance' else self.BYBIT_TAKER_FEE
+        fee_pct = taker * 2 * 100.0
+        slippage_pct = float(getattr(self, 'edge_slippage_pct', 0.05))
+
+        # Funding drag: only count it when it works against us.
+        funding_pct = float(getattr(self, 'edge_funding_fallback_pct', 0.05))
+        try:
+            rate = await self._get_funding_rate_cached(symbol)
+            if rate is not None:
+                rate_pct = float(rate) * 100.0  # per-interval, as price %
+                if side == TradeSide.LONG:
+                    # LONG pays when funding > 0; favorable when < 0 -> 0 drag.
+                    funding_pct = max(0.0, rate_pct)
+                else:
+                    # SHORT pays when funding < 0.
+                    funding_pct = max(0.0, -rate_pct)
+        except Exception as e:
+            logger.debug(f"edge funding lookup failed for {symbol}: {e}")
+
+        net_edge_pct = tp1_dist_pct - fee_pct - slippage_pct - funding_pct
+        return {
+            'tp1_dist_pct': tp1_dist_pct,
+            'fee_pct': fee_pct,
+            'slippage_pct': slippage_pct,
+            'funding_pct': funding_pct,
+            'net_edge_pct': net_edge_pct,
+        }
+
+    def _alert_edge_gate_breach(
+        self, symbol: str, side: TradeSide, edge: Dict[str, float], tp1_dist_pct: float
+    ) -> None:
+        """FUT-RM-19: surface an edge-gate rejection via monitoring/alerts.py.
+        Best-effort + lazy import so the engine import stays clean and a
+        missing/uninitialized alerts module never blocks the gate (which has
+        already logged + returned). Uses AlertManager.send_alert(alert_type,
+        message, priority) — fired on the running loop via ensure_future so
+        the _open_position caller is not awaited-on here."""
+        try:
+            from monitoring.alerts import AlertManager
+            mgr = getattr(self, '_alert_manager', None)
+            if mgr is None:
+                mgr = AlertManager()
+                self._alert_manager = mgr  # cache one instance
+            side_str = side.value.upper() if hasattr(side, 'value') else str(side)
+            detail = (
+                f"[futures] FUT-RM-19 edge gate: {side_str} {symbol} rejected — "
+                f"net_edge={edge['net_edge_pct']:.3f}% < min {self.min_net_edge_pct:.3f}% "
+                f"(TP1={tp1_dist_pct:.2f}% fee={edge['fee_pct']:.3f}% "
+                f"slip={edge['slippage_pct']:.3f}% funding={edge['funding_pct']:+.3f}%)"
+            )
+            asyncio.ensure_future(
+                mgr.send_alert('futures_edge_gate', detail, 'low')
+            )
+        except Exception as e:
+            logger.debug(f"edge-gate alert dispatch failed (non-fatal): {e}")
+
+    async def _auto_deleverage_if_needed(self) -> bool:
+        """FUT-RM-10 (Wave 3): wire the unused should_auto_deleverage() check.
+
+        Called from the monitor loop. When the drawdown threshold trips
+        AND the feature flag is on AND we're outside cooldown, halve the
+        WORST unrealized-PnL open position (close 50% at market).
+
+        Returns True if a deleverage fired this call. False otherwise.
+
+        Safety:
+          - Feature-flagged off by default (auto_deleverage_enabled).
+          - Cooldown so a single drawdown event doesn't repeat-halve.
+          - Skips when no risk_manager or no positions.
+          - Best-effort: failure to close one position doesn't crash the
+            loop; logged at ERROR for the operator.
+          - Each trigger logs a clearly-labeled WARNING that the
+            futures_trades.log filter picks up.
+        """
+        try:
+            if not getattr(self, 'auto_deleverage_enabled', False):
+                return False
+            if self.risk_manager is None or not hasattr(
+                self.risk_manager, 'should_auto_deleverage'
+            ):
+                return False
+            if not self.active_positions:
+                return False
+            # Cooldown gate.
+            now = datetime.now()
+            last = getattr(self, '_auto_deleverage_last_at', None)
+            cooldown = max(0, int(getattr(self, 'auto_deleverage_cooldown_seconds', 600)))
+            if last and (now - last).total_seconds() < cooldown:
+                return False
+            # Compose total PnL (realized + unrealized) over a capital base.
+            unrealized = sum(
+                float(getattr(p, 'unrealized_pnl', 0) or 0)
+                for p in self.active_positions.values()
+            )
+            realized = float(getattr(self, 'total_pnl', 0) or 0)
+            total_pnl = realized + unrealized
+            capital = float(getattr(self, 'capital_allocation', 0) or 0)
+            if capital <= 0:
+                return False
+            should_dl = bool(self.risk_manager.should_auto_deleverage(
+                total_pnl=total_pnl,
+                total_capital=capital,
+            ))
+            if not should_dl:
+                return False
+            # Pick worst-PnL open position.
+            worst_symbol = None
+            worst_pnl = float('inf')
+            worst_pos = None
+            for sym, pos in self.active_positions.items():
+                p = float(getattr(pos, 'unrealized_pnl', 0) or 0)
+                if p < worst_pnl:
+                    worst_pnl = p
+                    worst_symbol = sym
+                    worst_pos = pos
+            if worst_pos is None or worst_symbol is None:
+                return False
+            close_size = max(0.0, float(getattr(worst_pos, 'size', 0)) / 2.0)
+            if close_size <= 0:
+                return False
+            logger.warning(
+                "🛑 FUT-RM-10 AUTO-DELEVERAGE triggered "
+                f"(total_pnl=${total_pnl:.2f} on capital=${capital:.2f}); "
+                f"halving worst position {worst_symbol} "
+                f"(unrealized_pnl=${worst_pnl:.2f}, size {worst_pos.size:.6f} -> {close_size:.6f})"
+            )
+            self._auto_deleverage_last_at = now
+            try:
+                await self._partial_close_position(
+                    worst_pos, close_size, 'fut_rm_10_auto_deleverage'
+                )
+                return True
+            except Exception as e:
+                logger.error(
+                    f"FUT-RM-10 partial close failed for {worst_symbol}: {e}"
+                )
+                return False
+        except Exception as e:
+            logger.debug(f"_auto_deleverage_if_needed errored: {e}")
+            return False
+
+    async def _record_funding_snapshot(self) -> None:
+        """FUT-RM-09 (Wave 3): write a per-hour funding-cost snapshot to
+        futures_funding_payments for the dashboard widget.
+
+        For each active position we compute:
+            predicted_usd = funding_rate(symbol) × notional × side_sign
+
+        side_sign is +1 when the book is *paying* funding (LONG with
+        positive funding, SHORT with negative funding) and -1 when the
+        book is *receiving*. So predicted_usd > 0 means cost to the book.
+
+        The UNIQUE(hour_bucket, symbol, side, exchange, network, source)
+        constraint upserts within an hour bucket so calling this every
+        cycle just refreshes the latest snapshot. The dashboard reads the
+        trailing 24h and sums by hour_bucket.
+
+        Realized is left at 0 here — populating it requires reading the
+        exchange income history (Binance /fapi/v1/income type=FUNDING_FEE,
+        Bybit /v5/account/transaction-log type=Funding). That's gated to
+        a follow-up commit so this one stays in the LoC budget.
+
+        Best-effort: any failure is logged at debug and never blocks the
+        trading loop. No DB writes in DRY_RUN unless db_pool is available
+        (the dashboard widget works for paper trading too).
+        """
+        try:
+            if not self.db_pool or not self.active_positions:
+                return
+            from datetime import datetime as _dt, timezone as _tz
+            now = _dt.now(_tz.utc).replace(minute=0, second=0, microsecond=0)
+            network = 'testnet' if getattr(self, 'testnet', False) else 'mainnet'
+            exch = getattr(self, 'exchange', 'binance') or 'binance'
+            rows = []
+            for symbol, pos in list(self.active_positions.items()):
+                try:
+                    rate = await self._get_funding_rate_cached(symbol)
+                    if rate is None:
+                        continue
+                    notional = float(getattr(pos, 'notional_value', 0) or 0)
+                    if notional <= 0:
+                        continue
+                    side_val = pos.side.value if hasattr(pos.side, 'value') else str(pos.side)
+                    side_u = side_val.upper()
+                    # LONG pays when funding > 0; SHORT pays when funding < 0.
+                    if side_u == 'LONG':
+                        side_sign = 1.0 if rate > 0 else -1.0
+                    else:
+                        side_sign = 1.0 if rate < 0 else -1.0
+                    predicted = abs(float(rate)) * notional * side_sign
+                    rows.append((now, symbol, side_u, notional, predicted, 0.0,
+                                 exch, network, 'engine'))
+                except Exception as inner:
+                    logger.debug(f"funding snapshot row failed for {symbol}: {inner}")
+            if not rows:
+                return
+            async with self.db_pool.acquire() as conn:
+                await conn.executemany(
+                    """
+                    INSERT INTO futures_funding_payments (
+                        hour_bucket, symbol, side, notional_usd,
+                        predicted_usd, realized_usd, exchange, network, source
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    ON CONFLICT (hour_bucket, symbol, side, exchange, network, source)
+                    DO UPDATE SET
+                        notional_usd  = EXCLUDED.notional_usd,
+                        predicted_usd = EXCLUDED.predicted_usd
+                    """,
+                    rows,
+                )
+        except Exception as e:
+            logger.debug(f"funding snapshot write failed (non-fatal): {e}")
+
+    async def _verify_isolated_or_close(self, symbol: str, side: TradeSide) -> None:
+        """FUT-RM-07: defense-in-depth on MB-17.
+
+        Re-reads the position from the exchange right after a fill and
+        confirms margin_type == ISOLATED. If the readback shows CROSS
+        (stale account-level setting, prior session leak, or a
+        110026/110043 false-positive from Bybit's "idempotency" branch)
+        we immediately close the position to bound risk to one trade's
+        margin requirement instead of the whole account.
+
+        No-op when:
+          - executor lacks get_position (cannot verify; logs warning)
+          - DRY_RUN (no real fill)
+          - margin_type reads as None (unknown — fail-open, log)
+
+        Bounded to ~1s of extra latency per entry: a single REST read.
+        """
+        try:
+            executor = self.exchange_client
+            if executor is None or not hasattr(executor, 'get_position'):
+                logger.warning(
+                    f"FUT-RM-07: executor has no get_position(); skipping isolated verify for {symbol}"
+                )
+                return
+            pos = await executor.get_position(symbol)
+            if not pos:
+                # No position came back — fill failed silently or fully closed.
+                # Don't open a second order, just log.
+                logger.warning(
+                    f"FUT-RM-07: get_position returned empty for {symbol} immediately "
+                    f"after fill — fill may have failed; verify externally"
+                )
+                return
+            # Normalize so we have margin_type regardless of source.
+            try:
+                from modules.futures_trading.exchanges import normalize_position
+                src = getattr(self, 'exchange', '') or ''
+                normalized = normalize_position(pos, src) or pos
+            except Exception:
+                normalized = pos
+            margin_type = (
+                normalized.get('margin_type')
+                if isinstance(normalized, dict) else None
+            )
+            if margin_type is None:
+                logger.info(
+                    f"FUT-RM-07: margin_type unavailable for {symbol}; "
+                    f"skipping enforcement (fail-open)"
+                )
+                return
+            if str(margin_type).upper() != 'ISOLATED':
+                logger.error(
+                    f"🚨 FUT-RM-07: {symbol} fill landed with margin_type="
+                    f"{margin_type!r} but ISOLATED is required. Closing immediately."
+                )
+                # Capture position size BEFORE the close so the alert payload
+                # carries the actual notional that breached.
+                breach_size = None
+                try:
+                    raw_size = (
+                        normalized.get('contracts')
+                        or normalized.get('size')
+                        or normalized.get('positionAmt')
+                        or normalized.get('qty')
+                        if isinstance(normalized, dict) else None
+                    )
+                    breach_size = float(raw_size) if raw_size is not None else None
+                except (TypeError, ValueError):
+                    breach_size = None
+                close_ok = True
+                close_err_msg = None
+                # Best-effort close — same path the SL/TP uses.
+                try:
+                    await self._close_position(symbol, "fut_rm_07_cross_margin_detected")
+                except Exception as close_err:
+                    close_ok = False
+                    close_err_msg = str(close_err)
+                    logger.error(
+                        f"FUT-RM-07: emergency close after CROSS detect failed for "
+                        f"{symbol}: {close_err}. Operator MUST intervene."
+                    )
+                # FUT-RM-07b: high-priority Telegram alert. Fail-soft.
+                if getattr(self, 'telegram_emergency_close_enabled', True):
+                    try:
+                        await self._notify_fut_rm_07_emergency_close(
+                            symbol=symbol,
+                            side=side,
+                            actual_margin=str(margin_type),
+                            position_size=breach_size,
+                            close_ok=close_ok,
+                            close_error=close_err_msg,
+                        )
+                    except Exception as notify_err:
+                        logger.warning(
+                            f"FUT-RM-07b: Telegram alert dispatch failed "
+                            f"(non-fatal) for {symbol}: {notify_err}"
+                        )
+            else:
+                logger.debug(f"FUT-RM-07: {symbol} margin_type verified ISOLATED")
+        except Exception as e:
+            logger.warning(f"FUT-RM-07 verify errored for {symbol}: {e}")
+
+    async def _notify_fut_rm_07_emergency_close(
+        self,
+        symbol: str,
+        side: 'TradeSide',
+        actual_margin: str,
+        position_size: Optional[float],
+        close_ok: bool,
+        close_error: Optional[str],
+    ) -> None:
+        """FUT-RM-07b (Wave 4): high-priority Telegram alert when the
+        FUT-RM-07 verify path detects a CROSS-margin fill and fires the
+        emergency-close. Reaches the shared TelegramBotController
+        singleton (initialized by main_futures.py at startup). Fail-soft
+        on every path — never raises into the caller.
+        """
+        # Lazy import — telegram_bot has its own optional aiohttp dep and
+        # we don't want futures_engine import-time coupling.
+        try:
+            from monitoring.telegram_bot import get_telegram_controller
+        except Exception as imp_err:
+            logger.info(
+                f"FUT-RM-07b: telegram_bot import unavailable ({imp_err}); "
+                f"skipping alert for {symbol}"
+            )
+            return
+        controller = get_telegram_controller()
+        # Treat missing bot_token/chat_id as "Telegram not configured" —
+        # log a warning and continue; do NOT block the emergency flow.
+        if not getattr(controller, 'bot_token', None) or not getattr(
+            controller, 'chat_id', None
+        ):
+            logger.warning(
+                f"FUT-RM-07b: Telegram not configured "
+                f"(no bot_token/chat_id) — emergency-close alert for "
+                f"{symbol} ({actual_margin}) only logged, not pushed."
+            )
+            return
+        side_str = getattr(side, 'value', str(side)).upper()
+        size_str = (
+            f"{position_size:.6f}"
+            if isinstance(position_size, (int, float))
+            else "unknown"
+        )
+        close_status = (
+            "CLOSED"
+            if close_ok
+            else f"CLOSE FAILED: {close_error}"
+        )
+        ts = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')
+        msg = (
+            f"FUT-RM-07 EMERGENCY CLOSE\n"
+            f"Symbol: {symbol}\n"
+            f"Side: {side_str}\n"
+            f"Margin (intended -> actual): ISOLATED -> {actual_margin}\n"
+            f"Position size: {size_str}\n"
+            f"Exchange: {getattr(self, 'exchange', 'unknown')}\n"
+            f"Status: {close_status}\n"
+            f"Timestamp: {ts}\n"
+            f"Operator action: verify the position is flat and "
+            f"investigate the CROSS-margin slip."
+        )
+        try:
+            await controller.notify(msg, priority="critical")
+        except Exception as notify_err:
+            logger.warning(
+                f"FUT-RM-07b: controller.notify() failed (non-fatal) "
+                f"for {symbol}: {notify_err}"
+            )
+
     async def close_all_positions(self):
         """Close all open positions"""
         logger.info("Closing all positions...")
@@ -2086,12 +2973,26 @@ class FuturesTradingEngine:
         except:
             pass
 
+        # ISSUE-15: non-sensitive account identity so the dashboard/operator
+        # can tell WHICH exchange + account is in use. The api_key_secret_name
+        # is the env/secret KEY NAME (not the value) the active key was read
+        # from; api_key_fingerprint is the masked last-4. Never the full key.
+        exch_u = (self.exchange or '').upper()
+        api_key_secret_name = (
+            f"{exch_u}_TESTNET_API_KEY" if self.testnet else f"{exch_u}_API_KEY"
+        )
+
         return {
             'status': 'healthy' if self.is_running and exchange_connected else 'degraded',
             'engine_running': self.is_running,
             'exchange_connected': exchange_connected,
             'dry_run': self.dry_run,
             'testnet': self.testnet,
+            # Account identity (non-sensitive)
+            'exchange': self.exchange,
+            'network': 'testnet' if self.testnet else 'mainnet',
+            'api_key_secret_name': api_key_secret_name,
+            'api_key_fingerprint': getattr(self, 'api_key_fingerprint', None),
             'risk_can_trade': self.risk_metrics.can_trade,
             'active_positions': len(self.active_positions),
             'daily_pnl': self.risk_metrics.daily_pnl,

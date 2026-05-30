@@ -173,15 +173,10 @@
                             <div class="form-text">Master switch for all arbitrage engines.</div>
                         </div>
 
-                        <div class="mb-3 form-check form-switch">
-                            <input class="form-check-input" type="checkbox" id="dry_run" checked>
-                            <label class="form-check-label" for="dry_run"><strong>DRY RUN Mode</strong></label>
-                            <div class="form-text">Simulate trades without real execution. <span class="text-danger">Disable for LIVE trading.</span></div>
-                        </div>
-
-                        <div class="alert alert-warning mb-0">
-                            <i class="fas fa-exclamation-triangle me-2"></i>
-                            <strong>Important:</strong> Always test with DRY RUN enabled before going live.
+                        <div class="alert alert-info mb-0" style="font-size:0.9em">
+                            <i class="fas fa-info-circle me-2"></i>
+                            <strong>DRY/LIVE:</strong> use the DRY/LIVE banner at the top of this page to toggle simulation mode.
+                            The Save button never changes that flag.
                         </div>
                     </div>
                 </div>
@@ -259,6 +254,12 @@
                             <label class="form-label">Opportunity Cooldown (minutes)</label>
                             <input type="number" class="form-control" id="opportunity_cooldown" min="1" max="120" value="30">
                             <div class="form-text">Wait time before re-executing same opportunity.</div>
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label">Hourly Gas Budget (USD)</label>
+                            <input type="number" class="form-control" id="gas_budget_usd_per_hour" min="1" max="1000" step="1" value="50">
+                            <div class="form-text">A2-07: rolling per-engine cap on USD spent on gas in any rolling 1-hour window. New executions are refused once exceeded.</div>
                         </div>
                     </div>
                 </div>
@@ -508,8 +509,20 @@
                 </div>
             </div>
 
-            <!-- Triangular Arbitrage -->
-            <div class="chain-card">
+            <!-- Triangular Arbitrage — module is gated behind MB-05
+                 atomic-receiver contract (scope cut, not defect). The
+                 form fields below WILL persist to DB but the engine
+                 won't act on them until the contract is deployed.
+                 Audit agent 2 #25 — surfaced this so operators know
+                 toggling these has no live effect today. -->
+            <div class="chain-card" style="opacity:0.7;border:1px dashed rgba(245,158,11,0.4);">
+                <div style="padding:8px 12px;background:rgba(245,158,11,0.1);border-bottom:1px solid rgba(245,158,11,0.3);font-size:0.85rem;color:#f59e0b;">
+                    <i class="fas fa-info-circle"></i>
+                    <strong>Experimental — currently gated.</strong>
+                    Triangular execution is blocked behind the atomic-receiver
+                    contract deploy. Settings below persist but the engine
+                    doesn't act on them yet. See <code>modules/arbitrage/CLAUDE.md</code>.
+                </div>
                 <div class="chain-header">
                     <div class="chain-icon triangular"><i class="fas fa-route"></i></div>
                     <div>
@@ -1188,7 +1201,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
 
                 // General
                 document.getElementById('enabled').checked = s.enabled === true;
-                document.getElementById('dry_run').checked = s.dry_run !== false;
+                // dry_run is now owned by the DryRunWidget banner — do not bind here.
                 document.getElementById('min_profit_spread').value = s.min_profit_spread || 0.5;
                 document.getElementById('gas_aware_threshold').checked = s.gas_aware_threshold !== false;
                 document.getElementById('gas_buffer').value = s.gas_buffer || 1.5;
@@ -1197,6 +1210,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
                 document.getElementById('max_daily_trades').value = s.max_daily_trades || 5;
                 document.getElementById('scan_interval').value = s.scan_interval || 2;
                 document.getElementById('opportunity_cooldown').value = s.opportunity_cooldown || 30;
+                document.getElementById('gas_budget_usd_per_hour').value = s.gas_budget_usd_per_hour || 50;
 
                 // Chains
                 document.getElementById('ethereum_enabled').checked = s.ethereum_enabled !== false;
@@ -1258,7 +1272,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
         const settings = {
             // General
             enabled: document.getElementById('enabled').checked,
-            dry_run: document.getElementById('dry_run').checked,
+            // dry_run intentionally omitted — see /api/modules/<m>/dry-run + DryRunWidget.
             min_profit_spread: parseFloat(document.getElementById('min_profit_spread').value),
             gas_aware_threshold: document.getElementById('gas_aware_threshold').checked,
             gas_buffer: parseFloat(document.getElementById('gas_buffer').value),
@@ -1267,6 +1281,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
             max_daily_trades: parseInt(document.getElementById('max_daily_trades').value),
             scan_interval: parseInt(document.getElementById('scan_interval').value),
             opportunity_cooldown: parseInt(document.getElementById('opportunity_cooldown').value),
+            gas_budget_usd_per_hour: parseFloat(document.getElementById('gas_budget_usd_per_hour').value),
 
             // Chains
             ethereum_enabled: document.getElementById('ethereum_enabled').checked,
@@ -1332,7 +1347,7 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
         try {
             const response = await fetch('/api/arbitrage/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: withCsrfHeaders('POST'),
                 body: JSON.stringify(settings)
             });
             const data = await response.json();
@@ -1347,4 +1362,6 @@ DRY_RUN=true &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&
         }
     }
 </script>
+<script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
+<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('arbitrage'); });</script>
 {% endblock %}

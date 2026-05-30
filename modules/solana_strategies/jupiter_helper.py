@@ -81,6 +81,13 @@ class JupiterHelper:
         solana_rpc_url: str = None,
         private_key: str = None,
         priority_fee_lamports: Optional[int] = None,
+        *,
+        adaptive_priority_fee: bool = False,
+        adaptive_percentile: float = 75.0,
+        adaptive_min_lamports: int = 10_000,
+        adaptive_max_lamports: int = 2_000_000,
+        adaptive_ttl_s: float = 5.0,
+        quote_max_age_s: float = 10.0,
     ):
         """
         Initialize Jupiter helper
@@ -88,7 +95,36 @@ class JupiterHelper:
         Args:
             solana_rpc_url: Solana RPC URL
             private_key: Base58-encoded private key for transaction signing
-            priority_fee_lamports: Raw int lamports to use as Jupiter priority fee. If None, get_swap_transaction falls back to its structured-dict default (maxLamports=1_000_000, priorityLevel=high).
+            priority_fee_lamports: Raw int lamports to use as Jupiter
+                priority fee. If None AND adaptive_priority_fee is False,
+                get_swap_transaction falls back to its structured-dict
+                default (maxLamports=1_000_000, priorityLevel=high).
+            adaptive_priority_fee: When True, execute_swap calls
+                ``get_adaptive_priority_fee`` before submitting the swap
+                and overrides priority_fee_lamports with the network
+                percentile (clamped to [min, max]). Cached for
+                ``adaptive_ttl_s`` seconds across swaps.
+            adaptive_percentile: Percentile of recent prioritization
+                fees to bid at (default 75th). Higher = faster fill,
+                more fee burn. 50 ~ median network, 90 ~ aggressive.
+            adaptive_min_lamports: Floor for the adaptive bid; below
+                this the controller returns the floor (network may have
+                a fee of 0 in calm periods but we still want priority
+                over no-fee txs).
+            adaptive_max_lamports: Ceiling for the adaptive bid; above
+                this the controller clamps (defends against runaway
+                bidding wars). Equivalent to ``maxLamports`` in the
+                structured-dict default.
+            adaptive_ttl_s: Re-use the last adaptive sample for this
+                many seconds before re-querying. 5s is short enough to
+                react to a congestion burst, long enough to avoid
+                spamming getRecentPrioritizationFees.
+            quote_max_age_s: Engine-side TTL for Jupiter quotes. Quotes
+                older than this should be re-fetched before signing;
+                the jupiter_executor already enforces this on its own
+                quotes (P1), and the engine paths use this constant via
+                ``quote_max_age_s`` to drop stale quotes returned by
+                ``get_quote`` before paying the fee.
         """
         # Jupiter API URL - supports different plans:
         # - Lite (Free): https://lite-api.jup.ag/swap/v1 (1 RPS) - DEFAULT
@@ -180,6 +216,88 @@ class JupiterHelper:
         # Optional raw-lamports priority fee override (wired from SolanaConfigManager).
         # None => get_swap_transaction uses its structured-dict default.
         self.priority_fee_lamports = priority_fee_lamports
+
+        # Adaptive priority-fee controller. Off by default; flip via
+        # SolanaConfigManager when the operator wants per-swap dynamic fees
+        # instead of the fixed structured-dict default.
+        self.adaptive_priority_fee = bool(adaptive_priority_fee)
+        self.adaptive_percentile = float(adaptive_percentile)
+        self.adaptive_min_lamports = int(adaptive_min_lamports)
+        self.adaptive_max_lamports = int(adaptive_max_lamports)
+        self.adaptive_ttl_s = float(adaptive_ttl_s)
+        self._adaptive_cache_value: Optional[int] = None
+        self._adaptive_cache_at: float = 0.0
+        # Quote freshness: caller-side budget shared with execute_swap
+        # for the engine integration commit.
+        self.quote_max_age_s = float(quote_max_age_s)
+
+    async def get_adaptive_priority_fee(self) -> Optional[int]:
+        """Return network-percentile priority fee (lamports), or None on failure.
+
+        Queries Solana's ``getRecentPrioritizationFees`` RPC, takes the
+        configured percentile across the last ~150 slots, clamps to
+        ``[adaptive_min_lamports, adaptive_max_lamports]``, caches for
+        ``adaptive_ttl_s`` seconds. Cache miss returns the fresh sample.
+
+        Returns None on any failure so the caller falls back to the
+        structured-dict default. Never raises.
+        """
+        # Cache check first — coalesces concurrent swaps within TTL.
+        now = time.time()
+        if (
+            self._adaptive_cache_value is not None
+            and (now - self._adaptive_cache_at) < self.adaptive_ttl_s
+        ):
+            return self._adaptive_cache_value
+
+        if not self.solana_rpc:
+            return None
+        if not self.session:
+            try:
+                await self.initialize()
+            except Exception:
+                return None
+
+        try:
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "getRecentPrioritizationFees",
+                "params": [[]],
+            }
+            async with self.session.post(self.solana_rpc, json=payload) as response:
+                if response.status != 200:
+                    return None
+                data = await response.json()
+                samples = (data or {}).get('result') or []
+                fees = sorted(
+                    int(s.get('prioritizationFee', 0))
+                    for s in samples
+                    if isinstance(s, dict)
+                )
+                if not fees:
+                    bid = self.adaptive_min_lamports
+                else:
+                    # Linear-interpolated percentile.
+                    pct = max(0.0, min(100.0, self.adaptive_percentile))
+                    k = (len(fees) - 1) * (pct / 100.0)
+                    lo = int(k)
+                    hi = min(lo + 1, len(fees) - 1)
+                    frac = k - lo
+                    sample = fees[lo] + (fees[hi] - fees[lo]) * frac
+                    bid = int(sample)
+                # Clamp.
+                bid = max(self.adaptive_min_lamports, min(self.adaptive_max_lamports, bid))
+                self._adaptive_cache_value = bid
+                self._adaptive_cache_at = now
+                logger.debug(
+                    "adaptive priority fee = %d lamports (p%d of %d samples)",
+                    bid, int(self.adaptive_percentile), len(fees),
+                )
+                return bid
+        except Exception as exc:
+            logger.debug(f"adaptive priority fee fetch failed: {exc}")
+            return None
 
     def _load_keypair_from_value(self, pk_str: str) -> Optional[Keypair]:
         """
@@ -421,6 +539,10 @@ class JupiterHelper:
                     if response.status == 200:
                         quote = await response.json()
                         self.rate_limiter.record_success()
+                        # Quote freshness: stamp so execute_swap can drop
+                        # stale quotes before paying the fee (mirrors the
+                        # JupiterExecutor P1 fix at jupiter_executor.py:610).
+                        quote['_fetched_at'] = time.time()
                         logger.info(
                             f"✅ Jupiter quote: {input_mint[:10]}... → {output_mint[:10]}... "
                             f"Amount: {amount}, Output: {quote.get('outAmount', 0)}"
@@ -947,7 +1069,9 @@ class JupiterHelper:
         amount: int,
         slippage_bps: int = 50,
         user_public_key: str = None,
-        restrict_intermediate_tokens: bool = False
+        restrict_intermediate_tokens: bool = False,
+        dry_run: bool = False,
+        module: str = 'solana',
     ) -> Optional[str]:
         """
         Execute complete swap: quote → transaction → sign → send → confirm
@@ -958,6 +1082,14 @@ class JupiterHelper:
             amount: Amount to swap
             slippage_bps: Slippage tolerance
             user_public_key: User public key (defaults to loaded keypair)
+            dry_run: Defense-in-depth flag. The primary gate is at the
+                engine layer (`solana_engine` only instantiates
+                JupiterHelper when dry_run=False), but SOL-RM-14 asks
+                this helper to honor a passed-in flag and the global
+                killswitch in case a future caller forgets the engine
+                gate. When True (or the kill-switch / pause flag is
+                set), returns a sentinel signature instead of signing.
+            module: module-name used for the kill-switch/pause lookup.
 
         Returns:
             Optional[str]: Transaction signature or None
@@ -965,6 +1097,21 @@ class JupiterHelper:
         # Use module-level logger that matches SolanaTradingEngine
         import logging
         swap_logger = logging.getLogger("SolanaTradingEngine")
+
+        # Defense-in-depth gate. Honors module dry_run + global
+        # killswitch + per-module pause flag. SOL-RM-14.
+        try:
+            from core.dry_run import should_skip_live
+            if should_skip_live(dry_run, module=module, account=user_public_key):
+                swap_logger.info(
+                    f"🔶 JupiterHelper DRY-RUN/PAUSED gate engaged "
+                    f"({input_mint[:6]}→{output_mint[:6]} amt={amount}) — no tx broadcast"
+                )
+                return 'DRY_RUN_SIMULATED'
+        except ImportError:
+            # core.dry_run absent (older deployments) — fall through
+            # to the engine-layer gate.
+            pass
 
         try:
             # Clear last error for this swap attempt
@@ -999,11 +1146,40 @@ class JupiterHelper:
 
             swap_logger.info(f"   ✅ Quote received: out={quote.get('outAmount', 'N/A')}")
 
+            # Quote freshness gate: in volatile markets (memecoins, congestion
+            # spikes) a quote can decay between fetch and submit. Drop quotes
+            # older than quote_max_age_s before paying fees / signing.
+            fetched_at = quote.get('_fetched_at')
+            if fetched_at is not None:
+                age = time.time() - float(fetched_at)
+                if age > self.quote_max_age_s:
+                    swap_logger.warning(
+                        "⚠️ Jupiter quote stale: %.1fs old (max %.1fs) — refetching",
+                        age, self.quote_max_age_s,
+                    )
+                    quote = await self.get_quote(
+                        input_mint, output_mint, amount, slippage_bps,
+                        restrict_intermediate_tokens=restrict_intermediate_tokens,
+                    )
+                    if not quote:
+                        swap_logger.error("❌ Jupiter: refetch after stale quote failed")
+                        return None
+
             # 2. Get swap transaction
             swap_logger.info(f"   📝 Jupiter: Creating swap transaction...")
+            # Resolve priority fee: adaptive controller (when enabled) wins
+            # over the static configured value; either can be None to fall
+            # back to get_swap_transaction's structured-dict default.
+            pri_fee = None
+            if getattr(self, 'adaptive_priority_fee', False):
+                pri_fee = await self.get_adaptive_priority_fee()
+                if pri_fee is not None:
+                    swap_logger.debug(f"   ⚡ adaptive priority fee = {pri_fee} lamports")
+            if pri_fee is None:
+                pri_fee = getattr(self, 'priority_fee_lamports', None) or None
             swap_data = await self.get_swap_transaction(
                 quote, user_public_key,
-                priority_fee_lamports=getattr(self, 'priority_fee_lamports', None) or None,
+                priority_fee_lamports=pri_fee,
             )
             if not swap_data:
                 swap_logger.error("❌ Jupiter: Failed to get swap transaction")

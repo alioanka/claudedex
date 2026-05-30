@@ -239,8 +239,8 @@
             <div class="stat-value" id="stat-avg-spread">0.00%</div>
         </div>
         <div class="stat-card">
-            <div class="stat-label">Total Volume</div>
-            <div class="stat-value" id="stat-volume">0.00 ETH</div>
+            <div class="stat-label" title="Sum of native-token volume across all arbitrage trades. Mixed ETH/SOL — see per-chain breakdown on /arbitrage/trades for separate totals.">Total Volume (mixed)</div>
+            <div class="stat-value" id="stat-volume">0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Total Trades</div>
@@ -264,7 +264,7 @@
         </div>
         <div class="stat-card">
             <div class="stat-label">Avg Trade Size</div>
-            <div class="stat-value" id="stat-avg-size">0.00 ETH</div>
+            <div class="stat-value" id="stat-avg-size">0.00</div>
         </div>
         <div class="stat-card">
             <div class="stat-label">Active Routes</div>
@@ -296,12 +296,16 @@
     </div>
 
     <!-- Performance by Route Section -->
+    <style>
+    .table-responsive.route-table-scroll { max-height: 520px; overflow-y: auto; }
+    </style>
     <div class="section-card">
         <div class="section-title">
             <i class="fas fa-route"></i>
             Performance by Route
+            <span id="routeTableNote" style="margin-left:auto;font-size:0.75rem;color:var(--text-secondary);font-weight:400;"></span>
         </div>
-        <div class="table-responsive">
+        <div class="table-responsive route-table-scroll">
             <table class="route-table" id="routeTable">
                 <thead>
                     <tr>
@@ -415,13 +419,13 @@ function showEmptyState() {
     document.getElementById('stat-winrate').textContent = '0%';
     document.getElementById('stat-profit-factor').textContent = '0.00';
     document.getElementById('stat-avg-spread').textContent = '0.00%';
-    document.getElementById('stat-volume').textContent = '0.00 ETH';
+    document.getElementById('stat-volume').textContent = '0.00';
     document.getElementById('stat-total-trades').textContent = '0';
     document.getElementById('stat-avg-profit').textContent = '$0.00';
     document.getElementById('stat-best-trade').textContent = '$0.00';
     document.getElementById('stat-worst-trade').textContent = '$0.00';
     document.getElementById('stat-best-spread').textContent = '0.00%';
-    document.getElementById('stat-avg-size').textContent = '0.00 ETH';
+    document.getElementById('stat-avg-size').textContent = '0.00';
     document.getElementById('stat-routes').textContent = '0';
     document.getElementById('routeTableBody').innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:20px;">No arbitrage trades yet</td></tr>';
 }
@@ -476,13 +480,13 @@ function calculateAndDisplayMetrics(trades) {
     document.getElementById('stat-winrate').textContent = winRate.toFixed(1) + '%';
     document.getElementById('stat-profit-factor').textContent = profitFactor >= 999 ? '∞' : profitFactor.toFixed(2);
     document.getElementById('stat-avg-spread').textContent = avgSpread.toFixed(2) + '%';
-    document.getElementById('stat-volume').textContent = totalVolume.toFixed(4) + ' ETH';
+    document.getElementById('stat-volume').textContent = totalVolume.toFixed(4);
     document.getElementById('stat-total-trades').textContent = trades.length;
     document.getElementById('stat-avg-profit').textContent = `$${avgProfit.toFixed(2)}`;
     document.getElementById('stat-best-trade').textContent = `$${bestTrade.toFixed(2)}`;
     document.getElementById('stat-worst-trade').textContent = `$${worstTrade.toFixed(2)}`;
     document.getElementById('stat-best-spread').textContent = bestSpread.toFixed(2) + '%';
-    document.getElementById('stat-avg-size').textContent = avgSize.toFixed(4) + ' ETH';
+    document.getElementById('stat-avg-size').textContent = avgSize.toFixed(4);
     document.getElementById('stat-routes').textContent = routes.size;
 
     // Update charts
@@ -584,13 +588,24 @@ function sortRouteTable(column) {
 
 function updateRouteTable() {
     const tbody = document.getElementById('routeTableBody');
+    const note = document.getElementById('routeTableNote');
 
     if (routeStats.length === 0) {
         tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:var(--text-secondary);padding:20px;">No arbitrage trades yet</td></tr>';
+        if (note) note.textContent = '';
         return;
     }
 
-    tbody.innerHTML = routeStats.map(r => `
+    // Render top-25 by active sort; scrollable container handles overflow.
+    const ROW_LIMIT = 25;
+    const visible = routeStats.slice(0, ROW_LIMIT);
+    if (note) {
+        note.textContent = routeStats.length > ROW_LIMIT
+            ? `Top ${ROW_LIMIT} of ${routeStats.length} routes — sort by any column to re-rank`
+            : `${routeStats.length} routes`;
+    }
+
+    tbody.innerHTML = visible.map(r => `
         <tr>
             <td class="route-badge">
                 <span class="dex-tag">${r.buyDex}</span>
@@ -877,6 +892,20 @@ function updateCumulativePnlChart(trades, cumulativePnl) {
     });
 }
 
+function _renderArbChartEmptyState(canvasId, message) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+}
+
 function updateDailyPnlChart(trades) {
     const ctx = document.getElementById('dailyPnlChart').getContext('2d');
 
@@ -893,6 +922,12 @@ function updateDailyPnlChart(trades) {
 
     if (dailyPnlChart) {
         dailyPnlChart.destroy();
+        dailyPnlChart = null;
+    }
+
+    if (!pnls.some(p => Math.abs(p) > 1e-9)) {
+        _renderArbChartEmptyState('dailyPnlChart', 'No realized P&L yet');
+        return;
     }
 
     dailyPnlChart = new Chart(ctx, {
@@ -935,6 +970,12 @@ function updateWinLossChart(wins, losses) {
 
     if (winLossChart) {
         winLossChart.destroy();
+        winLossChart = null;
+    }
+
+    if ((wins || 0) + (losses || 0) === 0) {
+        _renderArbChartEmptyState('winLossChart', 'No closed trades yet');
+        return;
     }
 
     winLossChart = new Chart(ctx, {

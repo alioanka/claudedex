@@ -5,7 +5,10 @@
  */
 
 let currentModule = 'dex_trading';
-let currentTimeframe = '24h';
+// All Time so the page shows full P&L on first paint (matches the
+// <option selected> in analytics.html). A timeframe selector change
+// reassigns this immediately.
+let currentTimeframe = 'all';
 let equityChart = null;
 let dailyPnlChart = null;
 let refreshInterval = null;
@@ -75,6 +78,10 @@ async function loadPortfolioSummary() {
 }
 
 async function loadModuleTabs() {
+    // FAILURE B fix: replace the 3 hardcoded tabs (DEX/Futures/Solana) with
+    // the full set returned by /api/modules so SNIPER/ARBITRAGE/COPY/AI are
+    // reachable. Stamp every dynamic tab with both class + data-module so
+    // switchModule() can find it without textContent-prefix matching.
     try {
         const response = await fetch('/api/modules');
         const result = await response.json();
@@ -88,18 +95,35 @@ async function loadModuleTabs() {
             if (Array.isArray(result.data)) {
                 modules = result.data;
             } else if (result.data.modules && typeof result.data.modules === 'object') {
-                // Convert modules object to array
-                modules = Object.entries(result.data.modules).map(([name, data]) => ({
-                    name: name,
-                    display_name: data.display_name || name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-                    ...data
+                // Convert modules object to array. CRITICAL: `name`
+                // must come AFTER the spread because `data` carries
+                // its own `name` field (the display name like
+                // "Sniper") which would otherwise overwrite the
+                // route-key ("sniper"). When that happened, every
+                // analytics endpoint got hit with `/api/analytics/
+                // performance/Sniper` and returned empty data —
+                // exactly the "tab switching shows 0 trades" symptom.
+                modules = Object.entries(result.data.modules).map(([key, data]) => ({
+                    display_name: data.display_name || data.name ||
+                                  key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+                    ...data,
+                    name: key,
                 }));
             }
 
             modules.forEach(module => {
                 const tab = document.createElement('button');
-                tab.className = `tab-btn ${module.name === currentModule ? 'active' : ''}`;
-                tab.textContent = module.display_name || module.name;
+                // Use BOTH legacy `tab-button` and `tab-btn` so existing CSS
+                // and the inline-template event handler in analytics.html
+                // both find it.
+                tab.className = `tab-button tab-btn ${module.name === currentModule ? 'active' : ''}`;
+                tab.setAttribute('data-module', module.name);
+                const statusBadge = module.status === 'DISABLED'
+                    ? ' <span style="opacity:0.5;font-size:0.7em;">(disabled)</span>'
+                    : (module.status === 'ENABLED + RUNNING'
+                        ? ' <span style="opacity:0.9;font-size:0.7em;color:#10b981;">●</span>'
+                        : '');
+                tab.innerHTML = (module.display_name || module.name) + statusBadge;
                 tab.onclick = () => switchModule(module.name);
                 tabsContainer.appendChild(tab);
             });
@@ -112,11 +136,12 @@ async function loadModuleTabs() {
 async function switchModule(moduleName) {
     currentModule = moduleName;
 
-    // Update active tabs (both .tab-btn and .tab-button classes)
+    // FAILURE B fix: match strictly on data-module to avoid the prior
+    // textContent prefix trick that wrongly marked multiple tabs active
+    // (e.g. "copy_trading" matched both "Copy Trading" and "Copy Sniper").
     document.querySelectorAll('.tab-btn, .tab-button').forEach(btn => {
         btn.classList.remove('active');
-        // Re-add active to the clicked button based on data-module attribute
-        if (btn.getAttribute('data-module') === moduleName || btn.textContent.toLowerCase().includes(moduleName.split('_')[0])) {
+        if (btn.getAttribute('data-module') === moduleName) {
             btn.classList.add('active');
         }
     });
@@ -126,41 +151,43 @@ async function switchModule(moduleName) {
 }
 
 async function loadModuleAnalytics(moduleName, timeframe) {
+    // FAILURE B fix: surface 503/error responses to the operator instead
+    // of silently rendering zeros. Previously every endpoint returning
+    // 503 (because analytics_engine=None in the standalone dashboard
+    // subprocess) was treated as "no data" — operators saw $0.00 + empty
+    // charts with no hint of WHY. Now we show a notification when ANY of
+    // the five endpoints fail.
+    const endpoints = [
+        ['performance', `/api/analytics/performance/${moduleName}?timeframe=${timeframe}`],
+        ['risk',        `/api/analytics/risk/${moduleName}`],
+        ['equity',      `/api/analytics/equity/${moduleName}?timeframe=${timeframe}`],
+        ['daily-pnl',   `/api/analytics/daily-pnl/${moduleName}?timeframe=${timeframe}`],
+        ['trades',      `/api/analytics/trades/${moduleName}?limit=10`],
+    ];
     try {
-        // Load performance, risk, equity, daily PnL, and trades in parallel
-        const [perfResponse, riskResponse, equityResponse, pnlResponse, tradesResponse] = await Promise.all([
-            fetch(`/api/analytics/performance/${moduleName}?timeframe=${timeframe}`),
-            fetch(`/api/analytics/risk/${moduleName}`),
-            fetch(`/api/analytics/equity/${moduleName}?timeframe=${timeframe}`),
-            fetch(`/api/analytics/daily-pnl/${moduleName}?timeframe=${timeframe}`),
-            fetch(`/api/analytics/trades/${moduleName}?limit=10`)
-        ]);
-
-        const perfResult = await perfResponse.json();
-        const riskResult = await riskResponse.json();
-        const equityResult = await equityResponse.json();
-        const pnlResult = await pnlResponse.json();
-        const tradesResult = await tradesResponse.json();
-
-        if (perfResult.success) {
-            updatePerformanceMetrics(perfResult.data);
+        const responses = await Promise.all(endpoints.map(([_, url]) => fetch(url)));
+        const results = await Promise.all(responses.map(async (r, i) => {
+            const ok = r.ok;
+            let payload = null;
+            try { payload = await r.json(); } catch (_) {}
+            return { kind: endpoints[i][0], status: r.status, ok, payload };
+        }));
+        const failed = results.filter(r => !r.ok || (r.payload && r.payload.success === false));
+        if (failed.length === results.length) {
+            const reason = failed[0].payload?.error || `HTTP ${failed[0].status}`;
+            showNotification(`Analytics unavailable for ${moduleName}: ${reason}`, 'error');
+        } else if (failed.length > 0) {
+            const kinds = failed.map(f => f.kind).join(', ');
+            showNotification(`Some analytics failed (${kinds}) for ${moduleName}`, 'warning');
         }
+        const [perfResult, riskResult, equityResult, pnlResult, tradesResult] =
+            results.map(r => r.payload || {});
 
-        if (riskResult.success) {
-            updateRiskMetrics(riskResult.data);
-        }
-
-        if (equityResult.success) {
-            updateEquityChart(equityResult.data);
-        }
-
-        if (pnlResult.success) {
-            updateDailyPnlChart(pnlResult.data);
-        }
-
-        if (tradesResult.success) {
-            updateTradesTable(tradesResult.data.trades);
-        }
+        if (perfResult && perfResult.success) updatePerformanceMetrics(perfResult.data);
+        if (riskResult && riskResult.success) updateRiskMetrics(riskResult.data);
+        if (equityResult && equityResult.success) updateEquityChart(equityResult.data);
+        if (pnlResult && pnlResult.success) updateDailyPnlChart(pnlResult.data);
+        if (tradesResult && tradesResult.success) updateTradesTable(tradesResult.data.trades);
 
     } catch (error) {
         console.error('Error loading module analytics:', error);
@@ -175,12 +202,39 @@ function updatePerformanceMetrics(data) {
     updateElement('max-drawdown', `${data.max_drawdown}%`);
     updateElement('avg-win', formatCurrency(data.avg_win));
     updateElement('avg-loss', formatCurrency(data.avg_loss));
+    // FAILURE-A5 follow-up: surface the trade count + timeframe so an
+    // operator who clicked Sniper and saw all-zeros immediately sees
+    // WHY ("Showing 24h: 0 trades — try 'all' timeframe"). Previously
+    // the cards just showed 0%/0.00/0.00 with no hint.
+    updateEmptyWindowHint(data.total_trades || 0);
+}
+
+function updateEmptyWindowHint(trades) {
+    let hint = document.getElementById('tr-empty-window-hint');
+    if (!hint) {
+        const grid = document.querySelector('.metrics-grid');
+        if (!grid || !grid.parentElement) return;
+        hint = document.createElement('div');
+        hint.id = 'tr-empty-window-hint';
+        hint.style.cssText = 'margin-top:8px;font-size:0.8rem;color:#94a3b8;';
+        grid.parentElement.appendChild(hint);
+    }
+    const tf = (document.getElementById('timeframe-selector') || {}).value || '?';
+    const mod = currentModule || '?';
+    hint.textContent = `Module: ${mod} • Timeframe: ${tf} • Closed trades in window: ${trades.toLocaleString()}`;
+    hint.style.color = trades === 0 ? '#f59e0b' : '#94a3b8';
+    if (trades === 0) {
+        hint.textContent += '  — try a longer timeframe (e.g. "All Time") if you expected data.';
+    }
 }
 
 function updateRiskMetrics(data) {
     updateElement('total-exposure', formatCurrency(data.total_exposure));
     updateElement('net-exposure', formatCurrency(data.net_exposure), data.net_exposure >= 0 ? 'pnl-positive' : 'pnl-negative');
     updateElement('var-95', formatCurrency(data.var_95));
+    // var_99 and cvar_95 were computed and discarded — see DASH-Q-12.
+    updateElement('var-99', formatCurrency(data.var_99));
+    updateElement('cvar-95', formatCurrency(data.cvar_95));
     updateElement('annual-vol', `${data.annual_volatility}%`);
     updateElement('avg-leverage', `${data.avg_leverage.toFixed(1)}x`);
     updateElement('largest-position', `${data.largest_position_pct}%`);

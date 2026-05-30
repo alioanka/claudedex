@@ -150,10 +150,16 @@
         <select id="timeframe-selector" class="form-control" style="width: auto;">
             <option value="1h">1 Hour</option>
             <option value="4h">4 Hours</option>
-            <option value="24h" selected>24 Hours</option>
+            <option value="24h">24 Hours</option>
             <option value="7d">7 Days</option>
             <option value="30d">30 Days</option>
-            <option value="all">All Time</option>
+            <!-- Default to All Time so an operator landing on /analytics
+                 sees their full P&L immediately. The previous "24 Hours"
+                 default rendered every tile as 0 if the most recent trade
+                 was older than 24h — which mislead operators into
+                 thinking the module switcher was broken (it wasn't, the
+                 window was just empty). -->
+            <option value="all" selected>All Time</option>
         </select>
         <button id="refresh-btn" class="btn btn-primary" onclick="refreshAnalytics()">
             <i class="fas fa-sync"></i> Refresh
@@ -190,12 +196,13 @@
     </div>
 </section>
 
-<!-- Module Tabs -->
+<!-- Module Tabs — populated dynamically from /api/modules by
+     dashboard/static/js/analytics.js#loadModuleTabs (FAILURE B fix).
+     The placeholder buttons below are shown only while the JS is fetching
+     so the page never looks empty on first paint. -->
 <section class="module-tabs">
     <div class="tabs-header" id="module-tabs">
-        <button class="tab-button active" data-module="dex_trading">DEX Trading</button>
-        <button class="tab-button" data-module="futures_trading">Futures Trading</button>
-        <button class="tab-button" data-module="solana_trading">Solana Strategies</button>
+        <button class="tab-button tab-btn active" data-module="dex_trading" disabled>Loading modules&hellip;</button>
     </div>
 </section>
 
@@ -256,6 +263,14 @@
                     <div class="metric">
                         <span class="metric-label">VaR (95%)</span>
                         <span id="var-95" class="metric-value">$0.00</span>
+                    </div>
+                    <div class="metric" title="99% Value-at-Risk — daily loss exceeded only 1% of the time">
+                        <span class="metric-label">VaR (99%)</span>
+                        <span id="var-99" class="metric-value">$0.00</span>
+                    </div>
+                    <div class="metric" title="Conditional VaR — expected loss in the worst 5% of days">
+                        <span class="metric-label">CVaR (95%)</span>
+                        <span id="cvar-95" class="metric-value">$0.00</span>
                     </div>
                     <div class="metric">
                         <span class="metric-label">Volatility (Annual)</span>

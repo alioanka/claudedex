@@ -25,10 +25,9 @@
                                     <div class="form-text">Master switch for the sniper module.</div>
                                 </div>
 
-                                <div class="mb-3 form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="dry_run" checked>
-                                    <label class="form-check-label" for="dry_run">DRY RUN Mode</label>
-                                    <div class="form-text">Simulate trades without real execution. <strong class="text-danger">Disable for LIVE trading.</strong></div>
+                                <div class="alert alert-info py-2 mb-3" style="font-size:0.85em">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    DRY/LIVE is controlled by the banner at the top of this page (canonical toggle).
                                 </div>
 
                                 <div class="mb-3">
@@ -76,10 +75,17 @@
                             <div class="col-md-6">
                                 <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-shield-alt me-2"></i>Token Safety Checks</h6>
 
+                                <div class="alert alert-danger py-2 mb-3" style="font-size:0.85em">
+                                    <i class="fas fa-exclamation-triangle me-1"></i>
+                                    <strong>Live-trade guard:</strong> the engine refuses to start in LIVE mode while
+                                    <code>safety_check_enabled=false</code>. Disable safety checks only while DRY_RUN is on
+                                    — re-enable BEFORE flipping the module to LIVE.
+                                </div>
+
                                 <div class="mb-3 form-check form-switch">
                                     <input class="form-check-input" type="checkbox" id="safety_check_enabled" checked>
                                     <label class="form-check-label" for="safety_check_enabled">Enable Safety Checks</label>
-                                    <div class="form-text">Run token safety analysis before sniping (GoPlus, Honeypot.is, RugCheck).</div>
+                                    <div class="form-text">Run token safety analysis before sniping (GoPlus, Honeypot.is, RugCheck). Must be ON for LIVE trading.</div>
                                 </div>
 
                                 <div class="mb-3 form-check form-switch">
@@ -339,7 +345,7 @@
                 const settings = data.settings;
                 // Basic settings
                 document.getElementById('enabled').checked = settings.enabled === true;
-                document.getElementById('dry_run').checked = settings.dry_run !== false; // Default true
+                // dry_run owned by DryRunWidget banner — skipped here.
                 document.getElementById('trade_amount').value = settings.trade_amount || 0.1;
                 document.getElementById('slippage').value = settings.slippage || 10;
                 document.getElementById('chain').value = settings.chain || 'solana';
@@ -366,7 +372,7 @@
         const settings = {
             // Basic settings
             enabled: document.getElementById('enabled').checked,
-            dry_run: document.getElementById('dry_run').checked,
+            // dry_run omitted — banner-only.
             trade_amount: parseFloat(document.getElementById('trade_amount').value),
             slippage: parseFloat(document.getElementById('slippage').value),
             chain: document.getElementById('chain').value,
@@ -388,7 +394,7 @@
         try {
             const response = await fetch('/api/sniper/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: withCsrfHeaders('POST'),
                 body: JSON.stringify(settings)
             });
             const data = await response.json();
@@ -399,4 +405,6 @@
         }
     }
 </script>
+<script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
+<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('sniper'); });</script>
 {% endblock %}

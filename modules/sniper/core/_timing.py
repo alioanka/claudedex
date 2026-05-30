@@ -22,10 +22,19 @@ class SnipeTimingContext:
     time.perf_counter() floats; subtract to get monotonic deltas."""
     token_address: str = ""
     chain: str = ""
-    # Stage 1: detection — when listener emitted the event. May be
-    # parsed from target['timestamp'] (ISO wall-clock) if available;
-    # otherwise stamped at evaluate-start.
+    # Stage 1: detection — when the block was produced. Parsed from
+    # target['timestamp'] (ISO wall-clock anchored on on-chain
+    # block_time when available). Approximates "block production
+    # time" in perf_counter space via parse_iso_to_perf_counter.
     t_detect: Optional[float] = None
+    # Stage 1b: rpc_receipt — wall-clock when this process first SAW
+    # the event (logsSubscribe notification arrival for WSS, or
+    # getSignaturesForAddress response for polling). Stamped by the
+    # listener BEFORE any getTransaction confirmation wait, so the
+    # delta (t_rpc_receipt - t_detect) reflects pure detection
+    # staleness and isolates the WSS-vs-polling structural advantage
+    # from the commitment-wait penalty.
+    t_rpc_receipt: Optional[float] = None
     # Stage 2: evaluate start — sniper_engine._evaluate_target entry
     t_eval_start: float = field(default_factory=time.perf_counter)
     # Stage 3: safety check entry / exit
@@ -57,6 +66,12 @@ class SnipeTimingContext:
                     return "—"
                 return f"{(end - start) * 1000:.1f}ms"
 
+            # Detection-staleness metric: block-production → process-receipt.
+            # The headline number for the WSS-vs-polling A/B; isolated
+            # from the getTransaction commitment wait that previously
+            # dominated total_ms.
+            detect_to_rpc = _ms(self.t_detect, self.t_rpc_receipt)
+            rpc_to_eval = _ms(self.t_rpc_receipt, self.t_eval_start)
             detect_to_eval = _ms(self.t_detect, self.t_eval_start)
             eval_to_safety = _ms(self.t_eval_start, self.t_safety_start)
             safety_dur = _ms(self.t_safety_start, self.t_safety_done)
@@ -68,9 +83,10 @@ class SnipeTimingContext:
             token_disp = (self.token_address[:16] + "...") if self.token_address else "—"
             logger.info(
                 "⏱️ SNIPE TIMING %s %s outcome=%s | "
-                "detect→eval=%s eval→safety=%s safety=%s "
-                "safety→broadcast=%s broadcast=%s | total=%s",
+                "detect→rpc=%s rpc→eval=%s detect→eval=%s eval→safety=%s "
+                "safety=%s safety→broadcast=%s broadcast=%s | total=%s",
                 self.chain, token_disp, self.outcome,
+                detect_to_rpc, rpc_to_eval,
                 detect_to_eval, eval_to_safety, safety_dur,
                 safety_to_broadcast, broadcast_dur, total,
             )
@@ -89,6 +105,11 @@ class SnipeTimingContext:
 
         return {
             'outcome': self.outcome,
+            # Detection-staleness: block production → process receipt.
+            # Headline WSS-vs-polling A/B metric.
+            'detect_to_rpc_receipt_ms': _delta_ms(self.t_detect, self.t_rpc_receipt),
+            # In-process queue cost from receipt to engine pickup.
+            'rpc_receipt_to_eval_ms': _delta_ms(self.t_rpc_receipt, self.t_eval_start),
             'detect_to_eval_ms': _delta_ms(self.t_detect, self.t_eval_start),
             'eval_to_safety_ms': _delta_ms(self.t_eval_start, self.t_safety_start),
             'safety_ms': _delta_ms(self.t_safety_start, self.t_safety_done),

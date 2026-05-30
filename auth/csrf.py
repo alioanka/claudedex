@@ -26,6 +26,14 @@ _EXEMPT_PATHS = frozenset((
     '/api/auth/logout',
 ))
 
+# Path prefixes exempt from CSRF. Socket.IO long-poll uploads POST to
+# /socket.io/?... and don't carry a CSRF token (the protocol manages its
+# own session via sid). Auth middleware still gates these via session_id
+# cookie, so dropping CSRF here doesn't lower the security floor.
+_EXEMPT_PREFIXES = (
+    '/socket.io/',
+)
+
 
 def _new_token() -> str:
     return secrets.token_urlsafe(32)
@@ -37,7 +45,11 @@ async def csrf_middleware_factory(app: web.Application, handler: Callable) -> Ca
         path = request.path
 
         # State-changing requests must present a matching token unless exempt.
-        if method in _PROTECTED_METHODS and path not in _EXEMPT_PATHS:
+        is_exempt = (
+            path in _EXEMPT_PATHS
+            or any(path.startswith(p) for p in _EXEMPT_PREFIXES)
+        )
+        if method in _PROTECTED_METHODS and not is_exempt:
             cookie_token = request.cookies.get(CSRF_COOKIE)
             header_token = request.headers.get(CSRF_HEADER)
             if not cookie_token or not header_token or not secrets.compare_digest(

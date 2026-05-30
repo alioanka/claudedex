@@ -80,32 +80,36 @@ async def main():
     logger.info("👯 Copy Trading Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
     logger.info(f"   Log dir: {log_dir.absolute()}")
-
-    # Check for API keys and RPC URLs - use Pool Engine for RPC management
+    # Per-module DRY_RUN override (Phase 3 A4). COPY_TRADING_DRY_RUN
+    # env beats DRY_RUN. Mirror into DRY_RUN so copy_engine's
+    # should_skip_live() picks up the resolved value.
     try:
-        from security.secrets_manager import secrets
-        etherscan_key = secrets.get('ETHERSCAN_API_KEY', log_access=False)
-        helius_key = secrets.get('HELIUS_API_KEY', log_access=False)
-    except Exception:
-        # Fallback to env if secrets manager unavailable
-        etherscan_key = os.getenv('ETHERSCAN_API_KEY')
-        helius_key = os.getenv('HELIUS_API_KEY')
+        from core.dry_run import resolve_module_dry_run
+        copy_dry = resolve_module_dry_run('copy_trading', default=True)
+        os.environ['DRY_RUN'] = 'true' if copy_dry else 'false'
+        logger.info(f"   DRY_RUN (resolved per-module): {copy_dry}")
+    except Exception as e:
+        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
-    # Use Pool Engine for Solana RPC
-    solana_rpc = None
-    if RPCProvider:
-        solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
-    if not solana_rpc:
-        solana_rpc = os.getenv('SOLANA_RPC_URL')
+    # Wave-7 fix (issue 17a, mirrors AI commit cca8d94): the copy module's
+    # API keys (ETHERSCAN_API_KEY / HELIUS_API_KEY) live in the encrypted
+    # `secure_credentials` DB table, NOT in .env. The previous code read
+    # `secrets.get(...)` HERE — BEFORE the db_pool was created and BEFORE
+    # `secrets.initialize(db_pool)`. The secrets manager was still in
+    # bootstrap mode, so it fell back to os.getenv (None for DB-only ops)
+    # and logged "ETHERSCAN_API_KEY: NOT SET" / "HELIUS_API_KEY: Not set"
+    # even though both were configured. The Solana RPC was likewise
+    # resolved via the public .env fallback (hence the constant
+    # "Solana RPC rate limited" spam) because the Helius key wasn't
+    # available to build the Helius endpoint.
+    #
+    # Resolution: connect the DB FIRST, initialize the secrets manager
+    # with the pool, THEN resolve the keys via get_async (the sync get()
+    # short-circuits inside a running event loop — see secrets_manager
+    # _get_from_database_sync). Only after the Helius key resolves do we
+    # pick the Solana RPC, preferring Helius over any public endpoint.
 
-    logger.info(f"   ETHERSCAN_API_KEY: {'Configured' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
-    logger.info(f"   SOLANA_RPC_URL: {'Configured' if solana_rpc else 'NOT SET - Solana monitoring disabled'}")
-    logger.info(f"   HELIUS_API_KEY: {'Configured' if helius_key else 'Not set (optional)'}")
-
-    if not etherscan_key and not solana_rpc:
-        logger.warning("⚠️ No API keys configured - Copy Trading will not monitor any wallets")
-
-    # Init DB - Use Docker secrets or environment
+    # Init DB FIRST - Use Docker secrets or environment
     try:
         from security.docker_secrets import get_database_url
         db_url = get_database_url()
@@ -132,6 +136,45 @@ async def main():
     except Exception as e:
         logger.warning(f"Could not initialize secrets manager: {e}")
 
+    # Now resolve API keys AFTER the secrets manager has the db_pool, so
+    # the DB-backed encrypted credentials path is taken instead of the
+    # bootstrap-mode os.getenv fallback.
+    etherscan_key = None
+    helius_key = None
+    try:
+        from security.secrets_manager import secrets as _secrets
+        etherscan_key = await _secrets.get_async('ETHERSCAN_API_KEY', log_access=False)
+        helius_key = await _secrets.get_async('HELIUS_API_KEY', log_access=False)
+    except Exception as e:
+        logger.warning(f"   secrets_manager lookup failed: {e}; falling back to env")
+    # .env fallback (gradual-migration support)
+    if not etherscan_key:
+        etherscan_key = os.getenv('ETHERSCAN_API_KEY')
+    if not helius_key:
+        helius_key = os.getenv('HELIUS_API_KEY')
+
+    # Resolve the Solana RPC AFTER the Helius key is known. Prefer Helius
+    # (paid, high-rate) over any public endpoint so the run-loop stops
+    # getting 429-throttled. PoolEngine is initialised later by the
+    # engine; here we build the Helius RPC URL directly from the key.
+    solana_rpc = None
+    if helius_key:
+        solana_rpc = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
+    if not solana_rpc and RPCProvider:
+        solana_rpc = RPCProvider.get_rpc_sync('SOLANA_RPC')
+    if not solana_rpc:
+        solana_rpc = os.getenv('SOLANA_RPC_URL')
+
+    rpc_is_helius = bool(helius_key) and bool(solana_rpc) and 'helius' in solana_rpc.lower()
+    logger.info(f"   ETHERSCAN_API_KEY: {'SET' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
+    logger.info(f"   HELIUS_API_KEY: {'SET' if helius_key else 'Not set (optional)'}")
+    logger.info(
+        f"   SOLANA_RPC: {'SET (Helius)' if rpc_is_helius else ('SET (public/fallback)' if solana_rpc else 'NOT SET - Solana monitoring disabled')}"
+    )
+
+    if not etherscan_key and not solana_rpc:
+        logger.warning("⚠️ No API keys configured - Copy Trading will not monitor any wallets")
+
     # Init Config
     config_manager = ConfigManager()
     await config_manager.initialize()
@@ -144,7 +187,8 @@ async def main():
     telegram_controller = None
     if get_telegram_controller:
         try:
-            telegram_controller = get_telegram_controller(db_pool)
+            # Wave-11 FIX 2: tag with module_name so start_polling honors TELEGRAM_POLL_OWNER.
+            telegram_controller = get_telegram_controller(db_pool, module_name='copy')
             if await telegram_controller.initialize():
                 telegram_controller.register_module(
                     name='copy_trading',
@@ -160,13 +204,105 @@ async def main():
             logger.warning(f"Telegram controller failed to initialize: {e}")
 
     try:
-        logger.info("✅ Copy Trading Engine initialized successfully")
-        await engine.start()
+        # NOTE: the previous "✅ initialized successfully" log here
+        # was misleading — main_copy.py constructs the engine object
+        # but does NOT call engine.initialize(). The real init runs
+        # inside engine.start() (line 714: if self.executor is None →
+        # await self.initialize()). When initialize() fails, start()
+        # returns False, main() returns, the subprocess exits silently,
+        # and the orchestrator restarts it in a loop until max_restarts
+        # is reached (the "Copy Trading has failed permanently" log).
+        # Surface the failure here so the operator can read the actual
+        # error from logs/copy_trading/copy_trading.log instead of
+        # spelunking the engine's own logger.
+
+        # Wave-12 FIX 2: derive the Solana execution pubkey from
+        # SOLANA_MODULE_PRIVATE_KEY BEFORE engine.start() so
+        # _persist_execution_wallets surfaces it on the dashboard funding
+        # panel instead of "solana=none". The same class of bug as DEX /
+        # Sniper / Copy EVM (Wave-11 FIX 1 / 3 / Wave-12 FIX 1): the
+        # stored SOLANA_MODULE_WALLET secret was None for the operator,
+        # so copy_engine line 288 (`secrets.get('SOLANA_MODULE_WALLET') or
+        # os.getenv(...)`) resolved to None even with a valid PK. We can't
+        # edit copy_engine.py (concurrent agent owns it), so we run
+        # engine.initialize() here (idempotent), derive the pubkey from
+        # the executor's already-decrypted solana_private_key, write it
+        # into executor.solana_wallet, then re-call
+        # _persist_execution_wallets so the dashboard reads the resolved
+        # address. engine.start() will skip re-init since executor is
+        # non-None. Public address only — keypair never logged. Mask
+        # logged addresses to first6...last4.
+        if not await engine.initialize():
+            err = getattr(engine, 'error_message', None) or 'unknown (check engine.initialize)'
+            logger.error(f"❌ Copy Trading engine.initialize() returned False: {err}")
+            logger.error("   The subprocess will exit. Check upstream config / db / secrets.")
+            return
+        try:
+            _exec = getattr(engine, 'executor', None)
+            _pk = getattr(_exec, 'solana_private_key', None) if _exec else None
+            _existing = getattr(_exec, 'solana_wallet', None) if _exec else None
+            if _exec is not None and _pk and not _existing:
+                derived_sol = None
+                try:
+                    from solders.keypair import Keypair
+                    import base58
+                    key_bytes = None
+                    if _pk.startswith('['):
+                        try:
+                            import json as _json
+                            key_bytes = bytes(_json.loads(_pk))
+                        except Exception:
+                            pass
+                    if key_bytes is None:
+                        try:
+                            key_bytes = base58.b58decode(_pk)
+                        except Exception:
+                            pass
+                    if key_bytes is None:
+                        try:
+                            key_bytes = bytes.fromhex(_pk)
+                        except Exception:
+                            pass
+                    if key_bytes is not None:
+                        if len(key_bytes) == 64:
+                            kp = Keypair.from_bytes(key_bytes)
+                        elif len(key_bytes) == 32:
+                            kp = Keypair.from_seed(key_bytes)
+                        else:
+                            kp = None
+                        if kp is not None:
+                            derived_sol = str(kp.pubkey())
+                except Exception as e:
+                    logger.debug(f"copy Solana wallet derivation failed: {e}")
+                if derived_sol:
+                    _exec.solana_wallet = derived_sol
+                    mask = derived_sol[:6] + "..." + derived_sol[-4:]
+                    logger.info(f"🔑 Copy Solana wallet derived from PK: {mask}")
+                    # Re-surface to dashboard so funding panel updates.
+                    try:
+                        await engine._persist_execution_wallets()
+                    except Exception as e:
+                        logger.warning(f"re-persist execution wallets failed: {e}")
+        except Exception as e:
+            logger.warning(f"Copy Solana wallet derivation block failed (non-fatal): {e}")
+
+        logger.info("🚀 Copy Trading Engine starting — entering main loop")
+        result = await engine.start()
+        if not result:
+            err = getattr(engine, 'error_message', None) or 'unknown (check engine.initialize)'
+            logger.error(f"❌ Copy Trading engine.start() returned False: {err}")
+            logger.error("   The subprocess will exit. Check upstream config / db / secrets.")
     except KeyboardInterrupt:
         if telegram_controller:
             await telegram_controller.notify("Copy Trading module shutting down...", priority="high")
             await telegram_controller.stop_polling()
         await engine.stop()
+    except Exception as e:
+        # Catch-all so the operator sees the traceback in
+        # logs/copy_trading/ instead of a silent exit.
+        import traceback
+        logger.error(f"❌ Copy Trading main loop crashed: {e}")
+        logger.error(traceback.format_exc())
     except Exception as e:
         logger.error(f"❌ Engine error: {e}")
         import traceback

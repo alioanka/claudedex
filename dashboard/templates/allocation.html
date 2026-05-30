@@ -1,0 +1,316 @@
+{% extends "base.html" %}
+
+{% block title %}Portfolio Allocation - DexScreener Trading Bot{% endblock %}
+
+{% block extra_css %}
+<style>
+  .alloc-page { color: var(--text-primary, #f1f5f9); }
+  .alloc-grid {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 16px; margin-bottom: 16px;
+  }
+  @media (max-width: 900px) {
+    .alloc-grid { grid-template-columns: 1fr; }
+  }
+  .alloc-card {
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .alloc-card h3 { margin: 0 0 10px 0; font-size: 1rem; }
+  .alloc-bar {
+    display: flex; height: 26px; border-radius: 6px;
+    overflow: hidden; background: var(--bg-tertiary, #0f172a);
+    margin-top: 8px;
+  }
+  .alloc-segment {
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.7rem; font-weight: 700; color: #fff;
+    white-space: nowrap; overflow: hidden;
+    min-width: 0; transition: flex-grow 0.3s;
+  }
+  .alloc-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  .alloc-table th, .alloc-table td {
+    padding: 8px 10px; text-align: left;
+    border-bottom: 1px solid var(--border-color, #334155);
+  }
+  .alloc-table th { background: var(--bg-tertiary, #0f172a); font-weight: 600; }
+  .alloc-table td.num { text-align: right; font-family: ui-monospace, Menlo, monospace; }
+  .pending-actions button {
+    background: var(--accent-primary, #3b82f6); color: #fff;
+    border: none; padding: 4px 10px; border-radius: 4px;
+    font-size: 0.75rem; cursor: pointer; margin-right: 4px;
+  }
+  .pending-actions input {
+    background: var(--bg-tertiary, #0f172a); color: var(--text-primary);
+    border: 1px solid var(--border-color); border-radius: 4px;
+    padding: 4px 6px; font-size: 0.75rem; width: 60px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="alloc-page">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 style="pointer-events:auto;">Portfolio Allocation</h1>
+      <div style="color: var(--text-secondary, #94a3b8); font-size: 0.9rem;">
+        Per-module capital allocation based on rolling Sharpe.
+        Proposals from the allocator subprocess; operator approves
+        each one (or overrides with a custom percentage).
+      </div>
+    </div>
+    <button id="alloc-propose" class="btn btn-primary">
+      <i class="fas fa-bolt"></i> Recompute Now
+    </button>
+  </div>
+
+  <div class="alloc-grid">
+    <div class="alloc-card">
+      <h3>Current allocation (approved)</h3>
+      <div id="current-summary" style="color: var(--text-secondary, #94a3b8); font-size: 0.8rem;">
+        Loading…
+      </div>
+      <div id="current-bar" class="alloc-bar"></div>
+      <div id="current-legend" style="margin-top: 10px; font-size: 0.75rem;"></div>
+    </div>
+
+    <div class="alloc-card">
+      <h3>Pending proposals</h3>
+      <table class="alloc-table">
+        <thead>
+          <tr>
+            <th>Module</th>
+            <th class="num">Proposed %</th>
+            <th class="num">USD</th>
+            <th>Source</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="pending-tbody">
+          <tr><td colspan="5">Loading…</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="alloc-card">
+    <h3>History (last 50 proposals)</h3>
+    <table class="alloc-table">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Module</th>
+          <th class="num">% of book</th>
+          <th class="num">USD</th>
+          <th>By</th>
+          <th>State</th>
+        </tr>
+      </thead>
+      <tbody id="history-tbody">
+        <tr><td colspan="6">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  const PALETTE = ['#3b82f6','#10b981','#f59e0b','#ef4444','#8b5cf6','#ec4899','#14b8a6'];
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function csrfHeaders() {
+    const m = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+    return { 'Content-Type': 'application/json',
+             'X-CSRF-Token': decodeURIComponent(m) };
+  }
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    try {
+      const d = new Date(iso);
+      return d.toISOString().slice(0, 16).replace('T', ' ');
+    } catch (_) { return iso; }
+  }
+
+  async function loadCurrent() {
+    try {
+      const r = await fetch('/api/portfolio/allocations/current');
+      const data = await r.json();
+      const rows = data.current || [];
+      const total = rows.reduce((s, r) => s + r.pct_of_book, 0);
+      const reserve = Math.max(0, 100 - total);
+      const summary = document.getElementById('current-summary');
+      summary.textContent = rows.length === 0
+        ? 'No allocations approved yet. Recompute or wait for the next subprocess tick.'
+        : `${rows.length} modules allocated; reserve ${reserve.toFixed(1)}%`;
+      // Stacked bar
+      const bar = document.getElementById('current-bar');
+      bar.innerHTML = '';
+      rows.forEach((r, i) => {
+        const seg = document.createElement('div');
+        seg.className = 'alloc-segment';
+        seg.style.flexBasis = r.pct_of_book + '%';
+        seg.style.flexGrow = '0';
+        seg.style.background = PALETTE[i % PALETTE.length];
+        seg.textContent = r.pct_of_book >= 6
+          ? `${r.module} ${r.pct_of_book.toFixed(0)}%` : '';
+        seg.title = `${r.module}: ${r.pct_of_book.toFixed(2)}% ($${r.usd_amount.toFixed(2)})`;
+        bar.appendChild(seg);
+      });
+      if (reserve > 0) {
+        const seg = document.createElement('div');
+        seg.className = 'alloc-segment';
+        seg.style.flexBasis = reserve + '%';
+        seg.style.flexGrow = '0';
+        seg.style.background = '#475569';
+        seg.textContent = reserve >= 6 ? `reserve ${reserve.toFixed(0)}%` : '';
+        seg.title = `reserve: ${reserve.toFixed(2)}%`;
+        bar.appendChild(seg);
+      }
+      // Legend
+      const legend = document.getElementById('current-legend');
+      legend.innerHTML = rows.map((r, i) =>
+        `<span style="display:inline-block;margin-right:14px;">
+           <span style="display:inline-block;width:10px;height:10px;
+                        background:${PALETTE[i % PALETTE.length]};
+                        margin-right:4px;vertical-align:middle;"></span>
+           ${esc(r.module)} ${r.pct_of_book.toFixed(1)}%
+         </span>`
+      ).join('') + (reserve > 0
+        ? `<span><span style="display:inline-block;width:10px;height:10px;
+             background:#475569;margin-right:4px;vertical-align:middle;"></span>
+             reserve ${reserve.toFixed(1)}%</span>` : '');
+    } catch (e) {
+      document.getElementById('current-summary').textContent = 'Fetch failed: ' + e.message;
+    }
+  }
+
+  async function loadPending() {
+    try {
+      const r = await fetch('/api/portfolio/allocations?status=pending&limit=20');
+      const data = await r.json();
+      const rows = data.allocations || [];
+      const tbody = document.getElementById('pending-tbody');
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-secondary,#94a3b8);text-align:center;padding:14px 0;">No pending proposals.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(r => `
+        <tr data-alloc-id="${esc(r.id)}">
+          <td>${esc(r.module)}</td>
+          <td class="num">${r.pct_of_book.toFixed(2)}%</td>
+          <td class="num">$${r.usd_amount.toFixed(2)}</td>
+          <td>${esc(r.proposed_by)}</td>
+          <td class="pending-actions">
+            <button data-action="approve" data-id="${esc(r.id)}">Approve</button>
+            <input type="number" placeholder="% override" min="0" max="100" step="0.5"
+                   data-id="${esc(r.id)}" />
+            <button data-action="override" data-id="${esc(r.id)}">Apply</button>
+          </td>
+        </tr>`).join('');
+      tbody.querySelectorAll('button[data-action]').forEach(b => {
+        b.addEventListener('click', onAction);
+      });
+    } catch (e) {
+      document.getElementById('pending-tbody').innerHTML =
+        `<tr><td colspan="5" style="color:#ef4444;">Fetch failed: ${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  async function loadHistory() {
+    try {
+      const r = await fetch('/api/portfolio/allocations?status=all&limit=50');
+      const data = await r.json();
+      const rows = data.allocations || [];
+      const tbody = document.getElementById('history-tbody');
+      if (rows.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;">No history yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = rows.map(r => `
+        <tr>
+          <td>${fmtTime(r.created_at)}</td>
+          <td>${esc(r.module)}</td>
+          <td class="num">${r.pct_of_book.toFixed(2)}%</td>
+          <td class="num">$${r.usd_amount.toFixed(2)}</td>
+          <td>${esc(r.proposed_by)} ${r.approved_by ? '→ ' + esc(r.approved_by) : ''}</td>
+          <td>${r.approved_at ? '<span style="color:#10b981;">approved</span>' : '<span style="color:#f59e0b;">pending</span>'}</td>
+        </tr>`).join('');
+    } catch (e) {
+      document.getElementById('history-tbody').innerHTML =
+        `<tr><td colspan="6" style="color:#ef4444;">Fetch failed: ${esc(e.message)}</td></tr>`;
+    }
+  }
+
+  async function onAction(e) {
+    const btn = e.currentTarget;
+    const id = btn.dataset.id;
+    const action = btn.dataset.action;
+    btn.disabled = true;
+    const oldText = btn.textContent; btn.textContent = '…';
+    try {
+      let body = {};
+      if (action === 'override') {
+        const input = btn.parentElement.querySelector('input[data-id="' + id + '"]');
+        const v = parseFloat(input.value);
+        if (isNaN(v) || v < 0 || v > 100) {
+          alert('Override % must be 0..100');
+          return;
+        }
+        body = { override_pct: v };
+      }
+      const r = await fetch(`/api/portfolio/allocations/${id}/approve`, {
+        method: 'POST', headers: csrfHeaders(),
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (!r.ok || data.success === false) {
+        alert('Action failed: ' + (data.error || r.statusText));
+        return;
+      }
+      await Promise.all([loadCurrent(), loadPending(), loadHistory()]);
+    } catch (err) {
+      alert('Error: ' + (err.message || err));
+    } finally {
+      btn.disabled = false; btn.textContent = oldText;
+    }
+  }
+
+  async function propose() {
+    const btn = document.getElementById('alloc-propose');
+    btn.disabled = true;
+    const oldText = btn.innerHTML;
+    btn.textContent = 'Computing…';
+    try {
+      const r = await fetch('/api/portfolio/allocations/propose', {
+        method: 'POST', headers: csrfHeaders(), body: '{}',
+      });
+      const data = await r.json();
+      if (!r.ok || data.success === false) {
+        alert('Recompute failed: ' + (data.error || r.statusText));
+        return;
+      }
+      await Promise.all([loadCurrent(), loadPending(), loadHistory()]);
+    } catch (e) {
+      alert('Error: ' + (e.message || e));
+    } finally {
+      btn.disabled = false; btn.innerHTML = oldText;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    loadCurrent(); loadPending(); loadHistory();
+    document.getElementById('alloc-propose').addEventListener('click', propose);
+    // Auto-refresh every 5 min — matches the allocator subprocess tick.
+    setInterval(() => { loadCurrent(); loadPending(); loadHistory(); }, 5 * 60 * 1000);
+  });
+})();
+</script>
+{% endblock %}

@@ -139,7 +139,20 @@ class TokenSafetyChecker:
         return report
 
     async def _check_evm_token(self, token_address: str, chain: str) -> SafetyReport:
-        """Check EVM token using GoPlus and Honeypot.is APIs"""
+        """Check EVM token using GoPlus + Honeypot.is with quorum decision.
+
+        R4 quorum rule (set in `_quorum_honeypot_decision`):
+          * Both sources reachable + agree → honor the verdict.
+          * Both sources reachable + disagree → reject as honeypot
+            (fail-safe; false-positive on a token cheaper than buying a
+            real honeypot).
+          * Exactly one source reachable → trust its verdict.
+          * Neither source reachable → leave is_honeypot=False; the
+            engine's separate safety_check_error path will kick in.
+        Per-source verdicts are recorded in the warnings list with
+        explicit `[GP]` / `[HP]` tags so the dashboard / ops can trace
+        which source flagged.
+        """
         warnings = []
 
         # Default values
@@ -153,6 +166,10 @@ class TokenSafetyChecker:
         holder_count = 0
         top_holder_pct = 100.0
 
+        # Per-source verdicts: None = source unreachable, True/False = source verdict.
+        goplus_says_honeypot: Optional[bool] = None
+        honeypotis_says_honeypot: Optional[bool] = None
+
         # 1. GoPlus Security Check
         goplus_data = await self._call_goplus(token_address, chain)
         if goplus_data:
@@ -161,10 +178,15 @@ class TokenSafetyChecker:
             if not isinstance(token_info, dict):
                 token_info = {}
 
-            # Honeypot check
-            if token_info.get('is_honeypot') == '1':
-                is_honeypot = True
-                warnings.append("🍯 HONEYPOT: Cannot sell this token")
+            # Honeypot check (record-then-quorum). is_honeypot=='1' is the
+            # strict signal; '0' means cleared; anything else (None/empty)
+            # means GoPlus didn't decide — treat as None.
+            gp_flag = token_info.get('is_honeypot')
+            if gp_flag == '1':
+                goplus_says_honeypot = True
+                warnings.append("🍯 [GP] HONEYPOT: GoPlus flagged this token")
+            elif gp_flag == '0':
+                goplus_says_honeypot = False
 
             # Tax checks - handle None/null values
             try:
@@ -241,9 +263,17 @@ class TokenSafetyChecker:
         if honeypot_data and isinstance(honeypot_data, dict):
             # CRITICAL: use (x or {}) to handle explicit null values
             hp_result = honeypot_data.get('honeypotResult') or {}
-            if isinstance(hp_result, dict) and hp_result.get('isHoneypot'):
-                is_honeypot = True
-                warnings.append(f"🍯 HONEYPOT: {hp_result.get('honeypotReason') or 'Unknown reason'}")
+            if isinstance(hp_result, dict):
+                hp_flag = hp_result.get('isHoneypot')
+                # hp_flag is True/False (bool) or None when simulation
+                # couldn't complete. Trust True/False only.
+                if hp_flag is True:
+                    honeypotis_says_honeypot = True
+                    warnings.append(
+                        f"🍯 [HP] HONEYPOT: {hp_result.get('honeypotReason') or 'Unknown reason'}"
+                    )
+                elif hp_flag is False:
+                    honeypotis_says_honeypot = False
 
             simulation = honeypot_data.get('simulationResult') or {}
             if isinstance(simulation, dict):
@@ -263,6 +293,13 @@ class TokenSafetyChecker:
                     liquidity_usd = float(pair.get('liquidity') or 0)
                 except (TypeError, ValueError):
                     liquidity_usd = 0.0
+
+        # R4 quorum decision across the two honeypot sources.
+        is_honeypot, quorum_note = self._quorum_honeypot_decision(
+            goplus_says_honeypot, honeypotis_says_honeypot
+        )
+        if quorum_note:
+            warnings.append(quorum_note)
 
         # Calculate safety score
         score = self._calculate_score(
@@ -297,6 +334,40 @@ class TokenSafetyChecker:
             top_holder_percentage=top_holder_pct,
             warnings=warnings
         )
+
+    @staticmethod
+    def _quorum_honeypot_decision(
+        goplus_verdict: Optional[bool],
+        honeypotis_verdict: Optional[bool],
+    ) -> Tuple[bool, Optional[str]]:
+        """R4: combine two honeypot oracles into a quorum decision.
+
+        Returns (is_honeypot, optional warning note for the report).
+        Truth table (G=GoPlus verdict, H=Honeypot.is verdict):
+          G=None,  H=None  → (False, None)             both unreachable; let
+                                                       engine's safety_check_error
+                                                       path drive the cooldown.
+          G=v,     H=None  → (v, '[QUORUM] one-source')  trust single source.
+          G=None,  H=v     → (v, '[QUORUM] one-source')  trust single source.
+          G=True,  H=True  → (True,  '[QUORUM] both agree honeypot')
+          G=False, H=False → (False, None)             both clear, no warning.
+          disagree         → (True,  '[QUORUM] disagree — fail-safe')
+                              false-positive cheaper than buying a honeypot.
+        """
+        if goplus_verdict is None and honeypotis_verdict is None:
+            return False, None
+        if goplus_verdict is None:
+            return bool(honeypotis_verdict), '⚠️ [QUORUM] one-source (Honeypot.is only)'
+        if honeypotis_verdict is None:
+            return bool(goplus_verdict), '⚠️ [QUORUM] one-source (GoPlus only)'
+        if goplus_verdict == honeypotis_verdict:
+            if goplus_verdict:
+                return True, '🍯 [QUORUM] both sources agree: honeypot'
+            return False, None
+        # Disagreement → fail-safe: treat as honeypot. A false-positive
+        # snipe-skip costs zero; trusting the "clear" verdict in a real
+        # honeypot scenario costs the entire trade_amount.
+        return True, '⚠️ [QUORUM] sources disagree — failing safe'
 
     async def _check_solana_token(self, token_address: str) -> SafetyReport:
         """Check Solana token using RugCheck.xyz API"""

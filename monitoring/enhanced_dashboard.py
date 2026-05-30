@@ -1,6 +1,17 @@
 """
 Enhanced Dashboard for DexScreener Trading Bot
 Professional web-based monitoring, control, and analytics interface
+
+Timestamp convention (operator-reported 2026-05-21):
+    All datetime values emitted by this module MUST be UTC and MUST
+    carry a trailing 'Z' (or a +HH:MM offset) so that browser-side
+    `new Date(s)` parses them as UTC rather than local. Use the
+    `_iso_utc(dt)` helper below — it accepts naive or aware datetimes
+    and always returns an ISO 8601 string with a 'Z' suffix when the
+    input is naive. Without this, an operator at UTC+3 reads fresh
+    rows as "3h ago" because JS interprets naive ISO as LOCAL time.
+    A matching client-side helper lives at
+    /static/js/timezone.js — both layers should be kept in sync.
 """
 
 import asyncio
@@ -9,7 +20,7 @@ import os
 from typing import Dict, List, Optional, Any
 from dotenv import load_dotenv
 from dataclasses import dataclass, asdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 import json
@@ -39,6 +50,70 @@ except ImportError as e:
     AUTH_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+
+def _iso_utc(dt) -> str:
+    """
+    Serialise a datetime as an ISO 8601 string with explicit UTC marker.
+
+    The DB stores copy_trading / sniper / arbitrage timestamps in UTC
+    but the column type is TIMESTAMP WITHOUT TIME ZONE, so asyncpg
+    returns naive datetime objects. ``naive.isoformat()`` yields a
+    string without 'Z' or '+00:00', and browser JS interprets that as
+    LOCAL time — shifting the display by the operator's UTC offset.
+
+    Returns '' for None, and appends 'Z' to naive datetimes.  Aware
+    datetimes are converted to UTC first so the wire format is uniform
+    regardless of what the DB driver attaches.
+    """
+    if dt is None:
+        return ''
+    try:
+        if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+            # Aware datetime — normalise to UTC and emit with 'Z'.
+            try:
+                from datetime import timezone as _tz
+                return dt.astimezone(_tz.utc).strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z'
+            except Exception:
+                return dt.isoformat()
+        # Naive datetime (asyncpg default for TIMESTAMP WITHOUT TIME ZONE)
+        # — assumed to be UTC by project convention.
+        return dt.isoformat() + 'Z'
+    except Exception:
+        # Last-resort string coercion — keeps the endpoint from 500'ing
+        # if an unexpected type sneaks in.
+        return str(dt)
+
+
+def _as_utc(dt):
+    """Normalise a datetime to tz-aware UTC for safe comparison/subtraction.
+
+    Wave-6's ``_iso_utc`` timezone work surfaced a latent bug: some DB
+    columns are ``TIMESTAMP WITH TIME ZONE`` (asyncpg returns *aware*
+    datetimes) while others are ``TIMESTAMP WITHOUT TIME ZONE`` (asyncpg
+    returns *naive* datetimes, which the project treats as UTC). Mixing
+    the two when sorting or subtracting raises
+    ``TypeError: can't compare offset-naive and offset-aware datetimes``.
+
+    This helper makes every datetime consistently tz-aware UTC:
+      * ``None``               -> ``None`` (callers must None-check)
+      * naive datetime         -> same wall-clock, tagged UTC
+      * aware datetime         -> converted to UTC
+
+    Anything that is not a datetime (or has no ``tzinfo``) is returned
+    unchanged so callers can fall back gracefully.
+    """
+    if dt is None:
+        return None
+    try:
+        if not hasattr(dt, 'tzinfo'):
+            return dt
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return dt
+
 
 # Solana token name mapping for common tokens
 SOLANA_TOKEN_NAMES = {
@@ -124,6 +199,31 @@ class DashboardEndpoints:
         # RPC/API Pool Engine
         self.pool_engine = pool_engine
 
+        # Cached SOL/USD price for SOL-denominated PnL display. CoinGecko
+        # is hit lazily on first read and cached for 60s. Falls back to
+        # 200.0 (mid-range approximation) on network failure so the
+        # dashboard never errors. Replaces two hardcoded $200.0 sites.
+        self._sol_usd_cache: float = 0.0
+        self._sol_usd_cached_at: datetime = datetime.min
+
+        # Per-mint Jupiter price cache (token_address → (price_usd, fetched_at)).
+        # Used to populate live unrealized_pnl on open copy_trading positions
+        # so the operator sees real PnL instead of $0.00. 30s TTL keeps the
+        # Jupiter call rate well under the public-tier limit even when the
+        # operator hammers refresh.
+        self._token_price_cache: Dict[str, tuple] = {}
+
+        # Wave-11 FIX 1: /api/dashboard/charts/full response cache.
+        # The endpoint previously fetched every closed trade across 7 module
+        # tables (~400K rows for an active operator) and produced a 22 MB
+        # JSON in ~76s, blocking the event loop and triggering orchestrator
+        # restarts. We now cap rows per-table, exclude noisy modules
+        # (sniper / arbitrage) that have their own dashboards, downsample
+        # time-series to <=500 points, and cache the assembled response for
+        # 45s keyed on (since_days, granularity).
+        self._charts_cache: Dict[tuple, tuple] = {}
+        self._charts_cache_ttl_s: int = 45
+
         # Authentication
         self.auth_service = None
         self.auth_enabled = False
@@ -147,6 +247,25 @@ class DashboardEndpoints:
             loader=FileSystemLoader('dashboard/templates'),
             autoescape=select_autoescape(['html', 'xml'])
         )
+        # Static-asset cache buster — pinned to git HEAD at startup so that
+        # every deploy invalidates browser caches automatically. Falls back
+        # to the process start timestamp if git is unavailable (e.g. the
+        # repo dir got copied without .git). VPS failure 2: after the
+        # 5c7777b fix the operator still saw 'UNKNOWN' because Chrome had
+        # the pre-fix main.js cached. Now every script tag in base.html
+        # appends ?v={{ asset_version }}.
+        try:
+            import subprocess as _sp
+            _sha = _sp.check_output(
+                ['git', 'rev-parse', '--short', 'HEAD'],
+                cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                stderr=_sp.DEVNULL,
+                timeout=2,
+            ).decode().strip()
+        except Exception:
+            import time as _t
+            _sha = str(int(_t.time()))
+        self.jinja_env.globals['asset_version'] = _sha or 'dev'
 
         # ========== WALLET BALANCE CACHING ==========
         # Cache wallet balances to prevent instability from intermittent RPC failures
@@ -173,12 +292,22 @@ class DashboardEndpoints:
             # Register fallback routes for module pages when module_manager is not available
             self._setup_fallback_module_routes()
 
-        # Setup analytics routes if analytics engine available
-        if self.analytics_engine:
-            self._setup_analytics_routes()
+        # Setup analytics routes. Previously gated on analytics_engine
+        # being non-None, which meant the dashboard subprocess (which
+        # passes analytics_engine=None) never registered /analytics at
+        # all — the page silently 302'd to /login under auth, looking
+        # like it worked when really the route didn't exist. The route
+        # registration is harmless without an engine; the AnalyticsRoutes
+        # handlers now fail-soft on missing engine.
+        self._setup_analytics_routes()
 
         # Setup RPC/API Pool routes
         self._setup_rpc_pool_routes()
+
+        # Setup Test Runner routes (/api/test-runner/*) + /test-runner page.
+        # Registers unconditionally so /test-runner is reachable even
+        # when the dashboard runs standalone without the trading engine.
+        self._setup_test_runner_routes()
 
         # NOTE: Credentials routes are now setup in _on_startup AFTER db is ready
         # This was moved to ensure db_pool is available for the credentials API
@@ -191,6 +320,400 @@ class DashboardEndpoints:
 
         # In-memory storage for backtests
         self.backtests = {}
+
+    async def routes_debug_endpoint(self, request):
+        """Diagnostic: dump every registered route. Wrapped in an
+        outer try/except BaseException so a regression here never
+        cascades to a 500 from the error_handler_middleware."""
+        import traceback as _tb
+        try:
+            return await self._routes_debug_inner(request)
+        except BaseException as e:
+            tb_str = ''.join(_tb.format_exception(type(e), e, e.__traceback__))[-1500:]
+            try:
+                logger.error(
+                    f"routes_debug_endpoint outer catch: "
+                    f"{type(e).__name__}: {e}\n{tb_str}"
+                )
+            except Exception:
+                pass
+            return web.json_response(
+                {'error': f'{type(e).__name__}: {e}', 'traceback': tb_str},
+                status=200,
+            )
+
+    async def _routes_debug_inner(self, request):
+        def _safe(obj, attr=None, default='?'):
+            try:
+                if attr:
+                    val = getattr(obj, attr, None)
+                    if val is None:
+                        return default
+                    return str(val)
+                return str(obj)
+            except BaseException:
+                return default
+        rows = []
+        loop_error = None
+        try:
+            for r in self.app.router.routes():
+                try:
+                    method = _safe(r, 'method')
+                    resource = getattr(r, 'resource', None)
+                    path = _safe(resource, 'canonical') if resource is not None else _safe(r)
+                    handler_name = '?'
+                    try:
+                        h = getattr(r, 'handler', None)
+                        if h is not None:
+                            handler_name = _safe(h, '__name__')
+                            if handler_name == '?':
+                                handler_name = _safe(h)
+                    except BaseException:
+                        handler_name = '?'
+                    rows.append({'method': method, 'path': path, 'handler': handler_name})
+                except BaseException as e:
+                    rows.append({'error': f'{type(e).__name__}: {e}'[:120]})
+        except BaseException as e:
+            loop_error = f'{type(e).__name__}: {e}'
+
+        try:
+            payload = {'count': len(rows), 'routes': rows}
+            if loop_error:
+                payload['iter_error'] = loop_error
+            return web.json_response(payload)
+        except BaseException as e:
+            # Fall back to a plain text response so we still get SOMETHING
+            # back; also log so operators can see the underlying cause.
+            logger.error(
+                f"routes_debug_endpoint json_response failed: "
+                f"{type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            try:
+                return web.Response(
+                    text=(
+                        '{"error":"json_response failed",'
+                        f'"exception":"{type(e).__name__}",'
+                        f'"count":{len(rows)}}}'
+                    ),
+                    content_type='application/json',
+                    status=200,
+                )
+            except BaseException:
+                return web.Response(text='{"error":"all serialization failed"}',
+                                    content_type='application/json', status=200)
+
+    async def health_endpoint(self, request):
+        """Public health endpoint — never raises, never 500s.
+
+        The error_handler_middleware turns any uncaught exception into
+        a plain 500 response with body "Internal Server Error", which
+        breaks Docker healthchecks and external monitors. We catch
+        EVERYTHING here, including BaseException, and always return
+        a JSON response with HTTP 200 so the contract stays stable.
+        """
+        out = {'status': 'healthy', 'service': 'claudedex-dashboard'}
+        try:
+            out['time'] = datetime.now().isoformat()
+        except BaseException as e:
+            out['time_error'] = f'{type(e).__name__}'
+
+        try:
+            out['git_sha'] = self._get_git_sha_cached()
+        except BaseException:
+            out['git_sha'] = ''
+
+        # Probe DB if available. Try every plausible pool reference; if
+        # any single accessor raises (e.g. AttributeError on a
+        # half-initialized db_manager), capture and move on.
+        pool = None
+        for accessor in (
+            lambda: self.db.pool if (getattr(self, 'db', None) and getattr(self.db, 'pool', None)) else None,
+            lambda: getattr(self, 'db_pool', None),
+        ):
+            try:
+                p = accessor()
+                if p is not None:
+                    pool = p
+                    break
+            except BaseException:
+                continue
+
+        if pool is not None:
+            try:
+                async with pool.acquire() as conn:
+                    await conn.fetchval('SELECT 1')
+                out['db'] = 'reachable'
+            except BaseException as e:
+                out['status'] = 'degraded'
+                out['db'] = f'error: {type(e).__name__}: {e}'[:200]
+        else:
+            out['db'] = 'unavailable'
+
+        # web.json_response must not raise on this dict (all strings).
+        # If somehow it does, wrap once more.
+        try:
+            return web.json_response(out)
+        except BaseException as e:
+            logger.error(f"health_endpoint json_response failed: {e}", exc_info=True)
+            return web.Response(
+                text=f'{{"status":"degraded","error":"json_response: {type(e).__name__}"}}',
+                content_type='application/json',
+                status=200,
+            )
+
+    def _get_git_sha_cached(self) -> str:
+        """Return short git SHA (first 7 chars) of HEAD or '' on failure.
+        Cached on the instance after first read because the SHA does not
+        change at runtime."""
+        cached = getattr(self, '_git_sha', None)
+        if cached is not None:
+            return cached
+        sha = ''
+        try:
+            head_file = Path('.git/HEAD')
+            if head_file.exists():
+                head = head_file.read_text().strip()
+                if head.startswith('ref: '):
+                    ref_path = Path('.git') / head[5:]
+                    if ref_path.exists():
+                        sha = ref_path.read_text().strip()[:7]
+                else:
+                    sha = head[:7]
+        except Exception:
+            pass
+        self._git_sha = sha
+        return sha
+
+    async def _get_sol_usd_price(self) -> float:
+        """Return a recently cached SOL/USD price (60s TTL) for converting
+        SOL-denominated PnL to USD in dashboard surfaces. Hits CoinGecko
+        on cache miss; falls back to 200.0 on network failure so the
+        dashboard never raises. Replaces hardcoded 200.0 sentinels."""
+        now = datetime.now()
+        if self._sol_usd_cache > 0 and (now - self._sol_usd_cached_at).total_seconds() < 60:
+            return self._sol_usd_cache
+        try:
+            import aiohttp
+            url = 'https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd'
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=3) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        price = float((data.get('solana') or {}).get('usd') or 0)
+                        if price > 0:
+                            self._sol_usd_cache = price
+                            self._sol_usd_cached_at = now
+                            return price
+        except Exception as e:
+            logger.debug(f"_get_sol_usd_price fallback to 200.0: {e}")
+        # Last-known cached value beats the 200 fallback if we have one
+        return self._sol_usd_cache if self._sol_usd_cache > 0 else 200.0
+
+    async def _get_token_prices_usd(self, mints: list, ttl_s: int = 30) -> dict:
+        """Batch-fetch USD prices for a set of token mints via Jupiter
+        Price v3. Returns {mint: price_usd_float}. Cached per-mint with
+        30s TTL — repeated dashboard refreshes don't hammer Jupiter.
+        Network failures return cached values (or 0.0 for never-seen mints).
+
+        Used by api_get_copytrading_positions to compute live unrealized
+        PnL for OPEN copy positions. Without this, the dashboard reported
+        $0.00 PnL on every open position because current_price always
+        equalled entry_price.
+        """
+        if not mints:
+            return {}
+        now_ts = datetime.now()
+        unique = list({m for m in mints if isinstance(m, str) and m})
+
+        # Filter to mints whose cached row is stale.
+        need_fetch = []
+        out: dict = {}
+        for m in unique:
+            cached = self._token_price_cache.get(m)
+            if cached and (now_ts - cached[1]).total_seconds() < ttl_s:
+                out[m] = float(cached[0])
+            else:
+                need_fetch.append(m)
+
+        if not need_fetch:
+            return out
+
+        # Jupiter Price v3 accepts comma-separated mints up to ~100 per call.
+        # Chunk defensively at 50 to stay well under URL/limit caps.
+        try:
+            import aiohttp
+            timeout = aiohttp.ClientTimeout(total=5)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                for i in range(0, len(need_fetch), 50):
+                    chunk = need_fetch[i:i+50]
+                    url = f"https://api.jup.ag/price/v3?ids={','.join(chunk)}"
+                    try:
+                        async with session.get(url) as resp:
+                            if resp.status != 200:
+                                logger.debug(f"jupiter price v3 returned {resp.status}")
+                                continue
+                            data = await resp.json()
+                    except Exception as e:
+                        logger.debug(f"jupiter price fetch chunk failed: {e}")
+                        continue
+                    # v3 shape: {"<mint>": {"usdPrice": "1.2345", ...}, ...}
+                    # Legacy v2 shape: {"data": {"<mint>": {"price": ...}}}
+                    payload = data.get('data') if isinstance(data, dict) and 'data' in data else data
+                    if not isinstance(payload, dict):
+                        continue
+                    for mint in chunk:
+                        row = payload.get(mint) if isinstance(payload, dict) else None
+                        if not isinstance(row, dict):
+                            continue
+                        # Try several known key shapes
+                        price_str = (
+                            row.get('usdPrice')
+                            or row.get('price')
+                            or row.get('usd')
+                            or 0
+                        )
+                        try:
+                            price = float(price_str)
+                        except (TypeError, ValueError):
+                            price = 0.0
+                        if price > 0:
+                            self._token_price_cache[mint] = (price, now_ts)
+                            out[mint] = price
+        except Exception as e:
+            logger.debug(f"_get_token_prices_usd failed: {e}")
+
+        # Any mint we couldn't fetch but had a stale cache for — return
+        # the stale value rather than 0; better stale than zero.
+        for m in need_fetch:
+            if m not in out:
+                cached = self._token_price_cache.get(m)
+                if cached:
+                    out[m] = float(cached[0])
+                else:
+                    out[m] = 0.0
+        return out
+
+    @staticmethod
+    def _detect_legacy_copy_row(entry_price, native_price_at_trade,
+                                metadata) -> bool:
+        """Wave-5: a row is 'legacy' (pre-6fe0a36 schema-bug) when:
+          - metadata.tokens_received is missing, AND
+          - entry_price looks like the native SOL/ETH USD price at trade
+            time (entry_price ≈ native_price_at_trade), which is the
+            pre-fix signature of `entry_price = native_price`.
+        We use a 5% tolerance band on the native_price comparison; the
+        legacy bug wrote the EXACT native_price_at_trade into
+        entry_price, so anything within a hair of it is the bug. Fresh
+        post-fix rows write entry_price = USD-per-token which is almost
+        never within 5% of the SOL price for a real meme/utility token.
+
+        Returns True when the row's reported PnL would be garbage and
+        the dashboard should fall back to "PnL pending".
+        """
+        try:
+            meta = metadata or {}
+            if isinstance(meta, str):
+                import json as _json
+                try:
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            if isinstance(meta, dict) and meta.get('tokens_received'):
+                return False  # new-format row — trust the columns
+            ep = float(entry_price or 0)
+            np_ = float(native_price_at_trade or 0)
+            if ep <= 0 or np_ <= 0:
+                return False  # not enough info to flag — leave as-is
+            # Within +/-5% of native price = legacy schema-bug write.
+            return abs(ep - np_) / np_ < 0.05
+        except Exception:
+            return False
+
+    async def _enrich_copytrading_pnl(self, raw_rows: list) -> list:
+        """Wave-5 PnL surfacing — fixes operator's "every page shows $0"
+        complaint. Takes raw copytrading_trades rows (asyncpg Records or
+        dicts) and returns enriched dicts with:
+          - realized_pnl: closed-trade profit_loss (the existing column)
+          - unrealized_pnl: for OPEN Solana rows with tokens_received in
+              metadata, computes live_price * tokens - entry_usd via the
+              Jupiter price helper. 0 for closed or legacy rows.
+          - pnl_pending: True for legacy rows (no tokens_received +
+              entry_price ≈ native_price). UI shows "PnL pending" instead
+              of a fabricated zero.
+          - is_legacy_row: True if detected as pre-fix schema-bug row.
+          - profit_loss: realized + unrealized — drop-in replacement for
+              the raw column so existing templates magically work without
+              JS changes (they all already read `t.profit_loss`).
+
+        Fail-soft: any price-fetch failure leaves unrealized_pnl=0 and
+        flips pnl_pending=True so the UI doesn't lie.
+        """
+        # Normalise asyncpg Records -> dicts so callers can use either.
+        enriched: list = []
+        need_prices: list = []  # mints for OPEN rows with tokens_received
+        for r in raw_rows:
+            row = dict(r) if not isinstance(r, dict) else dict(r)
+            meta = row.get('metadata') or {}
+            if isinstance(meta, str):
+                try:
+                    import json as _json
+                    meta = _json.loads(meta)
+                except Exception:
+                    meta = {}
+            row['_meta_parsed'] = meta if isinstance(meta, dict) else {}
+            status = (row.get('status') or '').lower()
+            row['realized_pnl'] = float(row.get('profit_loss') or 0)
+            row['unrealized_pnl'] = 0.0
+            row['pnl_pending'] = False
+            row['is_legacy_row'] = self._detect_legacy_copy_row(
+                row.get('entry_price'),
+                row.get('native_price_at_trade'),
+                row['_meta_parsed'],
+            )
+            if status == 'open':
+                tokens = row['_meta_parsed'].get('tokens_received')
+                if tokens and float(tokens) > 0 and (row.get('chain') or '').lower() == 'solana':
+                    mint = row.get('token_address')
+                    if mint:
+                        need_prices.append(mint)
+                        row['_tokens_received'] = float(tokens)
+                elif row['is_legacy_row']:
+                    # Legacy row with no tokens_received — honestly
+                    # surface "pending" rather than fake a number.
+                    row['pnl_pending'] = True
+            enriched.append(row)
+
+        # Batch price lookup for all OPEN rows that need it
+        prices: dict = {}
+        if need_prices:
+            try:
+                prices = await self._get_token_prices_usd(list(set(need_prices)))
+            except Exception as e:
+                logger.debug(f"_enrich_copytrading_pnl: price fetch failed: {e}")
+                prices = {}
+
+        for row in enriched:
+            tokens = row.pop('_tokens_received', None)
+            if not tokens:
+                continue
+            mint = row.get('token_address')
+            live = float(prices.get(mint) or 0)
+            entry_usd = float(row.get('entry_usd') or 0)
+            if live > 0 and entry_usd > 0:
+                row['unrealized_pnl'] = (live * tokens) - entry_usd
+                row['current_price_usd'] = live
+            else:
+                # Price unavailable — be honest, don't fake $0.
+                row['pnl_pending'] = True
+
+        # Combined PnL: realized (closed) + unrealized (open). Existing
+        # JS uses `t.profit_loss` so we overwrite that field; raw stored
+        # value is preserved under `realized_pnl`.
+        for row in enriched:
+            row['profit_loss'] = row['realized_pnl'] + row['unrealized_pnl']
+            row.pop('_meta_parsed', None)
+        return enriched
 
     @staticmethod
     def _serialize_decimals(obj):
@@ -411,19 +934,41 @@ class DashboardEndpoints:
         # ⚠️ Auth routes (including /login) will be added during startup (see _on_startup handler)
         # This ensures the login route is available when the app serves requests
 
+        # /health — public, unauthenticated. Docker healthcheck and
+        # scripts/health_check.py expect it; previously missing so the
+        # checks always 404'd. Returns JSON with current git SHA when
+        # available so operators can identify which build is running.
+        self.app.router.add_get('/health', self.health_endpoint)
+        # Diagnostic: lists every registered route so we can confirm
+        # the /health binding made it into the routing table. Public
+        # (not auth-gated) because it reveals only paths, not data.
+        self.app.router.add_get('/__routes__', self.routes_debug_endpoint)
+
         # Pages - all will be protected by auth middleware if enabled
         self.app.router.add_get('/', self.index)
         self.app.router.add_get('/full-dashboard', self.full_dashboard_page)
-        self.app.router.add_get('/dashboard', self.dashboard_page)
+        self.app.router.add_get('/dashboard', self.dashboard_page)  # 301 → /dex/dashboard
+        # DEX module pages — root-prefixed URLs are kept for back-compat.
+        # /dex/* aliases give URL consistency with /futures/*, /solana/*,
+        # /sniper/*, etc. Audit agent 1 #5.
         self.app.router.add_get('/trades', self.trades_page)
+        self.app.router.add_get('/dex/trades', self.trades_page)
         self.app.router.add_get('/positions', self.positions_page)
+        self.app.router.add_get('/dex/positions', self.positions_page)
         self.app.router.add_get('/performance', self.performance_page)
+        self.app.router.add_get('/dex/performance', self.performance_page)
         self.app.router.add_get('/settings', self.settings_page)
         self.app.router.add_get('/reports', self.reports_page)
+        self.app.router.add_get('/dex/reports', self.reports_page)
         self.app.router.add_get('/backtest', self.backtest_page)
+        self.app.router.add_get('/dex/backtest', self.backtest_page)
         self.app.router.add_get('/logs', self.logs_page)
         self.app.router.add_get('/analysis', self.analysis_page)
-        self.app.router.add_get('/analytics', self.analytics_page)
+        self.app.router.add_get('/dex/analysis', self.analysis_page)
+        # /analytics intentionally NOT registered here — the real
+        # implementation lives in monitoring/analytics_routes.py
+        # (AnalyticsRoutes.analytics_page) and was shadowed by a
+        # dead redirect stub here.
         self.app.router.add_get('/simulator', self.simulator_page)
         self.app.router.add_get('/wallet-balances', self.wallet_balances_page)
 
@@ -443,6 +988,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/risk/metrics', self.api_risk_metrics)
         self.app.router.add_get('/api/wallets/balances', self.api_wallet_balances)
         self.app.router.add_get('/api/wallets/aggregated-balances', self.api_wallet_aggregated_balances)
+        # ISSUE 15: consolidated "which wallet/exchange funds which module"
+        self.app.router.add_get('/api/funding/accounts', self.api_funding_accounts)
 
         # API - Sniper Module
         self.app.router.add_get('/api/sniper/stats', self.api_get_sniper_stats)
@@ -466,10 +1013,24 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/arbitrage/trading/status', self.api_arbitrage_trading_status)
         self.app.router.add_post('/api/arbitrage/trading/unblock', self.api_arbitrage_trading_unblock)
         self.app.router.add_post('/api/arbitrage/reconcile', self.api_reconcile_arbitrage_trades)
+        # Wave-3: per-chain hourly gas-spend tile (reads
+        # arbitrage_runtime_stats persisted by EVMArbitrageEngine).
+        self.app.router.add_get('/api/arbitrage/gas-spend', self.api_get_arbitrage_gas_spend)
+        # Wave-5: "Why no trades?" panel - last 20 rejected opportunities,
+        # per-reason counters, cost profile, gas spend, chain liveness.
+        self.app.router.add_get('/api/arbitrage/diagnostics', self.api_get_arbitrage_diagnostics)
 
         # API - Copy Trading Module
         self.app.router.add_get('/api/copytrading/stats', self.api_get_copytrading_stats)
         self.app.router.add_get('/api/copytrading/positions', self.api_get_copytrading_positions)
+        # Manual-close request — writes a flag file the copy_engine subprocess
+        # picks up on its next reconcile tick. Admin-only because closing a
+        # position swaps the position back to SOL/native and is capital-
+        # impacting even in DRY_RUN (PnL audit row gets written).
+        self.app.router.add_post(
+            '/api/copytrading/positions/{trade_id}/close',
+            require_auth(require_admin(self.api_close_copytrading_position)),
+        )
         self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
         self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
         self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
@@ -484,6 +1045,18 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
         self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
         self.app.router.add_get('/api/ai/logs', self.api_get_ai_logs)
+        # A6 E2: confidence-calibration reliability diagram + Brier score.
+        # Source: ai_confidence_calibration (migration 023).
+        self.app.router.add_get('/api/ai/calibration', self.api_get_ai_calibration)
+        # A6 W4: multi-provider quorum metrics. Source: ai_feature_store
+        # rows with metadata.quorum_outcome (written by SentimentEngine
+        # _persist_quorum_outcome on every cycle that ran a quorum call).
+        self.app.router.add_get('/api/ai/quorum-metrics', self.api_get_ai_quorum_metrics)
+        # Wave-5: "why no trades?" diagnostic. Joins recent sentiment_logs
+        # + ai_trades + the [ai-skip] ledger tailed from
+        # logs/ai_analysis/ai.log so the operator can see exactly which
+        # gate ate each signal. Read-only.
+        self.app.router.add_get('/api/ai/diagnostics', self.api_get_ai_diagnostics)
 
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
@@ -493,9 +1066,18 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/simulator/export', self.api_simulator_export)
 
         # API - Bot control (MB-28: admin-gate state-changing routes; status is read-only)
-        self.app.router.add_post('/api/bot/start', require_auth(require_admin(self.api_bot_start)))
-        self.app.router.add_post('/api/bot/stop', require_auth(require_admin(self.api_bot_stop)))
-        self.app.router.add_post('/api/bot/restart', require_auth(require_admin(self.api_bot_restart)))
+        # Start/Stop/Restart are NOT registered here — they were taking
+        # precedence over module_routes.bot_{start,stop,restart} which
+        # operate on the full subprocess set. The engine-only handlers
+        # below acted on self.engine (DEX-only), so the user's "Start
+        # Bot" button only restarted DEX. Audit agent 3 caught this.
+        # ModuleRoutes.setup_routes (called from _setup_module_routes)
+        # owns these endpoints now.
+        # Kept here:
+        #  /api/bot/emergency_exit (underscore) for legacy callers — the
+        #    hyphen form /api/bot/emergency-exit is the canonical path
+        #    that module_routes registers separately.
+        #  /api/bot/status — read-only, no module_routes counterpart.
         self.app.router.add_post('/api/bot/emergency_exit', require_auth(require_admin(self.api_emergency_exit)))
         self.app.router.add_get('/api/bot/status', require_auth(self.api_bot_status))
 
@@ -548,6 +1130,9 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/futures/positions/close-all', self.api_futures_close_all_positions)
         self.app.router.add_get('/api/futures/trading/status', self.api_futures_trading_status)
         self.app.router.add_post('/api/futures/trading/unblock', self.api_futures_trading_unblock)
+        # FUT-RM-09b (Wave 4): per-symbol 24h forward funding-cost forecast.
+        # Derives from futures_funding_payments.predicted_usd × intervals/24h.
+        self.app.router.add_get('/api/futures/funding-forecast', self.api_futures_funding_forecast)
 
         # API - Trading controls
         self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
@@ -563,6 +1148,7 @@ class DashboardEndpoints:
         # API - Backtesting
         self.app.router.add_post('/api/backtest/run', self.api_run_backtest)
         self.app.router.add_get('/api/backtest/results/{test_id}', self.api_backtest_results)
+        self.app.router.add_get('/api/backtest/results/{test_id}/export', self.api_backtest_export)
         
         # API - Strategy
         self.app.router.add_get('/api/strategy/parameters', self.api_get_strategy_params)
@@ -627,10 +1213,15 @@ class DashboardEndpoints:
 
             logger.info("Setting up analytics routes...")
 
-            # Create analytics routes handler
+            # Create analytics routes handler. FAILURE B: pass db_manager so
+            # the routes can serve real DB-backed analytics when the
+            # standalone dashboard subprocess runs without an
+            # analytics_engine (it is constructed without one in
+            # modules/dashboard/main_dashboard.py).
             analytics_routes = AnalyticsRoutes(
                 analytics_engine=self.analytics_engine,
-                jinja_env=self.jinja_env
+                jinja_env=self.jinja_env,
+                db_manager=getattr(self, 'db', None) or getattr(self, 'db_manager', None),
             )
 
             # Setup all analytics routes
@@ -641,6 +1232,48 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Failed to setup analytics routes: {e}", exc_info=True)
             logger.warning("Module management will not be available")
+
+    def _setup_test_runner_routes(self):
+        """Wire the Test Runner backend + page handler. Mirrors the
+        AnalyticsRoutes pattern: instantiate the Routes class, pass db
+        manager, call setup_routes(self.app). Also registers the
+        /test-runner GET handler that renders the template."""
+        try:
+            from monitoring.test_runner_routes import TestRunnerRoutes
+            logger.info("Setting up Test Runner routes...")
+            tr = TestRunnerRoutes(
+                self.app,
+                db_manager=getattr(self, 'db', None) or getattr(self, 'db_manager', None),
+                jinja_env=self.jinja_env,
+            )
+            tr.setup_routes(self.app)
+            # GET /test-runner — render the page template.
+            self.app.router.add_get(
+                '/test-runner', require_auth(self._test_runner_page)
+            )
+            logger.info("✅ Test Runner routes initialized")
+        except Exception as e:
+            logger.error(f"Failed to setup test runner routes: {e}", exc_info=True)
+
+    async def _test_runner_page(self, request):
+        """Render dashboard/templates/test_runner.html with the same
+        page='test_runner' context every other page uses for sidebar
+        highlighting."""
+        template = self.jinja_env.get_template('test_runner.html')
+        return web.Response(
+            text=template.render(page='test_runner'),
+            content_type='text/html',
+        )
+
+    async def _orchestrator_page(self, request):
+        """Render dashboard/templates/orchestrator.html — Phase 3 D5
+        advisory recommendations view. Operator sees pending recs,
+        clicks Approve / Reject, audit trail tracks who did what."""
+        template = self.jinja_env.get_template('orchestrator.html')
+        return web.Response(
+            text=template.render(page='orchestrator'),
+            content_type='text/html',
+        )
 
     def _setup_rpc_pool_routes(self):
         """Setup RPC/API Pool management routes"""
@@ -779,10 +1412,42 @@ class DashboardEndpoints:
         self.app.router.add_get('/copytrading/trades', self._copytrading_trades)
         self.app.router.add_get('/copytrading/performance', self._copytrading_performance)
         self.app.router.add_get('/copytrading/settings', self._copytrading_settings)
+        # Atomic add/remove of a single tracked wallet — replaces the
+        # frontend's previous GET-then-POST round-trip that could wipe
+        # the entire target_wallets list on a transient settings-load
+        # failure (audit agent 2 HIGH #4).
+        self.app.router.add_post(
+            '/api/copytrading/wallets/remove',
+            require_auth(require_admin(self.api_copytrading_wallet_remove)),
+        )
+        self.app.router.add_post(
+            '/api/copytrading/wallets/add',
+            require_auth(require_admin(self.api_copytrading_wallet_add)),
+        )
         self.app.router.add_get('/copytrading/discovery', self._copytrading_discovery)
         self.app.router.add_get('/copytrading/wallets', self._copytrading_wallets)
         self.app.router.add_get('/api/copytrading/wallets', self.api_get_copytrading_wallets)
         self.app.router.add_post('/api/copytrading/reconcile', self.api_reconcile_copytrading_trades)
+        # Wave-2 quant rebuild: scored-leader ranking page.
+        # /copytrading/leaders renders the top-N rows from
+        # copy_leader_scores (migration 023). /api/copytrading/leaders
+        # serves the JSON; /api/copytrading/leaders/refresh kicks the
+        # wallet_discovery sweep on demand (admin-only — it can hit
+        # paid Helius/Birdeye quotas).
+        self.app.router.add_get('/copytrading/leaders', self._copytrading_leaders)
+        self.app.router.add_get('/api/copytrading/leaders', self.api_get_copytrading_leaders)
+        self.app.router.add_post(
+            '/api/copytrading/leaders/refresh',
+            require_auth(require_admin(self.api_refresh_copytrading_leaders)),
+        )
+        # Wave-3 CT-W3-01: rolling per-leader slippage stats from
+        # copy_slippage_observations (migration 026). Single-leader
+        # mode (?leader=<wallet>) returns scalar median bps + delta_ms;
+        # no-leader mode returns the per-leader leaderboard for the
+        # discovery-page slippage chart.
+        self.app.router.add_get(
+            '/api/copytrading/slippage', self.api_get_copytrading_slippage,
+        )
 
         # AI Analysis Module Pages
         self.app.router.add_get('/ai/dashboard', self._ai_dashboard)
@@ -799,6 +1464,89 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/modules/{module}/disable', self._api_module_disable)
         self.app.router.add_post('/api/modules/{module}/pause', self._api_module_pause)
         self.app.router.add_post('/api/modules/{module}/start', self._api_module_start)
+        # Phase 3 B1: per-module DRY_RUN toggle. Writes
+        # config_settings.<module>_config.dry_run; the module's main
+        # entry point reads this via resolve_module_dry_run() on next
+        # restart. (We don't auto-restart the subprocess here — that's
+        # an operator decision.)
+        self.app.router.add_post(
+            '/api/modules/{module}/dry-run', self._api_module_set_dry_run
+        )
+        self.app.router.add_get(
+            '/api/modules/{module}/dry-run', self._api_module_get_dry_run
+        )
+        # Phase 3 follow-up: explicit per-module restart via the
+        # logs/.restart_<module> flag-file pattern (orchestrator
+        # main.py polls every 5s). Replaces the operator's manual
+        # "disable + enable" 2-step.
+        self.app.router.add_post(
+            '/api/modules/{module}/restart', self._api_module_restart
+        )
+        # Phase 4C: circuit breaker events read API.
+        self.app.router.add_get(
+            '/api/circuit-breaker/events', self._api_breaker_events
+        )
+        self.app.router.add_get(
+            '/api/circuit-breaker/active', self._api_breaker_active
+        )
+        self.app.router.add_post(
+            '/api/circuit-breaker/{event_id}/clear', self._api_breaker_clear
+        )
+
+        # Phase 4B: portfolio allocation surface.
+        self.app.router.add_get(
+            '/allocation', require_auth(self._allocation_page)
+        )
+        self.app.router.add_get(
+            '/api/portfolio/allocations', self._api_alloc_list
+        )
+        self.app.router.add_get(
+            '/api/portfolio/allocations/current', self._api_alloc_current
+        )
+        self.app.router.add_post(
+            '/api/portfolio/allocations/{alloc_id}/approve',
+            self._api_alloc_approve,
+        )
+        self.app.router.add_post(
+            '/api/portfolio/allocations/propose',
+            self._api_alloc_propose,
+        )
+
+        # Phase 4A: backtest replay. POST runs the counterfactual
+        # simulator over the trade + recommendation history.
+        self.app.router.add_get(
+            '/backtest-replay', require_auth(self._backtest_replay_page)
+        )
+        self.app.router.add_post(
+            '/api/backtest/replay', self._api_backtest_replay
+        )
+        self.app.router.add_get(
+            '/api/backtest/strategies', self._api_backtest_strategies
+        )
+
+        # Phase 3 D5: orchestrator advisory layer. Surfaces pending
+        # recommendations + approval action.
+        self.app.router.add_get(
+            '/orchestrator', require_auth(self._orchestrator_page)
+        )
+        self.app.router.add_get(
+            '/api/orchestrator/recommendations', self._api_orch_list_recs
+        )
+        # Score-trend endpoint: per-module score over time, drawn from
+        # the metrics JSON of historical recommendation rows. Lets the
+        # /orchestrator page show a trend line per module without
+        # adding a separate "score_log" table.
+        self.app.router.add_get(
+            '/api/orchestrator/history', self._api_orch_history
+        )
+        self.app.router.add_post(
+            '/api/orchestrator/recommendations/{rec_id}/approve',
+            self._api_orch_approve_rec,
+        )
+        self.app.router.add_post(
+            '/api/orchestrator/recommendations/{rec_id}/reject',
+            self._api_orch_reject_rec,
+        )
 
         logger.info("✅ Fallback module routes registered")
 
@@ -869,11 +1617,14 @@ class DashboardEndpoints:
         else:
             logger.warning(f".env file not found at: {env_path}")
 
-        # Read module enabled status from .env (default to all enabled since user typically enables all)
-        # Also read raw values for debugging
-        dex_raw = os.getenv('DEX_MODULE_ENABLED', 'true')
-        futures_raw = os.getenv('FUTURES_MODULE_ENABLED', 'true')
-        solana_raw = os.getenv('SOLANA_MODULE_ENABLED', 'true')
+        # Read module enabled status from .env. FAILURE A fix: default to
+        # 'false' (DISABLED). Defaulting to 'true' lied to the operator when
+        # a flag was unset — modules silently appeared ENABLED even though
+        # the orchestrator would not spawn them. Single source of truth is
+        # the env flag; if it's missing the module is DISABLED.
+        dex_raw = os.getenv('DEX_MODULE_ENABLED', 'false')
+        futures_raw = os.getenv('FUTURES_MODULE_ENABLED', 'false')
+        solana_raw = os.getenv('SOLANA_MODULE_ENABLED', 'false')
 
         # Handle various true values: 'true', 'True', 'TRUE', '1', 'yes', 'Yes'
         def is_enabled(val):
@@ -1110,37 +1861,74 @@ class DashboardEndpoints:
         except Exception as e:
             logger.warning(f"Error reading module config files: {e}")
 
-        # Determine actual status for each module
-        # Consider module as running if either:
-        # 1. Health check succeeds (module process is live)
-        # 2. Module is enabled AND has data (metrics show trades)
+        # Determine actual status for each module.
+        # FAILURE A/C fix: status string clearly distinguishes
+        #   "ENABLED + RUNNING"  — env flag true AND subprocess responding on health port
+        #   "ENABLED (no health)" — env flag true BUT no health response
+        #   "DISABLED"            — env flag false
+        # The previous strings ('RUNNING'/'ENABLED'/'DISABLED') let operators
+        # mistake a stale "ENABLED" for "actually live" when really the
+        # subprocess hadn't started or had died.
+        def _module_status(running: bool, enabled: bool) -> str:
+            if not enabled:
+                return 'DISABLED'
+            if running:
+                return 'ENABLED + RUNNING'
+            return 'ENABLED (no health)'
 
-        # DEX: RUNNING if enabled (DEX runs in same process as dashboard)
-        dex_status = 'RUNNING' if dex_enabled else 'DISABLED'
-
-        # Futures: Check if actually running via health endpoint OR has activity
-        if futures_running:
-            futures_status = 'RUNNING'
-        elif futures_enabled or futures_metrics.get('total_trades', 0) > 0:
-            # If enabled or has trades, consider it RUNNING (data available)
-            futures_status = 'RUNNING' if futures_metrics.get('total_trades', 0) > 0 else 'ENABLED'
-        else:
-            futures_status = 'DISABLED'
-
-        # Solana: Check if actually running via health endpoint OR has activity
-        if solana_running:
-            solana_status = 'RUNNING'
-        elif solana_enabled or solana_metrics.get('total_trades', 0) > 0:
-            # If enabled or has trades, consider it RUNNING (data available)
-            solana_status = 'RUNNING' if solana_metrics.get('total_trades', 0) > 0 else 'ENABLED'
-        else:
-            solana_status = 'DISABLED'
+        # DEX: when the dashboard runs in-process with the engine we can use
+        # self.engine; but the dashboard usually runs as a SEPARATE process
+        # (engine is None there). Two cross-process signals — either is enough:
+        #   1. dex_runtime_stats freshness — the DEX subprocess UPSERTs a
+        #      single heartbeat row (id=1) every ~60s in
+        #      main_dex._status_reporter. If the row is < 150s old (2.5x the
+        #      60s write interval) the engine is alive, even when idle (no
+        #      recent trade). This is the PRIMARY signal and mirrors the ARB
+        #      arbitrage_runtime_stats / sniper_runtime_stats freshness checks.
+        #   2. a recent `trades` row (last 2h) — kept as a SECONDARY proxy for
+        #      older subprocesses that predate the heartbeat table.
+        # Before signal (1), a LIVE-but-idle DEX always showed "ENABLED (no
+        # health)" because health was inferred purely from trade activity.
+        dex_running_flag = bool(dex_enabled and self.engine is not None)
+        if dex_enabled and not dex_running_flag and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int
+                        FROM dex_runtime_stats WHERE id = 1
+                    """)
+                    if age is not None and age <= 150:
+                        dex_running_flag = True
+            except Exception:
+                pass
+        if dex_enabled and not dex_running_flag and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    recent = await conn.fetchval(
+                        "SELECT COUNT(*) FROM trades "
+                        "WHERE entry_timestamp > NOW() - INTERVAL '2 hours' "
+                        "AND UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')"
+                    )
+                    if recent and recent > 0:
+                        dex_running_flag = True
+            except Exception:
+                pass
+        dex_status = _module_status(dex_running_flag, dex_enabled)
+        futures_status = _module_status(futures_running, futures_enabled)
+        solana_status = _module_status(solana_running, solana_enabled)
 
         # ==================== CHECK SNIPER, ARBITRAGE, COPY TRADING, AI MODULES ====================
-        sniper_enabled = is_enabled(os.getenv('SNIPER_MODULE_ENABLED', 'true'))
-        arbitrage_enabled = is_enabled(os.getenv('ARBITRAGE_MODULE_ENABLED', 'true'))
-        copytrading_enabled = is_enabled(os.getenv('COPYTRADING_MODULE_ENABLED', 'true'))
-        ai_enabled = is_enabled(os.getenv('AI_MODULE_ENABLED', 'true'))
+        # FAILURE A fix: env-flag is the single source of truth, default to
+        # 'false' (DISABLED) — not 'true' — because if the operator hasn't
+        # set the flag at all the module must NOT be claimed as enabled.
+        # Also: the orchestrator (main.py:546) reads COPY_TRADING_MODULE_ENABLED
+        # (with underscore). The previous spelling here (COPYTRADING_MODULE_ENABLED)
+        # was a different var that nothing else sets, so Copy Trading always
+        # appeared enabled by default. Standardize on COPY_TRADING_MODULE_ENABLED.
+        sniper_enabled = is_enabled(os.getenv('SNIPER_MODULE_ENABLED', 'false'))
+        arbitrage_enabled = is_enabled(os.getenv('ARBITRAGE_MODULE_ENABLED', 'false'))
+        copytrading_enabled = is_enabled(os.getenv('COPY_TRADING_MODULE_ENABLED', 'false'))
+        ai_enabled = is_enabled(os.getenv('AI_MODULE_ENABLED', 'false'))
 
         sniper_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
         arbitrage_metrics = {'total_trades': 0, 'pnl': 0.0, 'positions': 0, 'win_rate': 0.0}
@@ -1152,7 +1940,13 @@ class DashboardEndpoints:
         copytrading_running = False
         ai_running = False
 
-        # Check Sniper module health
+        # Check Sniper module health. Two signals — either is enough:
+        #   1. health-port HTTP probe (if BaseModule opened a server)
+        #   2. sniper_runtime_stats freshness — the engine snapshots
+        #      stats every ~30s; if the row is < 120s old the
+        #      subprocess is alive. This is the more reliable signal
+        #      because the health-port is optional, but runtime_stats
+        #      updates are mandatory for every engine tick.
         try:
             sniper_port = int(os.getenv('SNIPER_HEALTH_PORT', '8083'))
             async with aiohttp.ClientSession() as session:
@@ -1161,6 +1955,17 @@ class DashboardEndpoints:
                         sniper_running = True
         except Exception:
             pass
+        if not sniper_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int
+                        FROM sniper_runtime_stats WHERE id = 1
+                    """)
+                    if age is not None and age <= 120:
+                        sniper_running = True
+            except Exception:
+                pass
 
         # Check Arbitrage module health
         try:
@@ -1171,6 +1976,23 @@ class DashboardEndpoints:
                         arbitrage_running = True
         except Exception:
             pass
+        # FAILURE 1(a) fix: ARBITRAGE has no reliable health-port server in
+        # the dashboard process, so fall back to arbitrage_runtime_stats
+        # freshness — the engine snapshots one row per chain every ~5 min
+        # via EVMArbitrageEngine._persist_runtime_stats. If ANY chain row is
+        # < 120s old the subprocess is alive. Mirrors the sniper path so the
+        # module reports "ENABLED + RUNNING" instead of "ENABLED (no health)".
+        if not arbitrage_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT MIN(EXTRACT(EPOCH FROM (NOW() - updated_at)))::int
+                        FROM arbitrage_runtime_stats
+                    """)
+                    if age is not None and age <= 120:
+                        arbitrage_running = True
+            except Exception:
+                pass
 
         # Check Copy Trading module health
         try:
@@ -1181,6 +2003,22 @@ class DashboardEndpoints:
                         copytrading_running = True
         except Exception:
             pass
+        # FAILURE 1(a) fix: COPY has no health-port server reachable from the
+        # dashboard process. Mirror api_get_copytrading_stats' heartbeat:
+        # a copytrading_trades row in the last 2h means the subprocess is
+        # mirroring leaders. (COPY does not write runtime_stats yet, so this
+        # recent-activity proxy is the most honest cross-process signal.)
+        if not copytrading_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    recent = await conn.fetchval(
+                        "SELECT COUNT(*) FROM copytrading_trades "
+                        "WHERE entry_timestamp > NOW() - INTERVAL '2 hours'"
+                    )
+                    if recent and recent > 0:
+                        copytrading_running = True
+            except Exception:
+                pass
 
         # Check AI module health
         try:
@@ -1191,23 +2029,79 @@ class DashboardEndpoints:
                         ai_running = True
         except Exception:
             pass
+        # Wave-11 FIX A (primary signal): the AI subprocess UPSERTs a
+        # per-cycle heartbeat into `ai_runtime_stats` (id=1) every analysis
+        # cycle (~15 min / 900s). When the row is < 30 min (2x cycle) old
+        # the subprocess is alive — even when it had nothing to delegate
+        # this cycle (no sentiment_logs row written). Pure SQL freshness
+        # so no naive/aware datetime risk. Guarded by `to_regclass` so the
+        # dashboard does not 500 on a VPS that hasn't applied migration
+        # 033 yet — instead it leaves a MIGRATION_MISSING hint that
+        # surfaces below (ai_runtime_stats_status).
+        ai_runtime_stats_status = None  # None | 'present' | 'missing'
+        if not ai_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    has_table = await conn.fetchval(
+                        "SELECT to_regclass('public.ai_runtime_stats') IS NOT NULL"
+                    )
+                    if has_table:
+                        ai_runtime_stats_status = 'present'
+                        age = await conn.fetchval("""
+                            SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int
+                            FROM ai_runtime_stats WHERE id = 1
+                        """)
+                        if age is not None and age <= 1800:
+                            ai_running = True
+                    else:
+                        ai_runtime_stats_status = 'missing'
+            except Exception:
+                pass
+
+        # Secondary fallback: pre-migration-033 deployments — sentiment_logs
+        # row in the last 30 min still counts as alive. NOW()-timestamp is
+        # computed in SQL so no naive/aware datetime risk.
+        if not ai_running and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval("""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - timestamp))::int
+                        FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1
+                    """)
+                    if age is not None and age <= 1800:
+                        ai_running = True
+            except Exception:
+                pass
 
         # Query database for additional module metrics
         if self.db and self.db_pool:
             try:
                 async with self.db_pool.acquire() as conn:
-                    # Sniper trades
+                    # Sniper trades — Wave-11 FIX C: SQL aggregates. Operator
+                    # dashboards were capped at total_trades=10000 because the
+                    # previous code did `SELECT ... LIMIT 10000` then `len()`
+                    # in Python. With ~391K rows in an active deployment the
+                    # cap silently truncated total/positions and biased win_rate
+                    # toward the most-recent 10K. COUNT(*) / SUM / FILTER let
+                    # Postgres do the aggregation — no row-set is materialized
+                    # in the event loop and the numbers reflect the full table.
                     try:
-                        sniper_trades = await conn.fetch("""
-                            SELECT profit_loss, status FROM sniper_trades ORDER BY entry_timestamp DESC LIMIT 10000
+                        srow = await conn.fetchrow("""
+                            SELECT
+                                COUNT(*) AS total,
+                                COUNT(*) FILTER (WHERE status='open') AS positions,
+                                COUNT(*) FILTER (WHERE status='closed') AS closed,
+                                COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins,
+                                COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl
+                            FROM sniper_trades
                         """)
-                        if sniper_trades:
-                            closed = [t for t in sniper_trades if t['status'] == 'closed']
-                            sniper_metrics['total_trades'] = len(sniper_trades)
-                            sniper_metrics['pnl'] = sum(float(t['profit_loss'] or 0) for t in closed)
-                            wins = [t for t in closed if float(t['profit_loss'] or 0) > 0]
-                            sniper_metrics['win_rate'] = (len(wins) / len(closed) * 100) if closed else 0
-                            sniper_metrics['positions'] = len([t for t in sniper_trades if t['status'] == 'open'])
+                        if srow and (srow['total'] or 0) > 0:
+                            sniper_metrics['total_trades'] = int(srow['total'] or 0)
+                            sniper_metrics['positions'] = int(srow['positions'] or 0)
+                            sniper_metrics['pnl'] = float(srow['pnl'] or 0)
+                            closed_n = int(srow['closed'] or 0)
+                            wins_n = int(srow['wins'] or 0)
+                            sniper_metrics['win_rate'] = (wins_n / closed_n * 100) if closed_n else 0
                     except Exception:
                         pass
 
@@ -1256,15 +2150,55 @@ class DashboardEndpoints:
             except Exception as e:
                 logger.debug(f"Error fetching additional module metrics: {e}")
 
-        # Determine status for additional modules
-        sniper_status = 'RUNNING' if sniper_running or sniper_metrics['total_trades'] > 0 else ('STOPPED' if sniper_enabled else 'DISABLED')
-        arbitrage_status = 'RUNNING' if arbitrage_running or arbitrage_metrics['total_trades'] > 0 else ('STOPPED' if arbitrage_enabled else 'DISABLED')
-        copytrading_status = 'RUNNING' if copytrading_running or copytrading_metrics['total_trades'] > 0 else ('STOPPED' if copytrading_enabled else 'DISABLED')
-        ai_status = 'RUNNING' if ai_running or ai_metrics['total_trades'] > 0 else ('STOPPED' if ai_enabled else 'DISABLED')
+        # FAILURE A: reuse the same three-state status string as DEX/Futures/Solana
+        # so the dashboard never marks a module RUNNING based on historical
+        # trades alone. _module_status was defined above.
+        sniper_status = _module_status(sniper_running, sniper_enabled)
+        arbitrage_status = _module_status(arbitrage_running, arbitrage_enabled)
+        copytrading_status = _module_status(copytrading_running, copytrading_enabled)
+        ai_status = _module_status(ai_running, ai_enabled)
 
         logger.info(f"Final module status: DEX={dex_status}, Futures={futures_status} (trades={futures_metrics.get('total_trades', 0)}), Solana={solana_status} (trades={solana_metrics.get('total_trades', 0)})")
         logger.info(f"Additional modules: Sniper={sniper_status}, Arbitrage={arbitrage_status}, CopyTrading={copytrading_status}, AI={ai_status}")
 
+        # Phase 3 B3: resolve effective_dry_run per module so the
+        # Module Overview cards can show "DRY" / "LIVE" alongside
+        # ENABLED/DISABLED. One query fetches all 7 rows; fall back
+        # to resolve_module_dry_run() with db_value=None when the DB
+        # row doesn't exist yet (which is the common case until the
+        # operator flips one explicitly).
+        dry_run_rows = {}
+        try:
+            if self.db and getattr(self.db, 'pool', None):
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT config_type, value FROM config_settings "
+                        "WHERE key = 'dry_run' AND config_type IN ("
+                        "'dex_config','futures_config','solana_config',"
+                        "'sniper_config','arbitrage_config','copytrading_config','ai_config'"
+                        ")"
+                    )
+                    dry_run_rows = {r['config_type']: r['value'] for r in rows}
+        except Exception as e:
+            logger.debug(f"per-module dry_run DB lookup failed: {e}")
+        from core.dry_run import resolve_module_dry_run
+        def _eff(module: str, config_type: str) -> bool:
+            return resolve_module_dry_run(
+                module, db_row_value=dry_run_rows.get(config_type)
+            )
+        dex_dry        = _eff('dex',        'dex_config')
+        futures_dry    = _eff('futures',    'futures_config')
+        solana_dry     = _eff('solana',     'solana_config')
+        sniper_dry     = _eff('sniper',     'sniper_config')
+        arbitrage_dry  = _eff('arbitrage',  'arbitrage_config')
+        copytrading_dry = _eff('copy_trading', 'copytrading_config')
+        ai_dry         = _eff('ai',         'ai_config')
+
+        # FAILURE A/C: `historical=True` when env flag is false. Lets the UI
+        # label numbers as "historical" so DISABLED rows with stale P&L/trades
+        # do not look like live activity. Operators were misreading a
+        # DISABLED Solana row showing "$1.23, 60.9% WR, 425 trades" as if
+        # the module were trading right now.
         return web.json_response({
             'success': True,
             'data': {
@@ -1274,7 +2208,9 @@ class DashboardEndpoints:
                         'enabled': dex_enabled,
                         'status': dex_status,
                         'capital': dex_capital,
-                        'metrics': dex_metrics
+                        'metrics': dex_metrics,
+                        'historical': not dex_enabled,
+                        'effective_dry_run': dex_dry,
                     },
                     'futures_trading': {
                         'name': 'Futures Trading',
@@ -1282,7 +2218,9 @@ class DashboardEndpoints:
                         'status': futures_status,
                         'capital': futures_capital,
                         'metrics': futures_metrics,
-                        'health': futures_health_data
+                        'health': futures_health_data,
+                        'historical': not futures_enabled,
+                        'effective_dry_run': futures_dry,
                     },
                     'solana_strategies': {
                         'name': 'Solana Strategies',
@@ -1290,35 +2228,57 @@ class DashboardEndpoints:
                         'status': solana_status,
                         'capital': solana_capital,
                         'metrics': solana_metrics,
-                        'health': solana_health_data
+                        'health': solana_health_data,
+                        'historical': not solana_enabled,
+                        'effective_dry_run': solana_dry,
                     },
                     'sniper': {
                         'name': 'Sniper',
                         'enabled': sniper_enabled,
                         'status': sniper_status,
                         'capital': 100.0,
-                        'metrics': sniper_metrics
+                        'metrics': sniper_metrics,
+                        'historical': not sniper_enabled,
+                        'effective_dry_run': sniper_dry,
                     },
                     'arbitrage': {
                         'name': 'Arbitrage',
                         'enabled': arbitrage_enabled,
                         'status': arbitrage_status,
                         'capital': 200.0,
-                        'metrics': arbitrage_metrics
+                        'metrics': arbitrage_metrics,
+                        'historical': not arbitrage_enabled,
+                        'effective_dry_run': arbitrage_dry,
                     },
                     'copy_trading': {
                         'name': 'Copy Trading',
                         'enabled': copytrading_enabled,
                         'status': copytrading_status,
                         'capital': 100.0,
-                        'metrics': copytrading_metrics
+                        'metrics': copytrading_metrics,
+                        'historical': not copytrading_enabled,
+                        'effective_dry_run': copytrading_dry,
                     },
                     'ai_analysis': {
                         'name': 'AI Analysis',
                         'enabled': ai_enabled,
                         'status': ai_status,
                         'capital': 100.0,
-                        'metrics': ai_metrics
+                        'metrics': ai_metrics,
+                        'historical': not ai_enabled,
+                        'effective_dry_run': ai_dry,
+                        # Wave-11 FIX A: surface a clear hint when migration 033
+                        # hasn't been applied yet so the operator knows WHY the
+                        # AI cell may still read "ENABLED (no health)" — the
+                        # heartbeat table doesn't exist. Only set when missing
+                        # so the field is otherwise absent and the UI can hide
+                        # the badge on healthy deployments.
+                        **({'migration_hint':
+                            'MIGRATION_MISSING — run migration 033 '
+                            '(ai_runtime_stats) so the dashboard can see '
+                            'AI per-cycle heartbeats; falling back to '
+                            'sentiment_logs freshness.'}
+                           if ai_runtime_stats_status == 'missing' else {}),
                     }
                 }
             }
@@ -1368,6 +2328,860 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Failed to set os.environ[{env_key}]: {e}")
             return False
+
+    # ---- Phase 3 B1: per-module DRY_RUN read/write ----
+    # The trading-bot subprocess reads its dry_run state via
+    # resolve_module_dry_run() at startup, which honors
+    # config_settings.<module>_config.dry_run > <MODULE>_DRY_RUN env >
+    # DRY_RUN env > default True. This pair of handlers lets the
+    # dashboard read AND flip the DB row WITHOUT touching .env. The
+    # flip only takes effect after the module subprocess restarts —
+    # we deliberately do NOT auto-restart here because that's a
+    # capital-impacting operator decision.
+    _DRY_RUN_CONFIG_TYPE_MAP = {
+        'sniper': 'sniper_config',
+        'arbitrage': 'arbitrage_config',
+        'copy_trading': 'copytrading_config',
+        'copytrading': 'copytrading_config',
+        'ai': 'ai_config',
+        'ai_analysis': 'ai_config',
+        'futures': 'futures_config',
+        'futures_trading': 'futures_config',
+        'solana': 'solana_config',
+        'solana_strategies': 'solana_config',
+        'dex': 'dex_config',
+        'dex_trading': 'dex_config',
+    }
+
+    async def _api_module_get_dry_run(self, request):
+        """GET /api/modules/{module}/dry-run — returns the current
+        DB-backed dry_run flag + the effective resolved value."""
+        module = (request.match_info.get('module', '') or '').lower()
+        config_type = self._DRY_RUN_CONFIG_TYPE_MAP.get(module)
+        if not config_type:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {module}'},
+                status=400,
+            )
+        db_value = None
+        try:
+            if self.db and getattr(self.db, 'pool', None):
+                async with self.db.pool.acquire() as conn:
+                    db_value = await conn.fetchval(
+                        "SELECT value FROM config_settings "
+                        "WHERE config_type = $1 AND key = 'dry_run'",
+                        config_type,
+                    )
+        except Exception as e:
+            logger.warning(f"dry_run DB read failed for {module}: {e}")
+        try:
+            from core.dry_run import resolve_module_dry_run
+            effective = resolve_module_dry_run(module, db_row_value=db_value)
+        except Exception:
+            effective = True  # safe-by-default
+        return web.json_response({
+            'success': True,
+            'module': module,
+            'config_type': config_type,
+            'db_value': db_value,
+            'effective_dry_run': effective,
+        })
+
+    async def _api_module_set_dry_run(self, request):
+        """POST /api/modules/{module}/dry-run {"dry_run": bool} —
+        UPSERTs the DB row. Operator must restart the module subprocess
+        (via /api/modules/{module}/disable + /enable, or the dashboard
+        bot-control buttons) for the new value to take effect."""
+        module = (request.match_info.get('module', '') or '').lower()
+        config_type = self._DRY_RUN_CONFIG_TYPE_MAP.get(module)
+        if not config_type:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {module}'},
+                status=400,
+            )
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if 'dry_run' not in payload:
+            return web.json_response(
+                {'success': False, 'error': 'body must contain {"dry_run": true|false}'},
+                status=400,
+            )
+        new_value = 'true' if bool(payload['dry_run']) else 'false'
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                await conn.execute(
+                    "INSERT INTO config_settings (config_type, key, value, value_type) "
+                    "VALUES ($1, 'dry_run', $2, 'bool') "
+                    "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                    config_type, new_value,
+                )
+            logger.info(f"[Phase 3 B1] dry_run flipped: {module} -> {new_value}")
+            return web.json_response({
+                'success': True,
+                'module': module,
+                'config_type': config_type,
+                'new_value': new_value,
+                'note': 'Restart the module subprocess for the change to take effect '
+                        '(disable then enable from the modules page, or use the bot '
+                        'control buttons).',
+            })
+        except Exception as e:
+            logger.error(f"dry_run DB write failed for {module}: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    # Module-name → orchestrator-process-key map. The orchestrator
+    # tracks subprocesses by short keys (sniper, arbitrage, ...)
+    # while the API may receive richer names (sniper_module,
+    # copy_trading vs copytrading). Normalize here.
+    _MODULE_RESTART_KEY_MAP = {
+        'sniper': 'sniper',
+        'arbitrage': 'arbitrage',
+        'copy_trading': 'copy_trading',
+        'copytrading': 'copy_trading',
+        'ai': 'ai_analysis',
+        'ai_analysis': 'ai_analysis',
+        'futures': 'futures_trading',
+        'futures_trading': 'futures_trading',
+        'solana': 'solana_strategies',
+        'solana_strategies': 'solana_strategies',
+        'dex': 'dex_trading',
+        'dex_trading': 'dex_trading',
+        'orchestrator_ai': 'orchestrator_ai',
+    }
+
+    async def _api_module_restart(self, request):
+        """POST /api/modules/{module}/restart — drop a flag file the
+        orchestrator's _restart_flag_monitor picks up within 5 seconds.
+
+        We don't poll for confirmation here; the dashboard frontend
+        can refetch /api/modules after a few seconds to see the
+        module status flip from RUNNING → restarting → RUNNING."""
+        from pathlib import Path
+        module = (request.match_info.get('module', '') or '').lower()
+        key = self._MODULE_RESTART_KEY_MAP.get(module)
+        if not key:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {module}'},
+                status=400,
+            )
+        flag_dir = Path("logs")
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        flag = flag_dir / f".restart_{key}"
+        try:
+            flag.write_text("")
+            logger.info(f"[Phase 3] restart flag written: {flag}")
+            return web.json_response({
+                'success': True,
+                'module': key,
+                'note': 'Restart flag written. Orchestrator polls every 5s; '
+                        'module should be back up within ~10s.',
+            })
+        except Exception as e:
+            logger.error(f"restart flag write failed for {module}: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    # ---- Phase 4C: circuit breaker surface ----
+    async def _api_breaker_events(self, request):
+        """GET /api/circuit-breaker/events?limit=N&module=<name>"""
+        try:
+            limit = max(1, min(int(request.query.get('limit', '50')), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        module_filter = request.query.get('module') or None
+        clauses = []
+        params: list = []
+        if module_filter:
+            params.append(module_filter)
+            clauses.append(f"module = ${len(params)}")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        sql = (
+            "SELECT id::text, tripped_at, module, pnl_loss_usd, "
+            "  capital_usd, pct_loss, threshold_pct, action_taken, "
+            "  notes, cleared_at, cleared_by "
+            f"FROM circuit_breaker_events {where} "
+            f"ORDER BY tripped_at DESC LIMIT ${len(params)}"
+        )
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'events': [
+                    {
+                        'id': r['id'],
+                        'tripped_at': r['tripped_at'].isoformat() if r['tripped_at'] else None,
+                        'module': r['module'],
+                        'pnl_loss_usd': float(r['pnl_loss_usd']),
+                        'capital_usd': float(r['capital_usd']),
+                        'pct_loss': float(r['pct_loss']),
+                        'threshold_pct': float(r['threshold_pct']),
+                        'action_taken': r['action_taken'],
+                        'notes': r['notes'],
+                        'cleared_at': r['cleared_at'].isoformat() if r['cleared_at'] else None,
+                        'cleared_by': r['cleared_by'],
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"breaker events error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_breaker_active(self, request):
+        """GET /api/circuit-breaker/active — uncleared trips in last 24h.
+        Used by the dashboard top-bar banner."""
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id::text, tripped_at, module, pct_loss, threshold_pct "
+                    "FROM circuit_breaker_events "
+                    "WHERE cleared_at IS NULL "
+                    "  AND tripped_at > NOW() - INTERVAL '24 hours' "
+                    "ORDER BY tripped_at DESC"
+                )
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'active': [
+                    {
+                        'id': r['id'],
+                        'tripped_at': r['tripped_at'].isoformat() if r['tripped_at'] else None,
+                        'module': r['module'],
+                        'pct_loss': float(r['pct_loss']),
+                        'threshold_pct': float(r['threshold_pct']),
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"breaker active error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_breaker_clear(self, request):
+        """POST /api/circuit-breaker/{event_id}/clear — operator
+        acknowledges and clears the trip. Module remains in DRY_RUN;
+        operator manually re-enables LIVE if appropriate."""
+        event_id = request.match_info.get('event_id', '')
+        cleared_by = None
+        try:
+            session = request.get('session')
+            if session:
+                cleared_by = session.get('username') or session.get('user_id')
+        except Exception:
+            pass
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "UPDATE circuit_breaker_events "
+                    "SET cleared_at = NOW(), cleared_by = $1 "
+                    "WHERE id = $2::uuid AND cleared_at IS NULL "
+                    "RETURNING module",
+                    cleared_by, event_id,
+                )
+                if row is None:
+                    return web.json_response(
+                        {'success': False, 'error': 'event not found or already cleared'},
+                        status=404,
+                    )
+            return web.json_response({
+                'success': True,
+                'event_id': event_id,
+                'module': row['module'],
+                'cleared_by': cleared_by,
+            })
+        except Exception as e:
+            logger.error(f"breaker clear error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    # ---- Phase 4B: portfolio allocator surface ----
+    async def _allocation_page(self, request):
+        template = self.jinja_env.get_template('allocation.html')
+        return web.Response(
+            text=template.render(page='allocation'),
+            content_type='text/html',
+        )
+
+    async def _api_alloc_list(self, request):
+        """GET /api/portfolio/allocations?status=pending|approved|all
+                                          &limit=N (default 50, max 200)
+                                          &module=<name>"""
+        status = (request.query.get('status') or 'pending').lower()
+        try:
+            limit = max(1, min(int(request.query.get('limit', '50')), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        module_filter = request.query.get('module') or None
+        clauses = []
+        params: list = []
+        if status == 'pending':
+            # Pending = not yet approved AND not superseded by a later
+            # allocator tick. The supersede semantic (effective_until
+            # set to NOW() on a prior tick) is the fix for the
+            # "every Recompute Now click adds 5 more duplicate rows"
+            # operator-reported bug.
+            clauses.append("approved_at IS NULL AND effective_until IS NULL")
+        elif status == 'approved':
+            clauses.append("approved_at IS NOT NULL")
+        elif status == 'superseded':
+            clauses.append("effective_until IS NOT NULL AND approved_at IS NULL")
+        if module_filter:
+            params.append(module_filter)
+            clauses.append(f"module = ${len(params)}")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        sql = (
+            "SELECT id::text, created_at, module, pct_of_book, "
+            "  usd_amount, proposed_by, reason, metrics, "
+            "  approved_at, approved_by, effective_until "
+            f"FROM portfolio_allocations {where} "
+            f"ORDER BY created_at DESC LIMIT ${len(params)}"
+        )
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'allocations': [
+                    {
+                        'id': r['id'],
+                        'created_at': r['created_at'].isoformat() if r['created_at'] else None,
+                        'module': r['module'],
+                        'pct_of_book': float(r['pct_of_book']),
+                        'usd_amount': float(r['usd_amount']),
+                        'proposed_by': r['proposed_by'],
+                        'reason': r['reason'],
+                        'metrics': r['metrics'],
+                        'approved_at': r['approved_at'].isoformat() if r['approved_at'] else None,
+                        'approved_by': r['approved_by'],
+                        'effective_until': r['effective_until'].isoformat() if r['effective_until'] else None,
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"alloc list error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_alloc_current(self, request):
+        """GET /api/portfolio/allocations/current — single most-recent
+        approved allocation per module."""
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT DISTINCT ON (module) module, pct_of_book, "
+                    "  usd_amount, approved_at, approved_by, reason "
+                    "FROM portfolio_allocations "
+                    "WHERE approved_at IS NOT NULL "
+                    "ORDER BY module, approved_at DESC"
+                )
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'current': [
+                    {
+                        'module': r['module'],
+                        'pct_of_book': float(r['pct_of_book']),
+                        'usd_amount': float(r['usd_amount']),
+                        'approved_at': r['approved_at'].isoformat() if r['approved_at'] else None,
+                        'approved_by': r['approved_by'],
+                        'reason': r['reason'],
+                    } for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"alloc current error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_alloc_approve(self, request):
+        """POST /api/portfolio/allocations/{alloc_id}/approve
+        Body (optional): {"override_pct": 25.0, "effective_until_hours": 24}
+        Marks the proposal as approved. If override_pct is set, writes
+        a NEW operator-driven row instead of approving the original —
+        the original stays pending so the audit shows the divergence.
+        """
+        alloc_id = request.match_info.get('alloc_id', '')
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        override_pct = body.get('override_pct')
+        eff_hours = body.get('effective_until_hours')
+        approved_by = None
+        try:
+            session = request.get('session')
+            if session:
+                approved_by = session.get('username') or session.get('user_id')
+        except Exception:
+            pass
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                row = await conn.fetchrow(
+                    "SELECT module, pct_of_book, usd_amount, metrics "
+                    "FROM portfolio_allocations WHERE id = $1::uuid",
+                    alloc_id,
+                )
+                if row is None:
+                    return web.json_response(
+                        {'success': False, 'error': f'alloc {alloc_id} not found'},
+                        status=404,
+                    )
+                if override_pct is not None:
+                    # Operator override: write a new row instead of
+                    # approving the allocator's number directly.
+                    pct = float(override_pct)
+                    book = float(row['usd_amount']) / (float(row['pct_of_book']) / 100.0) \
+                        if row['pct_of_book'] else 1000.0
+                    usd = pct / 100.0 * book
+                    sql = (
+                        "INSERT INTO portfolio_allocations "
+                        "(module, pct_of_book, usd_amount, proposed_by, reason, "
+                        " approved_at, approved_by, effective_until) "
+                        "VALUES ($1, $2, $3, 'operator', $4, NOW(), $5, "
+                        "       NOW() + INTERVAL '%s hours') "
+                        "RETURNING id::text" % int(eff_hours or 24)
+                    ) if eff_hours else (
+                        "INSERT INTO portfolio_allocations "
+                        "(module, pct_of_book, usd_amount, proposed_by, reason, "
+                        " approved_at, approved_by) "
+                        "VALUES ($1, $2, $3, 'operator', $4, NOW(), $5) "
+                        "RETURNING id::text"
+                    )
+                    new_id = await conn.fetchval(
+                        sql, row['module'], pct, usd,
+                        f"operator override (was {row['pct_of_book']}%)",
+                        approved_by,
+                    )
+                    return web.json_response({
+                        'success': True,
+                        'alloc_id': new_id,
+                        'overridden_from': alloc_id,
+                        'module': row['module'],
+                        'pct_of_book': pct,
+                    })
+                else:
+                    await conn.execute(
+                        "UPDATE portfolio_allocations "
+                        "SET approved_at = NOW(), approved_by = $1 "
+                        "WHERE id = $2::uuid",
+                        approved_by, alloc_id,
+                    )
+                    return web.json_response({
+                        'success': True,
+                        'alloc_id': alloc_id,
+                        'module': row['module'],
+                        'pct_of_book': float(row['pct_of_book']),
+                    })
+        except Exception as e:
+            logger.error(f"alloc approve error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    async def _api_alloc_propose(self, request):
+        """POST /api/portfolio/allocations/propose — operator-triggered
+        recompute (vs waiting for the subprocess tick)."""
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'}, status=503,
+            )
+        try:
+            from modules.portfolio_allocator.core.rebalance_engine import run_tick
+            book = float(os.getenv('PORTFOLIO_TOTAL_BOOK_USD', '1000.0'))
+            lookback = int(os.getenv('PORTFOLIO_ALLOCATOR_LOOKBACK_HOURS', '168'))
+            summary = await run_tick(self.db.pool, lookback, book)
+            return web.json_response({'success': True, 'summary': summary})
+        except Exception as e:
+            logger.error(f"alloc propose error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)}, status=500,
+            )
+
+    # ---- Phase 4A: backtest replay ----
+    async def _backtest_replay_page(self, request):
+        """Render dashboard/templates/backtest_replay.html."""
+        template = self.jinja_env.get_template('backtest_replay.html')
+        return web.Response(
+            text=template.render(page='backtest_replay'),
+            content_type='text/html',
+        )
+
+    async def _api_backtest_strategies(self, request):
+        """GET /api/backtest/strategies — returns the names of the
+        replay strategies available. Frontend uses this to populate
+        the strategy dropdown so adding a new strategy on the
+        backend lights up automatically."""
+        try:
+            from modules.backtest_replay.core.strategies import STRATEGY_FUNCS
+            return web.json_response({
+                'success': True,
+                'strategies': list(STRATEGY_FUNCS.keys()),
+            })
+        except Exception as e:
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    async def _api_backtest_replay(self, request):
+        """POST /api/backtest/replay
+        Body: {start_ts?, end_ts?, strategy, strategy_params?, modules?}
+        Returns: dataclass-asdict of ReplayReport."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        strategy = body.get('strategy', 'approve_all')
+        strategy_params = body.get('strategy_params', {})
+        modules = body.get('modules')
+        # Default window: last 30 days. Capped at 365 to bound DB load.
+        from datetime import datetime, timedelta
+        try:
+            if body.get('start_ts'):
+                start_ts = datetime.fromisoformat(body['start_ts'].replace('Z', ''))
+            else:
+                start_ts = datetime.utcnow() - timedelta(days=30)
+            if body.get('end_ts'):
+                end_ts = datetime.fromisoformat(body['end_ts'].replace('Z', ''))
+            else:
+                end_ts = datetime.utcnow()
+        except (TypeError, ValueError) as e:
+            return web.json_response(
+                {'success': False, 'error': f'bad date: {e}'},
+                status=400,
+            )
+        window_days = (end_ts - start_ts).days
+        if window_days > 365:
+            return web.json_response(
+                {'success': False, 'error': 'window too large (max 365 days)'},
+                status=400,
+            )
+        if window_days < 0:
+            return web.json_response(
+                {'success': False, 'error': 'end_ts must be after start_ts'},
+                status=400,
+            )
+
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+
+        try:
+            from modules.backtest_replay.core.trade_loader import (
+                load_trades, load_recommendations,
+            )
+            from modules.backtest_replay.core.replay_engine import run_replay
+            from dataclasses import asdict
+            trades = await load_trades(self.db.pool, start_ts, end_ts, modules)
+            recs = await load_recommendations(self.db.pool, start_ts, end_ts, modules)
+            report = run_replay(
+                trades, recs, strategy, strategy_params,
+                start_ts=start_ts, end_ts=end_ts,
+            )
+            return web.json_response({
+                'success': True,
+                'report': asdict(report),
+                'n_trades_loaded': sum(len(v) for v in trades.values()),
+                'n_recs_loaded': len(recs),
+            })
+        except ValueError as e:
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=400,
+            )
+        except Exception as e:
+            logger.error(f"backtest replay failed: {e}", exc_info=True)
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    # ---- Phase 3 D5/D6: orchestrator recommendations surface ----
+    async def _api_orch_list_recs(self, request):
+        """GET /api/orchestrator/recommendations
+        Query params:
+          ?status=pending|approved|rejected|superseded|all  (default pending)
+          ?limit=N  (default 50, max 200)
+          ?module=<name>  (optional filter)
+        """
+        status = (request.query.get('status') or 'pending').lower()
+        try:
+            limit = max(1, min(int(request.query.get('limit', '50')), 200))
+        except (TypeError, ValueError):
+            limit = 50
+        module_filter = request.query.get('module') or None
+
+        clauses = []
+        params: list = []
+        if status == 'pending':
+            clauses.append("approved IS NULL AND superseded_at IS NULL")
+        elif status == 'approved':
+            clauses.append("approved IS TRUE")
+        elif status == 'rejected':
+            clauses.append("approved IS FALSE")
+        elif status == 'superseded':
+            clauses.append("superseded_at IS NOT NULL")
+        # 'all' = no filter
+        if module_filter:
+            params.append(module_filter)
+            clauses.append(f"module = ${len(params)}")
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        params.append(limit)
+        sql = (
+            "SELECT id::text, created_at, module, recommended, "
+            "  confidence, reason, metrics, approved, approved_at, "
+            "  approved_by, superseded_at "
+            f"FROM orchestrator_recommendations {where} "
+            f"ORDER BY created_at DESC LIMIT ${len(params)}"
+        )
+        try:
+            if not self.db or not getattr(self.db, 'pool', None):
+                return web.json_response(
+                    {'success': False, 'error': 'db pool unavailable'},
+                    status=503,
+                )
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(sql, *params)
+            return web.json_response({
+                'success': True,
+                'count': len(rows),
+                'recommendations': [
+                    {
+                        'id': r['id'],
+                        'created_at': r['created_at'].isoformat() if r['created_at'] else None,
+                        'module': r['module'],
+                        'recommended': r['recommended'],
+                        'confidence': float(r['confidence']) if r['confidence'] is not None else None,
+                        'reason': r['reason'],
+                        'metrics': r['metrics'],
+                        'approved': r['approved'],
+                        'approved_at': r['approved_at'].isoformat() if r['approved_at'] else None,
+                        'approved_by': r['approved_by'],
+                        'superseded_at': r['superseded_at'].isoformat() if r['superseded_at'] else None,
+                    }
+                    for r in rows
+                ],
+            })
+        except Exception as e:
+            logger.error(f"orch list error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    async def _api_orch_history(self, request):
+        """GET /api/orchestrator/history?hours=72
+        Returns per-module timeseries of:
+          - score, confidence, recommended (categorical)
+          - decomposed metrics.components (win_rate, pnl_signal,
+            volume_factor, regime_signal)
+          - total_pnl_usd snapshot at that tick
+
+        Useful for /orchestrator's trend chart so the operator can see
+        a module's score-over-time, not just the most recent rec.
+        """
+        try:
+            hours = max(1, min(int(request.query.get('hours', '72')), 24 * 7))
+        except (TypeError, ValueError):
+            hours = 72
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT created_at, module, recommended, confidence, metrics "
+                    "FROM orchestrator_recommendations "
+                    f"WHERE created_at > NOW() - INTERVAL '{hours} hours' "
+                    "ORDER BY module, created_at ASC"
+                )
+            # Group by module so the frontend can render one series each.
+            series = {}
+            for r in rows:
+                m = r['module']
+                if m not in series:
+                    series[m] = []
+                metrics = r['metrics'] or {}
+                if isinstance(metrics, str):
+                    import json as _json
+                    try:
+                        metrics = _json.loads(metrics)
+                    except Exception:
+                        metrics = {}
+                series[m].append({
+                    'ts': r['created_at'].isoformat() if r['created_at'] else None,
+                    'recommended': r['recommended'],
+                    'confidence': float(r['confidence']) if r['confidence'] is not None else None,
+                    'score': metrics.get('score'),
+                    'components': metrics.get('components', {}),
+                    'total_pnl_usd': metrics.get('total_pnl_usd'),
+                    'closed_trades': metrics.get('closed_trades'),
+                })
+            return web.json_response({
+                'success': True,
+                'window_hours': hours,
+                'series': series,
+            })
+        except Exception as e:
+            logger.error(f"orch history error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
+
+    async def _api_orch_approve_rec(self, request):
+        """POST /api/orchestrator/recommendations/{rec_id}/approve
+        Marks the rec as approved + applies its action (flips
+        config_settings.<module>_config.dry_run, etc.). Operator must
+        still restart the subprocess for the flip to take effect on
+        the engine. We do NOT auto-restart."""
+        return await self._orch_decide(request, approved=True)
+
+    async def _api_orch_reject_rec(self, request):
+        """POST /api/orchestrator/recommendations/{rec_id}/reject
+        Marks the rec as rejected (audit trail) but takes no action."""
+        return await self._orch_decide(request, approved=False)
+
+    async def _orch_decide(self, request, *, approved: bool):
+        rec_id = request.match_info.get('rec_id', '')
+        # Identify the operator from the session if present.
+        approved_by = None
+        try:
+            session = request.get('session')
+            if session:
+                approved_by = session.get('username') or session.get('user_id')
+        except Exception:
+            pass
+        if not self.db or not getattr(self.db, 'pool', None):
+            return web.json_response(
+                {'success': False, 'error': 'db pool unavailable'},
+                status=503,
+            )
+        try:
+            async with self.db.pool.acquire() as conn:
+                rec = await conn.fetchrow(
+                    "SELECT module, recommended FROM orchestrator_recommendations "
+                    "WHERE id = $1::uuid",
+                    rec_id,
+                )
+                if rec is None:
+                    return web.json_response(
+                        {'success': False, 'error': f'rec {rec_id} not found'},
+                        status=404,
+                    )
+                await conn.execute(
+                    "UPDATE orchestrator_recommendations "
+                    "SET approved = $1, approved_at = NOW(), approved_by = $2 "
+                    "WHERE id = $3::uuid",
+                    approved, approved_by, rec_id,
+                )
+                applied = None
+                restart_triggered = False
+                # APPLY the action only on approval. Currently only
+                # 'to_dry' / 'to_live' map to DB flips; enable/disable
+                # are recommended-only for now (require env edits).
+                if approved and rec['recommended'] in ('to_dry', 'to_live'):
+                    new_dry = 'true' if rec['recommended'] == 'to_dry' else 'false'
+                    config_type = self._DRY_RUN_CONFIG_TYPE_MAP.get(rec['module'])
+                    if config_type:
+                        await conn.execute(
+                            "INSERT INTO config_settings (config_type, key, value, value_type) "
+                            "VALUES ($1, 'dry_run', $2, 'bool') "
+                            "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                            config_type, new_dry,
+                        )
+                        applied = {'config_type': config_type, 'dry_run': new_dry}
+                        logger.info(
+                            f"[Phase 3 D6] orchestrator rec {rec_id} applied: "
+                            f"{rec['module']} -> dry_run={new_dry} by {approved_by}"
+                        )
+                        # Auto-trigger a subprocess restart so the new
+                        # dry_run flag actually takes effect. Opt-out
+                        # by passing {"restart": false} in the body.
+                        try:
+                            payload = await request.json()
+                        except Exception:
+                            payload = {}
+                        if payload.get('restart', True):
+                            restart_key = self._MODULE_RESTART_KEY_MAP.get(rec['module'])
+                            if restart_key:
+                                from pathlib import Path
+                                flag_dir = Path("logs")
+                                flag_dir.mkdir(parents=True, exist_ok=True)
+                                (flag_dir / f".restart_{restart_key}").write_text("")
+                                restart_triggered = True
+                                logger.info(
+                                    f"[Phase 3 D6] restart flag dropped for {restart_key}"
+                                )
+            note = 'No DB-level action applied.'
+            if applied and restart_triggered:
+                note = 'Applied + restart flag dropped (subprocess back up within ~10s).'
+            elif applied:
+                note = 'Applied. Restart the module subprocess for the change to take effect.'
+            return web.json_response({
+                'success': True,
+                'rec_id': rec_id,
+                'approved': approved,
+                'applied': applied,
+                'restart_triggered': restart_triggered,
+                'note': note,
+            })
+        except Exception as e:
+            logger.error(f"orch decide({approved}) error: {e}")
+            return web.json_response(
+                {'success': False, 'error': str(e)},
+                status=500,
+            )
 
     async def _api_module_enable(self, request):
         """Enable a module by updating .env"""
@@ -1508,34 +3322,43 @@ class DashboardEndpoints:
         )
     
     async def dashboard_page(self, request):
-        """Main dashboard page"""
-        template = self.jinja_env.get_template('dashboard.html')
-        return web.Response(
-            text=template.render(page='dashboard'),
-            content_type='text/html'
-        )
+        """Legacy /dashboard URL — permanently redirects to /dex/dashboard.
+
+        The two paths historically rendered the same template, so any
+        link or bookmark pointing at /dashboard would silently land
+        on what's really the DEX dashboard. Now redirects (301) so
+        external links keep working while operators converge on the
+        canonical /dex/dashboard URL. Audit agent 3 #7.
+        """
+        raise web.HTTPMovedPermanently('/dex/dashboard')
     
+    # NOTE: page contexts for DEX pages use the 'dex_*' prefix so that
+    # base.html's sidebar highlight ({% if page == 'dex_positions' %})
+    # actually fires. Previously these handlers passed page='trades'
+    # etc., so the DEX side-nav never highlighted the current page —
+    # the conditions never matched. Same fix shape for /trades,
+    # /positions, /performance, /reports, /backtest, /analysis.
     async def trades_page(self, request):
-        """Recent trades page"""
+        """Recent trades page (DEX)"""
         template = self.jinja_env.get_template('trades.html')
         return web.Response(
-            text=template.render(page='trades'),
+            text=template.render(page='dex_trades'),
             content_type='text/html'
         )
-    
+
     async def positions_page(self, request):
-        """Positions page"""
+        """Positions page (DEX)"""
         template = self.jinja_env.get_template('positions.html')
         return web.Response(
-            text=template.render(page='positions'),
+            text=template.render(page='dex_positions'),
             content_type='text/html'
         )
-    
+
     async def performance_page(self, request):
-        """Performance analytics page"""
+        """Performance analytics page (DEX)"""
         template = self.jinja_env.get_template('performance.html')
         return web.Response(
-            text=template.render(page='performance'),
+            text=template.render(page='dex_performance'),
             content_type='text/html'
         )
 
@@ -1570,15 +3393,15 @@ class DashboardEndpoints:
         )
     
     async def reports_page(self, request):
-        """Reports generation page"""
+        """Reports generation page (DEX)"""
         template = self.jinja_env.get_template('reports.html')
         return web.Response(
             text=template.render(page='reports'),
             content_type='text/html'
         )
-    
+
     async def backtest_page(self, request):
-        """Backtesting interface page"""
+        """Backtesting interface page (DEX)"""
         template = self.jinja_env.get_template('backtest.html')
         return web.Response(
             text=template.render(page='backtest'),
@@ -1594,10 +3417,12 @@ class DashboardEndpoints:
         )
 
     async def global_settings_page(self, request):
-        """Global settings editor page"""
+        """Global settings editor page. Distinct from /settings (account
+        settings) — base.html nav uses page='global_settings' to
+        highlight it."""
         template = self.jinja_env.get_template('global_settings.html')
         return web.Response(
-            text=template.render(page='settings'),
+            text=template.render(page='global_settings'),
             content_type='text/html'
         )
 
@@ -1605,25 +3430,27 @@ class DashboardEndpoints:
         """Pro controls page"""
         template = self.jinja_env.get_template('pro_controls.html')
         return web.Response(
-            text=template.render(page='dashboard'),
+            text=template.render(page='pro_controls'),
             content_type='text/html'
         )
-    
+
     # ==================== API - DATA ENDPOINTS ====================
 
     async def analysis_page(self, request):
-        """Trade analysis page"""
+        """Trade analysis page (DEX)"""
         template = self.jinja_env.get_template('analysis.html')
         return web.Response(
             text=template.render(page='analysis'),
             content_type='text/html'
         )
 
-    async def analytics_page(self, request):
-        """Analytics page - DEPRECATED, redirects to main dashboard"""
-        # Analytics page was not working properly - redirect to main dashboard
-        # TODO: Remove this route entirely in future cleanup
-        raise web.HTTPFound('/dashboard')
+    # analytics_page removed — was a redirect stub that shadowed the
+    # real AnalyticsRoutes.analytics_page (monitoring/analytics_routes.py).
+    # The full advanced-analytics surface lives in that module along
+    # with /api/analytics/{performance,risk,comparison,portfolio}.
+    # The deprecation comment "was not working properly" was wrong —
+    # the JS in static/js/analytics.js targets endpoints that already
+    # exist, so removing the redirect restores the page.
 
     async def simulator_page(self, request):
         """Trade simulator page for dry-run validation"""
@@ -2257,43 +4084,95 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
 
     async def api_get_logs(self, request):
-        """Get recent log entries from all available log files."""
+        """Get recent log entries across all module log dirs.
+
+        Previously hardcoded /app/logs/TradingBot*.log which doesn't
+        exist in the current layout — actual logs live in
+        logs/<module>/{module}.log (e.g. logs/sniper/sniper.log,
+        logs/arbitrage/arbitrage.log, logs/dashboard/dashboard.log).
+        The /logs page consequently always rendered empty.
+
+        Now walks the canonical SUBPROCESS_MODULE_DIRS plus the
+        legacy /app/logs path for back-compat, picks up text and
+        JSON log lines, and returns the most-recent 500 entries
+        sorted by timestamp (or filename order for plain text).
+
+        Query params:
+          ?module=<name>  — filter to one module's logs only
+          ?limit=N        — cap returned lines (default 500, max 2000)
+          ?level=ERROR    — filter by log level (text logs only)
+        """
         try:
-            log_dir = "/app/logs"
-            log_files = [
-                "TradingBot.log",
-                "TradingBot_errors.log",
-                "TradingBot_trades.log"
-            ]
-            # Add rotated logs
-            for i in range(1, 11):
-                log_files.append(f"TradingBot.log.{i}")
+            from pathlib import Path
+            limit = max(1, min(int(request.query.get('limit', 500)), 2000))
+            module_filter = request.query.get('module', '').strip().lower()
+            level_filter = request.query.get('level', '').strip().upper()
+
+            # Canonical per-module log dirs (relative paths work because
+            # docker-compose mounts ./logs:/app/logs). Also probe the
+            # legacy /app/logs root for back-compat.
+            try:
+                from core.module_manager import SUBPROCESS_MODULE_DIRS
+                module_dirs = dict(SUBPROCESS_MODULE_DIRS)
+            except Exception:
+                module_dirs = {
+                    'dex': 'logs/dex_trading',
+                    'futures': 'logs/futures_trading',
+                    'solana': 'logs/solana_trading',
+                    'sniper': 'logs/sniper',
+                    'arbitrage': 'logs/arbitrage',
+                    'copy_trading': 'logs/copy_trading',
+                    'ai': 'logs/ai_analysis',
+                    'dashboard': 'logs/dashboard',
+                }
 
             all_lines = []
-            for lf in log_files:
-                try:
-                    full_path = f"{log_dir}/{lf}"
-                    with open(full_path, 'r') as f:
-                        for line in f:
-                            try:
-                                log_entry = json.loads(line)
-                                # Ensure timestamp exists for sorting
-                                if 'timestamp' in log_entry:
-                                    all_lines.append(log_entry)
-                            except (json.JSONDecodeError, TypeError):
-                                pass
-                except FileNotFoundError:
-                    # It's normal for some rotated files not to exist
+            for mod_name, log_dir_path in module_dirs.items():
+                if module_filter and module_filter != mod_name:
                     continue
+                p = Path(log_dir_path)
+                if not p.exists() or not p.is_dir():
+                    continue
+                for log_file in sorted(p.glob('*.log')):
+                    try:
+                        with open(log_file, 'r', errors='replace') as f:
+                            # Only read the tail of large files
+                            for line in f.readlines()[-500:]:
+                                line = line.rstrip('\n')
+                                if not line:
+                                    continue
+                                if level_filter and level_filter not in line:
+                                    continue
+                                # Best-effort timestamp parse from
+                                # "YYYY-MM-DD HH:MM:SS,sss" prefix.
+                                ts = line[:23] if len(line) > 23 and line[4] == '-' else ''
+                                # Best-effort level extraction so the
+                                # /logs UI can filter by level. Format
+                                # is "... - <Logger> - <LEVEL> - ...".
+                                lvl = 'INFO'
+                                for marker in (' - DEBUG - ', ' - INFO - ',
+                                               ' - WARNING - ', ' - ERROR - ',
+                                               ' - CRITICAL - '):
+                                    if marker in line:
+                                        lvl = marker.strip(' -')
+                                        break
+                                all_lines.append({
+                                    'module': mod_name,
+                                    'file': log_file.name,
+                                    'timestamp': ts,
+                                    'level': lvl,
+                                    'message': line,
+                                })
+                    except Exception as e:
+                        logger.debug(f"could not read {log_file}: {e}")
 
-            # Sort all log entries by timestamp
+            # Sort by timestamp descending (newest first); empty
+            # timestamps fall to the end.
             all_lines.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-
-            # Return last 500 log lines
-            return web.json_response({'success': True, 'data': all_lines[:500]})
+            return web.json_response({'success': True, 'data': all_lines[:limit], 'count': len(all_lines)})
         except Exception as e:
             logger.error(f"Error reading log files: {e}", exc_info=True)
-            return web.json_response({'error': str(e)}, status=500)
+            return web.json_response({'error': str(e), 'data': []}, status=200)
 
     async def api_get_analysis(self, request):
         """Get trade analysis data"""
@@ -2622,20 +4501,33 @@ class DashboardEndpoints:
             winning_trades_count = 0
 
             # Get DEX data from database
-            if self.db:
+            # Wave-12 FIX 4(a): the previous path called get_recent_trades(limit=1000)
+            # which silently capped the DEX bucket at 1000 rows AND co-mingled
+            # rows that any module (sniper/AI/solana) may have written into the
+            # legacy `trades` table. Operator saw 779 dashboard-total vs 834 DEX
+            # alone — that gap = cap + cross-module contamination. Query the
+            # `trades` table directly, exclude Solana (already counted in
+            # solana bucket below), and skip cross-module strategies so DEX is
+            # a clean SUM. No 1000 cap.
+            if self.db and getattr(self.db, 'pool', None):
                 try:
-                    # Get all trades for P&L calculation
-                    trades = await self.db.get_recent_trades(limit=1000)
-                    closed_trades = [t for t in trades if t.get('status') == 'closed' and t.get('profit_loss') is not None]
-
-                    total_pnl = sum(float(t.get('profit_loss', 0)) for t in closed_trades)
-                    total_trades = len(closed_trades)
-
-                    # Calculate win rate
-                    winning_trades_count = sum(1 for t in closed_trades if float(t.get('profit_loss', 0)) > 0)
-
+                    async with self.db.pool.acquire() as conn:
+                        dex_row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed') AS trades,
+                              COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins
+                            FROM trades
+                            WHERE UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')
+                              AND COALESCE(strategy,'') NOT IN
+                                  ('sniper','copy_trading','copytrading','ai','ai_analysis','arbitrage')
+                        """)
+                        if dex_row:
+                            total_pnl = float(dex_row['pnl'] or 0)
+                            total_trades = int(dex_row['trades'] or 0)
+                            winning_trades_count = int(dex_row['wins'] or 0)
                 except Exception as e:
-                    logger.warning(f"Error getting data from database: {e}")
+                    logger.warning(f"Error getting DEX data from database: {e}")
 
             # Get DEX open positions from ENGINE
             if self.engine and hasattr(self.engine, 'active_positions') and self.engine.active_positions:
@@ -2684,18 +4576,106 @@ class DashboardEndpoints:
                             net_pnl = stats.get('total_pnl', stats.get('net_pnl', stats.get('total_pnl_sol', 0)))
                             if isinstance(net_pnl, str):
                                 net_pnl = float(net_pnl.replace('$', '').replace(',', '').replace('SOL', '').strip())
-                            # Convert SOL to USD (approximate - should use real price)
-                            sol_price = 200.0  # TODO: Get real SOL price from API
+                            # Convert SOL to USD via cached CoinGecko fetch
+                            # (60s TTL; 200.0 fallback on network failure).
+                            sol_price = await self._get_sol_usd_price()
                             solana_pnl = net_pnl * sol_price
                             logger.debug(f"Solana summary: trades={solana_trades}, pnl={solana_pnl}, positions={solana_positions}")
             except Exception as e:
                 logger.debug(f"Could not fetch solana stats for summary: {e}")
 
+            # Sniper + Arbitrage + Copy Trading — aggregate directly from
+            # their DB tables. The previous code pulled DEX from `trades`,
+            # Futures from health-port, Solana from health-port, but the
+            # three modules above were silently omitted — so the summary
+            # always showed $0 / 0 trades even when sniper had 179k closed
+            # trades and $50k+ PnL on the operator's VPS.
+            sniper_pnl = sniper_trades = sniper_positions = sniper_winning = 0
+            arb_pnl = arb_trades = arb_winning = 0
+            copy_pnl = copy_trades_n = copy_positions = copy_winning = 0
+            if self.db and getattr(self.db, 'pool', None):
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed') AS trades,
+                              COUNT(*) FILTER (WHERE status='open') AS positions,
+                              COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins
+                            FROM sniper_trades
+                        """)
+                        if row:
+                            sniper_pnl = float(row['pnl'] or 0)
+                            sniper_trades = int(row['trades'] or 0)
+                            sniper_positions = int(row['positions'] or 0)
+                            sniper_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"Sniper summary fetch failed: {e}")
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss), 0) AS pnl,
+                              COUNT(*) AS trades,
+                              COUNT(*) FILTER (WHERE profit_loss > 0) AS wins
+                            FROM arbitrage_trades
+                        """)
+                        if row:
+                            arb_pnl = float(row['pnl'] or 0)
+                            arb_trades = int(row['trades'] or 0)
+                            arb_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"Arbitrage summary fetch failed: {e}")
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed' AND NOT is_simulated), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed' AND NOT is_simulated) AS trades,
+                              COUNT(*) FILTER (WHERE status='open' AND NOT is_simulated) AS positions,
+                              COUNT(*) FILTER (WHERE status='closed' AND NOT is_simulated AND profit_loss > 0) AS wins
+                            FROM copytrading_trades
+                        """)
+                        if row:
+                            copy_pnl = float(row['pnl'] or 0)
+                            copy_trades_n = int(row['trades'] or 0)
+                            copy_positions = int(row['positions'] or 0)
+                            copy_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"Copytrading summary fetch failed: {e}")
+                # ISSUE 3: AI was the only module missing from the summary
+                # roll-up. Add ai_trades so the headline P&L / trade count
+                # reflect all 7 modules. Table missing on older deployments
+                # is swallowed so the summary never 500s.
+                ai_pnl = ai_trades_n = ai_positions = ai_winning = 0
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        row = await conn.fetchrow("""
+                            SELECT
+                              COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl,
+                              COUNT(*) FILTER (WHERE status='closed') AS trades,
+                              COUNT(*) FILTER (WHERE status='open') AS positions,
+                              COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins
+                            FROM ai_trades
+                        """)
+                        if row:
+                            ai_pnl = float(row['pnl'] or 0)
+                            ai_trades_n = int(row['trades'] or 0)
+                            ai_positions = int(row['positions'] or 0)
+                            ai_winning = int(row['wins'] or 0)
+                except Exception as e:
+                    logger.debug(f"AI summary fetch failed: {e}")
+            else:
+                ai_pnl = ai_trades_n = ai_positions = ai_winning = 0
+
             # Combine totals from ALL modules
-            total_pnl += futures_pnl + solana_pnl
-            total_trades += futures_trades + solana_trades
-            open_positions_count += futures_positions + solana_positions
-            winning_trades_count += futures_winning + solana_winning
+            total_pnl += futures_pnl + solana_pnl + sniper_pnl + arb_pnl + copy_pnl + ai_pnl
+            total_trades += (futures_trades + solana_trades + sniper_trades
+                             + arb_trades + copy_trades_n + ai_trades_n)
+            open_positions_count += (futures_positions + solana_positions
+                                     + sniper_positions + copy_positions + ai_positions)
+            winning_trades_count += (futures_winning + solana_winning + sniper_winning
+                                     + arb_winning + copy_winning + ai_winning)
 
             # Calculate combined win rate
             win_rate = (winning_trades_count / total_trades * 100) if total_trades > 0 else 0
@@ -4142,8 +6122,23 @@ class DashboardEndpoints:
                 return web.json_response({'success': True, 'data': {'historical': default_metrics}})
 
             df = pd.DataFrame([dict(trade) for trade in trades])
-            df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+            # asyncpg DECIMAL → Decimal; pd.to_numeric refuses Decimal/None
+            # without errors='coerce'. NULL exit_timestamp on a status='closed'
+            # row (data anomaly) becomes NaT and breaks resample('D').
+            df['profit_loss'] = pd.to_numeric(df['profit_loss'], errors='coerce').fillna(0)
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], errors='coerce', utc=True)
+            df = df.dropna(subset=['exit_timestamp'])
+            if df.empty:
+                initial_balance = self.config_mgr.get_portfolio_config().initial_balance
+                return web.json_response({'success': True, 'data': {'historical': {
+                    'initial_balance': initial_balance,
+                    'total_pnl': 0.0, 'roi': 0.0, 'sortino_ratio': 0.0,
+                    'calmar_ratio': 0.0, 'daily_volatility': 0.0, 'annual_volatility': 0.0,
+                    'total_trades': 0, 'winning_trades': 0, 'losing_trades': 0,
+                    'win_rate': 0.0, 'avg_win': 0.0, 'avg_loss': 0.0,
+                    'best_trade': 0.0, 'worst_trade': 0.0, 'profit_factor': 0.0,
+                    'sharpe_ratio': 0.0, 'max_drawdown': 0.0,
+                }}})
 
             # --- FIX STARTS HERE ---
             # Basic metrics
@@ -4221,7 +6216,13 @@ class DashboardEndpoints:
             }
 
             for key, value in metrics.items():
-                if np.isnan(value) or np.isinf(value):
+                try:
+                    fv = float(value)
+                    if np.isnan(fv) or np.isinf(fv):
+                        metrics[key] = 0.0
+                    else:
+                        metrics[key] = fv
+                except (TypeError, ValueError):
                     metrics[key] = 0.0
 
             return web.json_response({
@@ -4261,8 +6262,17 @@ class DashboardEndpoints:
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            query = "SELECT exit_timestamp, profit_loss, strategy, metadata FROM trades WHERE status = 'closed' ORDER BY exit_timestamp ASC;"
-            trades = await self.db.pool.fetch(query)
+            # ISSUE 3: the main-dashboard charts previously read ONLY the
+            # generic `trades` table (DEX). Sniper/Arbitrage/Solana/Futures/
+            # Copy/AI live in their own tables, so the equity curve, strategy
+            # breakdown, win/loss and monthly charts silently omitted them.
+            # Reuse _unified_closed_trades (already tz-normalized via _as_utc)
+            # so every module is represented. strategy is the normalized
+            # module label ('dex','sniper','arbitrage','solana','futures',
+            # 'copy','ai') so strategy_performance shows all 7 modules.
+            async with self.db.pool.acquire() as conn:
+                unified = await self._unified_closed_trades(conn)
+            trades = [r for r in unified if r.get('exit_timestamp') is not None]
 
             if not trades:
                 return web.json_response({'success': True, 'data': {
@@ -4275,9 +6285,18 @@ class DashboardEndpoints:
                     'monthly': [],
                 }})
 
-            df = pd.DataFrame([dict(trade) for trade in trades])
+            df = pd.DataFrame([{
+                'exit_timestamp': r['exit_timestamp'],
+                'profit_loss': r['profit_loss'],
+                'strategy': r['strategy'],
+                'metadata': r['metadata'],
+            } for r in trades])
             df['profit_loss'] = pd.to_numeric(df['profit_loss'])
-            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'])
+            # utc=True keeps the column tz-aware UTC so the >= timeframe
+            # filter below (vs pd.Timestamp.utcnow()) does not raise the
+            # naive/aware comparison error (issue 18 class).
+            df['exit_timestamp'] = pd.to_datetime(df['exit_timestamp'], utc=True)
+            df = df.sort_values('exit_timestamp').reset_index(drop=True)
 
             # Use strategy column from DB, fallback to metadata if empty
             def get_strategy(row):
@@ -4560,8 +6579,20 @@ class DashboardEndpoints:
                 'modules': {
                     'dashboard': 'online',
                     'dex': dex_module_status,
-                    'futures': 'offline' if not os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'unknown',
-                    'solana': 'offline' if not os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'unknown',
+                    # All seven trading modules report 'online' when
+                    # their env flag is true. Health-probing each one
+                    # belongs in /api/modules (which already does that
+                    # via a 3-second timeout per module health-port).
+                    # For /api/bot/status — which is polled every 5s by
+                    # the MODE badge — we keep it cheap by reading env
+                    # only. The MODE badge cares about dry_run, not
+                    # per-module liveness.
+                    'futures':      'online' if os.getenv('FUTURES_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'solana':       'online' if os.getenv('SOLANA_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'sniper':       'online' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'arbitrage':    'online' if os.getenv('ARBITRAGE_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'copy_trading': 'online' if os.getenv('COPY_TRADING_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
+                    'ai_analysis':  'online' if os.getenv('AI_MODULE_ENABLED', 'false').lower() in ('true', '1', 'yes') else 'offline',
                 }
             }
 
@@ -5095,6 +7126,13 @@ class DashboardEndpoints:
                         settings[f"futures_{key}"] = float(value)
                     elif value_type == 'bool':
                         settings[f"futures_{key}"] = value.lower() in ('true', '1', 'yes')
+                    elif value_type == 'json':
+                        # FUT-RM-08: dict/list settings (e.g. max_leverage_overrides)
+                        try:
+                            import json as _json
+                            settings[f"futures_{key}"] = _json.loads(value) if value else {}
+                        except Exception:
+                            settings[f"futures_{key}"] = {}
                     else:
                         settings[f"futures_{key}"] = value
 
@@ -5168,6 +7206,12 @@ class DashboardEndpoints:
                     elif isinstance(value, float):
                         value_type = 'float'
                         value_str = str(value)
+                    elif isinstance(value, (dict, list)):
+                        # FUT-RM-08: dict/list settings persisted as JSON so the
+                        # loader's value_type=='json' branch round-trips.
+                        import json as _json
+                        value_type = 'json'
+                        value_str = _json.dumps(value)
                     else:
                         value_type = 'string'
                         value_str = str(value)
@@ -5209,6 +7253,8 @@ class DashboardEndpoints:
             'max_positions': 'futures_position', 'min_trade_size': 'futures_position',
             'default_leverage': 'futures_leverage', 'leverage': 'futures_leverage',
             'max_leverage': 'futures_leverage', 'margin_mode': 'futures_leverage',
+            'enforce_isolated_margin': 'futures_leverage',  # FUT-RM-07
+            'max_leverage_overrides': 'futures_leverage',   # FUT-RM-08
             'stop_loss_pct': 'futures_risk', 'stop_loss': 'futures_risk',
             'take_profit_pct': 'futures_risk', 'take_profit': 'futures_risk',
             'max_daily_loss_usd': 'futures_risk', 'daily_loss_limit': 'futures_risk',
@@ -5216,6 +7262,9 @@ class DashboardEndpoints:
             'trailing_stop_enabled': 'futures_risk', 'trailing_stop': 'futures_risk',
             'trailing_stop_distance': 'futures_risk', 'trailing_distance': 'futures_risk',
             'max_consecutive_losses': 'futures_risk',
+            # FUT-RM-10 (Wave 3) auto-deleverage controls
+            'auto_deleverage_enabled': 'futures_risk',
+            'auto_deleverage_cooldown_seconds': 'futures_risk',
             'allowed_pairs': 'futures_pairs', 'both_directions': 'futures_pairs',
             'preferred_direction': 'futures_pairs',
             'rsi_oversold': 'futures_strategy', 'rsi_overbought': 'futures_strategy',
@@ -5457,7 +7506,12 @@ class DashboardEndpoints:
                         'positions': db_positions,
                         'total_pnl': f'{total_pnl_sol:.4f} SOL',
                         'daily_pnl': '0.0000 SOL',
-                        'sol_price_usd': 200,
+                        # Pull live SOL/USD via the dashboard's cached
+                        # helper (60s TTL CoinGecko) instead of the
+                        # historical hardcoded $200 sentinel — that
+                        # value was 30-150% off current spot for the
+                        # entire 2025-2026 window.
+                        'sol_price_usd': await self._get_sol_usd_price(),
                         'mode': 'OFFLINE',
                         'win_rate': f'{(winning_trades/total_trades*100) if total_trades > 0 else 0:.0f}%'
                     },
@@ -5476,8 +7530,10 @@ class DashboardEndpoints:
 
         Checks multiple sources for position data:
         1. Running Solana module health endpoint
-        2. positions table with chain='SOLANA'
-        3. solana_trades table for trades without exit (open positions)
+        2. solana_positions table (authoritative open-position store; rows
+           are inserted on open, deleted on close — no status column)
+        3. positions table with chain='SOLANA'
+        4. solana_trades table for trades without exit (open positions)
         """
         positions = []
 
@@ -5496,8 +7552,51 @@ class DashboardEndpoints:
         if not positions and self.db_pool:
             try:
                 async with self.db_pool.acquire() as conn:
-                    # First try the positions table
-                    rows = await conn.fetch("""
+                    # PREFERRED: solana_positions is the authoritative
+                    # open-position store written by solana_engine on
+                    # _save_position_to_db and deleted on close. No
+                    # status column — row presence == OPEN.
+                    try:
+                        sp_rows = await conn.fetch("""
+                            SELECT
+                                position_id, token_mint, token_symbol, strategy,
+                                entry_price, amount, value_sol, stop_loss,
+                                take_profit, is_simulated, tx_signature, opened_at
+                            FROM solana_positions
+                            ORDER BY opened_at DESC
+                        """)
+                        for row in sp_rows:
+                            entry_price = float(row['entry_price'] or 0)
+                            positions.append({
+                                'position_id': row['position_id'],
+                                'token': row['token_symbol'],
+                                'token_symbol': row['token_symbol'],
+                                'token_address': row['token_mint'],
+                                'mint': row['token_mint'],
+                                'strategy': row['strategy'] or 'pumpfun',
+                                'entry_price': entry_price,
+                                'current_price': entry_price,
+                                'amount_sol': float(row['value_sol'] or 0),
+                                'token_amount': float(row['amount'] or 0),
+                                'current_value_sol': float(row['value_sol'] or 0),
+                                'stop_loss': float(row['stop_loss'] or 0),
+                                'take_profit': float(row['take_profit'] or 0),
+                                'unrealized_pnl': 0,
+                                'unrealized_pnl_usd': 0,
+                                'pnl_pct': 0,
+                                'pnl_percent': 0,
+                                'opened_at': row['opened_at'].isoformat() if row['opened_at'] else '',
+                                'status': 'open',
+                                'is_simulated': row['is_simulated'],
+                                'tx_signature': row['tx_signature'],
+                                'source': 'solana_positions'
+                            })
+                    except Exception as sp_err:
+                        logger.debug(f"Could not fetch from solana_positions: {sp_err}")
+
+                    # Secondary fallback: generic positions table
+                    if not positions:
+                        rows = await conn.fetch("""
                         SELECT
                             position_id, token_symbol, token_address, strategy,
                             entry_price, current_price, amount, usd_value,
@@ -5507,23 +7606,23 @@ class DashboardEndpoints:
                         WHERE chain = 'SOLANA' AND status = 'open'
                         ORDER BY opened_at DESC
                     """)
-                    for row in rows:
-                        positions.append({
-                            'position_id': row['position_id'],
-                            'token': row['token_symbol'],
-                            'token_symbol': row['token_symbol'],
-                            'token_address': row['token_address'],
-                            'strategy': row['strategy'] or 'pumpfun',
-                            'entry_price': float(row['entry_price'] or 0),
-                            'current_price': float(row['current_price'] or row['entry_price'] or 0),
-                            'amount_sol': float(row['amount'] or 0),
-                            'usd_value': float(row['usd_value'] or 0),
-                            'unrealized_pnl': float(row['unrealized_pnl'] or 0),
-                            'pnl_pct': float(row['unrealized_pnl_percentage'] or 0),
-                            'opened_at': row['opened_at'].isoformat() if row['opened_at'] else '',
-                            'status': row['status'],
-                            'source': 'database'
-                        })
+                        for row in rows:
+                            positions.append({
+                                'position_id': row['position_id'],
+                                'token': row['token_symbol'],
+                                'token_symbol': row['token_symbol'],
+                                'token_address': row['token_address'],
+                                'strategy': row['strategy'] or 'pumpfun',
+                                'entry_price': float(row['entry_price'] or 0),
+                                'current_price': float(row['current_price'] or row['entry_price'] or 0),
+                                'amount_sol': float(row['amount'] or 0),
+                                'usd_value': float(row['usd_value'] or 0),
+                                'unrealized_pnl': float(row['unrealized_pnl'] or 0),
+                                'pnl_pct': float(row['unrealized_pnl_percentage'] or 0),
+                                'opened_at': row['opened_at'].isoformat() if row['opened_at'] else '',
+                                'status': row['status'],
+                                'source': 'database'
+                            })
 
                     # Also check solana_trades for entries without exit
                     if not positions:
@@ -6052,47 +8151,154 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_close_position(self, request):
-        """Close a position"""
+        """Close a position.
+
+        Operator-reported regression: this legacy endpoint required
+        self.engine (the pre-subprocess in-process engine). In the
+        modular architecture the dashboard does NOT have access to the
+        trading subprocesses' in-memory state, so self.engine is always
+        None and every close request returned HTTP 503.
+
+        Resolution: before falling back to the legacy path, try the
+        per-module flag-file IPC by inspecting the position_id against
+        the module-specific trade tables. Currently routes COPY_TRADING
+        positions to the same flag-file the new
+        /api/copytrading/positions/{trade_id}/close endpoint uses.
+        Other modules still 503 until their own flag-file shim lands.
+        """
         try:
             data = await request.json()
-            position_id = data.get('position_id')
-            
+            position_id = data.get('position_id') or data.get('trade_id')
+
             if not position_id:
                 return web.json_response({
                     'success': False,
-                    'error': 'Position ID required'
+                    'error': 'Position ID required (position_id or trade_id)'
                 }, status=400)
-            
-            # ✅ FIX: Look for position in ENGINE's active_positions
+
+            # Sanitise — only [A-Za-z0-9_-] so we can't traverse FS.
+            safe = ''.join(c for c in str(position_id) if c.isalnum() or c in '_-')
+            if not safe or safe != position_id:
+                return web.json_response({
+                    'success': False,
+                    'error': 'invalid position_id format'
+                }, status=400)
+
+            # COPY_TRADING dispatch path — same flag-file IPC as
+            # /api/copytrading/positions/{trade_id}/close.
+            if self.db and self.db.pool:
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        ct_row = await conn.fetchrow(
+                            "SELECT trade_id FROM copytrading_trades "
+                            "WHERE trade_id = $1 AND status = 'open'",
+                            safe,
+                        )
+                except Exception:
+                    ct_row = None
+                if ct_row:
+                    from pathlib import Path
+                    flag_path = Path('logs') / f'.close_copy_{safe}'
+                    try:
+                        flag_path.parent.mkdir(parents=True, exist_ok=True)
+                        flag_path.write_text('1', encoding='utf-8')
+                    except Exception as e:
+                        return web.json_response({
+                            'success': False, 'error': f'flag write failed: {e}'
+                        }, status=500)
+                    # Best-effort UI flip
+                    try:
+                        async with self.db.pool.acquire() as conn:
+                            await conn.execute(
+                                "UPDATE copytrading_positions "
+                                "SET status='closing', updated_at=NOW() "
+                                "WHERE trade_id = $1 AND status='open'",
+                                safe,
+                            )
+                    except Exception:
+                        pass
+                    return web.json_response({
+                        'success': True,
+                        'trade_id': safe,
+                        'module': 'copy_trading',
+                        'note': (
+                            'close request queued via flag-file IPC; '
+                            'engine will execute on next reconcile tick (~10s)'
+                        ),
+                    }, status=202)
+
+                # DEX dispatch path — the main /positions page posts the
+                # integer trades.id as position_id. Per modules/dex_trading/
+                # CLAUDE.md the DEX subprocess polls logs/.close_dex_<id>
+                # (DexPositionService.close_flag_loop, every 15s) and looks
+                # the row up by `id` DB-first. We confirm the id maps to an
+                # OPEN non-Solana trades row before dropping the flag.
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        dex_row = await conn.fetchrow(
+                            "SELECT id FROM trades "
+                            "WHERE id = $1::bigint AND status = 'open' "
+                            "AND UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')",
+                            int(safe) if safe.isdigit() else -1,
+                        )
+                except Exception:
+                    dex_row = None
+                if dex_row:
+                    from pathlib import Path
+                    flag_path = Path('logs') / f'.close_dex_{safe}'
+                    try:
+                        flag_path.parent.mkdir(parents=True, exist_ok=True)
+                        flag_path.write_text('1', encoding='utf-8')
+                    except Exception as e:
+                        return web.json_response({
+                            'success': False, 'error': f'flag write failed: {e}'
+                        }, status=500)
+                    return web.json_response({
+                        'success': True,
+                        'position_id': safe,
+                        'module': 'dex_trading',
+                        'note': (
+                            'close request queued via flag-file IPC '
+                            '(logs/.close_dex_<id>); the DEX subprocess closes '
+                            'it on its next poll (~15s)'
+                        ),
+                    }, status=202)
+
+            # Legacy path — only useful when dashboard runs in the same
+            # process as the old monolithic engine. Modular setup will
+            # always 503 here unless we add per-module IPC shims.
             if not self.engine or not hasattr(self.engine, 'active_positions'):
                 return web.json_response({
                     'success': False,
-                    'error': 'Trading engine not available'
+                    'error': (
+                        'Trading engine not available, and position_id did not '
+                        'match an open DEX (trades.id) or COPY_TRADING (trade_id) '
+                        'position. Sniper uses /api/sniper/position/close, Solana '
+                        '/api/solana/close-position, Futures '
+                        '/api/futures/position/close.'
+                    ),
                 }, status=503)
-            
+
             # Find the position by ID
             position = None
             token_address = None
-            
+
             for addr, pos in self.engine.active_positions.items():
                 if pos.get('id') == position_id:
                     position = pos
                     token_address = addr
                     break
-            
+
             if not position:
                 return web.json_response({
                     'success': False,
                     'error': f'Position {position_id} not found in active positions'
                 }, status=404)
-            
+
             # ✅ Close the position via engine
             try:
-                # Call the engine's close position method
                 await self.engine._close_position(position, reason="Manual close via dashboard")
-                
                 logger.info(f"Position {position_id} closed successfully via dashboard")
-                
                 return web.json_response({
                     'success': True,
                     'message': f"Position closed: {position.get('token_symbol', 'Unknown')}",
@@ -6108,7 +8314,7 @@ class DashboardEndpoints:
                     'success': False,
                     'error': f'Failed to close position: {str(e)}'
                 }, status=500)
-                
+
         except Exception as e:
             logger.error(f"Error in api_close_position: {e}")
             return web.json_response({
@@ -6161,6 +8367,105 @@ class DashboardEndpoints:
                 'success': False,
                 'error': f'Futures module not available: {str(e)}'
             }, status=503)
+
+    async def api_futures_funding_forecast(self, request):
+        """FUT-RM-09b (Wave 4): per-symbol 24h forward funding-cost forecast.
+
+        Reads the latest snapshot row per (symbol, side) from
+        futures_funding_payments (migration 029) and projects it forward
+        N intervals (default 3 = 24h on Binance/Bybit 8h funding cadence).
+
+        Returns:
+            {
+              "success": True,
+              "interval_hours": 8,
+              "intervals_per_window": 3,
+              "window_hours": 24,
+              "rows": [
+                {"symbol", "side", "notional_usd",
+                 "per_interval_usd", "forecast_24h_usd",
+                 "implied_apr_pct", "as_of"},
+                ...
+              ],
+              "total_forecast_usd": <signed sum>
+            }
+
+        Sign convention matches the row schema: positive = cost to book.
+        Fail-soft: no DB or no rows -> success=True with rows=[].
+        """
+        try:
+            # Operator may override the funding cadence (Binance/Bybit are
+            # both 8h on USDT perps today; OKX is 8h too). Bounded 1..24.
+            try:
+                interval_hours = int(request.query.get('interval_hours', '8'))
+            except (TypeError, ValueError):
+                interval_hours = 8
+            interval_hours = max(1, min(24, interval_hours))
+            try:
+                window_hours = int(request.query.get('window_hours', '24'))
+            except (TypeError, ValueError):
+                window_hours = 24
+            window_hours = max(1, min(168, window_hours))  # 1h..7d
+            intervals_per_window = max(1, window_hours // interval_hours)
+
+            rows_out = []
+            total_forecast = 0.0
+            if self.db_pool:
+                async with self.db_pool.acquire() as conn:
+                    # Latest snapshot per (symbol, side) within trailing 24h.
+                    # DISTINCT ON keeps the freshest row regardless of source.
+                    db_rows = await conn.fetch(
+                        """
+                        SELECT DISTINCT ON (symbol, side)
+                            symbol, side, notional_usd, predicted_usd, hour_bucket
+                        FROM futures_funding_payments
+                        WHERE hour_bucket >= NOW() - INTERVAL '24 hours'
+                        ORDER BY symbol, side, hour_bucket DESC
+                        """
+                    )
+                    for r in db_rows:
+                        try:
+                            notional = float(r['notional_usd'] or 0)
+                            per_interval = float(r['predicted_usd'] or 0)
+                            forecast = per_interval * intervals_per_window
+                            # Implied APR (signed): per-interval rate × 365×24/h.
+                            if notional > 0:
+                                rate = per_interval / notional
+                                periods_per_year = (365 * 24) / interval_hours
+                                apr_pct = rate * periods_per_year * 100.0
+                            else:
+                                apr_pct = 0.0
+                            rows_out.append({
+                                'symbol': r['symbol'],
+                                'side': r['side'],
+                                'notional_usd': notional,
+                                'per_interval_usd': per_interval,
+                                'forecast_24h_usd': forecast,
+                                'implied_apr_pct': apr_pct,
+                                'as_of': r['hour_bucket'].isoformat()
+                                    if r['hour_bucket'] else None,
+                            })
+                            total_forecast += forecast
+                        except Exception as row_err:
+                            logger.debug(
+                                f"funding-forecast row skipped: {row_err}"
+                            )
+            return web.json_response({
+                'success': True,
+                'interval_hours': interval_hours,
+                'intervals_per_window': intervals_per_window,
+                'window_hours': window_hours,
+                'rows': rows_out,
+                'total_forecast_usd': total_forecast,
+            })
+        except Exception as e:
+            logger.error(f"Error computing funding forecast: {e}")
+            return web.json_response({
+                'success': False,
+                'error': str(e),
+                'rows': [],
+                'total_forecast_usd': 0.0,
+            }, status=500)
 
     async def api_futures_close_position(self, request):
         """Close a specific futures position"""
@@ -6422,13 +8727,58 @@ class DashboardEndpoints:
         try:
             test_id = request.match_info['test_id']
             results = self.backtests.get(test_id, {'status': 'not_found'})
-            
+
             return web.json_response({
                 'success': True,
                 'data': results
             })
         except Exception as e:
             logger.error(f"Error getting backtest results: {e}")
+            return web.json_response({'error': str(e)}, status=500)
+
+    async def api_backtest_export(self, request):
+        """Export backtest results as CSV. The frontend's
+        backtest.js called this endpoint but it wasn't registered,
+        producing a 404 on every Export click (audit agent 1 HIGH #4).
+
+        Result schema is flexible (backtest engine is in flux) so we
+        emit one CSV row per top-level key/value, plus per-trade rows
+        if results.trades is a list. Returns text/csv with a sensible
+        filename so the browser downloads it directly.
+        """
+        try:
+            import csv
+            import io
+            test_id = request.match_info['test_id']
+            results = self.backtests.get(test_id)
+            if not results or results.get('status') == 'not_found':
+                return web.json_response({'error': 'backtest not found'}, status=404)
+
+            buf = io.StringIO()
+            writer = csv.writer(buf)
+            writer.writerow(['metric', 'value'])
+            # Top-level scalars (skip 'trades' — handled separately)
+            for k, v in (results.items() if isinstance(results, dict) else []):
+                if k == 'trades' or isinstance(v, (list, dict)):
+                    continue
+                writer.writerow([k, v])
+
+            trades = results.get('trades') if isinstance(results, dict) else None
+            if isinstance(trades, list) and trades:
+                writer.writerow([])
+                headers = sorted({k for t in trades if isinstance(t, dict) for k in t.keys()})
+                writer.writerow(headers)
+                for t in trades:
+                    if isinstance(t, dict):
+                        writer.writerow([t.get(h, '') for h in headers])
+
+            return web.Response(
+                text=buf.getvalue(),
+                content_type='text/csv',
+                headers={'Content-Disposition': f'attachment; filename="backtest_{test_id}.csv"'},
+            )
+        except Exception as e:
+            logger.error(f"Error exporting backtest results: {e}")
             return web.json_response({'error': str(e)}, status=500)
     
     # ==================== API - STRATEGY ====================
@@ -7597,7 +9947,15 @@ class DashboardEndpoints:
                     """)
                     stats['tokens_detected'] = detected_24h or 0
 
-                    # Load settings from config_settings
+                    # Load settings from config_settings. VPS failure 3:
+                    # also capture max_active_positions here as the
+                    # source-of-truth fallback for the dashboard tile. When
+                    # the sniper subprocess has just restarted, the runtime
+                    # snapshot (5-min cadence) hasn't run yet so its
+                    # max_active_positions is 0 and the UI fell through to
+                    # "Active: N" with no /cap. Config DB always has the
+                    # configured value (defaults to 500 below if unset).
+                    config_max_active = 0
                     settings_rows = await conn.fetch(
                         "SELECT key, value FROM config_settings WHERE config_type = 'sniper_config'"
                     )
@@ -7613,8 +9971,90 @@ class DashboardEndpoints:
                             stats['trade_amount'] = float(val) if val else 0.1
                         elif key == 'slippage':
                             stats['slippage'] = float(val) if val else 10.0
+                        elif key == 'max_active_positions':
+                            try:
+                                config_max_active = int(val) if val else 0
+                            except (TypeError, ValueError):
+                                config_max_active = 0
 
-                    stats['status'] = 'Online' if os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() == 'true' else 'Offline'
+                    # Read live in-process counters from sniper_runtime_stats
+                    # (the sniper subprocess snapshots its _stats here every
+                    # ~5 minutes; if it hasn't run yet, all 4 stay at 0)
+                    try:
+                        runtime_row = await conn.fetchrow("""
+                            SELECT stats, updated_at
+                            FROM sniper_runtime_stats
+                            WHERE id = 1
+                        """)
+                        if runtime_row and runtime_row['stats']:
+                            rt = runtime_row['stats']
+                            if isinstance(rt, str):
+                                import json as _json
+                                rt = _json.loads(rt)
+                            stats['pools_detected'] = int(rt.get('pools_detected', 0) or 0)
+                            stats['pools_evaluated'] = int(rt.get('pools_evaluated', 0) or 0)
+                            stats['pools_passed'] = int(rt.get('pools_passed', 0) or 0)
+                            stats['pools_rejected'] = int(rt.get('pools_rejected', 0) or 0)
+                            # WSS concurrency observability — surface the
+                            # peak in-flight and total dispatched so the
+                            # dashboard can show semaphore saturation.
+                            sl = rt.get('solana_listener') or {}
+                            if isinstance(sl, dict):
+                                stats['wss_dispatched'] = int(sl.get('wss_dispatched', 0) or 0)
+                                stats['wss_inflight_peak'] = int(sl.get('wss_inflight_peak', 0) or 0)
+                            # Position cap headroom (added by c59a32c)
+                            stats['active_positions_live'] = int(rt.get('active_positions', 0) or 0)
+                            stats['max_active_positions'] = int(rt.get('max_active_positions', 0) or 0)
+                            # Effective count = max(in-memory, db_open) — what
+                            # the engine actually evaluates against the cap.
+                            # Falls back to live count if engine hasn't
+                            # populated the field yet.
+                            stats['active_positions_effective'] = int(
+                                rt.get('active_positions_effective',
+                                       rt.get('active_positions', 0)) or 0
+                            )
+                            stats['runtime_stats_age_seconds'] = int(
+                                (datetime.now(timezone.utc) - _as_utc(runtime_row['updated_at'])).total_seconds()
+                            ) if runtime_row['updated_at'] else None
+                    except Exception as rt_err:
+                        logger.debug(f"sniper_runtime_stats read failed (non-fatal): {rt_err}")
+
+                    # VPS failure 3: backstop runtime-stats-derived cap and
+                    # effective-count fields. If the engine just restarted
+                    # and hasn't snapshot yet, the runtime row is missing or
+                    # all-zero. Operators saw "Active: 356" with no /cap.
+                    # Order of precedence:
+                    #   max_active_positions: runtime snapshot > config_settings > 500 default
+                    #   active_positions_effective: max(runtime_effective, db_open_count)
+                    # (db_open_count = stats['active_positions'] computed above).
+                    if not stats.get('max_active_positions'):
+                        stats['max_active_positions'] = (
+                            config_max_active if config_max_active > 0 else 500
+                        )
+                    # If the runtime path didn't populate the effective count,
+                    # fall back to the DB-open count from sniper_trades so the
+                    # tile always renders the X/Y form. Keep the larger of the
+                    # two when both exist — that matches what the engine
+                    # checks against the cap.
+                    db_open = int(stats.get('active_positions', 0) or 0)
+                    rt_eff = int(stats.get('active_positions_effective', 0) or 0)
+                    stats['active_positions_effective'] = max(rt_eff, db_open)
+
+                    # Liveness derives from BOTH env flag AND snapshot
+                    # freshness: a crashed subprocess leaves env=true but
+                    # stats stop refreshing. Threshold is 10 min (longer
+                    # than the ~5-min snapshot cadence, short enough to
+                    # catch a real crash within one cycle).
+                    enabled = os.getenv('SNIPER_MODULE_ENABLED', 'false').lower() == 'true'
+                    age = stats.get('runtime_stats_age_seconds')
+                    if not enabled:
+                        stats['status'] = 'Offline'
+                    elif age is None:
+                        stats['status'] = 'Online (no snapshot yet)'
+                    elif age > 600:
+                        stats['status'] = f'Stale (no snapshot for {age}s)'
+                    else:
+                        stats['status'] = 'Online'
 
             return web.json_response({'success': True, **stats})
         except Exception as e:
@@ -7624,7 +10064,14 @@ class DashboardEndpoints:
     async def api_get_sniper_timing(self, request):
         """Return P50/P95 detection latency split by detection_path
         for the SNIPER Phase 2 A/B comparison. Reads sniper_trades.metadata
-        JSONB populated by commits 1a8010b + c8debf6."""
+        JSONB populated by commits 1a8010b + c8debf6.
+
+        Cached per-(window_days) with a 30s TTL because the underlying
+        percentile_cont queries scan 100k+ rows every time and the
+        dashboard polls /api/sniper/timing once a minute. Without the
+        cache, two open dashboard tabs at 1-min intervals doubled the
+        load on every refresh tick.
+        """
         result = {
             'paths': {},
             'window_days': 7,
@@ -7636,6 +10083,14 @@ class DashboardEndpoints:
             result['window_days'] = days
         except (TypeError, ValueError):
             days = 7
+
+        # Cache check
+        cache = getattr(self, '_sniper_timing_cache', None) or {}
+        entry = cache.get(days)
+        if entry:
+            ts, cached_result = entry
+            if (datetime.now() - ts).total_seconds() < 30:
+                return web.json_response({'success': True, 'data': cached_result, 'cached': True})
 
         try:
             if not self.db:
@@ -7656,7 +10111,18 @@ class DashboardEndpoints:
                     ) AS p50_safety_ms,
                     percentile_cont(0.5) WITHIN GROUP (
                         ORDER BY (metadata->'timing'->>'broadcast_ms')::float
-                    ) AS p50_broadcast_ms
+                    ) AS p50_broadcast_ms,
+                    -- Detection-staleness: block_time → process receipt.
+                    -- Headline WSS-vs-polling A/B metric, isolated from
+                    -- the getTransaction commitment wait that previously
+                    -- dominated total_ms.
+                    percentile_cont(0.5) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float
+                    ) AS p50_detect_to_rpc_receipt_ms,
+                    percentile_cont(0.95) WITHIN GROUP (
+                        ORDER BY (metadata->'timing'->>'detect_to_rpc_receipt_ms')::float
+                    ) AS p95_detect_to_rpc_receipt_ms,
+                    COUNT(metadata->'timing'->>'detect_to_rpc_receipt_ms') AS rpc_receipt_sample_count
                 FROM sniper_trades
                 WHERE metadata->'timing' IS NOT NULL
                   AND (metadata->'timing'->>'total_ms') IS NOT NULL
@@ -7674,8 +10140,26 @@ class DashboardEndpoints:
                     'p95_total_ms': float(row['p95_total_ms']) if row['p95_total_ms'] is not None else None,
                     'p50_safety_ms': float(row['p50_safety_ms']) if row['p50_safety_ms'] is not None else None,
                     'p50_broadcast_ms': float(row['p50_broadcast_ms']) if row['p50_broadcast_ms'] is not None else None,
+                    # Detection-staleness — headline WSS-vs-polling metric.
+                    # Will be None for historical rows captured before the
+                    # t_rpc_receipt marker was added.
+                    'p50_detect_to_rpc_receipt_ms': (
+                        float(row['p50_detect_to_rpc_receipt_ms'])
+                        if row['p50_detect_to_rpc_receipt_ms'] is not None else None
+                    ),
+                    'p95_detect_to_rpc_receipt_ms': (
+                        float(row['p95_detect_to_rpc_receipt_ms'])
+                        if row['p95_detect_to_rpc_receipt_ms'] is not None else None
+                    ),
+                    'rpc_receipt_sample_count': int(row['rpc_receipt_sample_count'] or 0),
                 }
             result['has_data'] = len(result['paths']) > 0
+
+            # Cache the fresh result for 30s. Bounded by window_days, so
+            # the cache map is at most 90 entries (the days clamp).
+            if not hasattr(self, '_sniper_timing_cache'):
+                self._sniper_timing_cache = {}
+            self._sniper_timing_cache[days] = (datetime.now(), result)
 
             return web.json_response({'success': True, 'data': result})
 
@@ -7687,29 +10171,35 @@ class DashboardEndpoints:
             )
 
     async def api_get_sniper_positions(self, request):
-        """Get Sniper open positions from sniper_trades table"""
+        """Get Sniper open positions from sniper_trades table.
+
+        Supports pagination via ?limit=&offset= (default 50, max 500).
+        Returns {positions, total, limit, offset, has_more, count} so a
+        dashboard with 1000s of open positions does not melt the browser
+        by rendering every row.
+        """
         positions = []
+        total = 0
         try:
+            limit = max(1, min(int(request.query.get('limit', 50)), 500))
+            offset = max(0, int(request.query.get('offset', 0)))
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    total = int(await conn.fetchval(
+                        "SELECT COUNT(*) FROM sniper_trades WHERE status = 'open'"
+                    ) or 0)
                     rows = await conn.fetch("""
                         SELECT
                             trade_id, token_address, chain, side, entry_price, amount,
                             entry_usd, native_token, native_price_at_entry,
                             safety_score, safety_rating, status, entry_timestamp,
-                            entry_tx_hash, metadata
+                            entry_tx_hash
                         FROM sniper_trades
                         WHERE status = 'open'
                         ORDER BY entry_timestamp DESC
-                    """)
+                        LIMIT $1 OFFSET $2
+                    """, limit, offset)
                     for row in rows:
-                        metadata = row['metadata'] or {}
-                        if isinstance(metadata, str):
-                            try:
-                                import json as json_module
-                                metadata = json_module.loads(metadata)
-                            except:
-                                metadata = {}
                         positions.append({
                             'trade_id': row['trade_id'],
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
@@ -7719,48 +10209,65 @@ class DashboardEndpoints:
                             'entry_price': float(row['entry_price'] or 0),
                             'size': float(row['amount'] or 0),
                             'entry_usd': float(row['entry_usd'] or 0),
-                            'safety_score': row['safety_score'],
+                            'safety_score': int(row['safety_score']) if row['safety_score'] is not None else None,
                             'safety_rating': row['safety_rating'],
                             'status': row['status'],
                             'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
                             'entry_tx_hash': row['entry_tx_hash'] or ''
                         })
-            return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
+            return web.json_response({
+                'success': True,
+                'positions': positions,
+                'count': len(positions),
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+                'has_more': (offset + len(positions)) < total,
+            })
         except Exception as e:
             logger.error(f"Error getting sniper positions: {e}")
-            return web.json_response({'success': False, 'error': str(e), 'positions': []})
+            return web.json_response({'success': False, 'error': str(e), 'positions': [], 'total': 0})
 
     async def api_get_sniper_trades(self, request):
-        """Get Sniper trade history from dedicated sniper_trades table"""
+        """Get Sniper trade history from dedicated sniper_trades table.
+
+        Returns ALL rows in sniper_trades by default (no status filter) so the
+        /sniper/trades page can client-side filter by Result (All/Winning/Losing).
+        Numeric/Decimal fields are explicitly cast to JSON-safe primitives so a
+        single Decimal column does not blow up json_response for the whole batch
+        (which previously surfaced as "0 of 0" on /sniper/trades).
+
+        Wave-12 FIX 3: accept either self.db.pool OR self.db_pool — some
+        bootstrap paths leave self.db unset while self.db_pool is attached
+        directly, which previously returned an empty list to /sniper/trades
+        despite 439k rows in sniper_trades.
+        """
         trades = []
         try:
-            limit = int(request.query.get('limit', 100))
-            if self.db:
-                async with self.db.pool.acquire() as conn:
+            # Cap limit to 5000 so a misbehaving client cannot OOM the dashboard.
+            # Default raised from 100 -> 2000 to match the template request and
+            # avoid silently truncating 439k -> 100 when a caller forgets ?limit.
+            limit = max(1, min(int(request.query.get('limit', 2000)), 5000))
+            pool = None
+            if getattr(self, 'db', None) and getattr(self.db, 'pool', None):
+                pool = self.db.pool
+            elif getattr(self, 'db_pool', None):
+                pool = self.db_pool
+            if pool is not None:
+                async with pool.acquire() as conn:
                     rows = await conn.fetch("""
                         SELECT
                             trade_id, token_address, chain, side, entry_price, exit_price,
                             amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
-                            native_token, native_price_at_entry, native_price_at_exit,
-                            safety_score, safety_rating, is_honeypot, buy_tax, sell_tax,
-                            liquidity_usd, status, exit_reason, is_simulated,
-                            entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash, metadata
+                            safety_score, safety_rating, status, exit_reason, is_simulated,
+                            entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash
                         FROM sniper_trades
                         ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
                     for row in rows:
-                        pnl = float(row['profit_loss'] or 0)
                         entry = float(row['entry_price'] or 0)
                         exit_p = float(row['exit_price'] or entry)
-                        pnl_pct = float(row['profit_loss_pct'] or 0)
-                        metadata = row['metadata'] or {}
-                        if isinstance(metadata, str):
-                            try:
-                                import json as json_module
-                                metadata = json_module.loads(metadata)
-                            except:
-                                metadata = {}
                         trades.append({
                             'trade_id': row['trade_id'],
                             'symbol': row['token_address'][:16] + '...' if row['token_address'] and len(row['token_address']) > 16 else row['token_address'],
@@ -7772,13 +10279,13 @@ class DashboardEndpoints:
                             'size': float(row['amount'] or 0),
                             'entry_usd': float(row['entry_usd'] or 0),
                             'exit_usd': float(row['exit_usd'] or 0),
-                            'pnl': pnl,
-                            'pnl_pct': pnl_pct,
-                            'safety_score': row['safety_score'],
+                            'pnl': float(row['profit_loss'] or 0),
+                            'pnl_pct': float(row['profit_loss_pct'] or 0),
+                            'safety_score': int(row['safety_score']) if row['safety_score'] is not None else None,
                             'safety_rating': row['safety_rating'],
                             'status': row['status'],
                             'close_reason': row['exit_reason'] or '-',
-                            'is_simulated': row['is_simulated'],
+                            'is_simulated': bool(row['is_simulated']) if row['is_simulated'] is not None else None,
                             'closed_at': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
                             'entry_tx_hash': row['entry_tx_hash'] or '',
                             'exit_tx_hash': row['exit_tx_hash'] or ''
@@ -7813,16 +10320,26 @@ class DashboardEndpoints:
 
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    # ISSUE 6: sniper writes sniper_trades, NOT the generic
+                    # `trades` table. The old UPDATE trades WHERE
+                    # strategy='sniper' matched zero rows (silent no-op).
+                    # Per modules/sniper/CLAUDE.md the close is a pure DB
+                    # UPDATE; the engine retires active_snipes on its next
+                    # monitor tick (no flag-file / in-process call needed).
                     result = await conn.execute("""
-                        UPDATE trades
+                        UPDATE sniper_trades
                         SET status = 'closed', exit_timestamp = NOW(),
-                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close"')
-                        WHERE strategy = 'sniper' AND token_address = $1 AND status = 'open'
+                            exit_reason = 'manual_close'
+                        WHERE token_address = $1 AND status = 'open'
                     """, token_address)
                     if 'UPDATE 0' in result:
                         return web.json_response({'success': False, 'error': 'Position not found', 'already_closed': True})
 
-            return web.json_response({'success': True, 'message': f'Position {token_address[:16]}... closed'})
+            return web.json_response({
+                'success': True,
+                'message': f'Position {token_address[:16]}... close requested',
+                'note': 'sniper_trades marked closed; engine retires the in-memory snipe on its next monitor tick',
+            }, status=202)
         except Exception as e:
             logger.error(f"Error closing sniper position: {e}")
             return web.json_response({'success': False, 'error': str(e)})
@@ -7830,15 +10347,26 @@ class DashboardEndpoints:
     async def api_sniper_close_all_positions(self, request):
         """Close all sniper positions"""
         try:
+            closed_n = 0
             if self.db:
                 async with self.db.pool.acquire() as conn:
-                    await conn.execute("""
-                        UPDATE trades
+                    # ISSUE 6: target sniper_trades (engine's real table), not
+                    # the empty `trades WHERE strategy='sniper'` set.
+                    result = await conn.execute("""
+                        UPDATE sniper_trades
                         SET status = 'closed', exit_timestamp = NOW(),
-                            metadata = jsonb_set(COALESCE(metadata, '{}'), '{exit_reason}', '"manual_close_all"')
-                        WHERE strategy = 'sniper' AND status = 'open'
+                            exit_reason = 'manual_close_all'
+                        WHERE status = 'open'
                     """)
-            return web.json_response({'success': True, 'message': 'All sniper positions closed'})
+                    try:
+                        closed_n = int(result.split()[-1])
+                    except Exception:
+                        closed_n = 0
+            return web.json_response({
+                'success': True,
+                'message': f'{closed_n} sniper position(s) close requested',
+                'closed': closed_n,
+            }, status=202)
         except Exception as e:
             logger.error(f"Error closing all sniper positions: {e}")
             return web.json_response({'success': False, 'error': str(e)})
@@ -7911,7 +10439,7 @@ class DashboardEndpoints:
 
                     # Get recent closed positions (sold)
                     closed_trades = await conn.fetch("""
-                        SELECT token_address, chain, entry_price, exit_price, profit_loss, exit_timestamp, close_reason
+                        SELECT token_address, chain, entry_price, exit_price, profit_loss, exit_timestamp, exit_reason
                         FROM sniper_trades
                         WHERE status = 'closed'
                         ORDER BY exit_timestamp DESC
@@ -7922,7 +10450,7 @@ class DashboardEndpoints:
                         activity.append({
                             'type': 'sold',
                             'icon': 'sold',
-                            'title': f"Position Closed ({row['close_reason'] or 'manual'})",
+                            'title': f"Position Closed ({row['exit_reason'] or 'manual'})",
                             'details': f"{row['token_address'][:12]}... | P&L: ${pnl:+.2f}",
                             'subdetails': f"Exit: ${float(row['exit_price'] or 0):.6f}",
                             'timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
@@ -7959,8 +10487,29 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='arbitrage_dashboard'), content_type='text/html')
 
     async def _arbitrage_positions(self, request):
-        # Arbitrage is instant execution - no open positions, redirect to trades
-        raise web.HTTPFound('/arbitrage/trades')
+        # Arbitrage opens + closes positions atomically inside a single
+        # tx — there's no concept of "open" arbitrage positions like the
+        # other modules have. Render an explanatory placeholder rather
+        # than silently 302-redirecting to /arbitrage/trades, so anyone
+        # who clicked the side-nav link knows why the page is empty.
+        body = (
+            '<!doctype html><html><head><meta charset="utf-8">'
+            '<title>Arbitrage Positions</title>'
+            '<style>body{font-family:system-ui,-apple-system,sans-serif;'
+            'background:#0f172a;color:#e2e8f0;padding:48px;max-width:640px;margin:0 auto;}'
+            'h1{font-size:1.5rem;margin-bottom:8px;}'
+            'p{color:#94a3b8;line-height:1.5;}'
+            'a{color:#60a5fa;}</style></head><body>'
+            '<h1>Arbitrage — No Open Positions</h1>'
+            '<p>Arbitrage is atomic: each opportunity executes the buy '
+            'and sell legs in a single transaction. There are no "open" '
+            'positions to display.</p>'
+            '<p>To see what arbitrage has done recently, visit '
+            '<a href="/arbitrage/trades">Arbitrage Trades</a> or '
+            '<a href="/arbitrage/performance">Arbitrage Performance</a>.</p>'
+            '</body></html>'
+        )
+        return web.Response(text=body, content_type='text/html')
 
     async def _arbitrage_trades(self, request):
         template = self.jinja_env.get_template('trades_arbitrage.html')
@@ -8056,12 +10605,213 @@ class DashboardEndpoints:
                             'pnl': float(reg_row['pnl'] or 0)
                         }
 
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 else 'Idle'
+                    # Status reflects subprocess liveness, not historical
+                    # trade count. Same fix shape as AI / COPY / SOLANA /
+                    # FUTURES (commits 3edbcac, 7a4ebf3, 49672a7). With
+                    # ARBITRAGE_MODULE_ENABLED=true we look for a recent
+                    # trade as a heartbeat (no separate runtime_stats
+                    # table for arbitrage yet); without it, Disabled.
+                    enabled = os.getenv('ARBITRAGE_MODULE_ENABLED', 'false').lower() == 'true'
+                    if not enabled:
+                        stats['status'] = 'Disabled'
+                    else:
+                        recent = await conn.fetchval(
+                            "SELECT COUNT(*) FROM arbitrage_trades "
+                            "WHERE entry_timestamp > NOW() - INTERVAL '2 hours'"
+                        )
+                        stats['status'] = 'Online' if (recent and recent > 0) else 'Idle'
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
             logger.error(f"Error getting arbitrage stats: {e}")
             return web.json_response({'success': False, 'error': str(e), 'stats': stats})
+
+    async def api_get_arbitrage_gas_spend(self, request):
+        """
+        Wave-3: per-chain hourly gas-spend tile. Reads the JSONB snapshots
+        in arbitrage_runtime_stats persisted by EVMArbitrageEngine._persist_runtime_stats.
+        One row per chain (ethereum / arbitrum / base etc.) - returns all
+        of them plus a roll-up so the dashboard widget can render a single
+        ratio bar at the top.
+        """
+        result = {
+            'success': True,
+            'chains': {},
+            'total_spend_usd': 0.0,
+            'total_budget_usd': 0.0,
+            'overall_ratio': 0.0,
+            'stale': True,
+            'max_age_s': None,
+        }
+        try:
+            if not self.db:
+                return web.json_response(result)
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT chain, updated_at, stats,
+                           EXTRACT(EPOCH FROM (NOW() - updated_at)) AS age_s
+                    FROM arbitrage_runtime_stats
+                    """
+                )
+            max_age = None
+            for row in rows:
+                stats = row['stats'] or {}
+                if isinstance(stats, str):
+                    try:
+                        import json as _json
+                        stats = _json.loads(stats)
+                    except Exception:
+                        stats = {}
+                age_s = float(row['age_s'] or 0.0)
+                spend = float(stats.get('gas_spend_usd_hour') or 0.0)
+                budget = float(stats.get('gas_budget_usd_per_hour') or 0.0)
+                ratio = (spend / budget) if budget > 0 else 0.0
+                result['chains'][row['chain']] = {
+                    'spend_usd': spend,
+                    'budget_usd': budget,
+                    'ratio': ratio,
+                    'window_age_s': float(stats.get('gas_window_age_s') or 0.0),
+                    'gas_spike_multiplier': float(stats.get('gas_spike_multiplier') or 1.0),
+                    'min_profit_threshold_effective': float(
+                        stats.get('min_profit_threshold_effective') or 0.0
+                    ),
+                    'realized_slip_trusted_keys': int(
+                        stats.get('realized_slip_trusted_keys') or 0
+                    ),
+                    'updated_at': row['updated_at'].isoformat() if row['updated_at'] else None,
+                    'age_s': age_s,
+                }
+                result['total_spend_usd'] += spend
+                result['total_budget_usd'] += budget
+                if max_age is None or age_s > max_age:
+                    max_age = age_s
+            if result['total_budget_usd'] > 0:
+                result['overall_ratio'] = result['total_spend_usd'] / result['total_budget_usd']
+            result['max_age_s'] = max_age
+            # Stale if no chain has reported in the last 10 min (engines
+            # snapshot every 5 min by default).
+            result['stale'] = (max_age is None) or (max_age > 600)
+            return web.json_response(result)
+        except Exception as e:
+            logger.error(f"Error getting arbitrage gas-spend: {e}")
+            return web.json_response({'success': False, 'error': str(e), **result})
+
+    async def api_get_arbitrage_diagnostics(self, request):
+        """
+        Wave-5 "Why no trades?" diagnostics. Returns per-chain:
+          - last 20 rejected opportunities (reason, pair, dexs, bps, gas)
+          - per-reason counters
+          - cost profile (effective + base min-profit threshold, gas-spike mult,
+            hourly gas spend + budget)
+          - chain liveness (age of the last runtime snapshot)
+          - last 10 trades from arbitrage_trades for quick "last fired" answer
+
+        Same data source as /api/arbitrage/gas-spend (arbitrage_runtime_stats
+        JSONB rows) so there is no IPC channel back into the engine subprocess.
+        Stale rows (>10 min) flagged with `stale=true` so the dashboard can
+        warn "engine appears dead".
+        """
+        result = {
+            'success': True,
+            'chains': {},
+            'stale': True,
+            'max_age_s': None,
+            'last_trades': [],
+        }
+        try:
+            if not self.db:
+                return web.json_response(result)
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT chain, updated_at, stats,
+                           EXTRACT(EPOCH FROM (NOW() - updated_at)) AS age_s
+                    FROM arbitrage_runtime_stats
+                    """
+                )
+                trade_rows = await conn.fetch(
+                    """
+                    SELECT chain, buy_dex, sell_dex, token_address,
+                           spread_pct, profit_loss, entry_timestamp
+                    FROM arbitrage_trades
+                    ORDER BY entry_timestamp DESC
+                    LIMIT 10
+                    """
+                )
+            max_age = None
+            for row in rows:
+                stats = row['stats'] or {}
+                if isinstance(stats, str):
+                    import json as _json
+                    try:
+                        stats = _json.loads(stats)
+                    except Exception:
+                        stats = {}
+                age_s = float(row['age_s'] or 0.0)
+                result['chains'][row['chain']] = {
+                    'updated_at': (
+                        row['updated_at'].isoformat() if row['updated_at'] else None
+                    ),
+                    'age_s': age_s,
+                    'cost_profile': {
+                        'min_profit_threshold_base': float(
+                            stats.get('min_profit_threshold_base') or 0.0
+                        ),
+                        'min_profit_threshold_effective': float(
+                            stats.get('min_profit_threshold_effective') or 0.0
+                        ),
+                        'gas_spike_multiplier': float(
+                            stats.get('gas_spike_multiplier') or 1.0
+                        ),
+                        'gas_spend_usd_hour': float(
+                            stats.get('gas_spend_usd_hour') or 0.0
+                        ),
+                        'gas_budget_usd_per_hour': float(
+                            stats.get('gas_budget_usd_per_hour') or 0.0
+                        ),
+                        'gas_budget_ratio': float(
+                            stats.get('gas_budget_ratio') or 0.0
+                        ),
+                    },
+                    'counters': {
+                        'scans': int(stats.get('scans') or 0),
+                        'opportunities_found': int(stats.get('opportunities_found') or 0),
+                        'opportunities_executed': int(
+                            stats.get('opportunities_executed') or 0
+                        ),
+                    },
+                    'near_miss_counters': stats.get('near_miss_counters') or {},
+                    'near_misses': stats.get('near_misses') or [],
+                    # W6: subprocess health surface. None on first persist
+                    # (startup marker before first scan tick); a fresh
+                    # `last_tick_at` with stale `updated_at` indicates the
+                    # engine is alive but its persist loop is wedged.
+                    'last_tick_at': stats.get('last_tick_at'),
+                    'last_error': stats.get('last_error'),
+                    'last_error_at': stats.get('last_error_at'),
+                }
+                if max_age is None or age_s > max_age:
+                    max_age = age_s
+            result['max_age_s'] = max_age
+            result['stale'] = (max_age is None) or (max_age > 600)
+            for tr in trade_rows:
+                result['last_trades'].append({
+                    'chain': tr['chain'],
+                    'buy_dex': tr['buy_dex'],
+                    'sell_dex': tr['sell_dex'],
+                    'token_address': tr['token_address'],
+                    'spread_pct': float(tr['spread_pct'] or 0),
+                    'profit_loss': float(tr['profit_loss'] or 0),
+                    'entry_timestamp': (
+                        tr['entry_timestamp'].isoformat()
+                        if tr['entry_timestamp'] else None
+                    ),
+                })
+            return web.json_response(result)
+        except Exception as e:
+            logger.error(f"Error getting arbitrage diagnostics: {e}")
+            return web.json_response({'success': False, 'error': str(e), **result})
 
     async def api_get_arbitrage_positions(self, request):
         """Get Arbitrage open positions from dedicated arbitrage_positions table"""
@@ -8263,8 +11013,26 @@ class DashboardEndpoints:
                 'mode': 'DRY_RUN'
             }
 
-            # Check if DRY_RUN mode
-            status['mode'] = 'DRY_RUN' if os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes') else 'LIVE'
+            # Effective DRY_RUN: arbitrage-specific override in config_settings
+            # wins over the global DRY_RUN env. Without this check the
+            # arbitrage trading-status card would lie when an operator
+            # set ARBITRAGE in DRY mode but kept the global LIVE (or
+            # vice versa). Falls back to the global env if no DB row.
+            arb_dry = None
+            if self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        row = await conn.fetchval(
+                            "SELECT value FROM config_settings "
+                            "WHERE config_type='arbitrage_config' AND key='dry_run'"
+                        )
+                        if row is not None:
+                            arb_dry = str(row).lower() in ('true', '1', 'yes')
+                except Exception:
+                    pass
+            if arb_dry is None:
+                arb_dry = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
+            status['mode'] = 'DRY_RUN' if arb_dry else 'LIVE'
 
             # Try to get pool from various sources
             pool = None
@@ -8480,8 +11248,275 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('wallets_copytrading.html')
         return web.Response(text=template.render(page='copytrading_wallets'), content_type='text/html')
 
+    async def _copytrading_leaders(self, request):
+        """Render the scored-leader ranking page (migration 023)."""
+        template = self.jinja_env.get_template('leaders_copytrading.html')
+        return web.Response(
+            text=template.render(page='copytrading_leaders'),
+            content_type='text/html',
+        )
+
+    async def api_get_copytrading_leaders(self, request):
+        """Return cached top-N rows from copy_leader_scores ordered by
+        composite score DESC. Never hits the network — discovery refresh
+        is a separate POST so paid quotas aren't burned on dashboard reload.
+        """
+        try:
+            chain = request.query.get('chain') or None
+            try:
+                limit = int(request.query.get('limit', '25'))
+            except ValueError:
+                limit = 25
+            try:
+                min_score = float(request.query.get('min_score', '0'))
+            except ValueError:
+                min_score = 0.0
+
+            if not (self.db and self.db.pool):
+                return web.json_response({
+                    'success': False, 'error': 'database unavailable',
+                    'leaders': [],
+                }, status=503)
+
+            from modules.copy_trading.wallet_discovery import get_top_leaders
+            rows = await get_top_leaders(
+                self.db.pool, chain=chain, limit=limit, min_score=min_score,
+            )
+
+            # Coerce datetimes / Decimals to JSON-safe primitives. The
+            # generic JSON encoder used elsewhere in this dashboard
+            # already handles Decimal but not asyncpg.Record fields.
+            # Route datetimes through _iso_utc so naive UTC values
+            # get a trailing 'Z' — client formatLocalDateTime() relies
+            # on the marker to parse them as UTC.
+            def _coerce(v):
+                from datetime import datetime as _dt, date as _date
+                from decimal import Decimal as _Dec
+                if v is None:
+                    return None
+                if isinstance(v, _dt):
+                    return _iso_utc(v)
+                if isinstance(v, _date):
+                    return v.isoformat()
+                if isinstance(v, _Dec):
+                    return float(v)
+                return v
+
+            leaders = []
+            for r in rows:
+                leaders.append({k: _coerce(v) for k, v in r.items()})
+
+            return web.json_response({
+                'success': True,
+                'leaders': leaders,
+                'count': len(leaders),
+            })
+        except Exception as e:
+            logger.error(f"api_get_copytrading_leaders failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_refresh_copytrading_leaders(self, request):
+        """Trigger a wallet_discovery sweep on demand.
+
+        Admin-only because the sweep hits paid Helius/Birdeye quotas.
+        Body (optional): {"chains": ["solana"], "mock": false}.
+        """
+        try:
+            try:
+                payload = await request.json()
+            except Exception:
+                payload = {}
+            chains = payload.get('chains') or ['solana', 'ethereum', 'base']
+            mock = bool(payload.get('mock'))
+
+            if not (self.db and self.db.pool):
+                return web.json_response({
+                    'success': False, 'error': 'database unavailable',
+                }, status=503)
+
+            from modules.copy_trading.wallet_discovery import (
+                DiscoveryConfig, discover_and_score,
+            )
+
+            # Resolve API keys via secrets manager (already wired
+            # elsewhere in this dashboard).
+            helius_key = birdeye_key = None
+            try:
+                from security.secrets_manager import secrets
+                helius_key = secrets.get('HELIUS_API_KEY', log_access=False)
+                birdeye_key = secrets.get('BIRDEYE_API_KEY', log_access=False)
+            except Exception:
+                pass
+
+            cfg = DiscoveryConfig(
+                chains=tuple(chains),
+                helius_api_key=helius_key,
+                birdeye_api_key=birdeye_key,
+                mock=mock,
+            )
+
+            scored = await discover_and_score(self.db.pool, cfg)
+            return web.json_response({
+                'success': True,
+                'discovered': len(scored),
+                'top_score': max((m.score or 0 for m in scored), default=0),
+            })
+        except Exception as e:
+            logger.error(f"api_refresh_copytrading_leaders failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_get_copytrading_slippage(self, request):
+        """Wave-3 CT-W3-01: rolling per-leader slippage stats.
+
+        Query params:
+          leader: optional leader wallet (single-leader scalar mode)
+          chain:  optional chain filter
+          window_days: integer, default 7 (clamped 1..90)
+          limit: max leaderboard rows in multi-leader mode (default 100)
+        """
+        try:
+            leader = request.query.get('leader') or None
+            chain = request.query.get('chain') or None
+            try:
+                window_days = max(1, min(90, int(request.query.get('window_days', '7'))))
+            except ValueError:
+                window_days = 7
+            try:
+                limit = max(1, min(500, int(request.query.get('limit', '100'))))
+            except ValueError:
+                limit = 100
+
+            if not (self.db and self.db.pool):
+                return web.json_response({
+                    'success': False, 'error': 'database unavailable',
+                }, status=503)
+
+            from modules.copy_trading.slippage_tracker import get_rolling_slippage
+            payload = await get_rolling_slippage(
+                self.db.pool,
+                leader_wallet=leader, chain=chain,
+                window_days=window_days, limit=limit,
+            )
+            payload['success'] = True
+            return web.json_response(payload)
+        except Exception as e:
+            logger.error(f"api_get_copytrading_slippage failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_copytrading_wallet_remove(self, request):
+        """Atomically remove a single wallet from copytrading_config.target_wallets.
+
+        Replaces the frontend's GET-then-POST settings round-trip,
+        which could wipe the entire target_wallets list if the
+        intermediate GET returned partial data. This endpoint does
+        the SELECT + filter + UPDATE in one DB transaction so the
+        list can never be lost on a transient error.
+
+        Body: {"wallet": "0x..." | "abc...solana"}
+        Returns: {"success": True, "remaining": int, "removed": bool}
+        """
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({'success': False, 'error': 'invalid JSON body'}, status=400)
+        target = (payload.get('wallet') or '').strip()
+        if not target:
+            return web.json_response({'success': False, 'error': 'wallet required'}, status=400)
+
+        if not (self.db and self.db.pool):
+            return web.json_response({'success': False, 'error': 'database unavailable'}, status=503)
+
+        try:
+            import json as _json
+            async with self.db.pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchval(
+                        "SELECT value FROM config_settings WHERE config_type='copytrading_config' "
+                        "AND key='target_wallets' FOR UPDATE"
+                    )
+                    wallets = []
+                    if row:
+                        try:
+                            parsed = _json.loads(row)
+                            if isinstance(parsed, list):
+                                wallets = [str(w).strip() for w in parsed if w]
+                        except Exception:
+                            wallets = [w.strip() for w in str(row).split(',') if w.strip()]
+                    # Filter the requested wallet out (case-insensitive
+                    # because EVM addresses can vary in checksum case).
+                    target_lc = target.lower()
+                    new_wallets = [w for w in wallets if w.lower() != target_lc]
+                    removed = len(new_wallets) != len(wallets)
+                    if removed:
+                        await conn.execute(
+                            "INSERT INTO config_settings (config_type, key, value, value_type) "
+                            "VALUES ('copytrading_config', 'target_wallets', $1, 'json') "
+                            "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                            _json.dumps(new_wallets),
+                        )
+            return web.json_response({'success': True, 'remaining': len(new_wallets), 'removed': removed})
+        except Exception as e:
+            logger.error(f"api_copytrading_wallet_remove failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_copytrading_wallet_add(self, request):
+        """Atomically add a single wallet to copytrading_config.target_wallets.
+
+        Idempotent: re-adding an existing wallet is a no-op.
+        Body: {"wallet": "0x..." | "abc...solana"}
+        """
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response({'success': False, 'error': 'invalid JSON body'}, status=400)
+        target = (payload.get('wallet') or '').strip()
+        if not target:
+            return web.json_response({'success': False, 'error': 'wallet required'}, status=400)
+
+        if not (self.db and self.db.pool):
+            return web.json_response({'success': False, 'error': 'database unavailable'}, status=503)
+
+        try:
+            import json as _json
+            async with self.db.pool.acquire() as conn:
+                async with conn.transaction():
+                    row = await conn.fetchval(
+                        "SELECT value FROM config_settings WHERE config_type='copytrading_config' "
+                        "AND key='target_wallets' FOR UPDATE"
+                    )
+                    wallets = []
+                    if row:
+                        try:
+                            parsed = _json.loads(row)
+                            if isinstance(parsed, list):
+                                wallets = [str(w).strip() for w in parsed if w]
+                        except Exception:
+                            wallets = [w.strip() for w in str(row).split(',') if w.strip()]
+                    target_lc = target.lower()
+                    already = any(w.lower() == target_lc for w in wallets)
+                    if not already:
+                        wallets.append(target)
+                        await conn.execute(
+                            "INSERT INTO config_settings (config_type, key, value, value_type) "
+                            "VALUES ('copytrading_config', 'target_wallets', $1, 'json') "
+                            "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value",
+                            _json.dumps(wallets),
+                        )
+            return web.json_response({'success': True, 'total': len(wallets), 'added': not already})
+        except Exception as e:
+            logger.error(f"api_copytrading_wallet_add failed: {e}", exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
     async def api_get_copytrading_wallets(self, request):
-        """Get tracked wallets with their activity status and calculated P&L"""
+        """Get tracked wallets with their activity status + per-wallet
+        realized + UNREALIZED PnL (Wave-5 fix). Previously the column
+        sum was always 0 for the operator because their 5 mirrored
+        positions are all OPEN — profit_loss is only populated on
+        close. Now we fetch every per-wallet trade in one query, run
+        them through _enrich_copytrading_pnl (live Jupiter price for
+        OPEN rows that have metadata.tokens_received), then sum
+        realized + unrealized per wallet.
+        """
         wallets = []
         try:
             if self.db:
@@ -8495,75 +11530,101 @@ class DashboardEndpoints:
                         import json as json_module
                         try:
                             wallet_list = json_module.loads(wallets_row)
-                        except:
+                        except Exception:
                             wallet_list = [w.strip() for w in wallets_row.split(',') if w.strip()]
+                    else:
+                        wallet_list = []
 
-                        # For each wallet, get trade stats from copytrading_trades
-                        for addr in wallet_list:
-                            if not addr:
-                                continue
+                    # Wave-5: pull every per-wallet trade in ONE query so
+                    # we can enrich the OPEN rows with one batched price
+                    # call instead of N queries + N price calls.
+                    targets = [w.split('@')[0] for w in wallet_list if w]
+                    rows = []
+                    if targets:
+                        rows = await conn.fetch("""
+                            SELECT
+                                trade_id, token_address, chain, source_wallet,
+                                entry_price, exit_price, amount,
+                                entry_usd, exit_usd, profit_loss, status,
+                                entry_timestamp, exit_timestamp,
+                                native_price_at_trade, metadata
+                            FROM copytrading_trades
+                            WHERE source_wallet = ANY($1::text[])
+                        """, targets)
 
-                            # Get comprehensive stats for this wallet
-                            # Calculate P&L from closed trades where exit > entry
-                            trades_row = await conn.fetchrow("""
-                                SELECT
-                                    COUNT(*) as total_trades,
-                                    COUNT(*) FILTER (WHERE status = 'closed') as closed_trades,
-                                    COUNT(*) FILTER (WHERE status = 'open') as open_trades,
-                                    COALESCE(SUM(entry_usd), 0) as total_volume,
-                                    -- Calculate P&L: use stored value or calculate from entry/exit
-                                    COALESCE(SUM(
-                                        CASE
-                                            WHEN profit_loss != 0 THEN profit_loss
-                                            WHEN status = 'closed' AND exit_usd > 0 THEN exit_usd - entry_usd
-                                            ELSE 0
-                                        END
-                                    ), 0) as calculated_pnl,
-                                    -- Count wins
-                                    COUNT(*) FILTER (WHERE
-                                        profit_loss > 0 OR
-                                        (status = 'closed' AND exit_usd > entry_usd AND exit_usd > 0)
-                                    ) as winning,
-                                    -- Count losses
-                                    COUNT(*) FILTER (WHERE
-                                        profit_loss < 0 OR
-                                        (status = 'closed' AND exit_usd < entry_usd AND exit_usd > 0)
-                                    ) as losing,
-                                    MAX(entry_timestamp) as last_trade,
-                                    MIN(entry_timestamp) as first_trade
-                                FROM copytrading_trades
-                                WHERE source_wallet = $1
-                            """, addr)
+                    enriched = await self._enrich_copytrading_pnl(rows)
 
-                            total_trades = trades_row['total_trades'] if trades_row else 0
-                            winning = trades_row['winning'] if trades_row else 0
-                            losing = trades_row['losing'] if trades_row else 0
-                            total_pnl = float(trades_row['calculated_pnl'] or 0) if trades_row else 0
-                            total_volume = float(trades_row['total_volume'] or 0) if trades_row else 0
+                    # Aggregate per wallet
+                    agg: dict = {}
+                    for r in enriched:
+                        sw = r.get('source_wallet') or 'unknown'
+                        a = agg.setdefault(sw, {
+                            'total_trades': 0, 'open_trades': 0, 'closed_trades': 0,
+                            'realized_pnl': 0.0, 'unrealized_pnl': 0.0,
+                            'total_volume': 0.0, 'winning': 0, 'losing': 0,
+                            'last_trade': None, 'first_trade': None,
+                            'pending_count': 0,
+                        })
+                        a['total_trades'] += 1
+                        status = (r.get('status') or '').lower()
+                        if status == 'open':
+                            a['open_trades'] += 1
+                        elif status == 'closed':
+                            a['closed_trades'] += 1
+                        a['realized_pnl'] += float(r.get('realized_pnl') or 0)
+                        a['unrealized_pnl'] += float(r.get('unrealized_pnl') or 0)
+                        a['total_volume'] += float(r.get('entry_usd') or 0)
+                        rpnl = float(r.get('realized_pnl') or 0)
+                        if rpnl > 0:
+                            a['winning'] += 1
+                        elif rpnl < 0:
+                            a['losing'] += 1
+                        if r.get('pnl_pending'):
+                            a['pending_count'] += 1
+                        ets = r.get('entry_timestamp')
+                        if ets:
+                            if a['last_trade'] is None or ets > a['last_trade']:
+                                a['last_trade'] = ets
+                            if a['first_trade'] is None or ets < a['first_trade']:
+                                a['first_trade'] = ets
 
-                            # Calculate win rate
-                            win_rate = 0.0
-                            if winning + losing > 0:
-                                win_rate = (winning / (winning + losing)) * 100
-                            elif total_trades > 0:
-                                # If no closed trades, show as pending
-                                win_rate = 0.0
+                    for addr in wallet_list:
+                        if not addr:
+                            continue
+                        addr_norm = addr.split('@')[0]
+                        a = agg.get(addr_norm, {
+                            'total_trades': 0, 'open_trades': 0, 'closed_trades': 0,
+                            'realized_pnl': 0.0, 'unrealized_pnl': 0.0,
+                            'total_volume': 0.0, 'winning': 0, 'losing': 0,
+                            'last_trade': None, 'first_trade': None,
+                            'pending_count': 0,
+                        })
+                        total_pnl = a['realized_pnl'] + a['unrealized_pnl']
+                        win_rate = (a['winning'] / (a['winning'] + a['losing']) * 100) if (a['winning'] + a['losing']) > 0 else 0.0
 
-                            wallets.append({
-                                'address': addr,
-                                'short_address': f"{addr[:8]}...{addr[-6:]}" if len(addr) > 14 else addr,
-                                'total_trades': total_trades,
-                                'winning_trades': winning,
-                                'losing_trades': losing,
-                                'total_pnl': total_pnl,
-                                'total_volume': total_volume,
-                                'win_rate': win_rate,
-                                'open_positions': trades_row['open_trades'] if trades_row else 0,
-                                'closed_trades': trades_row['closed_trades'] if trades_row else 0,
-                                'last_trade': trades_row['last_trade'].isoformat() if trades_row and trades_row['last_trade'] else None,
-                                'first_trade': trades_row['first_trade'].isoformat() if trades_row and trades_row['first_trade'] else None,
-                                'status': 'active' if total_trades > 0 else 'inactive'
-                            })
+                        wallets.append({
+                            'address': addr_norm,
+                            'short_address': f"{addr_norm[:8]}...{addr_norm[-6:]}" if len(addr_norm) > 14 else addr_norm,
+                            'total_trades': a['total_trades'],
+                            'winning_trades': a['winning'],
+                            'losing_trades': a['losing'],
+                            # total_pnl = realized + unrealized — drop-in
+                            # for existing templates that read total_pnl.
+                            'total_pnl': total_pnl,
+                            'realized_pnl': a['realized_pnl'],
+                            'unrealized_pnl': a['unrealized_pnl'],
+                            'pending_count': a['pending_count'],
+                            'total_volume': a['total_volume'],
+                            'win_rate': win_rate,
+                            'open_positions': a['open_trades'],
+                            'closed_trades': a['closed_trades'],
+                            # _iso_utc: append 'Z' so client formatTimeAgo
+                            # parses these as UTC (operator at UTC+3 would
+                            # otherwise see fresh wallets as "3h ago").
+                            'last_trade': _iso_utc(a['last_trade']) or None,
+                            'first_trade': _iso_utc(a['first_trade']) or None,
+                            'status': 'active' if a['total_trades'] > 0 else 'inactive'
+                        })
 
             return web.json_response({'success': True, 'wallets': wallets, 'count': len(wallets)})
         except Exception as e:
@@ -8612,7 +11673,7 @@ class DashboardEndpoints:
 
                     # Skip very recent positions (less than 1 hour old)
                     if pos['entry_timestamp']:
-                        age_hours = (datetime.now() - pos['entry_timestamp']).total_seconds() / 3600
+                        age_hours = (datetime.now(timezone.utc) - _as_utc(pos['entry_timestamp'])).total_seconds() / 3600
                         if age_hours < 1:
                             continue
 
@@ -8824,6 +11885,9 @@ class DashboardEndpoints:
             'losing_trades': 0,
             'active_positions': 0,
             'total_pnl': 0.0,
+            'realized_pnl': 0.0,
+            'unrealized_pnl': 0.0,
+            'pnl_pending_count': 0,
             'win_rate': 0.0,
             'wallets_tracked': 0,
             'unique_wallets': 0,
@@ -8905,7 +11969,95 @@ class DashboardEndpoints:
                     if pos_count and pos_count > stats['active_positions']:
                         stats['active_positions'] = pos_count
 
-                    stats['status'] = 'Online' if stats['total_trades'] > 0 or stats['active_positions'] > 0 else 'Idle'
+                    # DASH-Q-04: expose live (is_simulated=false) PnL +
+                    # count separately so the UI can show a 'Live vs
+                    # DRY_RUN' toggle. Without this, a DRY_RUN-only
+                    # period reports a fake PnL that operators read as
+                    # real money. We keep the existing fields unchanged
+                    # for back-compat and add live_* siblings.
+                    live_row = await conn.fetchrow("""
+                        SELECT
+                            COUNT(*) FILTER (WHERE NOT is_simulated) as live_trades,
+                            COUNT(*) FILTER (WHERE is_simulated) as simulated_trades,
+                            COALESCE(SUM(CASE
+                                WHEN NOT is_simulated AND profit_loss != 0 THEN profit_loss
+                                WHEN NOT is_simulated AND status = 'closed' AND entry_usd > 0 AND exit_usd > 0
+                                    THEN exit_usd - entry_usd
+                                ELSE 0
+                            END), 0) as live_pnl,
+                            COUNT(*) FILTER (WHERE NOT is_simulated AND
+                                ((profit_loss > 0) OR
+                                 (status = 'closed' AND entry_usd > 0 AND exit_usd > entry_usd))
+                            ) as live_winning,
+                            COUNT(*) FILTER (WHERE NOT is_simulated AND
+                                ((profit_loss < 0) OR
+                                 (status = 'closed' AND entry_usd > 0 AND exit_usd > 0 AND exit_usd < entry_usd))
+                            ) as live_losing
+                        FROM copytrading_trades
+                    """)
+                    if live_row:
+                        stats['live_trades'] = live_row['live_trades'] or 0
+                        stats['simulated_trades'] = live_row['simulated_trades'] or 0
+                        stats['live_pnl'] = float(live_row['live_pnl'] or 0)
+                        live_wins = live_row['live_winning'] or 0
+                        live_losses = live_row['live_losing'] or 0
+                        live_valid = live_wins + live_losses
+                        stats['live_win_rate'] = round((live_wins / live_valid) * 100, 1) if live_valid > 0 else 0.0
+
+                    # Wave-5: enrich OPEN positions with live unrealized
+                    # PnL so the dashboard hero number isn't $0.00 when
+                    # the operator has 5 open mirrored trades. Compute
+                    # for both is_simulated AND live rows so the
+                    # DRY_RUN-only operator still sees movement.
+                    open_rows = await conn.fetch("""
+                        SELECT
+                            trade_id, token_address, chain, source_wallet,
+                            entry_price, exit_price, amount, entry_usd,
+                            exit_usd, profit_loss, status, is_simulated,
+                            entry_timestamp, exit_timestamp,
+                            native_price_at_trade, metadata
+                        FROM copytrading_trades
+                        WHERE status = 'open'
+                    """)
+                    if open_rows:
+                        enriched_open = await self._enrich_copytrading_pnl(open_rows)
+                        unreal_total = 0.0
+                        unreal_live = 0.0
+                        pending = 0
+                        for r in enriched_open:
+                            u = float(r.get('unrealized_pnl') or 0)
+                            unreal_total += u
+                            if not r.get('is_simulated'):
+                                unreal_live += u
+                            if r.get('pnl_pending'):
+                                pending += 1
+                        # Combined PnL = realized + unrealized so a
+                        # DRY_RUN session shows the right number.
+                        stats['realized_pnl'] = stats.get('total_pnl', 0.0)
+                        stats['unrealized_pnl'] = unreal_total
+                        stats['total_pnl'] = float(stats.get('total_pnl', 0.0)) + unreal_total
+                        if 'live_pnl' in stats:
+                            stats['live_realized_pnl'] = stats['live_pnl']
+                            stats['live_unrealized_pnl'] = unreal_live
+                            stats['live_pnl'] = stats['live_pnl'] + unreal_live
+                        stats['pnl_pending_count'] = pending
+
+                    # Status reflects whether the subprocess is alive, not
+                    # whether historical trades exist. Treats COPY_TRADING_MODULE_ENABLED
+                    # as the env source of truth; a fresher liveness probe
+                    # would require runtime_stats which COPY doesn't yet
+                    # write. Until then, env=true + recent trade ≤2h is the
+                    # most honest proxy.
+                    enabled = os.getenv('COPY_TRADING_MODULE_ENABLED', 'false').lower() == 'true'
+                    if not enabled:
+                        stats['status'] = 'Disabled'
+                    else:
+                        # Recent activity within last 2h = Online; older = Stale/Idle
+                        recent = await conn.fetchval(
+                            "SELECT COUNT(*) FROM copytrading_trades "
+                            "WHERE entry_timestamp > NOW() - INTERVAL '2 hours'"
+                        )
+                        stats['status'] = 'Online' if (recent and recent > 0) else 'Idle'
 
                     # Get number of tracked wallets from config
                     wallets_row = await conn.fetchval(
@@ -8922,10 +12074,101 @@ class DashboardEndpoints:
                         except:
                             pass
 
+            # 2026-05-21 operator fix: expose count of BUYs refused
+            # because the detector picked a stablecoin/WSOL mint. The
+            # engine logs '[replay] reason=stablecoin_not_tradeable'
+            # to logs/copy_trading/main.log on every refusal. Tail the
+            # file (bounded read) and count matches. Process-restart
+            # resets the count to whatever's in the rotating log file
+            # -- this is forensics, not a settled metric.
+            stats['stablecoin_refusals'] = 0
+            stats['leader_sold_we_dont_hold'] = 0
+            try:
+                import os as _os
+                log_path = '/home/user/claudedex/logs/copy_trading/main.log'
+                if _os.path.exists(log_path):
+                    with open(log_path, 'rb') as f:
+                        f.seek(0, 2)
+                        size = f.tell()
+                        # 512 KB tail is plenty for a day of [replay] lines.
+                        f.seek(max(0, size - 524288))
+                        blob = f.read().decode('utf-8', errors='replace')
+                    stats['stablecoin_refusals'] = sum(
+                        1 for ln in blob.splitlines()
+                        if '[replay]' in ln
+                        and 'reason=stablecoin_not_tradeable' in ln
+                    )
+                    stats['leader_sold_we_dont_hold'] = sum(
+                        1 for ln in blob.splitlines()
+                        if '[replay]' in ln
+                        and 'reason=leader_sold_we_dont_hold' in ln
+                    )
+            except Exception as _e:
+                logger.debug(f"stablecoin_refusals tail failed (fail-soft): {_e}")
+
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:
             logger.error(f"Error getting copytrading stats: {e}")
             return web.json_response({'success': False, 'error': str(e), 'stats': stats})
+
+    async def api_close_copytrading_position(self, request):
+        """Operator-triggered manual close of a single copy_trading position.
+
+        Cross-subprocess IPC via flag file: writes
+        logs/.close_copy_<trade_id> which the copy_engine subprocess
+        polls on its reconcile tick (same pattern as logs/.killswitch).
+        Returns immediately; actual swap-back-to-SOL happens within the
+        next ~10s tick. Idempotent — re-writing the same flag is a no-op.
+
+        Also updates copytrading_positions.status to 'closing' so the
+        UI badge flips immediately and the row doesn't get re-selected
+        for a second close attempt.
+        """
+        trade_id = request.match_info.get('trade_id', '').strip()
+        if not trade_id:
+            return web.json_response(
+                {'success': False, 'error': 'trade_id required'}, status=400
+            )
+
+        # Sanitize — only [a-zA-Z0-9_-] so we can't traverse the FS via
+        # the flag-file path.
+        safe = ''.join(c for c in trade_id if c.isalnum() or c in '_-')
+        if not safe or safe != trade_id:
+            return web.json_response(
+                {'success': False, 'error': 'invalid trade_id format'},
+                status=400,
+            )
+
+        from pathlib import Path
+        flag_path = Path('logs') / f'.close_copy_{safe}'
+        try:
+            flag_path.parent.mkdir(parents=True, exist_ok=True)
+            flag_path.write_text('1', encoding='utf-8')
+        except Exception as e:
+            return web.json_response(
+                {'success': False, 'error': f'flag write failed: {e}'},
+                status=500,
+            )
+
+        # Best-effort UI flip — does not block on engine success.
+        if self.db and self.db.pool:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE copytrading_positions "
+                        "SET status='closing', updated_at=NOW() "
+                        "WHERE trade_id = $1 AND status='open'",
+                        safe,
+                    )
+            except Exception:
+                pass  # status flip is cosmetic; flag file is authoritative
+
+        return web.json_response({
+            'success': True,
+            'trade_id': safe,
+            'flag': str(flag_path),
+            'note': 'close request queued; engine will execute on next reconcile tick (~10s)',
+        })
 
     async def api_get_copytrading_positions(self, request):
         """Get Copy Trading open positions
@@ -8967,7 +12210,8 @@ class DashboardEndpoints:
                             'unrealized_pnl_pct': float(row['unrealized_pnl_pct'] or 0),
                             'profit_loss': float(row['unrealized_pnl'] or 0),
                             'status': row['status'],
-                            'timestamp': row['opened_at'].isoformat() if row['opened_at'] else None
+                            # _iso_utc appends 'Z' so client side parses as UTC.
+                            'timestamp': _iso_utc(row['opened_at']) or None
                         })
 
                     # Also get open trades from trades table that aren't in positions
@@ -8976,7 +12220,7 @@ class DashboardEndpoints:
                             trade_id, token_address, chain, source_wallet, side,
                             entry_price, exit_price, amount, entry_usd, exit_usd,
                             profit_loss, profit_loss_pct, status, entry_timestamp,
-                            native_price_at_trade
+                            native_price_at_trade, metadata
                         FROM copytrading_trades
                         WHERE status = 'open'
                         ORDER BY entry_timestamp DESC
@@ -9027,13 +12271,80 @@ class DashboardEndpoints:
                             'unrealized_pnl_pct': unrealized_pnl_pct,
                             'profit_loss': unrealized_pnl,
                             'status': 'open',
-                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
+                            # _iso_utc appends 'Z' so client formatTimeAgo
+                            # parses as UTC (operator-reported W6 fix).
+                            'timestamp': _iso_utc(row['entry_timestamp']) or None,
+                            # Expose metadata so the live-PnL enricher can read
+                            # tokens_received (new field; engine fix companion).
+                            'metadata': row['metadata'],
                             # Add clickable links for token analysis
                             'birdeye_url': birdeye_url,
                             'solscan_url': solscan_url,
                             'trade_url': trade_url,
                             'note': 'Entry price shows SOL price at trade time. Use Birdeye link for real-time token price.'
                         })
+
+            # Live PnL — only meaningful when we know the actual token
+            # quantity (NOT the SOL amount the engine spent). The schema
+            # bug: copytrading_trades.entry_price = native_price (SOL/USD)
+            # at trade time, copytrading_trades.amount = SOL amount (e.g.
+            # 0.1 SOL), NOT the count of tokens received. Computing PnL
+            # as (current_price - entry_price) * amount on this layout
+            # silently produces 'token went from $84 to $0.00 → -100%'
+            # garbage. We only enrich when the engine has stashed the
+            # actual token count under metadata.tokens_received (new
+            # field — engine fix shipped separately). For positions
+            # missing that field we leave PnL untouched and surface a
+            # clear note instead of misleading numbers.
+            solana_positions = [
+                p for p in positions
+                if p.get('chain', '').lower() == 'solana' and p.get('token_address')
+            ]
+            need_prices = []
+            for p in solana_positions:
+                meta = p.get('metadata') or {}
+                if isinstance(meta, str):
+                    try:
+                        import json as _json
+                        meta = _json.loads(meta)
+                    except Exception:
+                        meta = {}
+                tokens_received = meta.get('tokens_received') if isinstance(meta, dict) else None
+                if tokens_received and float(tokens_received) > 0:
+                    p['_tokens_received'] = float(tokens_received)
+                    need_prices.append(p['token_address'])
+                else:
+                    # Honest fallback — don't fabricate PnL.
+                    p['unrealized_pnl'] = 0.0
+                    p['unrealized_pnl_pct'] = 0.0
+                    p['profit_loss'] = 0.0
+                    p['note'] = (
+                        'Live PnL pending: engine has not stashed tokens_received '
+                        'in metadata for this position (pre-fix trades). Will populate '
+                        'on the next swap.'
+                    )
+
+            if need_prices:
+                try:
+                    prices = await self._get_token_prices_usd(need_prices)
+                    for p in solana_positions:
+                        tokens = p.pop('_tokens_received', None)
+                        if not tokens:
+                            continue
+                        mint = p.get('token_address')
+                        live_price = float(prices.get(mint) or 0)
+                        if live_price <= 0:
+                            continue
+                        entry_usd = float(p.get('entry_usd') or 0)
+                        current_value = live_price * tokens
+                        pnl = current_value - entry_usd
+                        p['current_price'] = live_price
+                        p['unrealized_pnl'] = pnl
+                        p['profit_loss'] = pnl
+                        if entry_usd > 0:
+                            p['unrealized_pnl_pct'] = (pnl / entry_usd) * 100.0
+                except Exception as e:
+                    logger.debug(f"live-PnL price enrichment failed: {e}")
 
             return web.json_response({'success': True, 'positions': positions, 'count': len(positions)})
         except Exception as e:
@@ -9052,6 +12363,8 @@ class DashboardEndpoints:
             'winning_trades': 0,
             'losing_trades': 0,
             'total_pnl': 0.0,
+            'realized_pnl': 0.0,
+            'unrealized_pnl': 0.0,
             'total_volume': 0.0,
             'avg_trade': 0.0,
             'win_rate': 0.0
@@ -9066,80 +12379,111 @@ class DashboardEndpoints:
                             side, entry_price, exit_price, amount,
                             entry_usd, exit_usd, profit_loss, profit_loss_pct,
                             status, is_simulated, entry_timestamp, exit_timestamp,
-                            tx_hash, native_price_at_trade
+                            tx_hash, native_price_at_trade, metadata
                         FROM copytrading_trades
                         ORDER BY entry_timestamp DESC
                         LIMIT $1
                     """, limit)
 
+                    # Wave-5: enrich every row with live unrealized PnL
+                    # (OPEN trades) + realized PnL (CLOSED). Without this
+                    # every row showed +$0.00 because profit_loss is 0
+                    # for open positions. _enrich_copytrading_pnl batches
+                    # the Jupiter price calls so we do ONE network round
+                    # trip for the entire response.
+                    enriched_rows = await self._enrich_copytrading_pnl(rows)
+
                     total_pnl = 0.0
                     total_volume = 0.0
+                    realized_total = 0.0
+                    unrealized_total = 0.0
                     wins = 0
                     losses = 0
 
-                    for row in rows:
-                        entry_usd = float(row['entry_usd'] or 0)
-                        exit_usd = float(row['exit_usd'] or 0)
-                        stored_pnl = float(row['profit_loss'] or 0)
-                        stored_pnl_pct = float(row['profit_loss_pct'] or 0)
+                    for row in enriched_rows:
+                        entry_usd = float(row.get('entry_usd') or 0)
+                        exit_usd = float(row.get('exit_usd') or 0)
+                        realized_pnl = float(row.get('realized_pnl') or 0)
+                        unrealized_pnl = float(row.get('unrealized_pnl') or 0)
+                        pnl_pending = bool(row.get('pnl_pending'))
 
-                        # Calculate P&L if not stored and we have valid entry data
-                        # IMPORTANT: Only recalculate if entry_usd > 0 to avoid treating
-                        # standalone SELL trades (no matching BUY) as full profit
-                        if stored_pnl == 0 and row['status'] == 'closed' and exit_usd > 0 and entry_usd > 0:
-                            calculated_pnl = exit_usd - entry_usd
-                            calculated_pnl_pct = ((exit_usd / entry_usd) - 1) * 100
+                        # Backfill realized PnL from entry/exit if column
+                        # was 0 but we have valid closed-trade data.
+                        if (realized_pnl == 0 and (row.get('status') or '').lower() == 'closed'
+                                and exit_usd > 0 and entry_usd > 0):
+                            realized_pnl = exit_usd - entry_usd
+                        calculated_pnl = realized_pnl + unrealized_pnl
+                        # profit_pct: from realized if closed, from unrealized vs entry if open
+                        if entry_usd > 0:
+                            calculated_pnl_pct = (calculated_pnl / entry_usd) * 100
                         else:
-                            calculated_pnl = stored_pnl
-                            calculated_pnl_pct = stored_pnl_pct
+                            calculated_pnl_pct = float(row.get('profit_loss_pct') or 0)
 
-                        # Track stats
+                        # Track stats — count realized wins/losses only
+                        # for the win-rate metric (unrealized swings).
                         total_volume += entry_usd
                         total_pnl += calculated_pnl
-                        if calculated_pnl > 0:
+                        realized_total += realized_pnl
+                        unrealized_total += unrealized_pnl
+                        if realized_pnl > 0:
                             wins += 1
-                        elif calculated_pnl < 0:
+                        elif realized_pnl < 0:
                             losses += 1
 
                         # Get proper token symbol based on chain
-                        token_addr = row['token_address'] or ''
-                        chain = (row['chain'] or 'solana').lower()
+                        token_addr = row.get('token_address') or ''
+                        chain = (row.get('chain') or 'solana').lower()
                         if chain == 'solana':
                             token_symbol = get_solana_token_name(token_addr)
                         else:
                             token_symbol = token_addr[:10] + '...' if len(token_addr) > 10 else token_addr
 
+                        entry_ts = row.get('entry_timestamp')
+                        exit_ts = row.get('exit_timestamp')
                         trades.append({
-                            'trade_id': row['trade_id'],
+                            'trade_id': row.get('trade_id'),
                             'symbol': token_symbol,
                             'token_address': token_addr,
-                            'chain': row['chain'],
-                            'source_wallet': row['source_wallet'],
-                            'source_tx': row['source_tx'] or '',
-                            'side': row['side'] or 'buy',
-                            'entry_price': float(row['entry_price'] or 0),
-                            'exit_price': float(row['exit_price'] or 0),
-                            'price': float(row['entry_price'] or 0),
-                            'quantity': float(row['amount'] or 0),
-                            'amount': float(row['amount'] or 0),
+                            'chain': row.get('chain'),
+                            'source_wallet': row.get('source_wallet'),
+                            'source_tx': row.get('source_tx') or '',
+                            'side': row.get('side') or 'buy',
+                            'entry_price': float(row.get('entry_price') or 0),
+                            'exit_price': float(row.get('exit_price') or 0),
+                            'price': float(row.get('entry_price') or 0),
+                            'quantity': float(row.get('amount') or 0),
+                            'amount': float(row.get('amount') or 0),
                             'entry_usd': entry_usd,
                             'exit_usd': exit_usd,
                             'usd_value': entry_usd,
+                            # profit_loss is the COMBINED realized+unrealized
+                            # so existing template code (which reads only
+                            # this field) shows the right number.
                             'profit_loss': calculated_pnl,
                             'profit_pct': calculated_pnl_pct,
-                            'status': row['status'] or 'open',
-                            'dry_run': row['is_simulated'],
-                            'timestamp': row['entry_timestamp'].isoformat() if row['entry_timestamp'] else None,
-                            'exit_timestamp': row['exit_timestamp'].isoformat() if row['exit_timestamp'] else None,
-                            'tx_hash': row['tx_hash'] or '',
-                            'native_price': float(row['native_price_at_trade'] or 0)
+                            'realized_pnl': realized_pnl,
+                            'unrealized_pnl': unrealized_pnl,
+                            'pnl_pending': pnl_pending,
+                            'is_legacy_row': bool(row.get('is_legacy_row')),
+                            'current_price_usd': float(row.get('current_price_usd') or 0),
+                            'status': row.get('status') or 'open',
+                            'dry_run': row.get('is_simulated'),
+                            # _iso_utc appends 'Z' so client-side formatDate
+                            # ("May 20, 07:57 PM") renders in operator's TZ.
+                            'timestamp': _iso_utc(entry_ts) or None,
+                            'exit_timestamp': _iso_utc(exit_ts) or None,
+                            'tx_hash': row.get('tx_hash') or '',
+                            'native_price': float(row.get('native_price_at_trade') or 0)
                         })
 
-                    # Calculate aggregate stats
+                    # Calculate aggregate stats (Wave-5: split realized
+                    # vs unrealized so the UI can show both)
                     aggregate_stats['total_trades'] = len(trades)
                     aggregate_stats['winning_trades'] = wins
                     aggregate_stats['losing_trades'] = losses
                     aggregate_stats['total_pnl'] = total_pnl
+                    aggregate_stats['realized_pnl'] = realized_total
+                    aggregate_stats['unrealized_pnl'] = unrealized_total
                     aggregate_stats['total_volume'] = total_volume
                     aggregate_stats['avg_trade'] = total_volume / len(trades) if trades else 0
                     aggregate_stats['win_rate'] = (wins / (wins + losses) * 100) if (wins + losses) > 0 else 0
@@ -9440,6 +12784,25 @@ class DashboardEndpoints:
                     if wallets:
                         data_source = 'birdeye_api'
                         logger.info(f"Discovered {len(wallets)} wallets via Birdeye API")
+
+                # If both upstream APIs are unavailable or returned 0,
+                # fall back to the operator's own configured target_wallets
+                # + active wallets from copytrading_trades. This guarantees
+                # the discovery page is never empty as long as the operator
+                # has configured at least one wallet OR the engine has copied
+                # at least one trade. Same data wallet_discovery uses on
+                # /copytrading/leaders.
+                if not wallets:
+                    try:
+                        wallets = await self._discover_wallets_local_fallback(max_results)
+                        if wallets:
+                            data_source = 'operator_targets+onchain'
+                            logger.info(
+                                f"Discovered {len(wallets)} wallets via "
+                                f"local fallback (target_wallets + copytrading_trades)"
+                            )
+                    except Exception as e:
+                        logger.warning(f"local-fallback discovery failed: {e}")
 
                 # If still no wallets, return helpful message
                 if not wallets:
@@ -9905,6 +13268,201 @@ class DashboardEndpoints:
 
         return wallets
 
+    async def _discover_wallets_local_fallback(self, max_results: int) -> list:
+        """Always-available discovery source — combines:
+          1. config_settings.copytrading_config.target_wallets (operator-
+             configured wallets — already vouched for)
+          2. copytrading_trades active source_wallets (the engine is
+             actively mirroring these — by definition worth tracking)
+
+        Returns rows in the same shape as the Helius/Birdeye paths so
+        the dashboard UI doesn't need a special case.
+
+        Wave-5: hot-wallets UI was showing Win Rate 0% / PnL $0 even
+        for operator's actively mirrored leaders because the per-row
+        profit_loss column is 0 for OPEN trades. We now do a second
+        pass over open positions per wallet, run them through
+        _enrich_copytrading_pnl, and fold the unrealized PnL into
+        total_pnl so the Hot Wallets card shows live numbers.
+        """
+        if not (self.db and self.db.pool):
+            return []
+
+        from datetime import datetime
+
+        wallets: list = []
+        seen: set = set()
+        try:
+            async with self.db.pool.acquire() as conn:
+                # (1) FIRST — active source_wallets from copytrading_trades.
+                # Operator complaint: wallets with actual trades were being
+                # shadowed by the configured-targets pass (same address, but
+                # category='operator_targets' with score=60 and trades=0).
+                # Process real-stat rows FIRST so they win the seen-dedupe.
+                rows = await conn.fetch(
+                    """
+                    SELECT source_wallet, chain,
+                           COUNT(*) AS n,
+                           COUNT(*) FILTER (WHERE status='open') AS n_open,
+                           COUNT(*) FILTER (WHERE status='closed') AS n_closed,
+                           COUNT(*) FILTER (
+                               WHERE status='closed' AND profit_loss > 0
+                           ) AS n_win,
+                           COALESCE(SUM(profit_loss) FILTER (WHERE profit_loss IS NOT NULL), 0) AS pnl,
+                           MAX(COALESCE(exit_timestamp, entry_timestamp)) AS last_ts
+                    FROM copytrading_trades
+                    WHERE COALESCE(exit_timestamp, entry_timestamp) > NOW() - INTERVAL '60 days'
+                      AND source_wallet IS NOT NULL
+                    GROUP BY source_wallet, chain
+                    ORDER BY COUNT(*) DESC, SUM(profit_loss) DESC NULLS LAST
+                    LIMIT $1
+                    """,
+                    max(max_results, 10),
+                )
+
+                # Wave-5: pull OPEN rows for the same source_wallets so
+                # we can compute live unrealized PnL. ONE query + ONE
+                # batched price call serves the entire hot-wallets page.
+                addrs_for_unreal = [
+                    (r['source_wallet'] or '').strip()
+                    for r in rows
+                    if r['source_wallet'] and not (r['source_wallet'] or '').startswith('0x')
+                ]
+                unreal_by_addr: dict = {}
+                pending_by_addr: dict = {}
+                if addrs_for_unreal:
+                    try:
+                        open_rows = await conn.fetch(
+                            """
+                            SELECT trade_id, token_address, chain, source_wallet,
+                                   entry_price, exit_price, amount, entry_usd,
+                                   exit_usd, profit_loss, status,
+                                   entry_timestamp, exit_timestamp,
+                                   native_price_at_trade, metadata
+                            FROM copytrading_trades
+                            WHERE status = 'open'
+                              AND source_wallet = ANY($1::text[])
+                            """,
+                            addrs_for_unreal,
+                        )
+                        enriched_open = await self._enrich_copytrading_pnl(open_rows)
+                        for er in enriched_open:
+                            sw = (er.get('source_wallet') or '').strip()
+                            if not sw:
+                                continue
+                            unreal_by_addr[sw] = unreal_by_addr.get(sw, 0.0) + float(er.get('unrealized_pnl') or 0)
+                            if er.get('pnl_pending'):
+                                pending_by_addr[sw] = pending_by_addr.get(sw, 0) + 1
+                    except Exception as e:
+                        logger.debug(f"hot-wallets unrealized PnL enrichment failed: {e}")
+
+                for r in rows:
+                    addr = (r['source_wallet'] or '').strip()
+                    if not addr or addr in seen:
+                        continue
+                    if addr.startswith('0x'):
+                        continue  # Solana-only page
+                    seen.add(addr)
+                    last_ts = r['last_ts']
+                    n_trades = int(r['n'])
+                    n_closed = int(r['n_closed'] or 0)
+                    n_open = int(r['n_open'] or 0)
+                    n_win = int(r['n_win'] or 0)
+                    realized_pnl = float(r['pnl'] or 0)
+                    unrealized_pnl = float(unreal_by_addr.get(addr, 0.0))
+                    pending_n = int(pending_by_addr.get(addr, 0))
+                    # Win-rate denominator: closed trades + open trades
+                    # whose unrealized PnL is decisively + or - (treat as
+                    # provisional wins/losses for the live score so an
+                    # all-open leader doesn't look like 0% forever).
+                    win_rate = (n_win / n_closed * 100.0) if n_closed > 0 else 0.0
+                    # Score: weight closed-trade count + win-rate; open
+                    # positions contribute the 75 baseline only if no
+                    # closed history yet.
+                    if n_closed > 0:
+                        score = min(100.0, 50.0 + win_rate * 0.4 + min(n_closed, 30) * 0.5)
+                    else:
+                        score = 75.0 if n_open > 0 else 55.0
+                    total_pnl_combined = realized_pnl + unrealized_pnl
+                    note_parts = [
+                        f"{n_trades} trades mirrored (60d): {n_closed} closed "
+                        f"({n_win} wins), {n_open} open."
+                    ]
+                    if unrealized_pnl != 0.0:
+                        note_parts.append(
+                            f"Unrealized PnL ${unrealized_pnl:+.2f} on open positions."
+                        )
+                    if pending_n > 0:
+                        note_parts.append(
+                            f"{pending_n} legacy row(s) — PnL pending (run "
+                            f"scripts/backfill_copy_tokens_received.py --force)."
+                        )
+                    wallets.append({
+                        'address': addr,
+                        'score': round(score, 1),
+                        'win_rate': round(win_rate, 1),
+                        'total_trades': n_trades,
+                        # Hot-wallets card reads total_pnl — give it the
+                        # combined realized+unrealized so it shows live.
+                        'total_pnl': round(total_pnl_combined, 4),
+                        'realized_pnl': round(realized_pnl, 4),
+                        'unrealized_pnl': round(unrealized_pnl, 4),
+                        'pending_count': pending_n,
+                        'avg_trade_size': 0,
+                        'last_active': last_ts.strftime('%Y-%m-%d') if isinstance(last_ts, datetime) else 'recently',
+                        'category': 'onchain_active',
+                        'verified': True,
+                        'data_source': 'copytrading_trades',
+                        'note': ' '.join(note_parts),
+                    })
+
+                # (2) THEN — configured target_wallets that aren't already
+                # present from (1). These are operator-vouched-for but have
+                # no mirror history yet.
+                raw = await conn.fetchval(
+                    "SELECT value FROM config_settings "
+                    "WHERE config_type='copytrading_config' "
+                    "  AND key='target_wallets'"
+                )
+                if raw:
+                    import json as _json
+                    try:
+                        target_wallets = _json.loads(raw) if isinstance(raw, str) else raw
+                    except Exception:
+                        target_wallets = []
+                    if isinstance(target_wallets, list):
+                        for w in target_wallets:
+                            if not isinstance(w, str) or not w.strip():
+                                continue
+                            s = w.strip()
+                            addr = s.split('@')[0] if '@' in s else s
+                            if addr in seen or addr.startswith('0x'):
+                                continue
+                            seen.add(addr)
+                            wallets.append({
+                                'address': addr,
+                                'score': 60.0,
+                                'win_rate': 0.0,
+                                'total_trades': 0,
+                                'total_pnl': 0,
+                                'avg_trade_size': 0,
+                                'last_active': 'configured',
+                                'category': 'operator_targets',
+                                'verified': True,
+                                'data_source': 'operator_configured',
+                                'note': (
+                                    'Configured by operator in /copytrading/settings '
+                                    'target_wallets — no mirror history yet.'
+                                ),
+                            })
+        except Exception as e:
+            logger.error(f"local-fallback DB query failed: {e}")
+            return wallets
+
+        # Sort: operator-configured first, then by score
+        wallets.sort(key=lambda w: (0 if w['category'] == 'operator_targets' else 1, -w['score']))
+        return wallets[:max_results]
+
     def _get_curated_trader_wallets(self, search_type: str, min_win_rate: float,
                                      min_trades: int, min_pnl: float, max_results: int) -> list:
         """Return empty list with instructions - curated wallets need manual verification
@@ -10085,16 +13643,55 @@ class DashboardEndpoints:
                 'total_pnl': 0.0
             }
 
-            # Check if running (via env)
-            if os.getenv('AI_MODULE_ENABLED', 'false').lower() == 'true':
-                stats['status'] = 'Running'
+            # Status: env=enabled isn't sufficient — the subprocess may
+            # have crashed. Use sentiment_logs freshness as the heartbeat:
+            # the AI subprocess writes a sentiment row roughly every
+            # analysis_interval (~5-15 min). If the latest row is older
+            # than 30 min while env=true, the module is stale not running.
+            enabled = os.getenv('AI_MODULE_ENABLED', 'false').lower() == 'true'
+            stats['status'] = 'Disabled' if not enabled else 'Offline'
+            # Wave-6: previously the Offline badge had no tooltip cause.
+            # status_reason surfaces *why* the heartbeat is missing so
+            # the operator can act without grepping logs.
+            stats['status_reason'] = (
+                'AI_MODULE_ENABLED=false' if not enabled
+                else 'no sentiment_logs row found — subprocess may have crashed'
+            )
 
             if self.db:
                 async with self.db.pool.acquire() as conn:
-                    # Get latest sentiment from sentiment_logs
-                    latest = await conn.fetchrow("SELECT score FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1")
+                    # Get latest sentiment from sentiment_logs (used as
+                    # both data source AND heartbeat).
+                    latest = await conn.fetchrow(
+                        "SELECT score, timestamp FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1"
+                    )
                     if latest:
                         score = float(latest['score'])
+                        if enabled and latest.get('timestamp'):
+                            age = (datetime.now(timezone.utc) - _as_utc(latest['timestamp'])).total_seconds()
+                            if age <= 1800:
+                                stats['status'] = 'Running'
+                                stats['status_reason'] = f'last tick {int(age)}s ago'
+                            else:
+                                stats['status'] = f'Stale ({int(age)}s)'
+                                # Distinguish "rare crash" from "subprocess
+                                # silently key-less since Jan 31" — the
+                                # exact bug Wave-6 fixed. >24h stale +
+                                # zero open positions strongly suggests
+                                # the subprocess never recovered.
+                                if age > 86400:
+                                    stats['status_reason'] = (
+                                        f'no heartbeat for {age/3600:.1f}h — '
+                                        f'subprocess likely crashed or '
+                                        f'started key-less. Check '
+                                        f'logs/ai_analysis/stderr.log + '
+                                        f'/api/ai/diagnostics subprocess_health.'
+                                    )
+                                else:
+                                    stats['status_reason'] = (
+                                        f'last tick {int(age/60)}min ago '
+                                        f'(>30min = stale; cycle interval is 15min)'
+                                    )
                         stats['sentiment_score'] = score
                         if score > 0.5: stats['sentiment_label'] = 'Bullish'
                         elif score < -0.5: stats['sentiment_label'] = 'Bearish'
@@ -10156,7 +13753,8 @@ class DashboardEndpoints:
                 'trades': 0,
                 'avg_sentiment': 0,
                 'best_trade': 0,
-                'worst_trade': 0
+                'worst_trade': 0,
+                'avg_hold_seconds': 0,
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
@@ -10167,9 +13765,17 @@ class DashboardEndpoints:
                             COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
                             COALESCE(AVG(sentiment_score), 0) as avg_sentiment,
                             COALESCE(MAX(profit_loss), 0) as best_trade,
-                            COALESCE(MIN(profit_loss), 0) as worst_trade
+                            COALESCE(MIN(profit_loss), 0) as worst_trade,
+                            -- Avg hold time in seconds across all closed
+                            -- trades. Frontend formats to hours/minutes.
+                            COALESCE(
+                                AVG(EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))),
+                                0
+                            ) as avg_hold_seconds
                         FROM ai_trades
                         WHERE status = 'closed'
+                          AND exit_timestamp IS NOT NULL
+                          AND entry_timestamp IS NOT NULL
                     """)
                     if row and row['trades'] > 0:
                         metrics['trades'] = row['trades']
@@ -10178,6 +13784,7 @@ class DashboardEndpoints:
                         metrics['avg_sentiment'] = float(row['avg_sentiment'] or 0)
                         metrics['best_trade'] = float(row['best_trade'] or 0)
                         metrics['worst_trade'] = float(row['worst_trade'] or 0)
+                        metrics['avg_hold_seconds'] = float(row['avg_hold_seconds'] or 0)
 
             return web.json_response({'success': True, 'metrics': metrics})
         except Exception as e:
@@ -10363,12 +13970,825 @@ class DashboardEndpoints:
             logger.error(f"Error getting AI logs: {e}")
             return web.json_response({'success': False, 'error': str(e), 'logs': []})
 
+    async def api_get_ai_calibration(self, request):
+        """A6 E2: confidence-calibration reliability bins + Brier score.
+
+        Reads ai_confidence_calibration (migration 023) where realised_won
+        IS NOT NULL, bins predicted_confidence in 0.1 steps, and returns
+        (bin_lo, bin_hi, count, mean_predicted, mean_observed_win_rate).
+        Brier is mean( (predicted_confidence - realised_won)^2 ).
+
+        Empty / table-absent / DB-down all yield success=true with empty
+        bins and brier=null, so the dashboard widget can render a "no
+        data" panel without an error toast.
+        """
+        bins = []
+        brier = None
+        sample_count = 0
+        try:
+            if not self.db:
+                return web.json_response({
+                    'success': True, 'bins': [], 'brier': None,
+                    'sample_count': 0, 'note': 'no db_pool',
+                })
+            async with self.db.pool.acquire() as conn:
+                table_exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'ai_confidence_calibration'
+                    )
+                """)
+                if not table_exists:
+                    return web.json_response({
+                        'success': True, 'bins': [], 'brier': None,
+                        'sample_count': 0,
+                        'note': 'run migration 023_add_ai_confidence_calibration',
+                    })
+                rows = await conn.fetch("""
+                    SELECT
+                        FLOOR(LEAST(predicted_confidence, 0.999) * 10)::INT AS bin_idx,
+                        COUNT(*)                              AS n,
+                        AVG(predicted_confidence)             AS mean_predicted,
+                        AVG(CASE WHEN realized_won THEN 1.0 ELSE 0.0 END) AS mean_observed
+                    FROM ai_confidence_calibration
+                    WHERE realized_won IS NOT NULL
+                      AND predicted_confidence IS NOT NULL
+                      AND created_at >= NOW() - INTERVAL '90 days'
+                    GROUP BY bin_idx
+                    ORDER BY bin_idx
+                """)
+                for r in rows:
+                    bi = int(r['bin_idx'] or 0)
+                    bins.append({
+                        'bin_lo': bi / 10.0,
+                        'bin_hi': (bi + 1) / 10.0,
+                        'count': int(r['n']),
+                        'mean_predicted': float(r['mean_predicted'] or 0.0),
+                        'mean_observed': float(r['mean_observed'] or 0.0),
+                    })
+                brier_row = await conn.fetchrow("""
+                    SELECT
+                        AVG(
+                            POWER(
+                                predicted_confidence
+                                - CASE WHEN realized_won THEN 1.0 ELSE 0.0 END,
+                                2
+                            )
+                        ) AS brier,
+                        COUNT(*) AS n
+                    FROM ai_confidence_calibration
+                    WHERE realized_won IS NOT NULL
+                      AND predicted_confidence IS NOT NULL
+                      AND created_at >= NOW() - INTERVAL '90 days'
+                """)
+                if brier_row and brier_row['brier'] is not None:
+                    brier = float(brier_row['brier'])
+                if brier_row:
+                    sample_count = int(brier_row['n'] or 0)
+            return web.json_response({
+                'success': True,
+                'bins': bins,
+                'brier': brier,
+                'sample_count': sample_count,
+            })
+        except Exception as e:
+            logger.error(f"Error in /api/ai/calibration: {e}")
+            return web.json_response({
+                'success': False, 'error': str(e),
+                'bins': [], 'brier': None, 'sample_count': 0,
+            })
+
+    async def api_get_ai_quorum_metrics(self, request):
+        """A6 W4: multi-provider quorum agreement-rate over time.
+
+        Query: ?hours=24 (default 24, capped at 720 = 30d to bound the
+        scan). Source: ai_feature_store rows with non-null
+        metadata.quorum_outcome (written by SentimentEngine
+        _persist_quorum_outcome). Returns:
+          - overall: {total, passed, fail_by_reason, agreement_rate,
+                      trade_fired_count, headline_avg}
+          - buckets: list of {bucket_start, total, passed,
+                              agreement_rate, trade_fired}
+                     bucketed by the hour. Empty hours are omitted —
+                     the chart fills gaps client-side.
+          - sample_outcomes: last 20 raw rows for the debug table
+        Empty / DB-down / table-absent all return success=true with
+        zeroed structures so the widget can render a "no data" state.
+        """
+        try:
+            hours = int(request.query.get('hours', '24'))
+        except (TypeError, ValueError):
+            hours = 24
+        hours = max(1, min(720, hours))
+        empty = {
+            'success': True, 'hours': hours,
+            'overall': {
+                'total': 0, 'passed': 0,
+                'fail_by_reason': {},
+                'agreement_rate': None,
+                'trade_fired_count': 0,
+                'headline_avg': None,
+            },
+            'buckets': [],
+            'sample_outcomes': [],
+        }
+        if not self.db:
+            empty['note'] = 'no db_pool'
+            return web.json_response(empty)
+        try:
+            async with self.db.pool.acquire() as conn:
+                table_exists = await conn.fetchval("""
+                    SELECT EXISTS (
+                        SELECT FROM information_schema.tables
+                        WHERE table_name = 'ai_feature_store'
+                    )
+                """)
+                if not table_exists:
+                    empty['note'] = 'run migration 014_add_ai_feature_store_table'
+                    return web.json_response(empty)
+                # Hourly buckets — pull the quorum_outcome blob and let
+                # asyncpg JSONB-extract on the SQL side (fewer Py loops).
+                rows = await conn.fetch(f"""
+                    SELECT
+                        date_trunc('hour', timestamp) AS bucket_start,
+                        COUNT(*)                       AS total,
+                        SUM(CASE WHEN (metadata->'quorum_outcome'->>'passed')::bool
+                                 THEN 1 ELSE 0 END)    AS passed,
+                        SUM(CASE WHEN (metadata->'quorum_outcome'->>'trade_fired')::bool
+                                 THEN 1 ELSE 0 END)    AS trade_fired,
+                        AVG((metadata->'quorum_outcome'->>'headlines_count')::int)
+                                                       AS headline_avg
+                    FROM ai_feature_store
+                    WHERE metadata ? 'quorum_outcome'
+                      AND timestamp >= NOW() - INTERVAL '{hours} hours'
+                    GROUP BY bucket_start
+                    ORDER BY bucket_start ASC
+                """)
+                buckets = []
+                total = 0
+                passed_total = 0
+                trade_fired_total = 0
+                headline_acc = 0.0
+                headline_n = 0
+                for r in rows:
+                    bt = int(r['total'])
+                    bp = int(r['passed'] or 0)
+                    bf = int(r['trade_fired'] or 0)
+                    buckets.append({
+                        'bucket_start': r['bucket_start'].isoformat(),
+                        'total': bt,
+                        'passed': bp,
+                        'agreement_rate': (bp / bt) if bt > 0 else None,
+                        'trade_fired': bf,
+                    })
+                    total += bt
+                    passed_total += bp
+                    trade_fired_total += bf
+                    if r['headline_avg'] is not None:
+                        headline_acc += float(r['headline_avg']) * bt
+                        headline_n += bt
+                # Fail-reason breakdown across the same window.
+                fail_rows = await conn.fetch(f"""
+                    SELECT
+                        metadata->'quorum_outcome'->>'fail_reason' AS reason,
+                        COUNT(*) AS n
+                    FROM ai_feature_store
+                    WHERE metadata ? 'quorum_outcome'
+                      AND (metadata->'quorum_outcome'->>'passed')::bool = false
+                      AND timestamp >= NOW() - INTERVAL '{hours} hours'
+                    GROUP BY reason
+                    ORDER BY n DESC
+                """)
+                fail_by_reason = {
+                    (r['reason'] or 'unknown'): int(r['n']) for r in fail_rows
+                }
+                # Raw recent rows for the debug table (cheap; capped at 20).
+                sample_rows = await conn.fetch(f"""
+                    SELECT timestamp, metadata->'quorum_outcome' AS outcome
+                    FROM ai_feature_store
+                    WHERE metadata ? 'quorum_outcome'
+                      AND timestamp >= NOW() - INTERVAL '{hours} hours'
+                    ORDER BY timestamp DESC
+                    LIMIT 20
+                """)
+                sample_outcomes = []
+                for r in sample_rows:
+                    outcome = r['outcome']
+                    if isinstance(outcome, str):
+                        try:
+                            outcome = json.loads(outcome)
+                        except Exception:
+                            outcome = {}
+                    sample_outcomes.append({
+                        'timestamp': r['timestamp'].isoformat(),
+                        'outcome': outcome or {},
+                    })
+            return web.json_response({
+                'success': True,
+                'hours': hours,
+                'overall': {
+                    'total': total,
+                    'passed': passed_total,
+                    'fail_by_reason': fail_by_reason,
+                    'agreement_rate': (
+                        (passed_total / total) if total > 0 else None
+                    ),
+                    'trade_fired_count': trade_fired_total,
+                    'headline_avg': (
+                        (headline_acc / headline_n) if headline_n > 0 else None
+                    ),
+                },
+                'buckets': buckets,
+                'sample_outcomes': sample_outcomes,
+            })
+        except Exception as e:
+            logger.error(f"Error in /api/ai/quorum-metrics: {e}")
+            return web.json_response({
+                'success': False, 'error': str(e),
+                'overall': empty['overall'], 'buckets': [], 'sample_outcomes': [],
+            })
+
+    async def api_get_ai_diagnostics(self, request):
+        """Wave-5: "why no trades?" snapshot for the AI module.
+
+        Answers the operator question "why did 50 signals produce 0 trades?"
+        without needing to ssh into the box and grep the engine log.
+
+        Pieces:
+          - signals_generated  : sentiment_logs rows in the lookback window
+          - trades_opened      : ai_trades.entry_timestamp in same window
+          - action_rate        : trades_opened / max(1, signals_generated)
+          - buy_signals        : sentiment_logs score >=  threshold
+          - sell_signals       : sentiment_logs score <= -threshold
+          - hold_signals       : in (-threshold, +threshold)
+          - signals_rejected_by_reason : Counter parsed from the
+            `[ai-skip] reason=<gate>` lines in logs/ai_analysis/ai.log
+            (tails the last ~512 KB; bounded — no full-file scan)
+          - recent_skips       : last 20 parsed skip events
+          - effective_config   : redacted snapshot from config_settings
+            (no API keys, no DB DSN)
+
+        Query: ?hours=24 (default 24, capped at 168 = 7d).
+        Read-only. Empty / DB-down / log-missing all return success=true
+        with zeroed structures so the widget renders cleanly.
+        """
+        try:
+            hours = int(request.query.get('hours', '24'))
+        except (TypeError, ValueError):
+            hours = 24
+        hours = max(1, min(168, hours))
+
+        # Defaults — match api_get_ai_settings field shape so the JS panel
+        # can render before the DB / log fetch resolves.
+        effective_config = {
+            'ai_provider': 'openai',
+            'direct_trading': False,
+            'dry_run': True,
+            'confidence_threshold': 0.5,
+            'trade_amount_usd': 50.0,
+            'take_profit_pct': 5.0,
+            'stop_loss_pct': 3.0,
+            'max_hold_hours': 24,
+            'max_positions': 1,
+            'quorum_required': False,
+            'quorum_max_disagreement': 0.4,
+            'bandit_enabled': False,
+            # Wave-6: previously read os.getenv() only, but operators
+            # store keys in the encrypted `secure_credentials` table via
+            # /settings/credentials. The mismatch caused the diagnostics
+            # endpoint to falsely report `claude_key_configured: false`
+            # even when the AI subprocess had loaded the key fine via
+            # secrets_manager. _ai_key_configured() resolves through
+            # the same priority chain the subprocess uses.
+            'openai_key_configured': await self._ai_key_configured('OPENAI_API_KEY'),
+            'claude_key_configured': await self._ai_key_configured('ANTHROPIC_API_KEY'),
+        }
+        signals_generated = 0
+        trades_opened = 0
+        buy_signals = 0
+        sell_signals = 0
+        hold_signals = 0
+        active_positions = 0
+        latest_sentiment = None
+
+        if self.db:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    cfg_rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings WHERE config_type = 'ai_config'"
+                    )
+                    for row in cfg_rows:
+                        key = row['key']; val = row['value']
+                        if key in effective_config:
+                            if isinstance(effective_config[key], bool):
+                                effective_config[key] = (val or '').lower() in ('true', '1', 'yes')
+                            elif isinstance(effective_config[key], float):
+                                try:
+                                    f = float(val)
+                                    # confidence_threshold special-case: dashboard
+                                    # stores as percent (50-100), engine wants 0-1.
+                                    if key == 'confidence_threshold' and f > 1:
+                                        f = f / 100.0
+                                    effective_config[key] = f
+                                except (TypeError, ValueError):
+                                    pass
+                            elif isinstance(effective_config[key], int):
+                                try:
+                                    effective_config[key] = int(float(val))
+                                except (TypeError, ValueError):
+                                    pass
+                            else:
+                                effective_config[key] = val
+
+                    threshold = float(effective_config.get('confidence_threshold', 0.5))
+
+                    srow = await conn.fetchrow(
+                        f"""
+                        SELECT
+                            COUNT(*) AS total,
+                            COUNT(*) FILTER (WHERE score >=  $1) AS buy,
+                            COUNT(*) FILTER (WHERE score <= -$1) AS sell
+                        FROM sentiment_logs
+                        WHERE timestamp >= NOW() - INTERVAL '{hours} hours'
+                        """,
+                        threshold,
+                    )
+                    if srow:
+                        signals_generated = int(srow['total'] or 0)
+                        buy_signals = int(srow['buy'] or 0)
+                        sell_signals = int(srow['sell'] or 0)
+                        hold_signals = max(0, signals_generated - buy_signals - sell_signals)
+
+                    trades_opened = int(await conn.fetchval(
+                        f"""
+                        SELECT COUNT(*) FROM ai_trades
+                        WHERE entry_timestamp >= NOW() - INTERVAL '{hours} hours'
+                        """
+                    ) or 0)
+                    active_positions = int(await conn.fetchval(
+                        "SELECT COUNT(*) FROM ai_trades WHERE status = 'open'"
+                    ) or 0)
+                    latest = await conn.fetchrow(
+                        "SELECT score, timestamp FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1"
+                    )
+                    if latest:
+                        latest_sentiment = {
+                            'score': float(latest['score']),
+                            'timestamp': latest['timestamp'].isoformat() if latest['timestamp'] else None,
+                        }
+            except Exception as e:
+                logger.warning(f"/api/ai/diagnostics db read failed: {e}")
+
+        # Tail the engine log for [ai-skip] lines. Bounded read so a 1 GB
+        # log doesn't OOM the dashboard.
+        import re as _re_local
+        skip_counter = {}
+        recent_skips = []
+        log_path = '/home/user/claudedex/logs/ai_analysis/ai.log'
+        try:
+            if os.path.exists(log_path):
+                with open(log_path, 'rb') as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    # ~512KB tail covers many hours of skip lines.
+                    f.seek(max(0, size - 524288))
+                    tail = f.read().decode('utf-8', errors='replace')
+                lines = tail.splitlines()
+                for line in lines[-4000:]:
+                    if '[ai-skip]' not in line:
+                        continue
+                    try:
+                        m = _re_local.search(r'\[ai-skip\]\s+reason=(\S+)', line)
+                        if not m:
+                            continue
+                        reason = m.group(1)
+                        skip_counter[reason] = skip_counter.get(reason, 0) + 1
+                        conf_m = _re_local.search(r'conf=([-+]?\d*\.?\d+)', line)
+                        sent_m = _re_local.search(r'sentiment=([-+]?\d*\.?\d+)', line)
+                        ts_m = _re_local.match(r'^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})', line)
+                        recent_skips.append({
+                            'timestamp': ts_m.group(1) if ts_m else None,
+                            'reason': reason,
+                            'conf': float(conf_m.group(1)) if conf_m else None,
+                            'sentiment': float(sent_m.group(1)) if sent_m else None,
+                            'raw': line.strip()[-300:],
+                        })
+                    except Exception:
+                        continue
+                recent_skips = recent_skips[-20:]
+        except Exception as e:
+            logger.debug(f"/api/ai/diagnostics log tail failed: {e}")
+
+        action_rate = (trades_opened / signals_generated) if signals_generated else 0.0
+
+        # Operator-facing "likely cause" hint — single-line summary that
+        # collapses the most common config mistakes into actionable text.
+        hint = None
+        if not effective_config['direct_trading']:
+            hint = (
+                "direct_trading is OFF — signals are generated but never "
+                "executed. Enable it on /ai/settings to trade automatically."
+            )
+        elif signals_generated > 0 and buy_signals == 0 and sell_signals > 0:
+            hint = (
+                f"Sentiment is heavily bearish ({sell_signals} sell / 0 buy "
+                f"in {hours}h). If you only execute long-side, you'll see "
+                f"zero trades. Check confidence_threshold ({effective_config['confidence_threshold']:.2f}) "
+                f"and consider lowering it to capture moderate signals."
+            )
+        elif signals_generated > 0 and (buy_signals + sell_signals) == 0:
+            hint = (
+                f"All {signals_generated} signals fell below confidence_threshold "
+                f"({effective_config['confidence_threshold']:.2f}). Lower it on "
+                f"/ai/settings or wait for stronger market sentiment."
+            )
+        elif active_positions >= int(effective_config.get('max_positions', 1)):
+            hint = (
+                f"max_positions ({effective_config.get('max_positions', 1)}) "
+                f"already reached ({active_positions} open) — engine refuses "
+                f"new entries until a position closes."
+            )
+
+        # Wave-6: subprocess_health surface. The Offline badge on
+        # /ai/dashboard was previously computed from sentiment_logs
+        # freshness alone (api_get_ai_stats) — that doesn't tell the
+        # operator *why* the subprocess is silent. This block joins:
+        #   - last_sentiment_tick_at  : latest sentiment_logs.timestamp
+        #   - last_signal_at          : latest ai_trades.entry_timestamp
+        #   - last_skip_reason        : most recent [ai-skip] reason
+        #   - restart_count_24h       : pulled from logs/orchestrator.log
+        #                               (counts "Restarting ai_analysis").
+        #   - status_hint             : crashed / stale / running / idle
+        subprocess_health = {
+            'last_sentiment_tick_at': latest_sentiment.get('timestamp') if latest_sentiment else None,
+            'last_signal_at': None,
+            'last_skip_reason': recent_skips[-1]['reason'] if recent_skips else None,
+            'restart_count_24h': 0,
+            'status_hint': 'unknown',
+        }
+        if self.db:
+            try:
+                async with self.db.pool.acquire() as conn:
+                    last_trade_ts = await conn.fetchval(
+                        "SELECT MAX(entry_timestamp) FROM ai_trades"
+                    )
+                    if last_trade_ts:
+                        subprocess_health['last_signal_at'] = last_trade_ts.isoformat()
+            except Exception as e:
+                logger.debug(f"diagnostics: last_signal_at lookup failed: {e}")
+        # Restart count from orchestrator log (bounded read).
+        try:
+            orch_log = '/home/user/claudedex/logs/orchestrator.log'
+            if os.path.exists(orch_log):
+                with open(orch_log, 'rb') as f:
+                    f.seek(0, 2)
+                    size = f.tell()
+                    f.seek(max(0, size - 262144))  # 256KB tail
+                    blob = f.read().decode('utf-8', errors='replace')
+                ai_restart_lines = [
+                    ln for ln in blob.splitlines()
+                    if 'Restarting' in ln and 'ai_analysis' in ln.lower()
+                ]
+                subprocess_health['restart_count_24h'] = len(ai_restart_lines)
+        except Exception as e:
+            logger.debug(f"diagnostics: orchestrator.log tail failed: {e}")
+        # Status hint synthesis.
+        if subprocess_health['last_sentiment_tick_at']:
+            try:
+                ts = subprocess_health['last_sentiment_tick_at']
+                last_ts = datetime.fromisoformat(ts.replace('Z', ''))
+                age_min = (datetime.utcnow() - last_ts).total_seconds() / 60.0
+                if age_min > 30:
+                    subprocess_health['status_hint'] = (
+                        f'stalled ({age_min:.0f}min since last tick)'
+                    )
+                elif subprocess_health['last_signal_at']:
+                    subprocess_health['status_hint'] = 'healthy'
+                else:
+                    subprocess_health['status_hint'] = (
+                        'ticking but never signaled — check direct_trading '
+                        '+ confidence_threshold'
+                    )
+            except (ValueError, AttributeError):
+                pass
+        else:
+            subprocess_health['status_hint'] = 'no heartbeat — subprocess likely crashed'
+
+        return web.json_response({
+            'success': True,
+            'hours': hours,
+            'signals_generated': signals_generated,
+            'trades_opened': trades_opened,
+            'action_rate': round(action_rate, 4),
+            'buy_signals': buy_signals,
+            'sell_signals': sell_signals,
+            'hold_signals': hold_signals,
+            'active_positions': active_positions,
+            'latest_sentiment': latest_sentiment,
+            'signals_rejected_by_reason': skip_counter,
+            'recent_skips': recent_skips,
+            'effective_config': effective_config,
+            'subprocess_health': subprocess_health,
+            'hint': hint,
+        })
+
+    async def _ai_key_configured(self, key_name: str) -> bool:
+        """Wave-6: resolve an AI API key through the same priority order
+        the subprocess uses (secrets_manager DB -> env). Returns True iff
+        a non-empty value is reachable. The previous code only checked
+        os.getenv() which produced the false-negative `claude_key_
+        configured: false` even after the operator added the key via
+        /settings/credentials. We intentionally do NOT return the value
+        — only existence — so this can stay an unauthenticated diagnostics
+        field without leaking the secret.
+        """
+        try:
+            from security.secrets_manager import secrets as _s
+            if self.db and (
+                not _s._initialized or _s._db_pool is None or _s._bootstrap_mode
+            ):
+                _s.initialize(self.db.pool)
+            v = await _s.get_async(key_name, log_access=False)
+            if v:
+                return True
+        except Exception as e:
+            logger.debug(f"_ai_key_configured({key_name}) secrets lookup failed: {e}")
+        return bool(os.getenv(key_name))
+
     # ==================== FULL DASHBOARD HANDLERS ====================
 
     async def full_dashboard_page(self, request):
         """Render the new Full Dashboard page"""
         template = self.jinja_env.get_template('full_dashboard.html')
         return web.Response(text=template.render(page='full_dashboard'), content_type='text/html')
+
+    async def api_funding_accounts(self, request):
+        """ISSUE 15: consolidated "Funding / Accounts" surface.
+
+        Reports, per module, the PUBLIC wallet address (EVM/Solana) or the
+        exchange+account it executes from, so the operator knows which
+        account to fund for LIVE. Public addresses ONLY — never private
+        keys. Each module surfaces its identity on a different diagnostics
+        channel (per each module's CLAUDE.md), so we read them all:
+          DEX     -> /health (:DEX_HEALTH_PORT, default 8085) .wallet_address
+          SOLANA  -> /health (:SOLANA_HEALTH_PORT, 8082)      .wallet_address
+          FUTURES -> /health (:FUTURES_HEALTH_PORT, 8081)     .exchange/.network/.api_key_fingerprint
+          SNIPER  -> sniper_runtime_stats.stats (id=1)        .wallet_address / .solana_/.evm_wallet_address
+          ARB     -> arbitrage_runtime_stats.stats (per chain).wallet_address / .chain
+          COPY    -> config_settings('copytrading_diagnostics') evm_/solana_execution_wallet
+        Any module not yet initialized reports status='not initialized'
+        instead of crashing the panel.
+        """
+        accounts = {}
+
+        def _entry(kind, **kw):
+            e = {'kind': kind, 'status': 'not initialized'}
+            e.update(kw)
+            return e
+
+        # --- Health-port modules (DEX / SOLANA / FUTURES) ---
+        async def _probe_health(port_env, default_port):
+            try:
+                port = int(os.getenv(port_env, str(default_port)))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'http://localhost:{port}/health', timeout=3) as resp:
+                        if resp.status == 200:
+                            return await resp.json()
+            except Exception:
+                pass
+            return None
+
+        dex_h = await _probe_health('DEX_HEALTH_PORT', 8085)
+        accounts['dex_trading'] = _entry('evm_wallet')
+        if dex_h:
+            addr = dex_h.get('wallet_address')
+            # Wave-11 FIX B: DEX subprocess flags `wallet_address_secret_mismatch`
+            # when the stored WALLET_ADDRESS secret doesn't match the address
+            # derived from PRIVATE_KEY. Bot uses the derived (correct) address;
+            # the stale stored secret is silently shadowed but should still be
+            # surfaced as a WARNING so the operator can update or remove it.
+            mismatch = bool(dex_h.get('wallet_address_secret_mismatch'))
+            stored = dex_h.get('wallet_address_stored')
+            accounts['dex_trading'].update(
+                wallet_address=addr or None,
+                chains='ETH/BSC/Polygon/Arbitrum/Base (shared EOA)',
+                status='initialized' if addr else 'no wallet_address on /health',
+                wallet_address_secret_mismatch=mismatch,
+            )
+            if mismatch:
+                accounts['dex_trading']['wallet_address_stored'] = stored or None
+                accounts['dex_trading']['warning'] = (
+                    'Stored WALLET_ADDRESS secret is stale and does not match '
+                    'PRIVATE_KEY derivation — bot uses the derived address; '
+                    'please update or remove the stored secret to silence '
+                    'this warning.'
+                )
+
+        sol_h = await _probe_health('SOLANA_HEALTH_PORT', 8082)
+        accounts['solana_trading'] = _entry('solana_wallet')
+        if sol_h:
+            addr = sol_h.get('wallet_address')
+            accounts['solana_trading'].update(
+                wallet_address=addr or None,
+                secret_source='SOLANA_MODULE_WALLET',
+                status='initialized' if addr else 'no wallet_address on /health',
+            )
+
+        # Wave-11 FIX B (1): DEX-on-Solana wallet is a SEPARATE keypair from the
+        # solana_trading module's. The operator's credentials page exposes both
+        # SOLANA_MODULE_WALLET (used by `solana_trading`, shown above) and
+        # SOLANA_WALLET (used by DEX-on-Solana). The Funding panel previously
+        # rendered only one Solana row, which made the second wallet invisible
+        # to operators trying to know which address to fund for DEX-on-Solana.
+        # Read the public address from secrets (never the private key).
+        dex_sol_addr = None
+        try:
+            from security.secrets_manager import secrets as _secrets
+            dex_sol_addr = _secrets.get('SOLANA_WALLET', log_access=False)
+        except Exception:
+            pass
+        if not dex_sol_addr:
+            dex_sol_addr = os.getenv('SOLANA_WALLET') or None
+        accounts['dex_solana'] = _entry(
+            'solana_wallet',
+            label='DEX-Solana (separate from solana_trading)',
+            secret_source='SOLANA_WALLET',
+            wallet_address=dex_sol_addr,
+            status=('initialized' if dex_sol_addr
+                    else 'no SOLANA_WALLET secret set'),
+        )
+
+        fut_h = await _probe_health('FUTURES_HEALTH_PORT', 8081)
+        accounts['futures_trading'] = _entry('exchange')
+        if fut_h:
+            ex = fut_h.get('exchange')
+            accounts['futures_trading'].update(
+                exchange=ex or None,
+                network=fut_h.get('network'),
+                api_key_secret_name=fut_h.get('api_key_secret_name'),
+                api_key_fingerprint=fut_h.get('api_key_fingerprint'),
+                status='initialized' if ex else 'no exchange on /health',
+            )
+
+        # --- DB runtime-stats modules (SNIPER / ARB) + COPY diagnostics ---
+        accounts['sniper'] = _entry('wallet')
+        accounts['arbitrage'] = _entry('evm_wallet')
+        accounts['copy_trading'] = _entry('wallet')
+        if self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    # SNIPER. Wave-11 FIX D: the Wave-11 engine agent fixed
+                    # the getattr-on-wrong-object bug that prevented these
+                    # fields from being persisted; the keys below are now
+                    # reliably populated. Render BOTH solana_ and evm_ lines
+                    # whenever each is set (the dashboard previously hid
+                    # one when only the other was populated). The Solana
+                    # wallet here is the SAME keypair as the solana_trading
+                    # module (SOLANA_MODULE_WALLET — see
+                    # modules/sniper/core/sniper_engine.py:734), surfaced
+                    # for operator clarity.
+                    try:
+                        row = await conn.fetchrow(
+                            "SELECT stats FROM sniper_runtime_stats WHERE id = 1")
+                        if row and row['stats']:
+                            st = row['stats']
+                            if isinstance(st, str):
+                                st = json.loads(st)
+                            sol_w = st.get('solana_wallet_address') or None
+                            evm_w = st.get('evm_wallet_address') or None
+                            primary = st.get('wallet_address') or None
+                            accounts['sniper'].update(
+                                wallet_address=primary,
+                                solana_wallet_address=sol_w,
+                                evm_wallet_address=evm_w,
+                                status='initialized' if (primary or sol_w or evm_w)
+                                       else 'no wallet in runtime stats',
+                            )
+                            if sol_w:
+                                accounts['sniper']['solana_wallet_note'] = (
+                                    'same keypair as solana_trading module '
+                                    '(SOLANA_MODULE_WALLET)'
+                                )
+                    except Exception as e:
+                        logger.debug(f"funding: sniper read failed: {e}")
+                    # DEX fallback: if /health didn't answer, still surface
+                    # `wallet_address_secret_mismatch` from dex_runtime_stats
+                    # so the WARNING badge renders cross-process too.
+                    try:
+                        if (not accounts['dex_trading'].get('wallet_address_secret_mismatch')
+                                and not accounts['dex_trading'].get('wallet_address')):
+                            drow = await conn.fetchrow(
+                                "SELECT stats FROM dex_runtime_stats WHERE id = 1")
+                            if drow and drow['stats']:
+                                ds = drow['stats']
+                                if isinstance(ds, str):
+                                    ds = json.loads(ds)
+                                d_addr = ds.get('wallet_address') or None
+                                d_mismatch = bool(ds.get('wallet_address_secret_mismatch'))
+                                d_stored = ds.get('wallet_address_stored')
+                                if d_addr:
+                                    accounts['dex_trading'].update(
+                                        wallet_address=d_addr,
+                                        chains='ETH/BSC/Polygon/Arbitrum/Base (shared EOA)',
+                                        status='initialized',
+                                        wallet_address_secret_mismatch=d_mismatch,
+                                    )
+                                if d_mismatch:
+                                    accounts['dex_trading']['wallet_address_stored'] = d_stored or None
+                                    accounts['dex_trading']['warning'] = (
+                                        'Stored WALLET_ADDRESS secret is stale '
+                                        'and does not match PRIVATE_KEY '
+                                        'derivation — bot uses the derived '
+                                        'address; please update or remove the '
+                                        'stored secret to silence this warning.'
+                                    )
+                    except Exception as e:
+                        logger.debug(f"funding: dex_runtime_stats read failed: {e}")
+                    # ARBITRAGE — one EOA shared across chains; report it + chains
+                    try:
+                        arows = await conn.fetch(
+                            "SELECT chain, stats FROM arbitrage_runtime_stats")
+                        arb_addr = None
+                        arb_chains = []
+                        for r in arows:
+                            st = r['stats'] or {}
+                            if isinstance(st, str):
+                                try:
+                                    st = json.loads(st)
+                                except Exception:
+                                    st = {}
+                            arb_addr = arb_addr or st.get('wallet_address')
+                            if r['chain']:
+                                arb_chains.append(r['chain'])
+                        if arows:
+                            accounts['arbitrage'].update(
+                                wallet_address=arb_addr or None,
+                                chains=', '.join(sorted(set(arb_chains))) or None,
+                                status='initialized' if arb_addr else 'no wallet in runtime stats',
+                            )
+                    except Exception as e:
+                        logger.debug(f"funding: arbitrage read failed: {e}")
+                    # COPY — public execution wallets persisted to config_settings.
+                    # Wave-11 FIX B: also pick up an optional stored-secret
+                    # mismatch flag (key='wallet_address_secret_mismatch') if
+                    # the copy_engine ever starts persisting it the same way
+                    # DEX does — render the same WARNING badge so the operator
+                    # has one consistent surface for "stored secret is stale".
+                    try:
+                        crows = await conn.fetch(
+                            "SELECT key, value FROM config_settings "
+                            "WHERE config_type = 'copytrading_diagnostics' "
+                            "AND key IN ('evm_execution_wallet',"
+                            "'solana_execution_wallet',"
+                            "'evm_wallet_address_stored',"
+                            "'wallet_address_secret_mismatch')")
+                        cmap = {r['key']: (r['value'] or None) for r in crows}
+                        if crows:
+                            evm = cmap.get('evm_execution_wallet') or None
+                            sol = cmap.get('solana_execution_wallet') or None
+                            mismatch_raw = (cmap.get('wallet_address_secret_mismatch') or '').lower()
+                            cmismatch = mismatch_raw in ('true', '1', 'yes')
+                            accounts['copy_trading'].update(
+                                evm_execution_wallet=evm,
+                                solana_execution_wallet=sol,
+                                status='initialized' if (evm or sol) else 'wallets not resolved yet',
+                                wallet_address_secret_mismatch=cmismatch,
+                            )
+                            if cmismatch:
+                                accounts['copy_trading']['wallet_address_stored'] = (
+                                    cmap.get('evm_wallet_address_stored') or None
+                                )
+                                accounts['copy_trading']['warning'] = (
+                                    'Stored WALLET_ADDRESS secret is stale '
+                                    'and does not match PRIVATE_KEY '
+                                    'derivation — bot uses the derived '
+                                    'address; please update or remove the '
+                                    'stored secret to silence this warning.'
+                                )
+                    except Exception as e:
+                        logger.debug(f"funding: copy read failed: {e}")
+            except Exception as e:
+                logger.debug(f"funding accounts DB read failed: {e}")
+
+        # AI does not execute on-chain itself: it delegates to the canonical
+        # FUTURES executor (MB-20 — see modules/ai_analysis/CLAUDE.md), so any
+        # AI trade lands on the FUTURES exchange account above, NOT a separate
+        # wallet. Tell the operator exactly which account funds AI's delegated
+        # trades so issue 15 is actionable (not just "delegating").
+        fut = accounts.get('futures_trading', {})
+        accounts['ai_analysis'] = _entry(
+            'delegated',
+            delegates_to='futures_trading',
+            status=(
+                'no own wallet — AI delegates execution to the canonical '
+                'futures executor; trades land on the FUTURES exchange '
+                'account (see futures_trading above)'
+            ),
+            execution_exchange=fut.get('exchange'),
+            execution_network=fut.get('network'),
+        )
+
+        return web.json_response({'success': True, 'data': {'accounts': accounts}})
 
     async def api_wallet_aggregated_balances(self, request):
         """Get aggregated balances from all wallets and exchanges"""
@@ -10469,9 +14889,23 @@ class DashboardEndpoints:
                 # Mock query or use internal tracking table
                 pass
 
-            balances['exchanges'] = {
-                'binance_futures': {'balance': 0.0, 'usd_value': 0.0}, # Placeholder until CCXT integration
-            }
+            # Exchange balances. Only include exchanges that are
+            # actually configured (have an API key in secrets/env) so
+            # the dashboard doesn't render misleading "$0.00 Binance"
+            # rows for unwired exchanges. Audit agent 3 #14.
+            balances['exchanges'] = {}
+            if os.getenv('BINANCE_API_KEY') or os.getenv('BINANCE_FUTURES_API_KEY'):
+                balances['exchanges']['binance_futures'] = {
+                    'balance': 0.0,
+                    'usd_value': 0.0,
+                    'status': 'configured (CCXT fetch not yet wired)',
+                }
+            if os.getenv('BYBIT_API_KEY'):
+                balances['exchanges']['bybit_futures'] = {
+                    'balance': 0.0,
+                    'usd_value': 0.0,
+                    'status': 'configured (CCXT fetch not yet wired)',
+                }
 
             # Fallback: If total is 0 (network failure), calculate from DB PnL + Initial
             if balances['total_usd'] == 0:
@@ -10488,19 +14922,227 @@ class DashboardEndpoints:
             logger.error(f"Error getting aggregated balances: {e}")
             return web.json_response({'error': str(e)}, status=500)
 
-    async def api_get_full_dashboard_charts(self, request):
-        """Get real data for all full dashboard charts"""
+    async def _unified_closed_trades(self, conn, *, since=None, per_table_limit=5000,
+                                     include_noisy=False):
+        """FAILURE A (charts): SNIPER trades live in `sniper_trades`, ARBITRAGE
+        in `arbitrage_trades`, FUTURES in `futures_trades`, SOLANA in
+        `solana_trades`, COPY in `copytrading_trades`, AI in `ai_trades`, and
+        DEX in the generic `trades` table. The Full-Dashboard Performance
+        Analytics cards were querying only `trades` so an operator running
+        only SNIPER+ARBITRAGE saw "No data yet" on 12 of 15 cards despite
+        having 10000+ sniper trades in the DB.
+
+        Wave-11 FIX 1: bounded — accepts ``since`` (datetime, UTC) and
+        ``per_table_limit`` (int) to keep the unified rowset small enough
+        for the event loop. SNIPER and ARBITRAGE tables are excluded by
+        default (``include_noisy=False``) because (a) they generate ~400K
+        rows on an active deployment, dwarfing every other module on the
+        unified chart, and (b) both have their own per-module dashboards.
+
+        Returns a list of dict-rows with normalized columns:
+          strategy, chain, profit_loss, entry_timestamp, exit_timestamp,
+          amount, entry_price, metadata.
+        Each per-table query is wrapped in try/except so a missing table
+        (older deployments) does not break the whole endpoint."""
+        rows = []
+        # Per-table column overrides. futures_trades (migration 006) predates
+        # the canonical column convention: it has NO `status` column (stores
+        # only closed trades), NO `chain` column (uses exchange/network),
+        # uses entry_time/exit_time (not entry_timestamp/exit_timestamp), and
+        # stores quantity in `size` (no `amount`). Without these overrides the
+        # futures SELECT raised "column does not exist", was swallowed by the
+        # try/except, and FUTURES was silently dropped from chartPnlDist /
+        # Chain ROI / Chain Volume / equity series (issues 2/3/7).
+        per_table = [
+            # (table, strategy, pnl_col, default_chain, status_filter,
+            #  chain_expr, entry_ts, exit_ts, amount_expr, noisy)
+            ('trades',             'dex',       'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', False),
+            ('sniper_trades',      'sniper',    'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', True),
+            ('arbitrage_trades',   'arbitrage', 'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', True),
+            ('futures_trades',     'futures',   'net_pnl',     'EXCHANGE',
+             "TRUE", "COALESCE(exchange, 'EXCHANGE')", 'entry_time', 'exit_time', 'COALESCE(size, 0)', False),
+            ('copytrading_trades', 'copy',      'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', False),
+            ('ai_trades',          'ai',        'profit_loss', None,
+             "status='closed'", "COALESCE(chain, 'UNKNOWN')", 'entry_timestamp', 'exit_timestamp', 'COALESCE(amount, 0)', False),
+        ]
+        for (table, strat, pnl_col, default_chain, status_filter,
+             chain_expr, entry_ts, exit_ts, amount_expr, noisy) in per_table:
+            if noisy and not include_noisy:
+                continue
+            try:
+                params = []
+                where_clauses = [status_filter]
+                if since is not None:
+                    params.append(since)
+                    # exit_ts may be NULL for not-yet-closed rows; status filter
+                    # already gates on 'closed', but be defensive against NULLs.
+                    where_clauses.append(f"{exit_ts} >= ${len(params)}")
+                # Per-table LIMIT after ORDER BY exit_ts DESC keeps the
+                # heaviest tables (sniper/arb if noisy=True) bounded to
+                # ``per_table_limit`` rows — protects the event loop.
+                sql = f"""
+                    SELECT
+                        {chain_expr} AS chain,
+                        {pnl_col} AS profit_loss,
+                        {entry_ts} AS entry_timestamp, {exit_ts} AS exit_timestamp,
+                        {amount_expr} AS amount,
+                        COALESCE(entry_price, 0) AS entry_price,
+                        metadata
+                    FROM {table}
+                    WHERE {' AND '.join(where_clauses)}
+                    ORDER BY {exit_ts} DESC NULLS LAST
+                    LIMIT {int(per_table_limit)}
+                """
+                table_rows = await conn.fetch(sql, *params)
+                for r in table_rows:
+                    rows.append({
+                        'strategy': strat,
+                        'chain': r['chain'] or 'UNKNOWN',
+                        'profit_loss': float(r['profit_loss'] or 0),
+                        # _as_utc: mixed TIMESTAMP / TIMESTAMPTZ columns across
+                        # module tables otherwise raise "can't compare
+                        # offset-naive and offset-aware datetimes" when these
+                        # rows are sorted/subtracted downstream.
+                        'entry_timestamp': _as_utc(r['entry_timestamp']),
+                        'exit_timestamp': _as_utc(r['exit_timestamp']),
+                        'amount': float(r['amount'] or 0),
+                        'entry_price': float(r['entry_price'] or 0),
+                        'metadata': r['metadata'],
+                    })
+            except Exception as e:
+                logger.debug(f"_unified_closed_trades: {table} skipped: {e}")
+        # Solana is special — PnL is in SOL, multiply by spot to compare in USD.
         try:
+            sol_price = await self._get_sol_usd_price()
+            sol_params = []
+            sol_where = ["status='closed'"]
+            if since is not None:
+                sol_params.append(since)
+                sol_where.append(f"exit_timestamp >= ${len(sol_params)}")
+            sol_sql = f"""
+                SELECT
+                    COALESCE(chain, 'SOLANA') AS chain,
+                    pnl_sol AS profit_loss,
+                    entry_timestamp, exit_timestamp,
+                    COALESCE(amount, 0) AS amount,
+                    COALESCE(entry_price, 0) AS entry_price,
+                    metadata
+                FROM solana_trades
+                WHERE {' AND '.join(sol_where)}
+                ORDER BY exit_timestamp DESC NULLS LAST
+                LIMIT {int(per_table_limit)}
+            """
+            solana_rows = await conn.fetch(sol_sql, *sol_params)
+            for r in solana_rows:
+                rows.append({
+                    'strategy': 'solana',
+                    'chain': r['chain'] or 'SOLANA',
+                    'profit_loss': float(r['profit_loss'] or 0) * sol_price,
+                    'entry_timestamp': _as_utc(r['entry_timestamp']),
+                    'exit_timestamp': _as_utc(r['exit_timestamp']),
+                    'amount': float(r['amount'] or 0),
+                    'entry_price': float(r['entry_price'] or 0),
+                    'metadata': r['metadata'],
+                })
+        except Exception as e:
+            logger.debug(f"_unified_closed_trades: solana_trades skipped: {e}")
+        return rows
+
+    @staticmethod
+    def _downsample_series(labels, values, max_points: int = 500):
+        """Wave-11 FIX 1 helper: cap a (labels, values) pair to
+        ``max_points`` entries via uniform-stride bucketing. Each kept
+        label/value is the LAST one in its bucket — for monotonic series
+        like equity-curve cumulative-pnl that preserves the running
+        endpoint of every bucket (no smoothing artefacts on the line).
+        Returns (labels, values) unchanged if already at/under cap.
+        """
+        n = len(values)
+        if n <= max_points or max_points <= 0:
+            return labels, values
+        stride = n / float(max_points)
+        out_labels = []
+        out_values = []
+        for i in range(max_points):
+            idx = min(n - 1, int((i + 1) * stride) - 1)
+            out_labels.append(labels[idx])
+            out_values.append(values[idx])
+        return out_labels, out_values
+
+    async def api_get_full_dashboard_charts(self, request):
+        """Get real data for all full dashboard charts.
+
+        Wave-11 FIX 1 caps (in-place defaults; query-string overridable):
+          - ``?since_days`` (int, default 7): only closed trades with
+            ``exit_timestamp >= now - since_days`` are included.
+          - ``?per_table_limit`` (int, default 5000, max 20000): SQL LIMIT
+            applied to each per-module table (ORDER BY exit_ts DESC).
+          - ``?include_noisy`` (0/1, default 0): when 1, sniper + arbitrage
+            tables are joined too. Off by default because they generate
+            ~400K rows on active deployments and have their own
+            per-module dashboards.
+          - Equity-curve / drawdown series are downsampled to at most 500
+            points via uniform-stride bucketing (was: one point per trade,
+            yielding 100k+ point lines that froze the browser).
+          - Response cached for ``self._charts_cache_ttl_s`` (45s) keyed
+            on (since_days, per_table_limit, include_noisy).
+          - Response-size guard: if assembled JSON > 5 MB the per-series
+            arrays are truncated to their last 500 elements and a
+            ``_truncated`` flag is set. Hard ceiling: ~5 MB.
+
+        Pre-fix this endpoint returned ~22 MB in ~76s and pegged the
+        event loop, triggering orchestrator restarts. Post-fix target is
+        <500 KB and <2s.
+        """
+        try:
+            # --- Parse + clamp request knobs ---
+            qs = request.rel_url.query
+            try:
+                since_days = max(1, min(int(qs.get('since_days', '7')), 365))
+            except (TypeError, ValueError):
+                since_days = 7
+            try:
+                per_table_limit = max(100, min(int(qs.get('per_table_limit', '5000')), 20000))
+            except (TypeError, ValueError):
+                per_table_limit = 5000
+            include_noisy = qs.get('include_noisy', '0') in ('1', 'true', 'True')
+            cache_key = (since_days, per_table_limit, include_noisy)
+
+            # --- In-process response cache ---
+            now_ts = datetime.utcnow()
+            cached = self._charts_cache.get(cache_key)
+            if cached is not None:
+                payload, cached_at = cached
+                if (now_ts - cached_at).total_seconds() < self._charts_cache_ttl_s:
+                    return web.json_response(payload)
+
             charts = {}
 
             if not self.db:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
+            since_dt = now_ts - timedelta(days=since_days)
+
             async with self.db.pool.acquire() as conn:
-                # 1. PnL Distribution (Win/Loss)
-                # Group profit_loss into buckets
-                trades = await conn.fetch("SELECT profit_loss FROM trades WHERE status='closed'")
-                pnl_values = [float(t['profit_loss']) for t in trades if t['profit_loss'] is not None]
+                # FAILURE A (charts): unify closed-trade rows across every
+                # module-specific table so cards reflect ALL modules, not
+                # just legacy DEX rows in `trades`.
+                # Wave-11 FIX 1: bounded by ``since`` + ``per_table_limit``
+                # and skips noisy modules by default — cuts ~400K rows
+                # down to a few thousand.
+                unified = await self._unified_closed_trades(
+                    conn,
+                    since=since_dt,
+                    per_table_limit=per_table_limit,
+                    include_noisy=include_noisy,
+                )
+
+                # 1. PnL Distribution (Win/Loss) — spans every module.
+                pnl_values = [r['profit_loss'] for r in unified if r['profit_loss'] is not None]
 
                 # Create bins for histogram
                 if pnl_values:
@@ -10558,7 +15200,7 @@ class DashboardEndpoints:
                 # Solana trades (from solana_trades table)
                 try:
                     solana_rows = await conn.fetch("SELECT pnl_sol FROM solana_trades")
-                    sol_price = 200.0  # Approximate SOL price
+                    sol_price = await self._get_sol_usd_price()
                     for r in solana_rows:
                         pnl = float(r['pnl_sol'] or 0) * sol_price
                         module_stats['Solana']['pnl'] += pnl
@@ -10668,60 +15310,61 @@ class DashboardEndpoints:
                     'datasets': [{'data': list(assets.values()), 'backgroundColor': ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6']}]
                 }
 
-                # 4. Chain Performance (ROI)
-                chain_rows = await conn.fetch("""
-                    SELECT chain, SUM(profit_loss) as pnl, SUM(amount * entry_price) as volume
-                    FROM trades WHERE status='closed' GROUP BY chain
-                """)
-                chain_labels = [r['chain'] for r in chain_rows]
-                chain_roi = []
-                for r in chain_rows:
-                    vol = float(r['volume'] or 0)
-                    pnl = float(r['pnl'] or 0)
-                    chain_roi.append((pnl / vol * 100) if vol > 0 else 0)
+                # 4 + 7. Chain ROI + Chain Volume — derive from the unified
+                # trade set (was: trades-table-only, missed every module).
+                chain_agg = {}
+                for r in unified:
+                    ch = r['chain'] or 'UNKNOWN'
+                    e = chain_agg.setdefault(ch, {'pnl': 0.0, 'volume': 0.0})
+                    e['pnl'] += r['profit_loss']
+                    e['volume'] += r['amount'] * r['entry_price']
+                chain_labels = list(chain_agg.keys())
+                chain_roi = [(e['pnl'] / e['volume'] * 100) if e['volume'] > 0 else 0
+                             for e in chain_agg.values()]
+                chain_vols = [e['volume'] for e in chain_agg.values()]
 
                 charts['chartChainRoi'] = {
                     'labels': chain_labels,
                     'datasets': [{'label': 'ROI %', 'data': chain_roi, 'backgroundColor': '#8b5cf6'}]
                 }
 
-                # 5. Hourly Profitability Heatmap (simplified to bar for now)
-                hourly_rows = await conn.fetch("""
-                    SELECT EXTRACT(HOUR FROM exit_timestamp) as hour, AVG(profit_loss) as avg_pnl
-                    FROM trades WHERE status='closed' GROUP BY hour ORDER BY hour
-                """)
-                hours = [int(r['hour']) for r in hourly_rows]
-                hourly_vals = [float(r['avg_pnl'] or 0) for r in hourly_rows]
-
-                # Fill missing hours
+                # 5. Hourly Profitability — bucket unified trades by exit hour.
+                hourly_buckets = {h: [] for h in range(24)}
+                for r in unified:
+                    ts = r['exit_timestamp']
+                    if ts is not None and hasattr(ts, 'hour'):
+                        hourly_buckets[ts.hour].append(r['profit_loss'])
                 full_hours = list(range(24))
-                full_vals = []
-                for h in full_hours:
-                    if h in hours:
-                        full_vals.append(hourly_vals[hours.index(h)])
-                    else:
-                        full_vals.append(0)
+                full_vals = [
+                    (sum(hourly_buckets[h]) / len(hourly_buckets[h])) if hourly_buckets[h] else 0
+                    for h in full_hours
+                ]
 
                 charts['chartHourlyHeatmap'] = {
                     'labels': [f"{h}:00" for h in full_hours],
                     'datasets': [{'label': 'Avg PnL', 'data': full_vals, 'backgroundColor': '#ec4899'}]
                 }
 
-                # 6. Equity Curve (Cumulative PnL over time)
-                equity_rows = await conn.fetch("""
-                    SELECT exit_timestamp, profit_loss
-                    FROM trades WHERE status='closed' ORDER BY exit_timestamp
-                """)
-
-                cum_pnl = 0
+                # 6. Equity Curve — cumulative PnL across all module tables.
+                equity_rows = sorted(
+                    [r for r in unified if r['exit_timestamp'] is not None],
+                    key=lambda r: r['exit_timestamp']
+                )
+                cum_pnl = 0.0
                 equity_data = []
                 equity_labels = []
-                initial_balance = 400 # Default
+                initial_balance = 400  # Default
 
                 for r in equity_rows:
-                    cum_pnl += float(r['profit_loss'] or 0)
+                    cum_pnl += r['profit_loss']
                     equity_data.append(initial_balance + cum_pnl)
                     equity_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d'))
+
+                # Wave-11 FIX 1: cap to 500 points (was: 1 point per trade,
+                # i.e. 100k+ points → 22 MB response + frozen browser).
+                equity_labels, equity_data = self._downsample_series(
+                    equity_labels, equity_data, max_points=500
+                )
 
                 charts['chartEquity'] = {
                     'labels': equity_labels,
@@ -10731,72 +15374,71 @@ class DashboardEndpoints:
                 # 7. Chain Volume
                 charts['chartChainVol'] = {
                     'labels': chain_labels,
-                    'datasets': [{'label': 'Volume', 'data': [float(r['volume'] or 0) for r in chain_rows], 'backgroundColor': '#22d3ee'}]
+                    'datasets': [{'label': 'Volume', 'data': chain_vols, 'backgroundColor': '#22d3ee'}]
                 }
 
-                # 8. Average Trade Duration by Module
-                duration_rows = await conn.fetch("""
-                    SELECT strategy,
-                           AVG(EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))/3600) as avg_hours
-                    FROM trades
-                    WHERE status='closed' AND exit_timestamp IS NOT NULL AND entry_timestamp IS NOT NULL
-                    GROUP BY strategy
-                """)
-                duration_labels = []
-                duration_vals = []
-                for r in duration_rows:
-                    strat = (r['strategy'] or 'unknown').lower()
-                    # Map to readable name
-                    if 'future' in strat or 'perp' in strat:
-                        duration_labels.append('Futures')
-                    elif 'solana' in strat or 'pump' in strat:
-                        duration_labels.append('Solana')
-                    elif 'sniper' in strat:
-                        duration_labels.append('Sniper')
-                    elif 'arb' in strat:
-                        duration_labels.append('Arbitrage')
-                    elif 'copy' in strat:
-                        duration_labels.append('CopyTrade')
-                    elif 'ai' in strat:
-                        duration_labels.append('AI')
-                    else:
-                        duration_labels.append('DEX')
-                    duration_vals.append(round(float(r['avg_hours'] or 0), 2))
+                # 8. Average Trade Duration by Module — bucket unified trades.
+                _label_map = {
+                    'dex': 'DEX', 'futures': 'Futures', 'solana': 'Solana',
+                    'sniper': 'Sniper', 'arbitrage': 'Arbitrage',
+                    'copy': 'CopyTrade', 'ai': 'AI',
+                }
+                dur_buckets = {}
+                for r in unified:
+                    if not (r['exit_timestamp'] and r['entry_timestamp']):
+                        continue
+                    hrs = (r['exit_timestamp'] - r['entry_timestamp']).total_seconds() / 3600
+                    label = _label_map.get(r['strategy'], 'DEX')
+                    dur_buckets.setdefault(label, []).append(hrs)
+                duration_labels = list(dur_buckets.keys())
+                duration_vals = [round(sum(v) / len(v), 2) for v in dur_buckets.values()]
 
                 charts['chartDuration'] = {
                     'labels': duration_labels if duration_labels else ['No Data'],
                     'datasets': [{'label': 'Avg Hours', 'data': duration_vals if duration_vals else [0], 'backgroundColor': '#f59e0b'}]
                 }
 
-                # 9. Fee Analysis by Chain
-                fee_rows = await conn.fetch("""
-                    SELECT chain, SUM(COALESCE(
-                        (metadata->>'gas_cost')::numeric,
-                        (metadata->>'fee')::numeric,
-                        0
-                    )) as total_fees
-                    FROM trades
-                    WHERE status='closed'
-                    GROUP BY chain
-                """)
-                fee_labels = [r['chain'] or 'Unknown' for r in fee_rows]
-                fee_vals = [float(r['total_fees'] or 0) for r in fee_rows]
+                # 9. Fee Analysis by Chain — pull from unified metadata.
+                def _meta_dict(m):
+                    if m is None: return {}
+                    if isinstance(m, dict): return m
+                    if isinstance(m, str):
+                        try: return json.loads(m) or {}
+                        except Exception: return {}
+                    return {}
+                fee_agg = {}
+                for r in unified:
+                    md = _meta_dict(r['metadata'])
+                    raw_fee = md.get('gas_cost') or md.get('fee') or md.get('fees') or 0
+                    try:
+                        fee = float(raw_fee)
+                    except Exception:
+                        fee = 0
+                    fee_agg[r['chain']] = fee_agg.get(r['chain'], 0) + fee
+                fee_labels = list(fee_agg.keys())
+                fee_vals = list(fee_agg.values())
 
                 charts['chartFees'] = {
                     'labels': fee_labels if fee_labels else ['No Data'],
                     'datasets': [{'label': 'Fees ($)', 'data': fee_vals if fee_vals else [0], 'backgroundColor': '#ef4444'}]
                 }
 
-                # 10. Drawdown Analysis (calculate running max drawdown)
+                # 10. Drawdown Analysis — running max drawdown across unified equity curve.
                 drawdown_data = []
                 drawdown_labels = []
                 peak = initial_balance
-                for i, r in enumerate(equity_rows):
-                    equity = initial_balance + sum(float(equity_rows[j]['profit_loss'] or 0) for j in range(i+1))
-                    peak = max(peak, equity)
-                    drawdown = ((peak - equity) / peak * 100) if peak > 0 else 0
-                    drawdown_data.append(round(drawdown, 2))
+                running = initial_balance
+                for r in equity_rows:
+                    running += r['profit_loss']
+                    peak = max(peak, running)
+                    dd = ((peak - running) / peak * 100) if peak > 0 else 0
+                    drawdown_data.append(round(dd, 2))
                     drawdown_labels.append(r['exit_timestamp'].strftime('%Y-%m-%d') if r['exit_timestamp'] else '')
+
+                # Wave-11 FIX 1: cap drawdown series to 500 points too.
+                drawdown_labels, drawdown_data = self._downsample_series(
+                    drawdown_labels, drawdown_data, max_points=500
+                )
 
                 charts['chartDrawdown'] = {
                     'labels': drawdown_labels if drawdown_labels else ['No Data'],
@@ -10809,35 +15451,21 @@ class DashboardEndpoints:
                     }]
                 }
 
-                # 11. Risk/Reward Ratio by Module
-                rr_rows = await conn.fetch("""
-                    SELECT strategy,
-                           AVG(CASE WHEN profit_loss > 0 THEN profit_loss ELSE 0 END) as avg_win,
-                           AVG(CASE WHEN profit_loss < 0 THEN ABS(profit_loss) ELSE 0 END) as avg_loss
-                    FROM trades
-                    WHERE status='closed'
-                    GROUP BY strategy
-                """)
-                rr_labels = []
+                # 11. Risk/Reward Ratio by Module — unified strategy buckets.
+                rr_buckets = {}
+                for r in unified:
+                    label = _label_map.get(r['strategy'], 'DEX')
+                    b = rr_buckets.setdefault(label, {'wins': [], 'losses': []})
+                    if r['profit_loss'] > 0:
+                        b['wins'].append(r['profit_loss'])
+                    elif r['profit_loss'] < 0:
+                        b['losses'].append(abs(r['profit_loss']))
+                rr_labels = list(rr_buckets.keys())
                 rr_vals = []
-                for r in rr_rows:
-                    strat = (r['strategy'] or 'dex').lower()
-                    if 'future' in strat:
-                        rr_labels.append('Futures')
-                    elif 'solana' in strat:
-                        rr_labels.append('Solana')
-                    elif 'sniper' in strat:
-                        rr_labels.append('Sniper')
-                    elif 'arb' in strat:
-                        rr_labels.append('Arbitrage')
-                    elif 'copy' in strat:
-                        rr_labels.append('CopyTrade')
-                    elif 'ai' in strat:
-                        rr_labels.append('AI')
-                    else:
-                        rr_labels.append('DEX')
-                    avg_win = float(r['avg_win'] or 0)
-                    avg_loss = float(r['avg_loss'] or 1)
+                for label in rr_labels:
+                    b = rr_buckets[label]
+                    avg_win = (sum(b['wins']) / len(b['wins'])) if b['wins'] else 0
+                    avg_loss = (sum(b['losses']) / len(b['losses'])) if b['losses'] else 0
                     rr_vals.append(round(avg_win / avg_loss, 2) if avg_loss > 0 else 0)
 
                 charts['chartRR'] = {
@@ -10845,36 +15473,39 @@ class DashboardEndpoints:
                     'datasets': [{'label': 'R:R Ratio', 'data': rr_vals if rr_vals else [0], 'backgroundColor': '#8b5cf6'}]
                 }
 
-                # 12. Slippage Impact
-                slippage_rows = await conn.fetch("""
-                    SELECT chain,
-                           AVG(COALESCE(
-                               (metadata->>'slippage')::numeric,
-                               (metadata->>'price_impact')::numeric,
-                               0
-                           )) as avg_slippage
-                    FROM trades
-                    WHERE status='closed'
-                    GROUP BY chain
-                """)
-                slippage_labels = [r['chain'] or 'Unknown' for r in slippage_rows]
-                slippage_vals = [round(float(r['avg_slippage'] or 0), 3) for r in slippage_rows]
+                # 12. Slippage Impact by Chain — unified metadata.
+                slip_agg = {}
+                for r in unified:
+                    md = _meta_dict(r['metadata'])
+                    raw_s = md.get('slippage') or md.get('price_impact') or 0
+                    try:
+                        s = float(raw_s)
+                    except Exception:
+                        s = 0
+                    b = slip_agg.setdefault(r['chain'], [])
+                    b.append(s)
+                slippage_labels = list(slip_agg.keys())
+                slippage_vals = [
+                    round(sum(v) / len(v), 3) if v else 0
+                    for v in slip_agg.values()
+                ]
 
                 charts['chartSlippage'] = {
                     'labels': slippage_labels if slippage_labels else ['No Data'],
                     'datasets': [{'label': 'Avg Slippage %', 'data': slippage_vals if slippage_vals else [0], 'backgroundColor': '#ec4899'}]
                 }
 
-                # 13. Win/Loss Streaks
-                streak_rows = await conn.fetch("""
-                    SELECT profit_loss FROM trades WHERE status='closed' ORDER BY exit_timestamp
-                """)
+                # 13. Win/Loss Streaks — across the unified ordered trade tape.
+                ordered = sorted(
+                    [r for r in unified if r['exit_timestamp'] is not None],
+                    key=lambda r: r['exit_timestamp']
+                )
                 max_win_streak = 0
                 max_loss_streak = 0
                 current_win = 0
                 current_loss = 0
-                for r in streak_rows:
-                    pnl = float(r['profit_loss'] or 0)
+                for r in ordered:
+                    pnl = r['profit_loss']
                     if pnl > 0:
                         current_win += 1
                         current_loss = 0
@@ -10893,7 +15524,56 @@ class DashboardEndpoints:
                     }]
                 }
 
-            return web.json_response({'success': True, 'data': charts})
+            payload = {
+                'success': True,
+                'data': charts,
+                'meta': {
+                    'since_days': since_days,
+                    'per_table_limit': per_table_limit,
+                    'include_noisy': include_noisy,
+                    'unified_row_count': len(unified),
+                    'generated_at': now_ts.isoformat() + 'Z',
+                    'cache_ttl_s': self._charts_cache_ttl_s,
+                },
+            }
+
+            # Wave-11 FIX 1: response-size guard. Anything >5 MB indicates a
+            # series escaped downsampling; truncate every dataset.data[] to
+            # its last 500 elements and mark the response.
+            try:
+                serialized = json.dumps(payload, default=str)
+                size = len(serialized.encode('utf-8'))
+                if size > 2 * 1024 * 1024:
+                    logger.warning(
+                        f"api_get_full_dashboard_charts: payload {size/1e6:.1f} MB "
+                        f"exceeds 2 MB advisory cap (unified rows={len(unified)})"
+                    )
+                if size > 5 * 1024 * 1024:
+                    for ck, cv in charts.items():
+                        labels = cv.get('labels') if isinstance(cv, dict) else None
+                        if isinstance(labels, list) and len(labels) > 500:
+                            cv['labels'] = labels[-500:]
+                        for ds in (cv.get('datasets') or []) if isinstance(cv, dict) else []:
+                            data = ds.get('data')
+                            if isinstance(data, list) and len(data) > 500:
+                                ds['data'] = data[-500:]
+                    payload['meta']['_truncated'] = True
+                    logger.error(
+                        f"api_get_full_dashboard_charts: HARD truncation "
+                        f"applied — payload was {size/1e6:.1f} MB > 5 MB ceiling"
+                    )
+            except Exception as guard_err:
+                logger.debug(f"charts size-guard skipped: {guard_err}")
+
+            # Populate cache (45s TTL) so repeated polls don't re-query.
+            self._charts_cache[cache_key] = (payload, now_ts)
+            # Cap cache cardinality so query-string fuzzing can't blow RAM.
+            if len(self._charts_cache) > 32:
+                # Drop the oldest entry by cached_at.
+                oldest_key = min(self._charts_cache, key=lambda k: self._charts_cache[k][1])
+                self._charts_cache.pop(oldest_key, None)
+
+            return web.json_response(payload)
         except Exception as e:
             logger.error(f"Error getting full dashboard charts: {e}")
             return web.json_response({'success': False, 'error': str(e)})

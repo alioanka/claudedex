@@ -256,6 +256,19 @@
         </div>
     </div>
 
+    <!-- R6: Per-chain listener health (Solana + EVM) -->
+    <div class="listener-health-panel" id="listenerHealthPanel" style="margin-bottom:24px;">
+        <h3 style="margin:0 0 12px 0;color:var(--text-primary);">
+            <i class="fas fa-network-wired"></i> Per-Chain Listener Health
+            <small style="color:var(--text-secondary);font-weight:normal;margin-left:8px;font-size:0.75em;">live snapshot from sniper_runtime_stats</small>
+        </h3>
+        <div id="listenerHealthBody" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;">
+            <div style="padding:16px;background:var(--bg-secondary,#1a1d24);border-radius:6px;color:var(--text-secondary);">
+                Loading&hellip;
+            </div>
+        </div>
+    </div>
+
     <!-- Overall Stats -->
     <div class="stats-grid">
         <div class="stat-card">
@@ -336,8 +349,9 @@
         <div class="section-title">
             <i class="fas fa-coins"></i>
             Performance by Token/Chain
+            <span id="pairTableNote" style="margin-left:auto;font-size:0.75rem;color:var(--text-secondary);font-weight:400;"></span>
         </div>
-        <div class="table-responsive">
+        <div class="table-responsive" style="max-height: 520px; overflow-y: auto;">
             <table class="pair-table" id="pairTable">
                 <thead>
                     <tr>
@@ -646,13 +660,26 @@ function sortPairTable(column) {
 
 function updatePairTable() {
     const tbody = document.getElementById('pairTableBody');
+    const note = document.getElementById('pairTableNote');
 
     if (pairStats.length === 0) {
         tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:var(--text-secondary);padding:20px;">No trades yet</td></tr>';
+        if (note) note.textContent = '';
         return;
     }
 
-    tbody.innerHTML = pairStats.map(pair => `
+    // Render top 25 rows by the active sort; scrollable container handles
+    // overflow. A 1000+ row table killed render time and the section
+    // appearance both.
+    const ROW_LIMIT = 25;
+    const visible = pairStats.slice(0, ROW_LIMIT);
+    if (note) {
+        note.textContent = pairStats.length > ROW_LIMIT
+            ? `Top ${ROW_LIMIT} of ${pairStats.length} tokens — sort by any column to re-rank`
+            : `${pairStats.length} tokens`;
+    }
+
+    tbody.innerHTML = visible.map(pair => `
         <tr>
             <td class="pair-symbol">${pair.symbol}</td>
             <td>${pair.trades}</td>
@@ -902,17 +929,51 @@ function calculateStdDev(arr) {
     return Math.sqrt(squaredDiffs.reduce((a, b) => a + b, 0) / arr.length);
 }
 
+// Shared helper: renders a friendly empty-state message on a canvas
+// when the underlying P&L series is degenerate (e.g. all zero — every
+// DRY_RUN trade returns 0 because exit_price = entry_price under the
+// synthetic-close path). Avoids showing a meaningless flat $10k line.
+function _renderChartEmptyState(canvasId, message) {
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.save();
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+    ctx.fillText(message, canvas.width / 2, canvas.height / 2);
+    ctx.restore();
+}
+
 function updateEquityChart(trades, equityCurve) {
     const ctx = document.getElementById('equityChart').getContext('2d');
+
+    if (equityChart) {
+        equityChart.destroy();
+        equityChart = null;
+    }
+
+    // If every closed trade is $0 P&L (DRY_RUN synthetic-close path),
+    // the equity curve is a flat $10k line — render an explanatory
+    // empty state instead so operators aren't confused into thinking
+    // capital is parked.
+    const hasNonZeroPnl = (trades || []).some(t =>
+        Math.abs(parseFloat(t.pnl || t.net_pnl || 0)) > 1e-9
+    );
+    if (!hasNonZeroPnl) {
+        _renderChartEmptyState(
+            'equityChart',
+            'No realized P&L yet — DRY_RUN trades close at entry price'
+        );
+        return;
+    }
 
     const labels = ['Start', ...trades.map((t, i) => {
         const date = new Date(t.closed_at || t.time || t.exit_time);
         return date.toLocaleDateString();
     })];
-
-    if (equityChart) {
-        equityChart.destroy();
-    }
 
     equityChart = new Chart(ctx, {
         type: 'line',
@@ -967,6 +1028,16 @@ function updateDailyPnlChart(trades) {
 
     if (dailyPnlChart) {
         dailyPnlChart.destroy();
+        dailyPnlChart = null;
+    }
+
+    // Empty-state when no day in the window had any non-zero P&L.
+    if (!pnls.some(p => Math.abs(p) > 1e-9)) {
+        _renderChartEmptyState(
+            'dailyPnlChart',
+            'No realized P&L yet — populated after the LIVE flip'
+        );
+        return;
     }
 
     dailyPnlChart = new Chart(ctx, {
@@ -1009,6 +1080,17 @@ function updateWinLossChart(wins, losses) {
 
     if (winLossChart) {
         winLossChart.destroy();
+        winLossChart = null;
+    }
+
+    // Empty-state when neither side has any closed trades with P&L —
+    // matches the DRY_RUN profile where every position closes flat.
+    if ((wins || 0) + (losses || 0) === 0) {
+        _renderChartEmptyState(
+            'winLossChart',
+            'No win/loss data yet — populated after the LIVE flip'
+        );
+        return;
     }
 
     winLossChart = new Chart(ctx, {
@@ -1066,8 +1148,18 @@ setInterval(loadPerformance, 30000);
         );
         body.innerHTML = ordered.map(function(path) {
             const m = paths[path];
+            // Detection-staleness — headline WSS-vs-polling metric.
+            // Falls back to "—" for rows captured before t_rpc_receipt
+            // marker existed.
+            const detectStale = (m.p50_detect_to_rpc_receipt_ms != null)
+                ? ('<div class="path-detect-stale" style="color:#fbbf24;font-weight:600;">' +
+                   fmtMs(m.p50_detect_to_rpc_receipt_ms) +
+                   ' <small style="font-size:0.7em;color:var(--text-secondary);font-weight:400;">p50 detect→rpc (' +
+                   (m.rpc_receipt_sample_count || 0) + ' samples)</small></div>')
+                : '';
             return '<div class="timing-ab-card path-' + path + '">' +
                 '<div class="path-name">' + path + ' &middot; ' + (m.sample_count || 0) + ' snipes</div>' +
+                detectStale +
                 '<div class="path-p50">' + fmtMs(m.p50_total_ms) + ' <small style="font-size:0.7em;color:var(--text-secondary);">p50 total</small></div>' +
                 '<div class="path-meta">p95 total: ' + fmtMs(m.p95_total_ms) +
                 ' &middot; safety p50: ' + fmtMs(m.p50_safety_ms) +
@@ -1088,6 +1180,101 @@ setInterval(loadPerformance, 30000);
     document.addEventListener('DOMContentLoaded', () => {
         loadTimingAB();
         setInterval(loadTimingAB, 60000);
+    });
+})();
+</script>
+
+<script>
+// R6: Per-Chain Listener Health widget. Pure consumer of /api/sniper/stats
+// which already surfaces solana_listener + evm_listener via runtime_stats.
+// No backend change required.
+(function() {
+    function pct(n, d) {
+        if (!d || d <= 0) return '—';
+        return ((n / d) * 100).toFixed(1) + '%';
+    }
+    function fmt(n) {
+        if (n === null || n === undefined) return '—';
+        if (n >= 1000) return (n / 1000).toFixed(1) + 'k';
+        return String(n);
+    }
+    function renderChain(name, s, kpIcon) {
+        if (!s || typeof s !== 'object') {
+            return '<div class="lh-card lh-' + name + '" style="padding:14px;background:var(--bg-secondary,#1a1d24);border-radius:6px;">' +
+                '<div style="font-weight:600;color:var(--text-primary);">' + kpIcon + ' ' + name.toUpperCase() + '</div>' +
+                '<div style="color:var(--text-secondary);font-size:0.85em;margin-top:6px;">No listener data yet</div></div>';
+        }
+        // Solana listener fields
+        const proc_hit = s.processed_hit || 0;
+        const proc_miss = s.processed_miss_fallback || 0;
+        const proc_total = proc_hit + proc_miss;
+        const processed_ratio = pct(proc_hit, proc_total);
+        // WSS saturation
+        const wss_in = s.wss_inflight_peak || 0;
+        const wss_disp = s.wss_dispatched || 0;
+        const wss_notif = s.wss_notifications || 0;
+        // EVM listener fields
+        const evm_anchored = s.block_time_anchored || 0;
+        const evm_missing = s.block_time_missing || 0;
+        const evm_total = evm_anchored + evm_missing;
+        const anchored_ratio = pct(evm_anchored, evm_total);
+        // Solana-specific rejection profile (top 3)
+        const rejections = [
+            ['NotInit', s.rejected_not_init || 0],
+            ['NoMint', s.rejected_no_mint || 0],
+            ['FilteredMint', s.rejected_filtered_mint || 0],
+            ['BadMint', s.rejected_bad_mint_format || 0],
+            ['TxFailed', s.rejected_tx_failed || 0],
+            ['NoResult', s.rejected_no_result || 0],
+            ['RPCErr', s.rejected_rpc_error || 0],
+        ].sort((a, b) => b[1] - a[1]).slice(0, 3);
+        const rejStr = rejections.map(r => r[0] + ': ' + fmt(r[1])).join(' &middot; ');
+
+        const isSolana = name === 'solana';
+        return '<div class="lh-card lh-' + name + '" style="padding:14px;background:var(--bg-secondary,#1a1d24);border-radius:6px;border-left:3px solid ' + (isSolana ? '#a855f7' : '#3b82f6') + ';">' +
+            '<div style="font-weight:600;color:var(--text-primary);margin-bottom:8px;">' + kpIcon + ' ' + name.toUpperCase() + '</div>' +
+            (isSolana ?
+                '<div style="font-size:0.85em;color:var(--text-secondary);line-height:1.6;">' +
+                '<div>Processed-hit ratio: <strong style="color:' + (proc_hit > proc_miss ? '#10b981' : '#fbbf24') + ';">' + processed_ratio + '</strong> <small>(' + fmt(proc_hit) + ' hit / ' + fmt(proc_miss) + ' fallback)</small></div>' +
+                '<div>WSS notifications: <strong>' + fmt(wss_notif) + '</strong> &middot; dispatched: <strong>' + fmt(wss_disp) + '</strong></div>' +
+                '<div>WSS in-flight peak: <strong style="color:' + (wss_in >= 14 ? '#ef4444' : '#10b981') + ';">' + wss_in + '</strong> <small>(cap 16, tune SNIPER_WSS_CONCURRENCY if &geq;14)</small></div>' +
+                '<div style="margin-top:6px;color:var(--text-secondary);">Top rejections: ' + rejStr + '</div>' +
+                '</div>'
+            :
+                '<div style="font-size:0.85em;color:var(--text-secondary);line-height:1.6;">' +
+                '<div>Block-time anchored: <strong style="color:' + (evm_anchored > evm_missing ? '#10b981' : '#fbbf24') + ';">' + anchored_ratio + '</strong> <small>(' + fmt(evm_anchored) + ' anchored / ' + fmt(evm_missing) + ' missing)</small></div>' +
+                '<div>Known pairs: <strong>' + fmt(s.known_pairs_total || 0) + '</strong></div>' +
+                '<div>WSS connects: <strong>' + fmt(s.wss_connects || 0) + '</strong> &middot; notifications: <strong>' + fmt(s.wss_log_notifications || 0) + '</strong></div>' +
+                '<div>Polling pairs emitted: <strong>' + fmt(s.polling_pairs_emitted || 0) + '</strong></div>' +
+                '</div>'
+            ) +
+            '</div>';
+    }
+
+    async function loadListenerHealth() {
+        try {
+            const r = await fetch('/api/sniper/stats');
+            if (!r.ok) return;
+            const json = await r.json();
+            const body = document.getElementById('listenerHealthBody');
+            if (!body) return;
+            // /api/sniper/stats merges solana_listener + evm_listener at the top level
+            const sol = json.solana_listener || null;
+            const evm = json.evm_listener || null;
+            if (!sol && !evm) {
+                body.innerHTML = '<div style="padding:16px;background:var(--bg-secondary,#1a1d24);border-radius:6px;color:var(--text-secondary);">No listener snapshot yet. Sniper engine writes once per minute.</div>';
+                return;
+            }
+            const parts = [];
+            if (sol) parts.push(renderChain('solana', sol, '<i class="fas fa-bolt"></i>'));
+            if (evm) parts.push(renderChain('evm', evm, '<i class="fab fa-ethereum"></i>'));
+            body.innerHTML = parts.join('');
+        } catch (e) { /* silent */ }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        loadListenerHealth();
+        setInterval(loadListenerHealth, 30000);
     });
 })();
 </script>

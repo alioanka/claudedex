@@ -118,6 +118,7 @@
                     </tr>
                 </tbody>
             </table>
+            <div id="tradesTableFooter" style="padding:8px 12px;font-size:0.85rem;color:var(--text-secondary);"></div>
         </div>
     </div>
 </div>
@@ -173,10 +174,27 @@ function displayTrades(trades) {
 
     if (trades.length === 0) {
         tbody.innerHTML = '<tr><td colspan="11" class="text-center">No trades found</td></tr>';
+        const footEl = document.getElementById('tradesTableFooter');
+        if (footEl) footEl.textContent = '';
         return;
     }
-    
-    tbody.innerHTML = trades.map(trade => {
+
+    // Cap DOM rows at 100 to keep the page responsive (audit agent 1
+    // HIGH #3 — sister sniper page already paginates at 25/page). When
+    // operators need older trades they can apply the chain/side/exit
+    // filters that exist above the table; the underlying fetch already
+    // pulls up to 1000 rows. Render note shows the trimming so users
+    // know it's not an error.
+    const ROW_LIMIT = 100;
+    const visible = trades.slice(0, ROW_LIMIT);
+    const footEl = document.getElementById('tradesTableFooter');
+    if (footEl) {
+        footEl.textContent = trades.length > ROW_LIMIT
+            ? `Showing ${ROW_LIMIT} of ${trades.length} trades — apply filters to narrow the set.`
+            : `${trades.length} trades.`;
+    }
+
+    tbody.innerHTML = visible.map(trade => {
     const pnl = parseFloat(trade.profit_loss || 0);
     const pnlClass = pnl >= 0 ? 'text-success' : 'text-danger';
     const statusBadge = trade.status === 'open' ? 'badge-success' : 'badge-neutral';

@@ -7,10 +7,18 @@ ENV PIP_DEFAULT_TIMEOUT=100
 ENV PIP_RETRIES=5
 
 # Install system dependencies needed for compilation
+# Plus curl + jq + postgresql-client for the Test Runner Section B
+# scripts that probe the running dashboard + run psql against the
+# postgres container from in-network. Without these the in-container
+# preflight emits 'docker: command not found' for every check that
+# expected to shell out to `docker compose exec postgres ...`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     g++ \
+    curl \
+    jq \
+    postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip and install wheel for faster builds
@@ -147,6 +155,8 @@ RUN pip install --no-cache-dir \
     orjson \
     psutil \
     pytest \
+    pytest-asyncio \
+    pytest-cov \
     textblob \
     scripts \
     setuptools \
@@ -173,9 +183,15 @@ COPY . .
 # Make entrypoint script executable
 RUN chmod +x scripts/docker-entrypoint.sh
 
-# Health check
+# Health check — actually probe the dashboard /health endpoint rather
+# than just checking Python imports (the previous check always passed
+# even when the dashboard was unresponsive, masking real outages).
+# Tolerates a non-2xx status by counting only timeout/connection errors
+# as unhealthy so a degraded DB doesn't take down the container.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD python -c "import sys; sys.exit(0)"
+    CMD python -c "import urllib.request, sys; \
+        urllib.request.urlopen('http://localhost:8080/health', timeout=5); \
+        sys.exit(0)" || exit 1
 
 # Use entrypoint to run migrations before starting app
 ENTRYPOINT ["./scripts/docker-entrypoint.sh"]

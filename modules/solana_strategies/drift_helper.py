@@ -69,13 +69,44 @@ class DriftHelper:
     Requires: pip install driftpy
     """
 
-    def __init__(self, rpc_url: str = None, private_key: str = None):
+    def __init__(
+        self,
+        rpc_url: str = None,
+        private_key: str = None,
+        *,
+        dry_run: bool = True,
+        max_leverage: float = 3.0,
+        max_abs_funding_rate_annual_pct: float = 50.0,
+        oracle_deviation_max_pct: float = 1.0,
+        min_oracle_confidence_bps: int = 500,
+    ):
         """
         Initialize Drift helper
 
         Args:
             rpc_url: Solana RPC URL
             private_key: Base58-encoded Solana private key
+            dry_run: When True (default), open_position/close_position
+                short-circuit and return a sentinel signature without
+                signing. The engine layer also checks the killswitch /
+                pause file via ``core.dry_run.should_skip_live`` on every
+                call (MB-15 SOL-RM-15).
+            max_leverage: Hard cap on per-trade leverage (account-value
+                multiplier). Defaults to 3x — Drift's matching engine
+                will let you push past this on cross-margin accounts, so
+                the cap MUST be enforced client-side.
+            max_abs_funding_rate_annual_pct: Refuse to open if the market's
+                annualized funding rate exceeds ±this value. Funding rips
+                wider than 50%/yr are the canonical "leg is about to get
+                run over" signal on perps.
+            oracle_deviation_max_pct: Refuse to open if the AMM mark price
+                deviates from the Pyth oracle by more than this percent.
+                Drift liquidates against the oracle, so trading at a
+                stale/manipulated mark is an instant-loss setup.
+            min_oracle_confidence_bps: Max acceptable Pyth oracle
+                confidence interval (in bps of price). Wider confidence
+                means the oracle itself isn't sure, so liquidation math
+                is unreliable.
         """
         # Get credentials from secrets manager (database/Docker secrets);
         # prefer PoolEngine for the RPC URL so failover/health-weighting works.
@@ -97,6 +128,29 @@ class DriftHelper:
         # Drift client (will be initialized when needed)
         self.drift_client = None
         self.user_account = None
+
+        # MB-15 hardening guards. All four are enforced inside
+        # open_position; they are deliberately conservative so the
+        # operator must explicitly raise them in DB config.
+        self.dry_run = bool(dry_run)
+        self.max_leverage = float(max_leverage)
+        self.max_abs_funding_rate_annual_pct = float(max_abs_funding_rate_annual_pct)
+        self.oracle_deviation_max_pct = float(oracle_deviation_max_pct)
+        self.min_oracle_confidence_bps = int(min_oracle_confidence_bps)
+
+        if self.dry_run:
+            logger.warning(
+                "🔶 Drift helper initialized in DRY_RUN — open_position will return sentinel sig"
+            )
+        else:
+            logger.critical(
+                "🔥 Drift helper LIVE — leverage_cap=%.1fx, funding_cap=%.1f%%/yr, "
+                "oracle_dev_max=%.2f%%, oracle_conf_max=%d bps",
+                self.max_leverage,
+                self.max_abs_funding_rate_annual_pct,
+                self.oracle_deviation_max_pct,
+                self.min_oracle_confidence_bps,
+            )
 
         logger.info("🎯 Drift Protocol helper initialized")
 
@@ -245,16 +299,21 @@ class DriftHelper:
         market_index: int,
         direction: str,
         base_amount: float,
-        price_limit: Optional[float] = None
+        price_limit: Optional[float] = None,
+        *,
+        notional_usd: Optional[float] = None,
     ) -> Optional[str]:
         """
-        Open a perpetual position
+        Open a perpetual position with MB-15 pre-trade guards.
 
         Args:
             market_index: Market index (0 = SOL-PERP, 1 = BTC-PERP, etc.)
             direction: 'LONG' or 'SHORT'
             base_amount: Size in base asset units
             price_limit: Optional limit price
+            notional_usd: Optional notional size override for leverage
+                check. When omitted, leverage is estimated from
+                base_amount × oracle mark.
 
         Returns:
             Optional[str]: Transaction signature or None
@@ -262,6 +321,90 @@ class DriftHelper:
         if not self.drift_client:
             logger.error("Drift client not initialized")
             return None
+
+        # ---- MB-15 PRE-TRADE GUARDS ----------------------------------------
+        # 1. DRY_RUN / killswitch / pause — defense-in-depth, even though the
+        #    engine layer should also gate this. Helper-level gate matches the
+        #    Jupiter helper pattern (SOL-RM-14).
+        try:
+            from core.dry_run import should_skip_live
+            if should_skip_live(self.dry_run, module='solana'):
+                logger.info(
+                    "🔶 Drift DRY_RUN gate engaged (market=%d %s base=%.4f) — no order placed",
+                    market_index, direction, base_amount,
+                )
+                return f"DRY_RUN_DRIFT_{market_index}_{direction}_{int(base_amount * 1e6)}"
+        except ImportError:
+            if self.dry_run:
+                logger.info(
+                    "🔶 Drift dry_run=True (core.dry_run unavailable) — no order placed"
+                )
+                return f"DRY_RUN_DRIFT_{market_index}_{direction}"
+
+        # 2. Funding-rate sanity. Perps rip in one direction when funding
+        #    is extreme; opening into that is asymmetric loss.
+        try:
+            funding_pct = await self.get_funding_rate(market_index)
+            if abs(funding_pct) > self.max_abs_funding_rate_annual_pct:
+                logger.warning(
+                    "⛔ Drift funding-rate guard: market=%d funding=%.2f%%/yr > cap=%.2f%%/yr — refusing entry",
+                    market_index, funding_pct, self.max_abs_funding_rate_annual_pct,
+                )
+                return None
+        except Exception as exc:
+            logger.warning(f"⛔ Drift funding-rate read failed: {exc} — refusing entry (fail-closed)")
+            return None
+
+        # 3. Oracle deviation guard. Drift liquidates against the oracle, so a
+        #    wide gap between AMM mark and oracle means immediate liquidation
+        #    risk on entry.
+        try:
+            ok, dev_pct, conf_bps = await self._check_oracle_health(market_index)
+            if not ok:
+                logger.warning(
+                    "⛔ Drift oracle guard: market=%d dev=%.3f%% conf=%d bps — refusing entry",
+                    market_index, dev_pct, conf_bps,
+                )
+                return None
+        except Exception as exc:
+            logger.warning(
+                f"⛔ Drift oracle health-check failed: {exc} — refusing entry (fail-closed)"
+            )
+            return None
+
+        # 4. Leverage cap. base_amount × oracle mark vs account collateral.
+        try:
+            if notional_usd is None:
+                # Estimate notional from price_limit if supplied, else fall
+                # back to oracle mark from the AMM.
+                if price_limit and price_limit > 0:
+                    notional_usd = float(base_amount) * float(price_limit)
+                else:
+                    market = await self.drift_client.get_perp_market_account(market_index)
+                    mark = float(market.amm.last_mark_price_twap) / 1e6 if hasattr(market.amm, 'last_mark_price_twap') else None
+                    if mark and mark > 0:
+                        notional_usd = float(base_amount) * mark
+
+            if notional_usd is not None:
+                account_value = float(await self.get_account_value())
+                if account_value > 0:
+                    effective_leverage = notional_usd / account_value
+                    if effective_leverage > self.max_leverage:
+                        logger.warning(
+                            "⛔ Drift leverage guard: notional=$%.2f / acct=$%.2f = %.2fx > cap=%.2fx — refusing entry",
+                            notional_usd, account_value, effective_leverage, self.max_leverage,
+                        )
+                        return None
+                else:
+                    logger.warning(
+                        "⛔ Drift account_value=0 with notional=$%.2f — refusing entry",
+                        notional_usd,
+                    )
+                    return None
+        except Exception as exc:
+            logger.warning(f"⛔ Drift leverage check failed: {exc} — refusing entry (fail-closed)")
+            return None
+        # --------------------------------------------------------------------
 
         try:
             from driftpy.types import PositionDirection, OrderType
@@ -296,6 +439,43 @@ class DriftHelper:
         except Exception as e:
             logger.error(f"❌ Error opening position: {e}", exc_info=True)
             return None
+
+    async def _check_oracle_health(self, market_index: int):
+        """Validate Pyth oracle vs AMM mark for a perp market.
+
+        Returns:
+            (ok, deviation_pct, confidence_bps)
+            ok=False when the deviation exceeds ``oracle_deviation_max_pct``
+            OR Pyth confidence exceeds ``min_oracle_confidence_bps``.
+        """
+        market = await self.drift_client.get_perp_market_account(market_index)
+        amm = market.amm
+
+        # Oracle price (Pyth, scaled by 1e6 on Drift). Confidence is also in
+        # the same units; convert to bps of price.
+        oracle_price_raw = getattr(amm, 'last_oracle_price_twap', None) or getattr(amm, 'oracle_price', None)
+        oracle_conf_raw = getattr(amm, 'last_oracle_conf', 0) or 0
+        mark_raw = getattr(amm, 'last_mark_price_twap', None) or getattr(amm, 'mark_price', None)
+
+        if not oracle_price_raw or not mark_raw:
+            # No oracle data → fail closed.
+            return (False, 0.0, 9999)
+
+        oracle_price = float(oracle_price_raw) / 1e6
+        mark_price = float(mark_raw) / 1e6
+        confidence = float(oracle_conf_raw) / 1e6
+
+        if oracle_price <= 0 or mark_price <= 0:
+            return (False, 0.0, 9999)
+
+        dev_pct = abs(mark_price - oracle_price) / oracle_price * 100.0
+        conf_bps = int((confidence / oracle_price) * 10_000) if oracle_price > 0 else 9999
+
+        if dev_pct > self.oracle_deviation_max_pct:
+            return (False, dev_pct, conf_bps)
+        if conf_bps > self.min_oracle_confidence_bps:
+            return (False, dev_pct, conf_bps)
+        return (True, dev_pct, conf_bps)
 
     async def close_position(self, market_index: int) -> Optional[str]:
         """

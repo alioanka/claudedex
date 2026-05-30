@@ -424,6 +424,7 @@
     </div>
 
     <!-- Filters -->
+    <div id="tradesOverflowWarn" style="padding:8px 12px;font-size:0.85rem;color:#f59e0b;"></div>
     <div class="filters-section">
         <div class="filters-row">
             <div class="filter-group">
@@ -618,11 +619,22 @@ const pageSize = 50;
 
 async function loadTrades() {
     try {
-        const response = await fetch('/api/arbitrage/trades?limit=2000');
+        const TRADES_LIMIT = 2000;
+        const response = await fetch(`/api/arbitrage/trades?limit=${TRADES_LIMIT}`);
         const data = await response.json();
 
         if (data.success && data.trades) {
             allTrades = data.trades;
+            // Warn when the fetch hit the hard cap — older trades are
+            // silently truncated otherwise. Backend bumps require a
+            // server change; the operator can filter to narrow the
+            // window in the meantime.
+            const warn = document.getElementById('tradesOverflowWarn');
+            if (warn) {
+                warn.textContent = (allTrades.length >= TRADES_LIMIT)
+                    ? `⚠ Showing the most recent ${TRADES_LIMIT} trades (cap). Older trades exist but are truncated from this view.`
+                    : '';
+            }
             extractRoutes();
             applyFilters();
         }
@@ -668,7 +680,7 @@ function applyFilters() {
 
     filteredTrades = allTrades.filter(trade => {
         if (startDate) {
-            const tradeDate = new Date(trade.timestamp || trade.entry_timestamp);
+            const tradeDate = window.parseUtcTimestamp(trade.timestamp || trade.entry_timestamp) || new Date(0);
             if (tradeDate < startDate) return false;
         }
 
@@ -724,8 +736,8 @@ function sortTrades() {
 
         switch (col) {
             case 'time':
-                aVal = new Date(a.timestamp || a.entry_timestamp).getTime();
-                bVal = new Date(b.timestamp || b.entry_timestamp).getTime();
+                aVal = (window.parseUtcTimestamp(a.timestamp || a.entry_timestamp) || new Date(0)).getTime();
+                bVal = (window.parseUtcTimestamp(b.timestamp || b.entry_timestamp) || new Date(0)).getTime();
                 break;
             case 'chain':
                 aVal = a.chain || 'ethereum';
@@ -831,7 +843,7 @@ function updateDisplay() {
 
     tbody.innerHTML = displayed.map(trade => {
         const timestamp = trade.timestamp || trade.entry_timestamp;
-        const timeStr = timestamp ? new Date(timestamp).toLocaleString() : 'N/A';
+        const timeStr = timestamp ? window.formatLocalDateTime(timestamp) : 'N/A';
         const pnl = parseFloat(trade.profit_loss || 0);
         const spread = parseFloat(trade.spread_pct || 0);
         const amount = parseFloat(trade.amount_eth || trade.amount || 0);

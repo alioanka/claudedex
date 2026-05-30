@@ -356,6 +356,8 @@
         </div>
     </div>
 
+    <div id="perfOverflowWarn" style="padding:8px 12px;font-size:0.85rem;color:#f59e0b;"></div>
+
     <!-- Hero Stats -->
     <div class="hero-stats">
         <div class="hero-stat purple">
@@ -480,10 +482,12 @@ let timeDistChart = null;
 let chainPnlChart = null;
 let chainVolumeChart = null;
 
+const PERF_TRADES_LIMIT = 5000;
+
 async function loadPerformance() {
     try {
         const [tradesRes, walletsRes] = await Promise.all([
-            fetch('/api/copytrading/trades?limit=5000'),
+            fetch(`/api/copytrading/trades?limit=${PERF_TRADES_LIMIT}`),
             fetch('/api/copytrading/wallets')
         ]);
 
@@ -493,6 +497,14 @@ async function loadPerformance() {
         ]);
 
         if (tradesData.success && tradesData.trades) {
+            // Warn when we hit the cap — older trades silently drop
+            // from the equity-curve domain otherwise.
+            const warn = document.getElementById('perfOverflowWarn');
+            if (warn) {
+                warn.textContent = (tradesData.trades.length >= PERF_TRADES_LIMIT)
+                    ? `⚠ Showing the most recent ${PERF_TRADES_LIMIT} trades (cap). Older history is truncated; equity-curve / win-rate stats are bounded to this window.`
+                    : '';
+            }
             processPerformance(tradesData.trades);
         }
 
@@ -510,10 +522,17 @@ function processPerformance(trades) {
         return;
     }
 
-    // Calculate metrics
+    // Calculate metrics. Wave-5: profit_loss from /api/copytrading/trades
+    // now includes unrealized PnL for OPEN trades — no template change
+    // needed for the equity curve, but we split realized vs unrealized
+    // in the hero stat so operators can see how much of total PnL is
+    // mark-to-market vs locked-in.
     const wins = trades.filter(t => (t.profit_loss || 0) > 0);
     const losses = trades.filter(t => (t.profit_loss || 0) < 0);
     const totalPnl = trades.reduce((a, t) => a + (t.profit_loss || 0), 0);
+    const realizedPnl = trades.reduce((a, t) => a + (t.realized_pnl || 0), 0);
+    const unrealizedPnl = trades.reduce((a, t) => a + (t.unrealized_pnl || 0), 0);
+    const pendingCount = trades.filter(t => t.pnl_pending).length;
     const winRate = trades.length > 0 ? (wins.length / trades.length) * 100 : 0;
     const bestTrade = Math.max(...trades.map(t => t.profit_loss || 0));
     const worstTrade = Math.min(...trades.map(t => t.profit_loss || 0));
@@ -526,9 +545,20 @@ function processPerformance(trades) {
     const avgLoss = losses.length > 0 ? grossLoss / losses.length : 0;
     const riskReward = avgLoss > 0 ? avgWin / avgLoss : avgWin > 0 ? 999 : 0;
 
-    // Update hero stats
+    // Update hero stats (Wave-5: show realized + live unrealized)
     const pnlEl = document.getElementById('stat-pnl');
-    pnlEl.textContent = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
+    let pnlText = (totalPnl >= 0 ? '+' : '') + '$' + Math.abs(totalPnl).toFixed(2);
+    if (unrealizedPnl !== 0 && realizedPnl !== 0) {
+        pnlText += ` (R: ${realizedPnl >= 0 ? '+' : ''}$${Math.abs(realizedPnl).toFixed(2)} + Live: ${unrealizedPnl >= 0 ? '+' : ''}$${Math.abs(unrealizedPnl).toFixed(2)})`;
+    } else if (unrealizedPnl !== 0) {
+        pnlText += ' (live)';
+    } else if (realizedPnl !== 0) {
+        pnlText += ' (realized)';
+    }
+    if (pendingCount > 0) {
+        pnlText += ` — ${pendingCount} pending`;
+    }
+    pnlEl.textContent = pnlText;
     pnlEl.className = 'hero-stat-value ' + (totalPnl >= 0 ? 'positive' : 'negative');
 
     document.getElementById('stat-trades').textContent = trades.length;
@@ -556,11 +586,18 @@ function processPerformance(trades) {
 }
 
 function createEquityChart(trades) {
-    const sorted = [...trades].sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+    // parseUtcTimestamp ensures naive UTC ISO strings sort + plot at
+    // the operator's local wall-clock position. Without it the chart
+    // X axis was shifted by the operator's UTC offset.
+    const _ts = t => {
+        const d = window.parseUtcTimestamp(t.timestamp || 0);
+        return d ? d.getTime() : 0;
+    };
+    const sorted = [...trades].sort((a, b) => _ts(a) - _ts(b));
     let cumPnl = 0;
     const data = sorted.map(t => {
         cumPnl += (t.profit_loss || 0);
-        return { x: new Date(t.timestamp), y: cumPnl };
+        return { x: window.parseUtcTimestamp(t.timestamp) || new Date(0), y: cumPnl };
     });
 
     const ctx = document.getElementById('equityChart').getContext('2d');
@@ -595,7 +632,12 @@ function createDailyPnlChart(trades) {
     const dailyPnl = {};
     trades.forEach(t => {
         if (t.timestamp) {
-            const date = new Date(t.timestamp).toLocaleDateString('en-CA');
+            // Bucket by operator's local date (parseUtcTimestamp normalises
+            // naive UTC ISO so a trade at 23:00 UTC shows in the correct
+            // local day for UTC+3, not the prior calendar day).
+            const _d = window.parseUtcTimestamp(t.timestamp);
+            if (!_d) return;
+            const date = _d.toLocaleDateString('en-CA');
             dailyPnl[date] = (dailyPnl[date] || 0) + (t.profit_loss || 0);
         }
     });
@@ -707,7 +749,11 @@ function createTimeDistChart(trades) {
     const hourCounts = Array(24).fill(0);
     trades.forEach(t => {
         if (t.timestamp) {
-            const hour = new Date(t.timestamp).getHours();
+            // Hour-of-day chart now uses operator's local hour after
+            // parseUtcTimestamp normalises naive UTC ISO.
+            const _d = window.parseUtcTimestamp(t.timestamp);
+            if (!_d) return;
+            const hour = _d.getHours();
             hourCounts[hour]++;
         }
     });

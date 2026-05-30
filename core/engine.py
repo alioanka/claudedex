@@ -7,7 +7,7 @@ import uuid
 import logging  # ADD THIS LINE
 from typing import Dict, List, Optional, Any, Tuple
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import time
 from dataclasses import dataclass, field
 import json
@@ -30,6 +30,7 @@ from data.collectors.whale_tracker import WhaleTracker
 from data.collectors.honeypot_checker import HoneypotChecker
 
 from ml.models.ensemble_model import EnsemblePredictor
+from ml.feature_builder import build_ml_feature_dict
 from ml.optimization.hyperparameter import HyperparameterOptimizer
 from ml.optimization.reinforcement import RLOptimizer
 
@@ -141,6 +142,19 @@ class TradingOpportunity:
 
         return 0.01  # Default 1%
 
+def _as_utc(dt):
+    """Normalize a datetime to UTC-aware. Naive values are assumed UTC.
+
+    Wave-11: positions restored by _load_state come from TIMESTAMPTZ (aware),
+    while in-process datetime.now() values are naive. Mixing them in
+    subtraction raises TypeError, so every (now - entry_time) arithmetic on
+    DB-sourced datetimes must route both sides through this helper.
+    """
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
 @dataclass
 class ClosedPositionRecord:
     """Track recently closed positions for cooldown"""
@@ -148,10 +162,10 @@ class ClosedPositionRecord:
     closed_at: datetime
     reason: str
     pnl: float
-    
+
     def is_cooled_down(self, cooldown_minutes: int = 60) -> bool:
         """Check if cooldown period has elapsed"""
-        elapsed = (datetime.now() - self.closed_at).total_seconds() / 60
+        elapsed = (datetime.now(timezone.utc) - _as_utc(self.closed_at)).total_seconds() / 60
         return elapsed >= cooldown_minutes
 
 class TradingBotEngine:
@@ -725,6 +739,103 @@ class TradingBotEngine:
             logger.error(f"Error getting {chain} balance: {e}")
             return 0.0
 
+    def _build_ml_feature_dict(self, pair: Dict, risk_score, patterns) -> Dict:
+        """Map the data we already gathered in _analyze_opportunity into the
+        nested-dict schema EnsemblePredictor.extract_features() consumes.
+
+        Wave-10: the mapping body now lives in the shared, pure
+        `ml.feature_builder.build_ml_feature_dict` so the offline trainer
+        (`scripts/train_ensemble.py`) builds train-time features with the SAME
+        code path — guaranteeing train==inference feature parity by
+        construction (no copy that can drift). This wrapper preserves the
+        original method signature/behaviour exactly (zero logic change).
+        """
+        return build_ml_feature_dict(pair, risk_score, patterns)
+
+    @staticmethod
+    def _is_trustworthy_ml_result(result: Dict) -> bool:
+        """A prediction is trustworthy only if the ensemble produced it without
+        error AND it is not the degenerate untrained/neutral output.
+
+        EnsemblePredictor.predict_decoupled() returns a {0.5, 0.5, ...} dict
+        with an 'error' key when the (unfitted) RobustScaler.transform raises —
+        which is exactly the state in any environment with no trained model
+        artifacts on disk. We must NOT treat that as a real signal: doing so
+        would re-introduce the fabricated-confidence bug from the other side.
+        """
+        if not isinstance(result, dict):
+            return False
+        if result.get('error'):
+            return False
+        pump = result.get('pump_probability')
+        rug = result.get('rug_probability')
+        conf = result.get('confidence', 0)
+        if pump is None or rug is None:
+            return False
+        # All-neutral 0.5 with floor confidence == untrained passthrough.
+        if abs(pump - 0.5) < 1e-9 and abs(rug - 0.5) < 1e-9 and conf <= 0.1:
+            return False
+        return True
+
+    async def _ml_predict_opportunity(
+        self, pair: Dict, risk_score, patterns, heuristic_score: float
+    ) -> Dict:
+        """Consult EnsemblePredictor for REAL ml_confidence/pump/rug.
+
+        Fail-soft + HONEST labeling (Wave-8 DEFECT 2): if the ensemble is
+        unavailable / untrained / errors, fall back to the heuristic but mark
+        ml_source='heuristic_fallback' and DO NOT fabricate an optimistic
+        rug_probability. The heuristic fallback derives rug_probability from
+        the heuristic score (low score -> higher implied rug risk) instead of
+        the old flat 0.2 constant that silently passed the 0.5 rug gate.
+
+        Returns a dict with: ml_confidence, pump_probability, rug_probability,
+        expected_return, ml_source, ml_meta.
+        """
+        token = pair.get('token_address', '')
+        chain = pair.get('chain', 'ethereum')
+        try:
+            predictor = getattr(self, 'ensemble_predictor', None)
+            if predictor is not None and hasattr(predictor, 'predict_decoupled'):
+                feat = self._build_ml_feature_dict(pair, risk_score, patterns)
+                result = await predictor.predict_decoupled(token, chain, feat)
+                if self._is_trustworthy_ml_result(result):
+                    return {
+                        'ml_confidence': float(result.get('confidence', 0.0)),
+                        'pump_probability': float(result['pump_probability']),
+                        'rug_probability': float(result['rug_probability']),
+                        'expected_return': float(result.get('expected_return', 0.0)),
+                        'ml_source': 'ensemble',
+                        'ml_meta': {
+                            'model_agreements': result.get('model_agreements', {}),
+                            'risk_adjusted_score': result.get('risk_adjusted_score'),
+                        },
+                    }
+                logger.info(
+                    "   ℹ️ ML ensemble unavailable/untrained for "
+                    f"{pair.get('token_symbol', token[:10])} "
+                    f"(reason={result.get('error', 'neutral-passthrough')}) "
+                    "— using HEURISTIC fallback (not a real ML signal)"
+                )
+        except Exception as e:
+            logger.warning(f"   ⚠️ ML ensemble prediction failed: {e} — heuristic fallback")
+
+        # ---- honest heuristic fallback -----------------------------------
+        # rug_probability is NOT a flat optimistic constant: a weak heuristic
+        # score implies more uncertainty, so map it inversely and clamp so a
+        # genuinely strong heuristic still has to clear the 0.5 rug gate on its
+        # own merit rather than being handed a free 0.2.
+        hs = max(0.0, min(1.0, float(heuristic_score)))
+        rug_prob = max(0.25, min(0.6, 0.6 - 0.4 * hs))
+        return {
+            'ml_confidence': hs,
+            'pump_probability': hs * 0.8,
+            'rug_probability': rug_prob,
+            'expected_return': hs * 100,
+            'ml_source': 'heuristic_fallback',
+            'ml_meta': {'note': 'no trained ensemble available in this environment'},
+        }
+
     async def _analyze_opportunity(self, pair: Dict) -> Optional[TradingOpportunity]:
         """
         Comprehensive analysis of a trading opportunity
@@ -798,6 +909,18 @@ class TradingBotEngine:
                 opportunity_score=score
             )
 
+            # 🆕 Wave-8 DEFECT 2: consult the REAL ML ensemble for
+            # ml_confidence/pump/rug instead of fabricating them from the
+            # heuristic. Fail-soft + honestly labeled (ml_source).
+            ml = await self._ml_predict_opportunity(
+                pair=pair, risk_score=risk_score, patterns=patterns,
+                heuristic_score=score,
+            )
+            logger.info(
+                f"   🤖 ML[{ml['ml_source']}] conf={ml['ml_confidence']:.3f} "
+                f"pump={ml['pump_probability']:.3f} rug={ml['rug_probability']:.3f}"
+            )
+
             # 🆕 CRITICAL FIX: Create opportunity FIRST (needed for strategy selection)
             # Create a temporary opportunity for strategy selection
             temp_opportunity = TradingOpportunity(
@@ -807,11 +930,22 @@ class TradingBotEngine:
                 price=pair.get('price_usd', 0),
                 liquidity=pair.get('liquidity_usd', 0),
                 volume_24h=pair.get('volume_24h', 0),
-                risk_score=risk_score if risk_score else RiskScore(overall_risk=0.5),
-                ml_confidence=score,
-                pump_probability=score * 0.8,
-                rug_probability=0.2,
-                expected_return=score * 100,
+                # SAFETY FIX (Wave-8 DEFECT 1): worst-case risk on a missing
+                # assessment, NOT a neutral 0.5. (The scorer above already
+                # rejects when risk_score is falsy, so this branch is normally
+                # unreachable — but the old `RiskScore(overall_risk=0.5)` call
+                # was itself a latent bug: `overall_risk` is a read-only @property,
+                # not a constructor arg, so it would have raised TypeError. We
+                # build a real all-1.0 worst-case RiskScore here instead.)
+                risk_score=risk_score if risk_score else RiskScore(
+                    liquidity_risk=1.0, developer_risk=1.0, contract_risk=1.0,
+                    volume_risk=1.0, holder_risk=1.0, social_risk=1.0,
+                    technical_risk=1.0, market_risk=1.0, confidence=0.0,
+                ),
+                ml_confidence=ml['ml_confidence'],
+                pump_probability=ml['pump_probability'],
+                rug_probability=ml['rug_probability'],
+                expected_return=ml['expected_return'],
                 recommended_position_size=position_size,
                 entry_strategy='momentum',  # Temporary, will be updated
                 metadata={
@@ -822,7 +956,13 @@ class TradingBotEngine:
                     'liquidity_depth': liquidity_depth,
                     'contract_safety': contract_safety,
                     'holder_distribution': holder_dist,
-                    'token_symbol': token_symbol
+                    'token_symbol': token_symbol,
+                    # Wave-8 DEFECT 2: honest provenance of the ML numbers above
+                    # so DRY_RUN audit can tell a real ensemble signal from a
+                    # heuristic fallback. NEVER reports a fake high ml_confidence.
+                    'ml_source': ml['ml_source'],
+                    'ml_meta': ml['ml_meta'],
+                    'heuristic_score': score,
                 },
                 timestamp=datetime.utcnow()
             )
@@ -925,7 +1065,7 @@ class TradingBotEngine:
             if token_address in self.recently_closed:
                 record = self.recently_closed[token_address]
                 if not record.is_cooled_down(self.cooldown_minutes):
-                    elapsed = (datetime.now() - record.closed_at).total_seconds() / 60
+                    elapsed = (datetime.now(timezone.utc) - _as_utc(record.closed_at)).total_seconds() / 60
                     remaining = self.cooldown_minutes - elapsed
                     logger.warning(
                         f"❄️ COOLDOWN ACTIVE for {token_symbol}: "
@@ -1553,7 +1693,7 @@ class TradingBotEngine:
                             position['pnl_percentage'] = float((current_value - entry_value) / entry_value * 100)
 
                             # Calculate holding time
-                            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                            holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
 
                             logger.info(
                                 f"  📈 {position_symbol} - "
@@ -1587,9 +1727,9 @@ class TradingBotEngine:
                             failures = position.get('_price_fetch_failures', 0) + 1
                             position['_price_fetch_failures'] = failures
 
-                            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                            holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
                             last_price_update = position.get('_last_price_update', position['entry_time'])
-                            time_since_price = (datetime.now() - last_price_update).total_seconds() / 60
+                            time_since_price = (datetime.now(timezone.utc) - _as_utc(last_price_update)).total_seconds() / 60
 
                             logger.warning(
                                 f"  ⚠️ PRICE FETCH FAILED for {position_symbol} "
@@ -1677,7 +1817,7 @@ class TradingBotEngine:
                 for pos in positions_snapshot:
                     entry_time = pos.get('entry_time')
                     if entry_time:
-                        holding_mins = (datetime.now() - entry_time).total_seconds() / 60
+                        holding_mins = (datetime.now(timezone.utc) - _as_utc(entry_time)).total_seconds() / 60
                         if holding_mins < 5:  # Position is less than 5 minutes old
                             has_new_positions = True
                             break
@@ -1863,7 +2003,7 @@ class TradingBotEngine:
         try:
             # Get position details
             pnl_percentage = position.get('pnl_percentage', 0)
-            holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60  # minutes
+            holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60  # minutes
             
             # 1. Take profit hit (default 30%)
             take_profit = position.get('take_profit_percentage', 0.3) * 100
@@ -1974,7 +2114,7 @@ class TradingBotEngine:
                 
                 final_pnl = (current_price - entry_price) * amount
                 pnl_percentage = float((current_price - entry_price) / entry_price * 100)
-                holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
                 
                 logger.info(f"📝 DRY RUN - CLOSING POSITION:")
                 logger.info(f"   Token: {token_symbol}")
@@ -2220,7 +2360,7 @@ class TradingBotEngine:
                 )
 
                 # Backfill DB + ML outcome on real-execution close (mirrors dry-run branch)
-                holding_time = (datetime.now() - position['entry_time']).total_seconds() / 60
+                holding_time = (datetime.now(timezone.utc) - _as_utc(position['entry_time'])).total_seconds() / 60
                 try:
                     trade_id = position.get('trade_id')
                     if not trade_id:
@@ -2785,9 +2925,16 @@ class TradingBotEngine:
             logger.info(f"   ✅ Volatility acceptable")
             
             # 6. Verify contract is verified (if available)
+            # Wave-9 quant audit: default is now FALSE (was True). An absent or
+            # unknown verification result must NOT be treated as "verified" —
+            # that was an optimistic default that silenced this caution whenever
+            # the (now honest) _check_smart_contract returned no positive signal.
+            # This remains a WARN, not a hard reject: the binding contract-risk
+            # gate is RiskScore.contract_risk inside _calculate_opportunity_score
+            # (which rejects on a missing/worst-case risk assessment).
             logger.info(f"   Checking contract verification...")
             contract_safety = opportunity.metadata.get('contract_safety', {})
-            if not contract_safety.get('verified', True):
+            if not contract_safety.get('verified', False):
                 logger.warning(f"   ⚠️  Contract not verified - proceeding with caution")
             
             logger.info(f"✅ All safety checks PASSED for {token_symbol}")
@@ -2821,13 +2968,120 @@ class TradingBotEngine:
             self.blacklisted_tokens = set()
             self.blacklisted_devs = set()
 
+    # EVM/Solana DEX chains this engine trades. Mirrors
+    # modules/dex_trading/position_service._DEX_CHAINS so _load_state restores
+    # exactly the rows position_service manages (no orphaned / cross-module rows).
+    _DEX_STATE_CHAINS = (
+        'ethereum', 'bsc', 'polygon', 'arbitrum', 'base',
+        'optimism', 'avalanche', 'solana',
+    )
+
     async def _load_state(self):
-        """Load saved bot state"""
+        """Restore OPEN positions from the DB into self.active_positions
+        (Wave-8 DEFECT 3).
+
+        Previously a no-op, so after a subprocess restart self.active_positions
+        was empty: in-engine exit logic, the rug-probability exit gate and
+        get_stats() all behaved as if there were no open positions, and
+        DexPositionService (DB-first) was masking only the PRICE-refresh symptom.
+
+        Coexistence with modules/dex_trading/position_service.py:
+        - We restore the SAME rows position_service reads
+          (trades WHERE status='open' AND side='buy' AND chain IN dex_chains).
+        - Each restored position carries `trade_id` = the INTEGER trades.id, so
+          the engine's close path (db.update_trade(trade_id, ...), which matches
+          the `id` column for ints) writes to the EXACT row position_service
+          manages — no duplicate/orphan rows, last-writer-wins on metadata which
+          converges since both write the same fresh quote.
+        - Restored positions are tagged metadata.restored_from_db=True for audit
+          and to distinguish them from positions opened in-process this session.
+
+        Fail-soft: any error logs and leaves active_positions as-is — a bad load
+        must never crash startup.
+        """
         try:
-            # Load from database or file
-            pass
-        except Exception:
-            pass
+            from decimal import Decimal as _Dec
+
+            pool = getattr(getattr(self, 'db', None), 'pool', None)
+            if pool is None:
+                logger.info("   _load_state: no DB pool — starting with empty active_positions")
+                return
+
+            chains = ', '.join(f"'{c}'" for c in self._DEX_STATE_CHAINS)
+            query = f"""
+                SELECT id, trade_id, token_address, chain, entry_price, amount,
+                       usd_value, entry_timestamp, metadata
+                FROM trades
+                WHERE status = 'open' AND side = 'buy'
+                  AND chain IN ({chains})
+                ORDER BY entry_timestamp DESC
+                LIMIT 200
+            """
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(query)
+
+            restored = 0
+            async with self.positions_lock:
+                for row in rows:
+                    try:
+                        token_address = row['token_address']
+                        if not token_address:
+                            continue
+
+                        # metadata may be jsonb(dict) or text(json) depending on driver.
+                        raw_meta = row['metadata']
+                        if isinstance(raw_meta, dict):
+                            metadata = dict(raw_meta)
+                        elif raw_meta:
+                            try:
+                                metadata = json.loads(raw_meta)
+                            except Exception:
+                                metadata = {}
+                        else:
+                            metadata = {}
+
+                        # Match the in-memory shape used by the live entry path
+                        # (lines ~1220/1300): entry_price + amount as Decimal so
+                        # the monitoring/exit arithmetic stays type-correct.
+                        try:
+                            entry_price = _Dec(str(row['entry_price'] or 0))
+                            amount = _Dec(str(row['amount'] or 0))
+                        except Exception:
+                            continue
+
+                        entry_time = row['entry_timestamp']
+                        if not isinstance(entry_time, datetime):
+                            entry_time = datetime.now()
+
+                        position = {
+                            'token_address': token_address,
+                            'token_symbol': metadata.get('token_symbol', 'UNKNOWN'),
+                            'entry_price': entry_price,
+                            'amount': amount,
+                            'entry_value': float(row['usd_value'] or 0),
+                            'chain': (row['chain'] or 'ethereum'),
+                            'strategy': {'name': metadata.get('entry_strategy', 'momentum')},
+                            'entry_time': entry_time,
+                            'stop_loss_percentage': metadata.get('stop_loss_percentage', 0.1),
+                            'take_profit_percentage': metadata.get('take_profit_percentage', 0.3),
+                            # INTEGER trades.id -> engine close writes target this exact row.
+                            'trade_id': row['id'],
+                            'metadata': {**metadata, 'restored_from_db': True},
+                        }
+                        self.active_positions[token_address] = position
+                        restored += 1
+                    except Exception as row_err:
+                        logger.debug(f"   _load_state: skipped a row: {row_err}")
+                        continue
+
+            logger.info(
+                f"   _load_state: restored {restored} open position(s) into "
+                f"active_positions (DB-first refresh still owned by "
+                f"DexPositionService)"
+            )
+        except Exception as e:
+            # Fail-soft: never block startup on a bad state load.
+            logger.warning(f"   _load_state failed (non-fatal): {e}")
 
     async def _warmup_collectors(self):
         """Warm up data collectors"""
@@ -2846,8 +3100,18 @@ class TradingBotEngine:
         )
 
     async def _check_developer_reputation(self, dev_address: str) -> float:
-        """Check developer reputation score"""
-        # Placeholder - returns neutral score
+        """Developer reputation score.
+
+        UNIMPLEMENTED no-op (Wave-9 quant audit). The REAL developer-risk
+        signal is already produced by RiskManager.analyze_token() →
+        RiskScore.developer_risk (the 20% risk weight in
+        _calculate_opportunity_score). This parallel score is NOT consumed by
+        any gate or scorer — it is only stored in opportunity.metadata for
+        audit. Returns a NEUTRAL 0.5 (no optimism injected); do NOT wire this
+        into a score without first replacing it with a real on-chain
+        dev-history source (analysis/dev_analyzer.py).
+        """
+        # Neutral placeholder — feeds no live gate/score; see RiskScore.developer_risk.
         return 0.5
 
     async def _analyze_liquidity_depth(self, pair: Dict) -> Dict:
@@ -2855,17 +3119,44 @@ class TradingBotEngine:
         return {'depth': pair.get('liquidity', 0)}
 
     async def _check_smart_contract(self, token_address: str) -> Dict:
-        """Check smart contract for vulnerabilities"""
-        return {'verified': True, 'issues': []}
+        """Smart-contract verification check.
+
+        HONEST UNIMPLEMENTED stub (Wave-9 quant audit). It previously returned
+        `verified=True` unconditionally — a FALSE positive safety signal that
+        claimed every contract was source-verified. No real verifier is wired
+        into this engine path (analysis/smart_contract_analyzer.py exists but is
+        not instantiated here; the REAL contract-risk signal is
+        RiskScore.contract_risk via RiskManager.analyze_token, which DOES feed
+        the scorer). We now return `verified=False`/`status='unknown'` so the
+        downstream gate in _final_safety_checks logs a caution instead of
+        silently asserting a verification we never performed.
+        """
+        # NEVER assert a positive safety signal we cannot verify.
+        return {'verified': False, 'status': 'unknown', 'issues': [],
+                'note': 'engine-level contract check unimplemented; '
+                        'real signal is RiskScore.contract_risk'}
 
     async def _analyze_holder_distribution(self, token_address: str) -> Dict:
-        """Analyze token holder distribution"""
-        return {'concentrated': False}
+        """Holder-distribution analysis.
 
-    def _extract_features(self, data: Dict) -> np.ndarray:
-        """Extract ML features from data"""
-        # Placeholder - return dummy features
-        return np.random.rand(10)
+        UNIMPLEMENTED no-op (Wave-9 quant audit). Not consumed by any gate or
+        scorer — only stored in opportunity.metadata for audit. The REAL
+        holder-concentration signal is RiskScore.holder_risk via
+        RiskManager.analyze_token. Returns a NEUTRAL/UNKNOWN value (no optimism:
+        does NOT assert `concentrated=False`, which would have been an
+        unverified "looks safe" claim).
+        """
+        return {'concentrated': None, 'status': 'unknown',
+                'note': 'engine-level holder check unimplemented; '
+                        'real signal is RiskScore.holder_risk'}
+
+    # NOTE (Wave-9 quant audit): the former `_extract_features(data)` that
+    # returned `np.random.rand(10)` was DELETED. It had ZERO callers in this
+    # engine — the live ML path builds features via `_build_ml_feature_dict`
+    # → `EnsemblePredictor.extract_features` (a deterministic 95-dim vector),
+    # never this method. Returning RANDOM features from a live path is the
+    # worst possible fabrication, so the dead stub is removed outright rather
+    # than left as a foot-gun for a future caller.
 
     def _calculate_pnl(self, position: Dict) -> float:
         """Calculate position P&L"""
@@ -3449,6 +3740,14 @@ class TradingBotEngine:
                 }
             
             # Risk score (20% weight) - Adjusted to balance weights
+            # SAFETY FIX (Wave-8 DEFECT 1): a missing/failed risk assessment is
+            # NOT "absent" — it means we could not rule out a honeypot/rug. The
+            # previous code only added the risk term `if risk_score`, which
+            # DROPPED the 0.20 weight from the denominator on failure, so a token
+            # we could not safety-check normalized HIGHER than a token with known
+            # moderate risk. We now treat unknown risk as WORST-CASE and reject
+            # outright: in DRY_RUN data-collection mode an unverifiable safety
+            # signal must bias the decision to "do not enter", never reward it.
             if risk_score and hasattr(risk_score, 'overall_risk'):
                 risk_component = 1.0 - risk_score.overall_risk
                 score += risk_component * 0.20
@@ -3456,6 +3755,13 @@ class TradingBotEngine:
                 score_breakdown['risk'] = {
                     'score': risk_component, 'weight': 0.20, 'contribution': risk_component * 0.20, 'raw_value': risk_score.overall_risk
                 }
+            else:
+                logger.warning(
+                    "      ❌ REJECTED: risk assessment unavailable/failed "
+                    "(treated as worst-case — cannot verify token is not a "
+                    "honeypot/rug)"
+                )
+                return 0.0
             
             # Age bonus (5% weight) - Remains the same
             age_hours = pair.get('age_hours', 999)

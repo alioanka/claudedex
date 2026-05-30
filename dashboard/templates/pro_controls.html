@@ -107,18 +107,50 @@ async function loadModules() {
     }
 }
 
-async function controlModule(module, action) {
-    // Determine API endpoint based on action (start/stop/enable/disable)
-    // For pro controls, we map start->enable and stop->disable for simplicity, or use specific endpoints
-    const endpoint = action === 'start' ? 'enable' : 'disable';
+async function panicSell() {
+    if(!confirm("Are you sure you want to close ALL positions across ALL modules?")) return;
 
+    // Matches the canonical kill-switch endpoint at base.html:1169 —
+    // earlier the wrong URL (emergency_exit with underscore) silently
+    // 404'd, so operators thought they'd panicked but the bot kept
+    // trading. See audit DASH-RM-01.
+    //
+    // CSRF: auth/csrf.py requires X-CSRF-Token on every non-GET. Echo
+    // the csrf_token cookie back in the header (double-submit pattern).
+    // Inline cookie read because this template doesn't import main.js's
+    // withCsrfHeaders() helper directly. See VPS failure 1.
+    const csrf = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
     try {
-        const res = await fetch(`/api/modules/${module}/${endpoint}`, { method: 'POST' });
-        const data = await res.json();
-        if (data.success) {
-            loadModules(); // Reload status
+        const response = await fetch('/api/bot/emergency-exit', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': decodeURIComponent(csrf)
+            }
+        });
+        const data = await response.json().catch(() => ({}));
+        if (response.ok) {
+            alert(data.message || 'Emergency exit triggered!');
         } else {
-            alert('Error: ' + data.error);
+            alert('Emergency exit FAILED: ' + (data.error || response.statusText));
+        }
+    } catch (e) {
+        alert('Emergency exit FAILED: ' + e.message);
+    }
+}
+
+// Manual trade and module-control also need CSRF. Earlier these calls
+// fired raw fetch() and would have 403'd as soon as the operator hit
+// them. Routing through main.js's apiPost/apiRequest puts them on the
+// same CSRF pipe as everything else.
+async function controlModule(module, action) {
+    const endpoint = action === 'start' ? 'enable' : 'disable';
+    try {
+        const data = await apiPost(`/api/modules/${module}/${endpoint}`, {});
+        if (data.success) {
+            loadModules();
+        } else {
+            alert('Error: ' + (data.error || 'unknown'));
         }
     } catch (e) {
         alert('Request failed: ' + e.message);
@@ -131,19 +163,12 @@ async function executeTrade() {
     const side = document.getElementById('trade-side').value;
     const amount = document.getElementById('trade-amount').value;
 
-    await fetch('/api/trade/execute', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ module, token, side, amount })
-    });
-    alert('Trade executed!');
-}
-
-async function panicSell() {
-    if(!confirm("Are you sure you want to close ALL positions across ALL modules?")) return;
-
-    await fetch('/api/bot/emergency_exit', { method: 'POST' });
-    alert('Emergency exit triggered!');
+    try {
+        const data = await apiPost('/api/trade/execute', { module, token, side, amount });
+        alert(data.success ? 'Trade executed!' : ('Trade failed: ' + (data.error || 'unknown')));
+    } catch (e) {
+        alert('Trade failed: ' + e.message);
+    }
 }
 </script>
 {% endblock %}

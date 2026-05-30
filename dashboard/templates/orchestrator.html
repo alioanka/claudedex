@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+
+{% block title %}Orchestrator AI - DexScreener Trading Bot{% endblock %}
+
+{#
+  Advisory layer dashboard. Lists pending recommendations from the
+  orchestrator_ai subprocess and lets the operator Approve or Reject
+  each one. Approving a to_dry/to_live rec writes the corresponding
+  config_settings.<module>_config.dry_run row; the operator still
+  has to restart the module subprocess for the change to take effect.
+#}
+
+{% block extra_css %}
+<style>
+  .orch-page { color: var(--text-primary, #f1f5f9); }
+  .orch-toolbar {
+    display: flex; gap: 12px; align-items: center;
+    margin-bottom: 16px; flex-wrap: wrap;
+  }
+  .orch-status-tabs button {
+    background: var(--bg-tertiary, #0f172a);
+    color: var(--text-primary, #f1f5f9);
+    border: 1px solid var(--border-color, #334155);
+    padding: 6px 14px; border-radius: 999px;
+    cursor: pointer; font-size: 0.8rem;
+  }
+  .orch-status-tabs button.active {
+    background: var(--accent-primary, #3b82f6); color: #fff;
+    border-color: var(--accent-primary, #3b82f6);
+  }
+  .rec-card {
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+  }
+  .rec-header { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .rec-module {
+    font-weight: 700; font-size: 1rem;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .rec-action {
+    padding: 3px 10px; border-radius: 6px;
+    font-size: 0.75rem; font-weight: 700;
+  }
+  .rec-action.to_live  { background: rgba(239, 68, 68, 0.25);  color: #fca5a5; }
+  .rec-action.to_dry   { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+  .rec-action.disable  { background: rgba(100, 116, 139, 0.3); color: #cbd5e1; }
+  .rec-action.enable   { background: rgba(16, 185, 129, 0.2); color: #6ee7b7; }
+  .rec-action.hold     { background: rgba(100, 116, 139, 0.15); color: #94a3b8; }
+  .rec-conf {
+    font-size: 0.7rem; color: var(--text-secondary, #94a3b8);
+    font-family: ui-monospace, Menlo, monospace;
+  }
+  .rec-time { font-size: 0.7rem; color: var(--text-secondary, #94a3b8); margin-left: auto; }
+  .rec-reason { color: var(--text-primary, #f1f5f9); font-size: 0.9rem; margin: 8px 0; }
+  .rec-metrics {
+    background: var(--bg-tertiary, #0f172a);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 0.75rem;
+    color: #cbd5e1;
+    margin-top: 8px;
+    white-space: pre-wrap;
+    max-height: 160px;
+    overflow: auto;
+  }
+  .rec-actions { display: flex; gap: 8px; margin-top: 10px; }
+  .rec-actions button.approve {
+    background: #10b981; color: #fff; border: none; padding: 6px 14px;
+    border-radius: 6px; font-weight: 600; cursor: pointer;
+  }
+  .rec-actions button.reject {
+    background: #475569; color: #fff; border: none; padding: 6px 14px;
+    border-radius: 6px; cursor: pointer;
+  }
+  .rec-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .orch-empty {
+    color: var(--text-secondary, #94a3b8);
+    text-align: center; padding: 40px 0; font-size: 0.95rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="orch-page">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 style="pointer-events:auto;">Orchestrator AI</h1>
+      <div style="color: var(--text-secondary, #94a3b8); font-size: 0.9rem;">
+        Per-module performance scoring → advisory recommendations.
+        Operator approves each action; nothing happens automatically.
+        Restart the affected module subprocess after approving a
+        <code>to_dry</code> or <code>to_live</code> rec for it to take effect.
+      </div>
+    </div>
+  </div>
+
+  <div class="orch-toolbar">
+    <div class="orch-status-tabs">
+      <button data-status="pending" class="active">Pending</button>
+      <button data-status="approved">Approved</button>
+      <button data-status="rejected">Rejected</button>
+      <button data-status="superseded">Superseded</button>
+      <button data-status="all">All</button>
+    </div>
+    <button id="orch-refresh" class="btn btn-sm btn-secondary"
+            style="margin-left:auto;">
+      <i class="fas fa-sync"></i> Refresh
+    </button>
+  </div>
+
+  <!-- Trend table: per-module score timeline. Compact ASCII-art
+       sparklines so we don't pull in Chart.js just for this. -->
+  <div class="card" style="margin-bottom:18px;background:var(--bg-secondary,#1e293b);
+                            border:1px solid var(--border-color,#334155);
+                            border-radius:10px;padding:14px 16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 style="margin:0;font-size:1rem;">Score trend (last 72h)</h3>
+      <button id="orch-trend-refresh" class="btn btn-sm btn-secondary">Refresh</button>
+    </div>
+    <table id="orch-trend-table" style="width:100%;border-collapse:collapse;
+           margin-top:10px;font-family:ui-monospace,Menlo,monospace;font-size:0.8rem;">
+      <thead>
+        <tr style="border-bottom:1px solid var(--border-color,#334155);">
+          <th style="text-align:left;padding:4px 8px;">Module</th>
+          <th style="text-align:left;padding:4px 8px;">Sparkline</th>
+          <th style="text-align:right;padding:4px 8px;">Latest score</th>
+          <th style="text-align:right;padding:4px 8px;">Sharpe</th>
+          <th style="text-align:right;padding:4px 8px;">P&amp;L (window)</th>
+          <th style="text-align:right;padding:4px 8px;">Latest rec</th>
+        </tr>
+      </thead>
+      <tbody id="orch-trend-tbody">
+        <tr><td colspan="6" class="orch-empty">Loading trend…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div id="orch-recs-list">
+    <div class="orch-empty">Loading recommendations…</div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+  let currentStatus = 'pending';
+
+  function csrfHeaders() {
+    const m = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+    return {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': decodeURIComponent(m),
+    };
+  }
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function formatTime(iso) {
+    if (!iso) return '';
+    try {
+      // Server stores timestamps in UTC but emits them as naive ISO
+      // (e.g. "2026-05-19T19:33:52"). new Date() of a naive string
+      // interprets it as LOCAL time, which shifts the displayed delta
+      // by the operator's offset (UTC+3 -> "3h ago" on fresh rows).
+      // Force UTC by appending 'Z' when no offset is present.
+      let s = String(iso);
+      if (!/Z|[+-]\d{2}:?\d{2}$/.test(s)) s += 'Z';
+      const d = new Date(s);
+      const diffMs = Date.now() - d.getTime();
+      const diffMin = Math.floor(diffMs / 60000);
+      if (diffMin < 1) return 'just now';
+      if (diffMin < 60) return diffMin + 'm ago';
+      const hr = Math.floor(diffMin / 60);
+      if (hr < 24) return hr + 'h ago';
+      // For older entries, render in operator's local time zone.
+      return d.toLocaleString();
+    } catch (_) { return iso; }
+  }
+
+  async function load() {
+    const list = document.getElementById('orch-recs-list');
+    list.innerHTML = '<div class="orch-empty">Loading recommendations…</div>';
+    try {
+      const r = await fetch(`/api/orchestrator/recommendations?status=${currentStatus}&limit=100`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const recs = (data && data.recommendations) || [];
+      if (recs.length === 0) {
+        list.innerHTML = `<div class="orch-empty">
+          No <strong>${esc(currentStatus)}</strong> recommendations.
+          ${currentStatus === 'pending'
+            ? "Either the orchestrator subprocess isn't running, no module crossed a scoring threshold yet, or all pending recs were already actioned."
+            : ''}
+        </div>`;
+        return;
+      }
+      list.innerHTML = recs.map(renderCard).join('');
+      list.querySelectorAll('button[data-action]').forEach(btn => {
+        btn.addEventListener('click', onAction);
+      });
+    } catch (e) {
+      list.innerHTML = `<div class="orch-empty" style="color:#ef4444;">
+        Fetch failed: ${esc(e.message || e)}
+      </div>`;
+    }
+  }
+
+  function renderCard(rec) {
+    const action = esc(rec.recommended);
+    const conf = (rec.confidence != null) ? rec.confidence.toFixed(2) : '?';
+    const metricsJson = rec.metrics ? JSON.stringify(rec.metrics, null, 2) : '';
+    const canAct = rec.approved == null && !rec.superseded_at;
+    const stateLine = rec.superseded_at
+      ? `<span style="color:#94a3b8;">superseded ${formatTime(rec.superseded_at)}</span>`
+      : (rec.approved === true
+          ? `<span style="color:#10b981;">approved ${formatTime(rec.approved_at)} by ${esc(rec.approved_by || '?')}</span>`
+          : (rec.approved === false
+              ? `<span style="color:#f59e0b;">rejected ${formatTime(rec.approved_at)} by ${esc(rec.approved_by || '?')}</span>`
+              : `<span style="color:#3b82f6;">pending</span>`));
+    return `
+      <div class="rec-card" data-rec-id="${esc(rec.id)}">
+        <div class="rec-header">
+          <span class="rec-module">${esc(rec.module)}</span>
+          <span class="rec-action ${action}">${action.replace('_', ' ')}</span>
+          <span class="rec-conf">conf: ${conf}</span>
+          <span class="rec-time">${formatTime(rec.created_at)}</span>
+        </div>
+        <div class="rec-reason">${esc(rec.reason)}</div>
+        <div>${stateLine}</div>
+        ${metricsJson ? `<pre class="rec-metrics">${esc(metricsJson)}</pre>` : ''}
+        ${canAct ? `
+          <div class="rec-actions">
+            <button class="approve" data-action="approve" data-rec-id="${esc(rec.id)}">
+              <i class="fas fa-check"></i> Approve
+            </button>
+            <button class="reject"  data-action="reject"  data-rec-id="${esc(rec.id)}">
+              <i class="fas fa-times"></i> Reject
+            </button>
+          </div>
+        ` : ''}
+      </div>`;
+  }
+
+  async function onAction(e) {
+    const btn = e.currentTarget;
+    const recId = btn.dataset.recId;
+    const action = btn.dataset.action;  // approve | reject
+    btn.disabled = true;
+    btn.textContent = action === 'approve' ? 'Approving…' : 'Rejecting…';
+    try {
+      const r = await fetch(`/api/orchestrator/recommendations/${recId}/${action}`, {
+        method: 'POST',
+        headers: csrfHeaders(),
+        body: JSON.stringify({}),
+      });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok || body.success === false) {
+        alert(`${action} failed: ${body.error || r.statusText}`);
+        btn.disabled = false;
+        btn.textContent = action === 'approve' ? 'Approve' : 'Reject';
+        return;
+      }
+      if (body.applied) {
+        alert(`${action} OK. Applied: ${JSON.stringify(body.applied)}\n\n${body.note || ''}`);
+      }
+      load();  // refresh the list
+    } catch (err) {
+      alert(`${action} failed: ${err.message || err}`);
+      btn.disabled = false;
+    }
+  }
+
+  // ---- Score-trend table (sparklines from /api/orchestrator/history) ----
+  // Unicode block-element sparkline. No external dep.
+  const SPARK_CHARS = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+  function sparkline(values) {
+    if (!values || values.length === 0) return '—';
+    const finite = values.filter(v => v !== null && !isNaN(v));
+    if (finite.length === 0) return '—';
+    const min = Math.min(...finite);
+    const max = Math.max(...finite);
+    const range = max - min || 1;
+    return values.map(v => {
+      if (v === null || isNaN(v)) return ' ';
+      const idx = Math.min(7, Math.max(0, Math.floor(((v - min) / range) * 7)));
+      return SPARK_CHARS[idx];
+    }).join('');
+  }
+
+  async function loadTrend() {
+    const tbody = document.getElementById('orch-trend-tbody');
+    tbody.innerHTML = '<tr><td colspan="6" class="orch-empty">Loading trend…</td></tr>';
+    try {
+      const r = await fetch('/api/orchestrator/history?hours=72');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      const series = (data && data.series) || {};
+      const modules = Object.keys(series).sort();
+      if (modules.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="6" class="orch-empty">No history yet. Orchestrator subprocess running?</td></tr>';
+        return;
+      }
+      tbody.innerHTML = modules.map(m => {
+        const pts = series[m];
+        const scores = pts.map(p => p.score);
+        const latest = pts[pts.length - 1] || {};
+        const comp = latest.components || {};
+        const sharpe = comp.sharpe;
+        const pnl = latest.total_pnl_usd;
+        return `<tr style="border-bottom:1px solid var(--border-color,#334155);">
+          <td style="padding:4px 8px;font-weight:600;">${esc(m)}</td>
+          <td style="padding:4px 8px;font-size:1rem;letter-spacing:0;">${esc(sparkline(scores))}</td>
+          <td style="padding:4px 8px;text-align:right;">${(latest.score != null) ? latest.score.toFixed(3) : '—'}</td>
+          <td style="padding:4px 8px;text-align:right;">${(sharpe != null) ? sharpe.toFixed(3) : '—'}</td>
+          <td style="padding:4px 8px;text-align:right;">${(pnl != null) ? '$' + pnl.toFixed(2) : '—'}</td>
+          <td style="padding:4px 8px;text-align:right;">
+            <span class="rec-action ${esc(latest.recommended || 'hold')}">${esc((latest.recommended || '?').replace('_', ' '))}</span>
+          </td>
+        </tr>`;
+      }).join('');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="orch-empty" style="color:#ef4444;">Fetch failed: ${esc(e.message || e)}</td></tr>`;
+    }
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    load();
+    loadTrend();
+    document.querySelectorAll('.orch-status-tabs button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        currentStatus = btn.dataset.status;
+        document.querySelectorAll('.orch-status-tabs button')
+          .forEach(b => b.classList.toggle('active', b === btn));
+        load();
+      });
+    });
+    document.getElementById('orch-refresh').addEventListener('click', load);
+    document.getElementById('orch-trend-refresh').addEventListener('click', loadTrend);
+    // Auto-refresh pending every 60s so new recs surface without
+    // operator action.
+    setInterval(() => { if (currentStatus === 'pending') load(); }, 60000);
+    // Trend refresh every 5 min — matches the orchestrator tick.
+    setInterval(loadTrend, 5 * 60 * 1000);
+  });
+})();
+</script>
+{% endblock %}

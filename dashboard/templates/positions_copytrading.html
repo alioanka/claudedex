@@ -285,7 +285,18 @@
         align-items: center;
         padding-top: 12px;
         border-top: 1px solid var(--border-color);
+        gap: 8px;
+        flex-wrap: wrap;
     }
+    .btn-close-position {
+        background: #ef4444; color: #fff; border: none; border-radius: 6px;
+        padding: 6px 12px; font-weight: 600; font-size: 0.85em;
+        cursor: pointer; transition: all 0.15s;
+    }
+    .btn-close-position:hover:not(:disabled) { background: #dc2626; }
+    .btn-close-position:disabled { opacity: 0.5; cursor: not-allowed; }
+    .badge-status-open { background: rgba(16,185,129,0.18); color: #10b981; padding: 3px 9px; border-radius: 8px; font-size: 0.78em; font-weight: 600; }
+    .badge-status-closing { background: rgba(251,191,36,0.18); color: #fbbf24; padding: 3px 9px; border-radius: 8px; font-size: 0.78em; font-weight: 600; }
 
     .source-wallet {
         display: flex;
@@ -343,6 +354,25 @@
         --text-secondary: #6b7280;
         --metric-bg: #f3f4f6;
     }
+
+/* 2026-05-21 operator-requested action icons. */
+.token-actions { display: inline-flex; gap: 4px; margin-left: 4px; vertical-align: middle; }
+.icon-btn {
+    background: transparent;
+    border: 1px solid var(--border-color, #444);
+    border-radius: 4px;
+    padding: 1px 4px;
+    font-size: 0.7rem;
+    line-height: 1;
+    cursor: pointer;
+    color: var(--text-secondary, #94a3b8);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+}
+.icon-btn:hover { color: #8b5cf6; border-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+.icon-btn.copied { color: #10b981; border-color: #10b981; }
+
 </style>
 {% endblock %}
 
@@ -473,6 +503,27 @@ function updatePositions(positions) {
         const sideClass = side === 'SELL' ? 'badge-side-sell' : 'badge-side-buy';
         const tokenSymbol = pos.symbol || (pos.token_address ? pos.token_address.substring(0, 6) : 'TOKEN');
         const tokenInitial = tokenSymbol.substring(0, 2).toUpperCase();
+        const tradeId = pos.trade_id || '';
+        const statusClass = pos.status === 'closing' ? 'closing' : 'open';
+        const closeBtnDisabled = pos.status === 'closing' ? 'disabled' : '';
+        const closeBtnLabel = pos.status === 'closing' ? 'Closing...' : 'Close Position';
+        const qty = pos.quantity != null ? pos.quantity : (pos.amount || 0);
+
+        // 2026-05-21: copy/Birdeye/Solscan icons inline with the symbol.
+        const mint = pos.token_address || '';
+        const isSol = (pos.chain || 'solana').toLowerCase() === 'solana';
+        const birdeyeChain = isSol ? 'solana' : 'ethereum';
+        const scanHost = isSol ? 'solscan.io/token' : 'etherscan.io/token';
+        const tokenActions = mint
+            ? `<span class="token-actions">
+                <button class="icon-btn" title="Copy token address"
+                  onclick="copyTokenAddress(event, '${mint}')">&#128203;</button>
+                <a class="icon-btn" title="Open on Birdeye" target="_blank"
+                   href="https://birdeye.so/token/${mint}?chain=${birdeyeChain}">&#128279;</a>
+                <a class="icon-btn" title="Open on Solscan/Etherscan" target="_blank"
+                   href="https://${scanHost}/${mint}">&#128269;</a>
+               </span>`
+            : '';
 
         html += `
             <div class="position-card">
@@ -480,7 +531,7 @@ function updatePositions(positions) {
                     <div class="position-token">
                         <div class="token-icon">${tokenInitial}</div>
                         <div class="token-info">
-                            <h4>${tokenSymbol}</h4>
+                            <h4>${tokenSymbol}${tokenActions}</h4>
                             <div class="token-address">${pos.token_address ? pos.token_address.substring(0, 12) + '...' : 'Unknown'}</div>
                         </div>
                     </div>
@@ -500,6 +551,10 @@ function updatePositions(positions) {
                         <div class="pos-stat-value">$${(pos.current_price || pos.entry_price || 0).toFixed(6)}</div>
                     </div>
                     <div class="pos-stat">
+                        <div class="pos-stat-label">Tokens Held</div>
+                        <div class="pos-stat-value">${qty.toLocaleString(undefined, {maximumFractionDigits: 4})}</div>
+                    </div>
+                    <div class="pos-stat">
                         <div class="pos-stat-label">Position Size</div>
                         <div class="pos-stat-value">$${(pos.entry_usd || 0).toFixed(2)}</div>
                     </div>
@@ -510,16 +565,26 @@ function updatePositions(positions) {
                             <small>(${pnlPct >= 0 ? '+' : ''}${pnlPct.toFixed(1)}%)</small>
                         </div>
                     </div>
+                    <div class="pos-stat">
+                        <div class="pos-stat-label">Status</div>
+                        <div class="pos-stat-value">
+                            <span class="badge badge-status-${statusClass}">${(pos.status || 'open').toUpperCase()}</span>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="position-footer">
                     <div class="source-wallet">
                         <i class="fas fa-user"></i>
-                        <span>${pos.source_wallet ? pos.source_wallet.substring(0, 8) + '...' : 'Unknown'}</span>
+                        <span title="${pos.source_wallet || ''}">${pos.source_wallet ? pos.source_wallet.substring(0, 8) + '...' : 'Unknown'}</span>
                     </div>
                     <div class="position-time">
-                        ${pos.timestamp ? formatTimeAgo(new Date(pos.timestamp)) : 'Recently'}
+                        ${pos.timestamp ? window.formatTimeAgo(pos.timestamp) : 'Recently'}
                     </div>
+                    <button class="btn-close-position" data-trade-id="${tradeId}"
+                            onclick="closePosition('${tradeId}', this)" ${closeBtnDisabled}>
+                        <i class="fas fa-times-circle"></i> ${closeBtnLabel}
+                    </button>
                 </div>
             </div>
         `;
@@ -542,20 +607,87 @@ function showEmpty() {
     `;
 }
 
-function formatTimeAgo(date) {
-    const now = new Date();
-    const diff = now - date;
-
-    if (diff < 60000) return 'Just now';
-    if (diff < 3600000) return Math.floor(diff / 60000) + 'm ago';
-    if (diff < 86400000) return Math.floor(diff / 3600000) + 'h ago';
-    return Math.floor(diff / 86400000) + 'd ago';
+async function closePosition(tradeId, btn) {
+    if (!tradeId) {
+        alert('Trade ID missing — cannot close.');
+        return;
+    }
+    if (!confirm('Close this copy-trading position? It will swap back to SOL/native on the next engine tick (~10s).')) {
+        return;
+    }
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Closing...';
+    try {
+        const headers = (typeof window.withCsrfHeaders === 'function')
+            ? window.withCsrfHeaders('POST')
+            : (function () {
+                const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+                return { 'Content-Type': 'application/json', 'X-CSRF-Token': m ? decodeURIComponent(m[1]) : '' };
+            })();
+        const resp = await fetch(`/api/copytrading/positions/${encodeURIComponent(tradeId)}/close`, {
+            method: 'POST',
+            headers: headers,
+            credentials: 'same-origin',
+        });
+        const data = await resp.json().catch(() => ({}));
+        if (resp.ok && data.success) {
+            btn.innerHTML = '<i class="fas fa-check"></i> Queued';
+            // Reload positions after the engine had a chance to execute.
+            setTimeout(() => loadPositions(), 12000);
+        } else {
+            alert('Failed to queue close: ' + (data.error || `HTTP ${resp.status}`));
+            btn.disabled = false;
+            btn.innerHTML = originalLabel;
+        }
+    } catch (e) {
+        alert('Network error: ' + e.message);
+        btn.disabled = false;
+        btn.innerHTML = originalLabel;
+    }
 }
 
+// formatTimeAgo removed — superseded by window.formatTimeAgo in
+// /static/js/timezone.js (handles naive UTC ISO correctly).
+
 // Load on page load
+
+// 2026-05-21 operator-requested copy-to-clipboard helper.
+function copyTokenAddress(ev, addr) {
+    ev.preventDefault();
+    ev.stopPropagation();
+    const btn = ev.currentTarget;
+    const finish = (ok) => {
+        if (!ok) return;
+        const original = btn.innerHTML;
+        btn.innerHTML = '&#10003;';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.innerHTML = original; btn.classList.remove('copied'); }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(addr).then(() => finish(true)).catch(() => {
+            const ta = document.createElement('textarea');
+            ta.value = addr; document.body.appendChild(ta); ta.select();
+            try { document.execCommand('copy'); finish(true); } catch (e) {}
+            document.body.removeChild(ta);
+        });
+    } else {
+        const ta = document.createElement('textarea');
+        ta.value = addr; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); finish(true); } catch (e) {}
+        document.body.removeChild(ta);
+    }
+}
+
 loadPositions();
 
-// Auto-refresh every 10 seconds
-setInterval(loadPositions, 10000);
+// Auto-refresh every 30 seconds (raised from 10s) AND suspend while
+// the tab is hidden so a backgrounded dashboard doesn't pound the DB
+// when COPY_TRADING is disabled. The 30s cadence is still fast enough
+// for an active operator session.
+setInterval(() => {
+    if (document.hidden) return;
+    loadPositions();
+}, 30000);
 </script>
 {% endblock %}

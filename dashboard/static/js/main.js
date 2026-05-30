@@ -262,16 +262,20 @@ async function handleEmergencyExit() {
     try {
         showToast('warning', 'Executing emergency exit...');
         
-        const response = await fetch('/api/bot/emergency_exit', {
+        // Canonical kill-switch endpoint is /api/bot/emergency-exit
+        // (kebab). The underscore form 404s; see DASH-RM-01.
+        const response = await fetch('/api/bot/emergency-exit', {
             method: 'POST',
             headers: withCsrfHeaders('POST'),
         });
         const data = await response.json();
-        
+
         if (data.success) {
-            showToast('success', data.message);
-            showAlert('success', 'Emergency Exit Complete', 
-                `Closed: ${data.closed.length}, Failed: ${data.failed.length}`);
+            showToast('success', data.message || 'Emergency exit complete');
+            const closed = (data.closed && data.closed.length) || 0;
+            const failed = (data.failed && data.failed.length) || 0;
+            showAlert('success', 'Emergency Exit Complete',
+                `Closed: ${closed}, Failed: ${failed}`);
         } else {
             showToast('error', data.error || 'Emergency exit failed');
         }
@@ -776,9 +780,28 @@ async function refreshBotModeBadge() {
     const txt = document.getElementById('bot-mode-text');
     if (!el || !txt) return;
     try {
-        const r = await fetch('/api/bot/status');
+        const r = await fetch('/api/bot/status', {
+            // Reject HTML — auth middleware redirects unauth'd calls to
+            // /login (200 + text/html), and r.json() then silently fails
+            // and the badge sticks at UNKNOWN. Telling the server we want
+            // JSON makes that redirect deterministic to detect.
+            headers: { 'Accept': 'application/json' },
+        });
         if (!r.ok) throw new Error('status ' + r.status);
-        const data = await r.json();
+        const ct = (r.headers.get('content-type') || '').toLowerCase();
+        if (!ct.includes('application/json')) {
+            console.warn('[bot-mode] /api/bot/status returned non-JSON (likely a login redirect). content-type=', ct);
+            throw new Error('non-json response');
+        }
+        // /api/bot/status returns {success, data: {dry_run, ...}}.
+        // Earlier we read data.dry_run from the unwrapped response, so
+        // the badge silently showed UNKNOWN even when the API knew the
+        // mode. Honor both shapes for resilience.
+        const payload = await r.json();
+        const data = (payload && payload.data) ? payload.data : payload;
+        if (data && typeof data === 'object' && !('dry_run' in data)) {
+            console.warn('[bot-mode] payload missing dry_run key. Payload keys=', Object.keys(data));
+        }
         el.classList.remove('bot-mode-live', 'bot-mode-dry', 'bot-mode-unknown');
         if (data.dry_run === undefined || data.dry_run === null) {
             el.classList.add('bot-mode-unknown');
@@ -791,6 +814,7 @@ async function refreshBotModeBadge() {
             txt.textContent = '🔵 DRY-RUN';
         }
     } catch (e) {
+        console.warn('[bot-mode] refresh failed:', e && e.message ? e.message : e);
         const el2 = document.getElementById('bot-mode-badge');
         if (el2) {
             el2.classList.remove('bot-mode-live', 'bot-mode-dry');

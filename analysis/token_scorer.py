@@ -74,7 +74,43 @@ class TokenScorer:
         
         # Scoring weights (customizable)
         self.weights = ScoringWeights(**config.get('scoring_weights', {}))
-        
+
+        # AI-Q-09: online perceptron-style weight learning. OFF by default.
+        # When enabled, `update_weights_from_outcome(category_scores,
+        # realized_pnl_usd, entry_usd)` nudges each ScoringWeights field
+        # toward the gradient of realized R-multiple. We renormalize so
+        # weights still sum to 1.0 after each update — preserves the
+        # invariant `_calculate_weighted_score` relies on for the divide.
+        #
+        # Lever is per-call, no DB writes here. Caller (engine close hook
+        # or replay backfill) is responsible for persistence via
+        # config_settings if it wants the learned weights to survive
+        # restart. Snapshot ships in self.weights_history (capped) so
+        # operators can audit drift via /api/ai/scoring_weights.
+        self.online_learning_enabled = bool(
+            config.get('token_scorer_online_learning_enabled', False)
+        )
+        # Step size; small to avoid one outlier reshaping the weight
+        # vector. 0.005 ≈ ~200 updates to fully respond to a regime
+        # shift, which matches the trader's intuition.
+        self.online_learning_rate = float(
+            config.get('token_scorer_online_learning_rate', 0.005)
+        )
+        # Hard guard so a category never collapses to zero (= ignored)
+        # nor monopolises the score.
+        self.online_min_weight = float(
+            config.get('token_scorer_min_weight', 0.01)
+        )
+        self.online_max_weight = float(
+            config.get('token_scorer_max_weight', 0.50)
+        )
+        # In-memory audit trail (last N updates). Capped to keep RAM
+        # bounded; ops can pull deltas via the cap-size dashboard tile.
+        self._weights_history_cap = int(
+            config.get('token_scorer_history_cap', 500)
+        )
+        self.weights_history: list = []
+
         # Scoring thresholds
         self.thresholds = {
             'A+': 90,
@@ -975,3 +1011,118 @@ class TokenScorer:
             return weighted_sum / total_weight
         else:
             return 50.0  # Default middle score
+
+    # ====================================================================
+    # AI-Q-09: online perceptron-style weight learner
+    # ====================================================================
+
+    # Mapping from category score key -> ScoringWeights attribute name.
+    # Kept module-local to avoid coupling to internal field reshuffles.
+    _WEIGHT_ATTRS = {
+        'liquidity': 'liquidity',
+        'volume': 'volume',
+        'holder_distribution': 'holder_distribution',
+        'developer_activity': 'developer_activity',
+        'contract_safety': 'contract_safety',
+        'price_action': 'price_action',
+        'social_sentiment': 'social_sentiment',
+        'market_correlation': 'market_correlation',
+        'innovation': 'innovation',
+    }
+
+    def update_weights_from_outcome(
+        self,
+        category_scores: Dict[str, float],
+        realized_pnl_usd: float,
+        entry_usd: float,
+        meta: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, float]:
+        """Online perceptron-style nudge of `self.weights` from a trade outcome.
+
+        AI-Q-09. OFF by default (`self.online_learning_enabled`). When
+        enabled, computes an R-multiple `r = realized_pnl_usd / entry_usd`,
+        clips to `[-1, 1]`, then for each category nudges its weight by
+            delta_w = lr * r * (s - mean_s) / max_s
+        where `s` is the category's 0-100 score in this trade and
+        `mean_s` is the cross-category mean — i.e. categories that scored
+        ABOVE average get rewarded if the trade won, punished if it lost,
+        and vice versa for below-average. Then clips to
+        `[min_weight, max_weight]` and renormalises to sum=1.
+
+        Returns the new weight dict. No DB write here — caller decides
+        persistence cadence.
+        """
+        if not self.online_learning_enabled:
+            return self._weights_snapshot()
+        if entry_usd is None or entry_usd <= 0:
+            return self._weights_snapshot()
+        if not category_scores:
+            return self._weights_snapshot()
+        try:
+            # Clip R-multiple to keep one fat-tail trade from monopolising
+            # the gradient. 100% gain or loss is plenty of signal.
+            r = float(realized_pnl_usd) / float(entry_usd)
+            r = max(-1.0, min(1.0, r))
+
+            present = [k for k in self._WEIGHT_ATTRS
+                       if k in category_scores]
+            if not present:
+                return self._weights_snapshot()
+            scores = np.array(
+                [float(category_scores.get(k, 50.0)) for k in present],
+                dtype=np.float64,
+            )
+            mean_s = float(scores.mean())
+            # Scale by max_s so the units of `delta_w` are weight-fraction.
+            max_s = float(max(scores.max(), 1.0))
+            lr = self.online_learning_rate
+
+            old = self._weights_snapshot()
+            new = dict(old)
+            for k, s in zip(present, scores):
+                attr = self._WEIGHT_ATTRS[k]
+                delta = lr * r * ((s - mean_s) / max_s)
+                w = old.get(attr, getattr(self.weights, attr, 0.0)) + delta
+                w = max(self.online_min_weight,
+                        min(self.online_max_weight, w))
+                new[attr] = w
+
+            # Renormalise to sum=1 so _calculate_weighted_score's
+            # divide-by-total_weight remains stable.
+            total = sum(new.values())
+            if total <= 0:
+                logger.warning(
+                    "AI-Q-09: degenerate weight sum; rolling back update"
+                )
+                return old
+            new = {k: v / total for k, v in new.items()}
+
+            # Apply.
+            for attr, v in new.items():
+                setattr(self.weights, attr, v)
+
+            # Audit trail (capped FIFO).
+            self.weights_history.append({
+                'timestamp': datetime.utcnow().isoformat(),
+                'r_multiple': r,
+                'entry_usd': float(entry_usd),
+                'pnl_usd': float(realized_pnl_usd),
+                'before': old,
+                'after': new,
+                'meta': meta or {},
+            })
+            if len(self.weights_history) > self._weights_history_cap:
+                # Drop oldest in one shot to avoid per-call shift cost.
+                drop = len(self.weights_history) - self._weights_history_cap
+                del self.weights_history[:drop]
+            return new
+        except Exception as e:
+            logger.error(f"AI-Q-09: update_weights_from_outcome failed: {e}")
+            return self._weights_snapshot()
+
+    def _weights_snapshot(self) -> Dict[str, float]:
+        """Current `self.weights` as a plain dict — used for audit + return."""
+        return {
+            attr: float(getattr(self.weights, attr, 0.0))
+            for attr in self._WEIGHT_ATTRS.values()
+        }

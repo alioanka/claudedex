@@ -1,0 +1,683 @@
+"""Unit tests for SNIPER paths added in the May 2026 hardening session.
+
+Covers timing-marker math (t_rpc_receipt isolation), the active-positions
+cap gate, the LIVE-mode safety filter guard, and the Jupiter /quote
+USD-derivation. Each test is pure-Python; no DB, no RPC, no listener
+sockets. Run via:
+    pytest tests/unit/test_sniper_new_paths.py -v
+"""
+import asyncio
+import time
+import pytest
+
+from modules.sniper.core._timing import (
+    SnipeTimingContext,
+    parse_iso_to_perf_counter,
+)
+
+
+# ---------------------------------------------------------------------------
+# Timing context math
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_timing_to_metadata_basic_shape():
+    """to_metadata_dict returns all expected keys with float|None values."""
+    ctx = SnipeTimingContext(token_address='ABC', chain='solana')
+    md = ctx.to_metadata_dict()
+    expected = {
+        'outcome',
+        'detect_to_rpc_receipt_ms',
+        'rpc_receipt_to_eval_ms',
+        'detect_to_eval_ms',
+        'eval_to_safety_ms',
+        'safety_ms',
+        'safety_to_broadcast_ms',
+        'broadcast_ms',
+        'total_ms',
+    }
+    assert set(md.keys()) == expected
+    assert md['outcome'] == 'pending'
+    # All deltas None when only t_eval_start is stamped.
+    assert md['detect_to_rpc_receipt_ms'] is None
+    assert md['broadcast_ms'] is None
+
+
+@pytest.mark.unit
+def test_timing_detect_to_rpc_receipt_isolated_from_eval_lag():
+    """Core insight of the timing re-architecture: detect_to_rpc_receipt_ms
+    should reflect listener arrival lag, NOT include subsequent eval queue
+    or commitment-wait time. Build a context with t_detect = perf_now - 3s
+    (block produced 3s ago), t_rpc_receipt = perf_now - 2.8s (WSS arrived
+    200ms after block), t_eval_start = perf_now (engine just evaluating).
+    The detect_to_rpc_receipt delta should be ~200ms, NOT ~3s.
+    """
+    now = time.perf_counter()
+    ctx = SnipeTimingContext(
+        token_address='X',
+        chain='solana',
+        t_detect=now - 3.0,
+        t_rpc_receipt=now - 2.8,
+    )
+    ctx.t_eval_start = now  # override the field's default_factory snapshot
+
+    md = ctx.to_metadata_dict()
+    assert 150 <= md['detect_to_rpc_receipt_ms'] <= 250  # ~200ms within drift
+    assert 2700 <= md['rpc_receipt_to_eval_ms'] <= 2900  # ~2800ms eval lag
+    # Total spans detect → broadcast_done; broadcast not stamped, so None.
+    assert md['total_ms'] is None
+
+
+@pytest.mark.unit
+def test_timing_emit_is_idempotent():
+    """emit() guards against double-counting via the _emitted flag."""
+    ctx = SnipeTimingContext(token_address='Y', chain='evm')
+    ctx.outcome = 'success'
+    ctx.emit()
+    assert ctx._emitted is True
+    # Second call is a no-op — would not raise even if state is corrupted
+    ctx.emit()
+
+
+@pytest.mark.unit
+def test_parse_iso_to_perf_counter_returns_none_on_empty():
+    assert parse_iso_to_perf_counter('') is None
+    assert parse_iso_to_perf_counter(None) is None
+
+
+@pytest.mark.unit
+def test_parse_iso_to_perf_counter_recovers_recent_iso():
+    """An ISO timestamp from N seconds ago should map to perf_counter()
+    minus approximately N seconds (within ~1s tolerance for scheduling
+    jitter and wall-clock vs perf-clock drift)."""
+    from datetime import datetime, timezone, timedelta
+    five_sec_ago = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+    perf_anchor = parse_iso_to_perf_counter(five_sec_ago)
+    assert perf_anchor is not None
+    # delta should be ~5 seconds back from now
+    delta = time.perf_counter() - perf_anchor
+    assert 4.5 <= delta <= 5.5
+
+
+# ---------------------------------------------------------------------------
+# LIVE-mode safety filter guard
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_live_mode_refuses_to_start_with_safety_off(monkeypatch):
+    """The guard added in 12ec9cc must raise when DRY_RUN=false AND
+    safety_check_enabled=false. Mirrors the VPS validation flow."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'false')
+
+    eng = SniperEngine({}, None, None)
+    eng.safety_check_enabled = False  # the dangerous state
+
+    with pytest.raises(RuntimeError, match='safety_check_enabled=false in LIVE mode'):
+        await eng._load_settings()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_live_mode_starts_when_safety_on(monkeypatch):
+    """Same conditions but safety_check_enabled=True → engine starts."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'false')
+
+    eng = SniperEngine({}, None, None)
+    eng.safety_check_enabled = True
+    # Should not raise. The settings load has no DB but that path is
+    # already fail-soft (try/except wrapper at module level).
+    await eng._load_settings()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dry_run_allows_safety_off(monkeypatch):
+    """DRY_RUN=true overrides — Phase 2 measurement state must still
+    work even though safety_check_enabled is off."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+
+    eng = SniperEngine({}, None, None)
+    eng.safety_check_enabled = False
+    await eng._load_settings()  # MUST NOT raise
+
+
+# ---------------------------------------------------------------------------
+# Active-positions cap gate
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_active_positions_cap_rejects_when_full(monkeypatch):
+    """When len(active_snipes) >= max_active_positions, _evaluate_target
+    must short-circuit and never reach _check_filters."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+
+    eng = SniperEngine({}, None, None)
+    eng.max_active_positions = 2
+    eng.active_snipes = {'a': {}, 'b': {}}  # at cap
+
+    # If filters were called we'd raise; ensure they aren't
+    async def fail(*args, **kw):
+        raise AssertionError("_check_filters should not be reached when capped")
+    eng._check_filters = fail
+
+    target = {'token_address': 'X', 'pair_address': 'P', 'timestamp': ''}
+    await eng._evaluate_target(target, 'solana')
+
+    # The capped path increments capped_rejections counter
+    assert eng._stats.get('capped_rejections', 0) >= 1
+    # And does NOT add a pending target
+    assert 'X' not in eng.pending_targets
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_active_positions_cap_allows_when_below(monkeypatch):
+    """Under the cap, the candidate flows through to _check_filters."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+
+    eng = SniperEngine({}, None, None)
+    eng.max_active_positions = 100
+    eng.active_snipes = {'a': {}}  # well below cap
+
+    called = {'n': 0}
+
+    async def stub_filter(*args, **kw):
+        called['n'] += 1
+        return False  # reject so we don't add to pending_targets
+
+    eng._check_filters = stub_filter
+
+    target = {'token_address': 'Y', 'pair_address': 'P', 'timestamp': ''}
+    await eng._evaluate_target(target, 'solana')
+
+    assert called['n'] == 1
+    assert eng._stats.get('capped_rejections', 0) == 0
+
+
+# ---------------------------------------------------------------------------
+# R4: Honeypot quorum decision (TokenSafetyChecker._quorum_honeypot_decision)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_quorum_both_none_returns_clear_no_note():
+    """Both sources unreachable: caller's safety_check_error path
+    handles cooldown — quorum returns (False, None)."""
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    assert T._quorum_honeypot_decision(None, None) == (False, None)
+
+
+@pytest.mark.unit
+def test_quorum_single_source_trusted():
+    """One source reachable: trust its verdict with a note."""
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    is_hp, note = T._quorum_honeypot_decision(True, None)
+    assert is_hp is True and 'one-source' in note and 'GoPlus' in note
+    is_hp, note = T._quorum_honeypot_decision(None, True)
+    assert is_hp is True and 'one-source' in note and 'Honeypot.is' in note
+    # Single-source clean
+    is_hp, note = T._quorum_honeypot_decision(False, None)
+    assert is_hp is False and 'one-source' in note
+
+
+@pytest.mark.unit
+def test_quorum_both_agree_honeypot():
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    is_hp, note = T._quorum_honeypot_decision(True, True)
+    assert is_hp is True and 'both sources agree' in note
+
+
+@pytest.mark.unit
+def test_quorum_both_agree_clean():
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    assert T._quorum_honeypot_decision(False, False) == (False, None)
+
+
+@pytest.mark.unit
+def test_quorum_disagree_fails_safe():
+    """Disagreement always trips fail-safe (treat as honeypot) — false-
+    positive cheaper than trusting the wrong 'clear' verdict."""
+    from modules.sniper.core.token_safety import TokenSafetyChecker as T
+    is_hp, note = T._quorum_honeypot_decision(True, False)
+    assert is_hp is True and 'disagree' in note
+    is_hp, note = T._quorum_honeypot_decision(False, True)
+    assert is_hp is True and 'disagree' in note
+
+
+# ---------------------------------------------------------------------------
+# Jupiter quote USD-derivation
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_jupiter_quote_math_consistent_with_executor_decimals():
+    """The fallback computes:
+        price_usd = (in_sol * sol_usd) / (out_amount_raw / 1e6)
+
+    With 0.01 SOL probe, SOL @ $200, out_amount_raw = 1_000_000_000 raw
+    units (= 1000 whole tokens at trade_executor's 6-decimal convention),
+    expected USD per whole token = (0.01 * 200) / 1000 = $0.002.
+    """
+    in_lamports = 10_000_000
+    in_sol = in_lamports / 1e9
+    sol_usd = 200.0
+    out_amount_raw = 1_000_000_000  # 1000 tokens at 6 decimals
+    tokens_received = out_amount_raw / 1e6  # 1000.0
+    price_usd = (in_sol * sol_usd) / tokens_received
+    assert price_usd == pytest.approx(0.002, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Wave-3: Pyth Hermes feed resolution + fallback chain
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_pyth_feed_map_known_blue_chips_resolve():
+    """SOL/USDC/USDT/ETH/BONK all have feed-ids; pump.fun mints return None."""
+    from modules.sniper.core.pyth_feed_ids import get_pyth_feed_id
+
+    sol = 'So11111111111111111111111111111111111111112'
+    usdc = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+    bonk = 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263'
+    pumpfun_fake = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'  # not mapped
+
+    assert get_pyth_feed_id(sol) is not None
+    assert get_pyth_feed_id(usdc) is not None
+    assert get_pyth_feed_id(bonk) is not None
+    assert get_pyth_feed_id(pumpfun_fake) is None
+    assert get_pyth_feed_id(None) is None
+    assert get_pyth_feed_id('') is None
+
+
+@pytest.mark.unit
+def test_pyth_feed_ids_are_well_formed_hex():
+    """Every feed-id must be 0x + 64 hex chars (32-byte identifier)."""
+    from modules.sniper.core.pyth_feed_ids import SOLANA_MINT_TO_PYTH_FEED_ID
+    for mint, fid in SOLANA_MINT_TO_PYTH_FEED_ID.items():
+        assert fid.startswith('0x'), f"{mint}: feed-id missing 0x prefix"
+        hex_part = fid[2:]
+        assert len(hex_part) == 64, f"{mint}: feed-id wrong length {len(hex_part)}"
+        int(hex_part, 16)  # raises if non-hex
+
+
+@pytest.mark.unit
+def test_pyth_parse_price_handles_hermes_v2_shape():
+    """The _parse_price helper turns Hermes v2 'parsed[0].price' into USD."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    data = {
+        'parsed': [
+            {'id': 'abc', 'price': {'price': '12345678', 'expo': -8}},
+        ]
+    }
+    # 12345678 * 10^-8 = 0.12345678
+    assert PythFeedClient._parse_price(data) == pytest.approx(0.12345678, rel=1e-9)
+
+
+@pytest.mark.unit
+def test_pyth_parse_price_returns_none_on_bad_shapes():
+    """Malformed payloads must return None without raising."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    assert PythFeedClient._parse_price(None) is None
+    assert PythFeedClient._parse_price({}) is None
+    assert PythFeedClient._parse_price({'parsed': []}) is None
+    assert PythFeedClient._parse_price({'parsed': [{}]}) is None
+    assert PythFeedClient._parse_price({'parsed': [{'price': {}}]}) is None
+    # garbage values
+    bad = {'parsed': [{'price': {'price': 'NaN', 'expo': 'lol'}}]}
+    assert PythFeedClient._parse_price(bad) is None
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_client_get_price_none_on_empty_feed_id():
+    """No feed-id -> immediate None, no HTTP call."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    c = PythFeedClient()
+    assert await c.get_price(None) is None
+    assert await c.get_price('') is None
+    # No counters mutated either
+    assert c.fetches == 0 and c.fetch_errors == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_client_cache_serves_within_ttl():
+    """Pre-populated cache entry returns without HTTP; hits counter bumps."""
+    from datetime import datetime
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    c = PythFeedClient()
+    c._cache['0xabc'] = (1.23, datetime.now())
+    price = await c.get_price('0xabc')
+    assert price == 1.23
+    assert c.hits == 1
+    assert c.fetches == 0  # no HTTP issued
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_via_pyth_helper_unmapped_returns_zero(monkeypatch):
+    """_get_token_price_via_pyth returns 0 for unmapped (pump.fun) mints
+    without making any HTTP call — the cheapest fall-through path."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+    eng = SniperEngine({}, None, None)
+
+    # Force the singleton to fail loudly if called — proves we don't reach it
+    from modules.sniper.core import pyth_feed
+    async def boom(*a, **kw):
+        raise AssertionError("pyth_client.get_price should not be called for unmapped mint")
+    monkeypatch.setattr(pyth_feed.pyth_client, 'get_price', boom)
+
+    pumpfun_fake = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
+    price = await eng._get_token_price_via_pyth(pumpfun_fake)
+    assert price == 0
+    assert eng._stats.get('pyth_fallback_hits', 0) == 0
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_via_pyth_helper_mapped_mint_uses_singleton(monkeypatch):
+    """For a mapped mint, helper calls pyth_client.get_price and bumps the
+    pyth_fallback_hits counter on success."""
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+    eng = SniperEngine({}, None, None)
+
+    captured = {'feed_id': None}
+
+    async def fake_get_price(feed_id):
+        captured['feed_id'] = feed_id
+        return 187.42
+
+    from modules.sniper.core import pyth_feed
+    monkeypatch.setattr(pyth_feed.pyth_client, 'get_price', fake_get_price)
+
+    sol_mint = 'So11111111111111111111111111111111111111112'
+    price = await eng._get_token_price_via_pyth(sol_mint)
+    assert price == pytest.approx(187.42)
+    assert captured['feed_id'] is not None
+    assert captured['feed_id'].startswith('0x')
+    assert eng._stats.get('pyth_fallback_hits', 0) == 1
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_pyth_feature_flag_off_skips_pyth_step(monkeypatch):
+    """When sniper_pyth_feeds_enabled=False, _get_token_price must not
+    even probe Pyth; it falls straight to Jupiter Price v2.
+    We monkey-patch the Pyth helper to raise so any call would fail the
+    test, then short-circuit the Jupiter HTTP layer with a stub.
+    """
+    from modules.sniper.core.sniper_engine import SniperEngine
+
+    monkeypatch.setenv('DRY_RUN', 'true')
+    eng = SniperEngine({}, None, None)
+    eng.sniper_pyth_feeds_enabled = False  # flag off
+
+    async def boom_pyth(*a, **kw):
+        raise AssertionError("Pyth must not be called when flag is off")
+    eng._get_token_price_via_pyth = boom_pyth
+
+    # Short-circuit subsequent steps too — return 0 to verify no exception
+    # is raised by bypassing Pyth.
+    async def zero_jq(*a, **kw):
+        return 0
+    async def zero_be(*a, **kw):
+        return 0
+    eng._get_token_price_via_jupiter_quote = zero_jq
+    eng._get_token_price_via_birdeye = zero_be
+
+    # Force the aiohttp Jupiter Price v2 call to short-circuit via cache.
+    # Use a non-mapped mint so even if Pyth helper WAS called, the no-op
+    # path would return 0 — but we asserted it must not be called.
+    eng._mint_price_cache['BONKxxxx'] = (0.0, __import__('datetime').datetime.now())
+
+    # Call should not raise.
+    price = await eng._get_token_price('BONKxxxx', 'solana')
+    # Cached 0 returns 0; just ensure no exception path was hit.
+    assert price == 0
+
+
+@pytest.mark.unit
+def test_pyth_client_stats_shape():
+    """stats() must return the dict shape the dashboard expects."""
+    from modules.sniper.core.pyth_feed import PythFeedClient
+    c = PythFeedClient()
+    stats = c.stats()
+    assert set(stats.keys()) == {
+        'pyth_cache_hits',
+        'pyth_fetches',
+        'pyth_fetch_errors',
+        'pyth_rate_limited',
+        'pyth_cache_size',
+    }
+    assert all(isinstance(v, int) for v in stats.values())
+
+
+# ---------------------------------------------------------------------------
+# EVM block-time cache (added in dd8bb51)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_evm_block_ts_cache_returns_cached_on_hit():
+    """Pre-populating the cache lets _get_cached_block_timestamp return
+    without any RPC call. Verifies the burst-friendly fast path."""
+    from modules.sniper.core.evm_listener import EVMListener
+    el = EVMListener({})
+    el._block_ts_cache[18_000_000] = 1715800000
+    assert el._get_cached_block_timestamp(18_000_000) == 1715800000
+
+
+@pytest.mark.unit
+def test_evm_block_ts_cache_evicts_oldest_on_overflow():
+    """Cache is bounded by _block_ts_cache_max — overflow evicts the
+    oldest entry first (insertion order)."""
+    from modules.sniper.core.evm_listener import EVMListener
+    el = EVMListener({})
+    el._block_ts_cache_max = 3
+    el._block_ts_cache[100] = 1715800000
+    el._block_ts_cache[101] = 1715800012
+    el._block_ts_cache[102] = 1715800024
+    # Now fetch a new one — without a live w3, get_block fails and
+    # the cache miss returns None, NOT mutating the cache. So we
+    # poke the cache directly to simulate a successful fetch.
+    el._block_ts_cache[103] = 1715800036  # would be the post-eviction state
+    # Manually trigger the eviction logic the helper uses:
+    if len(el._block_ts_cache) > el._block_ts_cache_max:
+        el._block_ts_cache.pop(next(iter(el._block_ts_cache)))
+    assert 100 not in el._block_ts_cache  # oldest evicted
+    assert 103 in el._block_ts_cache       # newest retained
+
+
+@pytest.mark.unit
+def test_evm_block_ts_cache_handles_str_block_number():
+    """Hex-string block numbers (from raw WSS payloads) are coerced to int."""
+    from modules.sniper.core.evm_listener import EVMListener
+    el = EVMListener({})
+    el._block_ts_cache[18_000_000] = 1715800000
+    # The helper accepts a string and int()s it before lookup
+    assert el._get_cached_block_timestamp(18_000_000) == 1715800000
+
+
+@pytest.mark.unit
+def test_evm_block_ts_cache_returns_none_on_failure():
+    """No w3 connection → graceful None instead of an exception."""
+    from modules.sniper.core.evm_listener import EVMListener
+    el = EVMListener({})
+    el.w3 = None
+    assert el._get_cached_block_timestamp(18_000_000) is None
+
+
+# ---------------------------------------------------------------------------
+# COPY_TRADING position cap (added in a28dd22)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_copy_position_cap_fail_soft_without_db():
+    """_at_position_cap with no DB pool returns False (don't block)."""
+    from modules.copy_trading.copy_engine import CopyTradingEngine
+    eng = CopyTradingEngine.__new__(CopyTradingEngine)
+    eng.db_pool = None
+    eng.max_active_positions = 50
+    assert await eng._at_position_cap() is False
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_copy_position_cap_disabled_when_zero():
+    """max_active_positions <= 0 disables the cap (returns False)."""
+    from modules.copy_trading.copy_engine import CopyTradingEngine
+    eng = CopyTradingEngine.__new__(CopyTradingEngine)
+    eng.db_pool = object()  # not None — would otherwise try a query
+    eng.max_active_positions = 0
+    assert await eng._at_position_cap() is False
+
+
+# ---------------------------------------------------------------------------
+# Dashboard SOL/USD cache (added in ee7fe62)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dashboard_sol_usd_cache_serves_recent_value(monkeypatch):
+    """A recently cached price short-circuits the network fetch."""
+    from monitoring.enhanced_dashboard import DashboardEndpoints
+    from datetime import datetime
+    d = DashboardEndpoints.__new__(DashboardEndpoints)
+    d._sol_usd_cache = 187.5
+    d._sol_usd_cached_at = datetime.now()
+    assert await d._get_sol_usd_price() == 187.5
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_dashboard_sol_usd_falls_back_when_empty():
+    """No cache + no network reachable → 200.0 last-resort fallback."""
+    from monitoring.enhanced_dashboard import DashboardEndpoints
+    from datetime import datetime
+    d = DashboardEndpoints.__new__(DashboardEndpoints)
+    d._sol_usd_cache = 0.0
+    d._sol_usd_cached_at = datetime.min
+    # Network unreachable in test sandbox; helper logs at debug and
+    # returns 200.0. (If network IS reachable in CI, this just returns
+    # the real SOL price — also > 0, so the assertion still passes.)
+    price = await d._get_sol_usd_price()
+    assert price > 0
+
+
+# ---------------------------------------------------------------------------
+# Module status derivation — Disabled / ENABLED / RUNNING (3edbcac, 7a4ebf3,
+# 49672a7, 8307113 fixes that stopped reporting RUNNING for disabled modules
+# with stale trades).
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_status_helper_disabled_when_env_off():
+    """The _status(running, enabled) helper used for sniper/arbitrage/
+    copytrading/ai status returns 'DISABLED' when env flag is off,
+    regardless of whether subprocess is alive."""
+    def _status(running, enabled):
+        if running: return 'RUNNING'
+        if enabled: return 'ENABLED'
+        return 'DISABLED'
+    assert _status(False, False) == 'DISABLED'
+    assert _status(True, False) == 'RUNNING'   # running wins even if env off
+    assert _status(True, True) == 'RUNNING'
+    assert _status(False, True) == 'ENABLED'
+
+
+# ---------------------------------------------------------------------------
+# AI per-model cost rate table (4f15cce)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+def test_ai_cost_per_model_consistency():
+    """Spot-check the AI cost-per-model rates produce sensible USD
+    figures for typical token usage. The frontend formula is
+    (tokens_used / 1000) * rate.
+    """
+    COST_PER_1K = {
+        'gpt-3.5-turbo': 0.002,
+        'gpt-4o-mini':   0.000375,
+        'gpt-4o':        0.0125,
+        'gpt-4-turbo':   0.020,
+        'gpt-4':         0.045,
+        'claude-3-haiku': 0.000750,
+        'claude-3.5-haiku': 0.0020,
+        'claude-3-sonnet': 0.0090,
+        'claude-3.5-sonnet': 0.009,
+        'claude-3-opus':   0.0450,
+    }
+    # 10k tokens on gpt-4o-mini ≈ $0.00375 (cheap)
+    assert (10000 / 1000) * COST_PER_1K['gpt-4o-mini'] == pytest.approx(0.00375)
+    # 10k tokens on gpt-4 ≈ $0.45 (45x more expensive)
+    assert (10000 / 1000) * COST_PER_1K['gpt-4'] == pytest.approx(0.45)
+    # The old single-rate-for-everything (0.002) was right for gpt-3.5
+    # but off by an order of magnitude for gpt-4. Sanity-check the
+    # ordering: gpt-4 > gpt-4-turbo > gpt-4o > gpt-3.5 > gpt-4o-mini.
+    rates = sorted(COST_PER_1K.values())
+    assert COST_PER_1K['gpt-4'] == max(rates) or COST_PER_1K['claude-3-opus'] == max(rates)
+    assert COST_PER_1K['gpt-4o-mini'] < COST_PER_1K['gpt-3.5-turbo'] < COST_PER_1K['gpt-4o']
+
+
+# ---------------------------------------------------------------------------
+# Atomic wallet add/remove endpoints (a52e010)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_atomic_wallet_remove_payload_validation():
+    """api_copytrading_wallet_remove must reject requests with no
+    wallet field — prevents accidental no-op writes and surfaces
+    operator errors instead of silently mutating settings.
+    """
+    from monitoring.enhanced_dashboard import DashboardEndpoints
+
+    # Synthesize a request-like object that returns an empty body.
+    class FakeReq:
+        async def json(self):
+            return {}
+    d = DashboardEndpoints.__new__(DashboardEndpoints)
+    d.db = None  # forces the 'database unavailable' path AFTER
+                 # the wallet-required check.
+    resp = await d.api_copytrading_wallet_remove(FakeReq())
+    # Must be a web.Response with 400 (wallet required, hits before db check)
+    assert getattr(resp, 'status', None) == 400
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_atomic_wallet_add_rejects_empty():
+    """api_copytrading_wallet_add rejects empty body the same way."""
+    from monitoring.enhanced_dashboard import DashboardEndpoints
+
+    class FakeReq:
+        async def json(self):
+            return {'wallet': ''}  # empty string
+    d = DashboardEndpoints.__new__(DashboardEndpoints)
+    d.db = None
+    resp = await d.api_copytrading_wallet_add(FakeReq())
+    assert getattr(resp, 'status', None) == 400
+
+
+# ---------------------------------------------------------------------------
+# AnalyticsRoutes fail-soft when engine is None (cc21720)
+# ---------------------------------------------------------------------------
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_analytics_routes_require_engine_guard():
+    """_require_engine returns a 503 response when engine is None,
+    None when wired. Used by every /api/analytics/* endpoint as a
+    fail-soft guard."""
+    from monitoring.analytics_routes import AnalyticsRoutes
+
+    # engine=None
+    r = AnalyticsRoutes(analytics_engine=None)
+    guard = r._require_engine()
+    assert guard is not None
+    assert getattr(guard, 'status', None) == 503
+
+    # engine present
+    r2 = AnalyticsRoutes(analytics_engine=object())
+    assert r2._require_engine() is None

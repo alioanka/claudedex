@@ -342,8 +342,31 @@ function updateStats(logs) {
     const avgSentiment = logs.reduce((sum, log) => sum + (log.sentiment_score || 0), 0) / logs.length;
     document.getElementById('stat-avg-sentiment').textContent = avgSentiment.toFixed(2);
 
-    // Estimate cost (GPT-3.5-turbo: ~$0.002 per 1K tokens)
-    const estCost = (totalTokens / 1000) * 0.002;
+    // Cost estimate uses a per-model rate table because GPT-3.5's
+    // $0.002/1K is no longer representative (gpt-4o-mini is ~$0.15/1M
+    // in + $0.60/1M out, Claude Haiku ~$0.25/1M in + $1.25/1M out).
+    // Hardcoded blended rate gave wildly wrong dollar figures for any
+    // model other than gpt-3.5-turbo. The blended rate per row is the
+    // average of input + output costs; we don't have token split per
+    // log, so the estimate is necessarily approximate — better than
+    // assuming gpt-3.5 across the board.
+    const COST_PER_1K = {
+        'gpt-3.5-turbo': 0.002,
+        'gpt-4o-mini':   0.000375,   // (0.15 + 0.60) / 2 per 1M -> /1000
+        'gpt-4o':        0.0125,     // (2.50 + 10.00) / 2 per 1M -> /1000
+        'gpt-4-turbo':   0.020,
+        'gpt-4':         0.045,
+        'claude-3-haiku': 0.000750,
+        'claude-3.5-haiku': 0.0020,
+        'claude-3-sonnet': 0.0090,
+        'claude-3.5-sonnet': 0.009,
+        'claude-3-opus':   0.0450,
+    };
+    const estCost = logs.reduce((sum, log) => {
+        const model = (log.model || 'gpt-3.5-turbo').toLowerCase();
+        const rate = COST_PER_1K[model] || 0.002;  // fallback to gpt-3.5
+        return sum + ((log.tokens_used || 0) / 1000) * rate;
+    }, 0);
     document.getElementById('stat-est-cost').textContent = '$' + estCost.toFixed(4);
 }
 
@@ -447,7 +470,25 @@ function escapeHtml(text) {
 // Load on page load
 loadLogs();
 
-// Auto-refresh every 60 seconds
-setInterval(loadLogs, 60000);
+// Auto-refresh every 60s, but suspend while the tab is hidden and
+// back off when consecutive responses are empty (e.g. AI module is
+// disabled — no point repolling the same empty endpoint).
+let aiLogsEmptyStreak = 0;
+async function loadLogsWithBackoff() {
+    if (document.hidden) return;
+    if (aiLogsEmptyStreak >= 5) {
+        // After 5 consecutive empty fetches (5 minutes) slow to once
+        // every 5 minutes until the AI module starts logging again.
+        if (aiLogsEmptyStreak % 5 !== 0) {
+            aiLogsEmptyStreak++;
+            return;
+        }
+    }
+    const before = (window._lastAiLogCount || 0);
+    await loadLogs();
+    const after = (window._lastAiLogCount || 0);
+    aiLogsEmptyStreak = (after > before) ? 0 : (aiLogsEmptyStreak + 1);
+}
+setInterval(loadLogsWithBackoff, 60000);
 </script>
 {% endblock %}

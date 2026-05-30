@@ -61,8 +61,8 @@ httpx.AsyncClient = _CompatAsyncClient
 import asyncio
 import logging
 import time
-from typing import Dict, List, Optional, Any
-from datetime import datetime, timedelta
+from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from enum import Enum
 import os
@@ -78,6 +78,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from core.pnl_tracker import PnLTracker, TradeRecord
 from core.units import get_spl_decimals
+from modules.solana_trading.core.price_buffer import TokenPriceBuffer
 
 # Import JupiterHelper for live swap execution
 try:
@@ -85,6 +86,13 @@ try:
     JUPITER_HELPER_AVAILABLE = True
 except ImportError:
     JUPITER_HELPER_AVAILABLE = False
+
+# Wave-4: shared Jito MEV-bundle client (opt-in routing).
+try:
+    from trading.chains.solana.jito_bundle import JitoClient
+    JITO_CLIENT_AVAILABLE = True
+except ImportError:
+    JITO_CLIENT_AVAILABLE = False
 
 # Import SafetyEngine for honeypot detection and close retry logic
 try:
@@ -135,6 +143,56 @@ class TokenInfo:
     liquidity_usd: float = 0.0
     volume_24h: float = 0.0
     price_change_24h: float = 0.0
+
+
+def _as_utc(dt):
+    """Normalize a datetime to UTC-aware. Naive values are assumed UTC.
+
+    Wave-11: positions/trades reconstructed from solana_positions/_trades
+    rows carry TIMESTAMPTZ (tz-aware) opened_at, while in-process opens
+    use naive datetime.utcnow(). Subtracting the two raises TypeError, so
+    every arithmetic involving opened_at/closed_at must route through this
+    helper.
+    """
+    if dt is None:
+        return None
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+
+def _json_safe(obj):
+    """Recursively convert a value into a JSON-serializable equivalent.
+
+    Wave-12 FIX 3: explicit datetime -> ISO-8601 string conversion (every
+    `datetime.now()` ingested into Position.metadata via the DexScreener /
+    pump.fun listener token dicts at solana_engine.py:704 and :1059
+    blew up `json.dumps(position.metadata)` in `_save_position_to_db`,
+    losing position-recovery metadata on every new open). Also handles
+    Decimal, UUID, set, and dataclass-shaped objects so sibling persist /
+    log sites are robust against the same class of bug. Preferred over
+    `json.dumps(..., default=str)` because the conversion is explicit and
+    the ISO format is round-trippable.
+    """
+    from decimal import Decimal as _Decimal
+    from uuid import UUID as _UUID
+    if obj is None or isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, datetime):
+        return _as_utc(obj).isoformat() if obj.tzinfo is not None else (obj.replace(tzinfo=timezone.utc).isoformat())
+    if isinstance(obj, _Decimal):
+        return str(obj)
+    if isinstance(obj, _UUID):
+        return str(obj)
+    if isinstance(obj, dict):
+        return {str(k): _json_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set, frozenset)):
+        return [_json_safe(v) for v in obj]
+    # Enum (e.g. Strategy / TradeSide) — fall through to .value
+    if hasattr(obj, 'value') and not callable(obj.value):
+        try:
+            return _json_safe(obj.value)
+        except Exception:
+            pass
+    return str(obj)
 
 
 @dataclass
@@ -459,9 +517,17 @@ class JupiterClient:
                 if resp.status == 200:
                     data = await resp.json()
                     pairs = data.get('pairs', [])
-                    if pairs:
-                        # Get the pair with highest liquidity
-                        best_pair = max(pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
+                    # Issue 10: only consider pairs where the queried mint is the
+                    # BASE token; DexScreener priceUsd is the base-token price, so
+                    # a quote-side match returns the WRONG token's price (the
+                    # $6788 ORCA exit bug).
+                    own_pairs = [
+                        p for p in pairs
+                        if (p.get('baseToken', {}).get('address') or '').lower() == token_mint.lower()
+                    ]
+                    if own_pairs:
+                        # Get the (base-token) pair with highest liquidity
+                        best_pair = max(own_pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
                         price = float(best_pair.get('priceUsd', 0))
                         if price > 0:
                             self._price_cache[token_mint] = {'price': price, 'source': 'dexscreener'}
@@ -514,9 +580,19 @@ class JupiterClient:
             async with session.get(price_api_url, params=params, timeout=10) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    if 'data' in data and token_mint in data['data']:
+                    # Issue 10: Jupiter Price v3 dropped the legacy
+                    # {"data": {<mint>: {"price": ...}}} envelope; it now returns a
+                    # flat {<mint>: {"usdPrice": ...}} object. The old parser only
+                    # matched the envelope, so this fallback silently returned None
+                    # and never contributed a price. Tolerate both shapes and both
+                    # field names so the fallback actually works.
+                    price_data = None
+                    if isinstance(data.get('data'), dict) and token_mint in data['data']:
                         price_data = data['data'][token_mint]
-                        price = float(price_data.get('price', 0))
+                    elif isinstance(data.get(token_mint), dict):
+                        price_data = data[token_mint]
+                    if isinstance(price_data, dict):
+                        price = float(price_data.get('usdPrice') or price_data.get('price') or 0)
                         if price > 0:
                             self._price_cache[token_mint] = {'price': price, 'source': 'jupiter'}
                             self._price_cache_time[token_mint] = datetime.now()
@@ -856,8 +932,26 @@ class PumpFunMonitor:
                     if not pairs:
                         return None
 
-                    # Get the pair with highest liquidity
-                    best_pair = max(pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
+                    # Issue 10: DexScreener `priceUsd` is the price of the pair's
+                    # BASE token. When the queried mint appears only as the QUOTE
+                    # side (e.g. SOMETOKEN/ORCA), the highest-liquidity pair's
+                    # priceUsd is SOMETOKEN's price — thousands of dollars — not
+                    # ours. Restrict to pairs where our mint is the base token so
+                    # priceUsd always refers to the token we asked about. This is
+                    # the root cause of the $6788 ORCA exit / +495424% PnL.
+                    own_pairs = [
+                        p for p in pairs
+                        if (p.get('baseToken', {}).get('address') or '').lower() == token_address.lower()
+                    ]
+                    if not own_pairs:
+                        logger.debug(
+                            f"DexScreener: {token_address[:8]} only appears as quote token — "
+                            f"no base-token pair, skipping (avoids wrong-token price)"
+                        )
+                        return None
+
+                    # Get the (base-token) pair with highest liquidity
+                    best_pair = max(own_pairs, key=lambda p: float(p.get('liquidity', {}).get('usd', 0) or 0))
 
                     price = float(best_pair.get('priceUsd', 0) or 0)
                     liquidity = float(best_pair.get('liquidity', {}).get('usd', 0) or 0)
@@ -1070,6 +1164,11 @@ class SolanaTradingEngine:
         self.is_running = False
         self.config_manager = config_manager
         self.db_pool = db_pool  # Database pool for trade persistence
+        # Cross-module risk gate. Injected after construction via
+        # set_risk_manager() — matches the arbitrage pattern. Optional
+        # so DRY_RUN paths and unit tests can construct the engine
+        # without a fully wired RiskManager.
+        self.risk_manager = None
 
         # DRY_RUN mode - CRITICAL: Check environment variable
         dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
@@ -1118,19 +1217,61 @@ class SolanaTradingEngine:
         self.token_cooldowns: Dict[str, datetime] = {}
         self.cooldown_duration = timedelta(minutes=10)
 
+        # Per-token rolling price buffer feeds the pump-predictor gate
+        # (wave-3). 60 bars = 3x PumpPredictor.sequence_length=20, gives
+        # slack across cycle drift. 30-min recency eviction keeps memory
+        # bounded as memecoin candidates rotate. Off by default -- only
+        # consumed when `solana_pump_predictor_enabled=True`.
+        self.price_buffer = TokenPriceBuffer(maxlen=60, max_age_s=1800.0)
+        self._pump_predictor_singleton = None  # lazy-loaded on first use
+
         # Solana client and wallet
         self.client = None
         self.wallet = None
         self.wallet_pubkey = None
+
+        # Wallet-balance fetch throttle + fail-soft cache (Issue 22).
+        # Health/metrics endpoints can be polled many times per second; an
+        # uncached RPC get_balance per request was producing millions of
+        # "Error getting wallet balance:" log lines on RPC failure. We cache
+        # the last good value, throttle the poll, and exponentially back off
+        # error logging so the flood is impossible.
+        self._wallet_balance_cache_sol = 0.0
+        self._wallet_balance_cache_ts = 0.0
+        self._wallet_balance_ttl_s = 15.0          # min seconds between RPC reads
+        self._wallet_balance_error_streak = 0
+        self._wallet_balance_last_err_log = 0.0
+        self._wallet_balance_err_log_interval_s = 30.0  # cap error log rate
 
         # Strategy clients (price/quote APIs)
         self.jupiter_client: Optional[JupiterClient] = None
         self.drift_client = None
         self.pumpfun_monitor: Optional[PumpFunMonitor] = None
 
+        # Drift perp market name -> Drift market index (Issue 11). Drift's
+        # mainnet ordering: 0 SOL-PERP, 1 BTC-PERP, 2 ETH-PERP. Extend as the
+        # operator enables more markets in drift_markets config.
+        self.DRIFT_MARKET_INDEX = {
+            'SOL-PERP': 0, 'BTC-PERP': 1, 'ETH-PERP': 2,
+        }
+        # Per-market scan throttle so the funding-rate signal is evaluated at
+        # most once per interval instead of every 5s cycle.
+        self._drift_last_scan_ts = 0.0
+        self._drift_scan_interval_s = 60.0
+        # Annualized funding magnitude (%) above which we take the carry side.
+        self._drift_funding_signal_pct = 10.0
+
         # Live trading helpers (for actual swap execution)
         self.jupiter_helper: Optional['JupiterHelper'] = None
         self.drift_helper: Optional['DriftHelper'] = None
+
+        # Wave-4: Jito MEV-bundle client. Lazy-init only when the
+        # `solana_jito_bundle_enabled` flag is True at engine startup; off
+        # by default. On bundle rejection the engine falls back to the
+        # vanilla JupiterHelper.execute_swap path.
+        self.jito: Optional['JitoClient'] = None
+        self.jito_enabled: bool = False
+        self.jito_tip_lamports: int = 50_000
 
         # Risk metrics
         self.risk_metrics = RiskMetrics(
@@ -1175,6 +1316,14 @@ class SolanaTradingEngine:
         logger.info(f"  Position size: {self.position_size_sol} SOL")
         logger.info(f"  Slippage: {self.slippage_bps} bps")
 
+    def set_risk_manager(self, risk_manager) -> None:
+        """Inject the cross-module RiskManager so entry broadcasts can be
+        gated by validate_trade(). Setter pattern matches arbitrage's
+        engine; main_solana.py calls this once after constructing the
+        engine. Engine remains functional without one — DRY_RUN paths
+        and tests skip the gate."""
+        self.risk_manager = risk_manager
+
     async def initialize(self):
         """Initialize Solana connections and components"""
         try:
@@ -1202,6 +1351,15 @@ class SolanaTradingEngine:
 
             # Reconcile open positions against on-chain SPL balances (MB-09)
             await self._reconcile_positions_on_startup()
+
+            # Wave-4: pre-fetch 60 1m bars per active token so the
+            # pump-predictor gate has history immediately on restart
+            # instead of waiting ~30min for the live poll loop to fill
+            # the buffer. Tolerant of every failure -- never blocks startup.
+            try:
+                await self._warmup_price_buffer()
+            except Exception as wu_err:
+                logger.warning(f"price-buffer warmup failed (non-fatal): {wu_err}")
 
             # Initialize SafetyEngine for all strategies (slippage, circuit breaker, etc.)
             try:
@@ -1427,16 +1585,70 @@ class SolanaTradingEngine:
                     # Get the decrypted private key for signing (reuse helper)
                     private_key = await self._get_decrypted_private_key()
                     if private_key:
+                        # Wire MB-15 / adaptive priority fee / quote TTL
+                        # config from SolanaConfigManager when available;
+                        # defaults preserve legacy behavior otherwise.
+                        cm = self.config_manager
                         self.jupiter_helper = JupiterHelper(
                             solana_rpc_url=self.primary_rpc,
                             private_key=private_key,
                             priority_fee_lamports=(
-                                self.config_manager.priority_fee_lamports
-                                if self.config_manager else None
+                                cm.priority_fee_lamports if cm else None
+                            ),
+                            adaptive_priority_fee=(
+                                cm.adaptive_priority_fee_enabled if cm else False
+                            ),
+                            adaptive_percentile=(
+                                cm.adaptive_priority_fee_percentile if cm else 75.0
+                            ),
+                            adaptive_min_lamports=(
+                                cm.adaptive_priority_fee_min_lamports if cm else 10_000
+                            ),
+                            adaptive_max_lamports=(
+                                cm.adaptive_priority_fee_max_lamports if cm else 2_000_000
+                            ),
+                            adaptive_ttl_s=(
+                                cm.adaptive_priority_fee_ttl_s if cm else 5.0
+                            ),
+                            quote_max_age_s=(
+                                cm.jupiter_quote_max_age_s if cm else 10.0
                             ),
                         )
                         await self.jupiter_helper.initialize()
-                        logger.info("✅ JupiterHelper initialized for LIVE swap execution")
+                        logger.info(
+                            "✅ JupiterHelper initialized for LIVE swap execution "
+                            "(adaptive_fee=%s, quote_ttl=%.1fs)",
+                            getattr(self.jupiter_helper, 'adaptive_priority_fee', False),
+                            getattr(self.jupiter_helper, 'quote_max_age_s', 10.0),
+                        )
+
+                        # Wave-4: optional Jito bundle path. Only init when
+                        # explicitly enabled AND a JupiterHelper signing
+                        # keypair landed. Failure to init is non-fatal --
+                        # engine continues with vanilla Jupiter.
+                        try:
+                            jito_flag = bool(getattr(cm, 'solana_jito_bundle_enabled', False))
+                        except Exception:
+                            jito_flag = False
+                        if jito_flag and JITO_CLIENT_AVAILABLE and getattr(self.jupiter_helper, 'keypair', None):
+                            try:
+                                self.jito = JitoClient()
+                                await self.jito.initialize(keypair=self.jupiter_helper.keypair)
+                                self.jito_enabled = True
+                                self.jito_tip_lamports = int(
+                                    getattr(cm, 'solana_jito_tip_lamports', 50_000)
+                                )
+                                logger.info(
+                                    "🛡️ Jito bundle path ENABLED (tip=%d lamports, endpoint=%s)",
+                                    self.jito_tip_lamports,
+                                    getattr(self.jito, 'primary_endpoint', '?'),
+                                )
+                            except Exception as je:
+                                logger.warning(f"⚠️ Jito bundle init failed, falling back to vanilla Jupiter: {je}")
+                                self.jito = None
+                                self.jito_enabled = False
+                        elif jito_flag and not JITO_CLIENT_AVAILABLE:
+                            logger.warning("⚠️ solana_jito_bundle_enabled=True but JitoClient import failed")
                     else:
                         logger.warning("⚠️ JupiterHelper not available - no private key")
                         self.jupiter_helper = None
@@ -1462,41 +1674,72 @@ class SolanaTradingEngine:
             raise
 
     async def _init_drift(self):
-        """Initialize Drift Protocol client"""
+        """Initialize Drift Protocol (Issue 11).
+
+        The DriftHelper is constructed even when driftpy is not installed or no
+        key/collateral is configured: its open_position short-circuits to a
+        sentinel in DRY_RUN before touching the chain, so the engine's Drift
+        scan can exercise the full path and the operator can SEE Drift activity
+        before funding a live account. The strategy is only stripped when LIVE
+        and the helper cannot reach chain (no driftpy / no key) — opening a
+        real perp blind is unacceptable.
+        """
         try:
             logger.info("Initializing Drift Protocol...")
 
-            # Drift requires driftpy which is optional
+            if not DRIFT_HELPER_AVAILABLE:
+                logger.info("✅ Drift Protocol configured (helper module unavailable)")
+                return
+
+            cm = self.config_manager
+            private_key = None
             try:
-                from driftpy.drift_client import DriftClient
+                private_key = await self._get_decrypted_private_key()
+            except Exception as e:
+                logger.debug(f"Drift key fetch failed: {e}")
 
-                # Initialize DriftHelper for live perpetual trading
-                if not self.dry_run and DRIFT_HELPER_AVAILABLE:
-                    try:
-                        # Get decrypted private key for signing
-                        private_key = await self._get_decrypted_private_key()
-                        if private_key:
-                            self.drift_helper = DriftHelper(
-                                rpc_url=self.primary_rpc,
-                                private_key=private_key
-                            )
-                            initialized = await self.drift_helper.initialize()
-                            if initialized:
-                                logger.info("✅ DriftHelper initialized for LIVE perpetual trading")
-                            else:
-                                logger.warning("⚠️ DriftHelper initialization failed")
-                                self.drift_helper = None
-                        else:
-                            logger.warning("⚠️ DriftHelper not available - no private key")
-                            self.drift_helper = None
-                    except Exception as e:
-                        logger.warning(f"⚠️ DriftHelper not available: {e}")
-                        self.drift_helper = None
-                else:
-                    logger.info("✅ Drift Protocol configured (DRY_RUN mode)")
+            # MB-15: the helper enforces leverage/oracle/funding caps and the
+            # DRY_RUN short-circuit regardless of init success. Read the guards
+            # via cm.get(...) — the solana_trading config manager (the one main
+            # injects) has no drift_max_* PROPERTIES, only the generic get().
+            # Direct attribute access raised AttributeError here, which the
+            # outer except swallowed as "Drift initialization failed" and left
+            # drift_helper=None — a contributing cause of zero Drift activity.
+            def _cfg(key, default):
+                return cm.get(key, default) if cm else default
 
-            except ImportError:
-                logger.warning("⚠️ driftpy not installed. Drift trading disabled.")
+            self.drift_helper = DriftHelper(
+                rpc_url=self.primary_rpc,
+                private_key=private_key,
+                dry_run=self.dry_run,
+                max_leverage=_cfg('drift_max_leverage', 3.0),
+                max_abs_funding_rate_annual_pct=_cfg('drift_max_funding_pct_annual', 50.0),
+                oracle_deviation_max_pct=_cfg('drift_oracle_deviation_max_pct', 1.0),
+                min_oracle_confidence_bps=_cfg('drift_min_oracle_conf_bps', 500),
+            )
+
+            initialized = False
+            try:
+                initialized = await self.drift_helper.initialize()
+            except Exception as e:
+                logger.warning(f"⚠️ DriftHelper chain init failed: {e}")
+
+            if initialized:
+                logger.info(
+                    "✅ DriftHelper initialized (dry_run=%s, max_lev=%.1fx)",
+                    self.dry_run, getattr(self.drift_helper, 'max_leverage', 0),
+                )
+            elif self.dry_run:
+                logger.warning(
+                    "🔶 DriftHelper chain not connected (no driftpy/key/collateral); "
+                    "DRY_RUN simulated Drift activity will still run so you can verify wiring"
+                )
+            else:
+                logger.error(
+                    "❌ DriftHelper could not connect to chain in LIVE — disabling Drift "
+                    "(refusing to trade perps blind). Install driftpy + fund collateral to enable."
+                )
+                self.drift_helper = None
                 self.strategies = [s for s in self.strategies if s != Strategy.DRIFT]
 
         except Exception as e:
@@ -1536,27 +1779,200 @@ class SolanaTradingEngine:
         except Exception as e:
             logger.error(f"Pump.fun initialization failed: {e}")
 
-    async def _get_wallet_balance(self) -> float:
-        """Get wallet SOL balance"""
+    async def _get_wallet_balance(self, *, force: bool = False) -> float:
+        """Get wallet SOL balance (throttled + fail-soft, Issue 22).
+
+        Caches the last good balance for `_wallet_balance_ttl_s`; returns the
+        cached value within the TTL so high-frequency health/metrics polls do
+        not generate one RPC call (and one potential error line) each. On RPC
+        failure we keep returning the last good balance and rate-limit the
+        error log (logging type + repr so empty-str exceptions stay
+        diagnosable). `force=True` bypasses the TTL for pre-trade checks.
+        """
+        now = time.time()
+
+        if self.wallet_pubkey is None or self.client is None:
+            return self._wallet_balance_cache_sol
+
+        # Serve from cache inside the TTL window unless a caller forces a read.
+        if not force and (now - self._wallet_balance_cache_ts) < self._wallet_balance_ttl_s:
+            return self._wallet_balance_cache_sol
+
         try:
             from solders.pubkey import Pubkey
 
             pubkey = Pubkey.from_string(self.wallet_pubkey)
             response = await self.client.get_balance(pubkey)
             if response.value is not None:
-                return response.value / self.LAMPORTS_PER_SOL
-            return 0.0
+                self._wallet_balance_cache_sol = response.value / self.LAMPORTS_PER_SOL
+            self._wallet_balance_cache_ts = now
+            self._wallet_balance_error_streak = 0
+            return self._wallet_balance_cache_sol
         except Exception as e:
-            logger.error(f"Error getting wallet balance: {e}")
-            return 0.0
+            # Push out the next RPC attempt so a hard-down endpoint does not get
+            # hammered every call: back off the cache timestamp into the future.
+            self._wallet_balance_error_streak += 1
+            backoff = min(self._wallet_balance_ttl_s * self._wallet_balance_error_streak, 120.0)
+            self._wallet_balance_cache_ts = now - self._wallet_balance_ttl_s + backoff
 
-    async def _get_token_balance(self, token_mint: str, decimals: int = 6) -> float:
+            # Rate-limit the error log; include TYPE + repr so an empty str(e)
+            # (the symptom from the VPS flood) is still diagnosable.
+            if (now - self._wallet_balance_last_err_log) >= self._wallet_balance_err_log_interval_s:
+                self._wallet_balance_last_err_log = now
+                logger.error(
+                    f"Error getting wallet balance "
+                    f"(streak={self._wallet_balance_error_streak}): "
+                    f"{type(e).__name__}: {e!r}"
+                )
+            # Fail-soft: keep serving last good balance, never crash the loop.
+            return self._wallet_balance_cache_sol
+
+    async def _ml_rug_probability(
+        self,
+        token_mint: str,
+        token_symbol: str,
+        metadata: Dict,
+    ) -> Optional[float]:
+        """Lazy-loaded ML rug-pull probability for the entry gate (P1-07).
+
+        Returns None if no trained model is present (refuse-to-predict);
+        returns ensemble probability in [0,1] otherwise. Caches the
+        classifier on the engine after the first call so subsequent
+        entries skip the load cost.
+        """
+        # Lazy import + cache: avoid taking the ml/ dependency in DRY_RUN
+        # paths that never enable the flag.
+        if not hasattr(self, '_rug_classifier_singleton'):
+            try:
+                from ml.models.rug_classifier import RugClassifier
+                clf = RugClassifier(config={})
+                # RugClassifier.load_model() may be a no-op if no artefact;
+                # is_loaded() then returns False and predict() refuses.
+                load = getattr(clf, 'load_model', None)
+                if callable(load):
+                    try:
+                        load()
+                    except Exception as exc:
+                        logger.debug(f"RugClassifier.load_model raised: {exc}")
+                self._rug_classifier_singleton = clf
+            except Exception as exc:
+                logger.debug(f"RugClassifier unavailable, ML gate idle: {exc}")
+                self._rug_classifier_singleton = None
+
+        clf = self._rug_classifier_singleton
+        if clf is None or not getattr(clf, 'is_loaded', lambda: False)():
+            return None
+
+        # Map DexScreener / pump.fun metadata onto the 33-feature dict the
+        # RugClassifier expects. Missing keys default to 0 (handled in
+        # extract_features) so EVM-only fields just contribute zero weight.
+        liq = float(metadata.get('liquidity_usd') or metadata.get('liquidity') or 0)
+        mcap = float(metadata.get('market_cap') or metadata.get('fdv') or 0)
+        vol = float(metadata.get('volume_24h') or metadata.get('volume') or 0)
+        buys_5m = float(metadata.get('buys_5m') or 0)
+        sells_5m = float(metadata.get('sells_5m') or 0)
+        bs_ratio = (buys_5m / sells_5m) if sells_5m > 0 else (1.0 if buys_5m == 0 else 5.0)
+        feats = {
+            'liquidity_usd': liq,
+            'market_cap': mcap,
+            'lp_burn_percentage': float(metadata.get('lp_burn_percentage') or 0),
+            'liquidity_locked_percentage': float(metadata.get('liquidity_locked_percentage') or 0),
+            'liquidity_locked': bool(metadata.get('liquidity_locked', False)),
+            'liquidity_lock_duration_days': float(metadata.get('liquidity_lock_duration_days') or 0),
+            'unique_holders': float(metadata.get('holder_count') or metadata.get('holders') or 0),
+            'dev_wallet_percentage': float(metadata.get('dev_holding_pct') or metadata.get('creator_holdings') or 0),
+            'whale_percentage': float(metadata.get('whale_pct') or 0),
+            'buy_sell_ratio': bs_ratio,
+            'unique_buyers_sellers_ratio': float(metadata.get('unique_buyers_sellers_ratio') or 1.0),
+            'volume_liquidity_ratio': (vol / liq) if liq > 0 else 0.0,
+            'price_volatility': abs(float(metadata.get('price_change_24h') or metadata.get('priceChange') or 0)),
+            'contract_age_hours': float(metadata.get('age_hours') or 0),
+            'contract_verified': True,  # Solana SPL — no source verification concept
+        }
+        try:
+            result = clf.predict(feats)
+        except Exception as exc:
+            logger.debug(f"RugClassifier.predict raised for {token_symbol}: {exc}")
+            return None
+        if result is None:
+            return None
+        prob, _per_model = result
+        return float(prob)
+
+    async def _pump_predict_probability(
+        self,
+        token_mint: str,
+        token_symbol: str,
+    ) -> Optional[float]:
+        """Lazy-loaded pump probability from the rolling price buffer.
+
+        Returns None if (a) PumpPredictor / pandas unavailable, (b) no
+        trained model present (refuse-to-predict, MB-19 sibling), or (c)
+        the buffer has fewer than `sequence_length` bars for this mint.
+        Caller falls back to the existing scam-pattern filter on None.
+        """
+        # Lazy import + cache. Don't pay the tensorflow import cost when
+        # the flag is off.
+        if self._pump_predictor_singleton is None:
+            try:
+                from ml.models.pump_predictor import PumpPredictor
+                self._pump_predictor_singleton = PumpPredictor(config={})
+            except Exception as exc:
+                logger.debug(f"PumpPredictor unavailable, pump gate idle: {exc}")
+                self._pump_predictor_singleton = False  # negative-cache
+
+        pp = self._pump_predictor_singleton
+        if not pp or not getattr(pp, 'is_loaded', lambda: False)():
+            return None
+
+        seq_len = int(getattr(pp, 'sequence_length', 20))
+        if not self.price_buffer.has_enough(token_mint, seq_len):
+            return None
+
+        # Build a minimal frame matching `pp.price_features`. Volume /
+        # liquidity / market_cap / change columns aren't in our buffer;
+        # fill with zeros -- LSTM input is dominated by `price` and the
+        # tree heads are not invoked on this path (we feed a 3-D LSTM
+        # tensor only). MinMaxScaler tolerates zeros without crashing.
+        try:
+            import pandas as pd  # local import: keeps engine startup cheap
+            import numpy as np
+        except Exception as exc:
+            logger.debug(f"pandas/numpy unavailable, pump gate idle: {exc}")
+            return None
+
+        prices = self.price_buffer.prices(token_mint)[-seq_len:]
+        cols = list(getattr(pp, 'price_features', ['price']))
+        df = pd.DataFrame({c: ([0.0] * len(prices)) for c in cols})
+        if 'price' in df.columns:
+            df['price'] = prices
+
+        try:
+            data = df[cols].values
+            scaler = pp.scalers.get('price')
+            if scaler is None or not hasattr(scaler, 'data_min_'):
+                return None  # scaler unfitted -- refuse to predict
+            scaled = scaler.transform(data)
+            seq = np.asarray(scaled).reshape(1, seq_len, len(cols)).astype('float32')
+            lstm_out = pp.models['lstm'].predict(seq, verbose=0)
+            prob = float(lstm_out.flatten()[0])
+            return max(0.0, min(1.0, prob))
+        except Exception as exc:
+            logger.debug(f"PumpPredictor.predict raised for {token_symbol}: {exc}")
+            return None
+
+    async def _get_token_balance(self, token_mint: str, decimals: int = None) -> float:
         """
         Get actual SPL token balance from wallet.
 
         Args:
             token_mint: Token mint address
-            decimals: Token decimals (default 6 for most SPL tokens)
+            decimals: Optional override for token decimals. When None (the
+                preferred path), decimals are read on-chain via
+                ``core.units.get_spl_decimals`` so BONK (5) / WIF (6) /
+                modern launches (9) all size correctly. Hardcoding 6 here
+                was the original MB-06 root cause and caused 10x/1000x
+                close-size errors on memecoins.
 
         Returns:
             Token balance as float, or 0.0 if not found
@@ -1569,6 +1985,17 @@ class SolanaTradingEngine:
             owner_pubkey = Pubkey.from_string(self.wallet_pubkey)
             mint_pubkey = Pubkey.from_string(token_mint)
 
+            # Resolve decimals on-chain when not supplied. Fall back to 6
+            # only if the lookup fails (logged) — never silently default.
+            if decimals is None:
+                try:
+                    decimals = await get_spl_decimals(token_mint)
+                except Exception as exc:
+                    logger.warning(
+                        f"⚠️ get_spl_decimals failed for {token_mint[:10]}: {exc} — falling back to 6"
+                    )
+                    decimals = 6
+
             # Method 1: Get token accounts with Confirmed commitment (faster than Finalized)
             # Finalized takes 6-12s on Solana, Confirmed takes ~0.5s
             try:
@@ -1580,6 +2007,7 @@ class SolanaTradingEngine:
 
                 if response.value:
                     total_balance = 0
+                    parsed_decimals = None
                     for account in response.value:
                         account_data = account.account.data
                         if hasattr(account_data, 'parsed'):
@@ -1587,6 +2015,9 @@ class SolanaTradingEngine:
                             if 'info' in parsed and 'tokenAmount' in parsed['info']:
                                 amount = int(parsed['info']['tokenAmount']['amount'])
                                 total_balance += amount
+                                # Prefer the parsed on-chain decimals when present.
+                                if parsed_decimals is None:
+                                    parsed_decimals = parsed['info']['tokenAmount'].get('decimals')
                         else:
                             import base64
                             if isinstance(account_data, str):
@@ -1598,7 +2029,8 @@ class SolanaTradingEngine:
                                 total_balance += amount
 
                     if total_balance > 0:
-                        return total_balance / (10 ** decimals)
+                        effective_decimals = parsed_decimals if parsed_decimals is not None else decimals
+                        return total_balance / (10 ** effective_decimals)
             except Exception as e:
                 logger.debug(f"Method 1 (get_token_accounts_by_owner) failed: {e}")
 
@@ -1721,7 +2153,12 @@ class SolanaTradingEngine:
                 'mode': 'DRY_RUN' if self.dry_run else 'LIVE',
                 **details
             }
-            trade_logger.info(json.dumps(trade_info))
+            # Wave-12 FIX 3 sibling: `details` may carry datetime /
+            # Decimal / Enum values from the caller (Position fields,
+            # listener token dicts) — route through _json_safe so a
+            # caller surprise can't silently swallow trade logs via the
+            # try/except below.
+            trade_logger.info(json.dumps(_json_safe(trade_info)))
         except Exception as e:
             logger.debug(f"Error logging trade: {e}")
 
@@ -1793,7 +2230,15 @@ class SolanaTradingEngine:
                     position.entry_price, position.amount, position.value_sol,
                     position.stop_loss, position.take_profit, position.is_simulated,
                     position.tx_signature, position.opened_at,
-                    json.dumps(position.metadata) if position.metadata else None,
+                    # Wave-12 FIX 3: route through _json_safe so the
+                    # `created_at: datetime.now()` injected by the
+                    # DexScreener listener token dicts (lines :739 / :1094)
+                    # is converted to an ISO-8601 string instead of
+                    # raising "Object of type datetime is not JSON
+                    # serializable" — every new open used to silently
+                    # lose its metadata persistence under the prior
+                    # `json.dumps(position.metadata)` call.
+                    json.dumps(_json_safe(position.metadata)) if position.metadata else None,
                 )
         except Exception as e:
             logger.warning(f"Failed to persist position {position.token_symbol}: {e}")
@@ -1812,6 +2257,130 @@ class SolanaTradingEngine:
                 )
         except Exception as e:
             logger.warning(f"Failed to remove position {token_mint}: {e}")
+
+    async def _warmup_price_buffer(self) -> None:
+        """Wave-4: pre-fill the per-token price buffer at engine startup.
+
+        Default poll cadence appends one price per scan loop, so the
+        pump-predictor (sequence_length=20, buffer maxlen=60) needs
+        ~30min of uptime before its gate has anything to score. This
+        warmup fetches the last hour of 1m bars per active token from
+        Birdeye (when BIRDEYE_API_KEY is configured) and seeds the
+        buffer in one shot. If no Birdeye key is configured we seed a
+        single current-price bar via the existing JupiterClient stack
+        so the buffer is at least non-empty.
+
+        Behaviour-preserving on its own — the predictor gate is itself
+        opt-in via `solana_pump_predictor_enabled` (default False).
+        Skips per-token when the buffer is already full.
+        """
+        try:
+            tokens = list(self.config_manager.jupiter_tokens) if self.config_manager else []
+        except Exception as e:
+            logger.debug(f"warmup: could not read jupiter_tokens: {e}")
+            tokens = []
+        # Also warm any positions reconciled from DB.
+        for mint in list(self.active_positions.keys()):
+            sym = self.active_positions[mint].token_symbol or mint[:6]
+            if not any(m == mint for _, m in tokens):
+                tokens.append((sym, mint))
+
+        if not tokens:
+            logger.info("📊 price-buffer warmup: no active tokens to seed")
+            return
+
+        try:
+            from security.secrets_manager import secrets
+            birdeye_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False) or os.getenv('BIRDEYE_API_KEY')
+        except Exception:
+            birdeye_key = os.getenv('BIRDEYE_API_KEY')
+
+        target = self.price_buffer.maxlen  # 60
+        seeded = 0
+        skipped_full = 0
+        spot_fallback = 0
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=10)
+        ) as session:
+            for symbol, mint in tokens:
+                if self.price_buffer.size(mint) >= target:
+                    skipped_full += 1
+                    continue
+                bars = []
+                if birdeye_key:
+                    bars = await self._birdeye_history(session, mint, birdeye_key, target)
+                if bars:
+                    for ts, price in bars:
+                        self.price_buffer.append(mint, price, ts=ts)
+                    seeded += 1
+                    logger.info(
+                        "📊 price-buffer warmup: seeded %s (%s) with %d bars",
+                        symbol, mint[:8], len(bars),
+                    )
+                else:
+                    # No history available — seed with current spot so
+                    # the buffer is at least non-empty; the predictor
+                    # will still need to accumulate to sequence_length.
+                    try:
+                        price = await self._get_token_price(mint)
+                        if price and price > 0:
+                            self.price_buffer.append(mint, float(price))
+                            spot_fallback += 1
+                    except Exception:
+                        pass
+
+        logger.info(
+            "📊 price-buffer warmup done: %d seeded, %d already full, %d spot-only (no BIRDEYE_API_KEY history)",
+            seeded, skipped_full, spot_fallback,
+        )
+
+    async def _birdeye_history(
+        self,
+        session: aiohttp.ClientSession,
+        mint: str,
+        api_key: str,
+        target_bars: int,
+    ) -> List[Tuple[float, float]]:
+        """Fetch the last `target_bars` 1m bars from Birdeye history_price.
+
+        Returns a list of (ts_seconds, price_usd) tuples, oldest first.
+        Returns [] on any failure so the caller falls back to spot seed.
+        """
+        try:
+            import time as _time
+            now = int(_time.time())
+            time_from = now - (target_bars + 5) * 60  # small headroom
+            url = "https://public-api.birdeye.so/defi/history_price"
+            params = {
+                'address': mint,
+                'address_type': 'token',
+                'type': '1m',
+                'time_from': str(time_from),
+                'time_to': str(now),
+            }
+            headers = {
+                'accept': 'application/json',
+                'x-chain': 'solana',
+                'X-API-KEY': api_key,
+            }
+            async with session.get(url, params=params, headers=headers, timeout=10) as resp:
+                if resp.status != 200:
+                    logger.debug(f"Birdeye history {resp.status} for {mint[:8]}")
+                    return []
+                data = await resp.json()
+                items = (data.get('data') or {}).get('items') or []
+                out = []
+                for it in items[-target_bars:]:
+                    ts = float(it.get('unixTime', 0))
+                    price = float(it.get('value', 0))
+                    if ts > 0 and price > 0:
+                        out.append((ts, price))
+                return out
+        except asyncio.TimeoutError:
+            logger.debug(f"Birdeye history timeout for {mint[:8]}")
+        except Exception as e:
+            logger.debug(f"Birdeye history error for {mint[:8]}: {e}")
+        return []
 
     async def _reconcile_positions_on_startup(self) -> None:
         """Cross-reference DB open positions with on-chain SPL balances.
@@ -1847,26 +2416,38 @@ class SolanaTradingEngine:
 
         for row in rows:
             mint = row['token_mint']
-            try:
-                decimals = await get_spl_decimals(mint)
-            except Exception:
-                decimals = 6  # safe fallback for the balance call only
 
-            try:
-                balance = await self._get_token_balance(mint, decimals)
-            except Exception as e:
-                logger.warning(
-                    f"Reconcile: balance fetch failed for {mint[:8]}: {e} — leaving row, skipping restore"
-                )
-                continue
+            # Issue 8: a simulated (DRY_RUN) position has NO on-chain footprint
+            # by definition, so the on-chain balance is always 0. Reconciling it
+            # against chain state wrongly classified every sim position as a
+            # "phantom" and DELETED it on restart — which is exactly why the
+            # dashboard "Active Positions" pane was empty for 7 open DRY_RUN
+            # positions. Restore sim rows directly from the DB row instead.
+            row_is_simulated = bool(row['is_simulated'])
 
-            if balance <= 0:
-                await self._remove_position_from_db(mint)
-                phantom += 1
-                logger.warning(
-                    f"👻 Phantom position dropped: {row.get('token_symbol') or mint[:8]} (on-chain balance 0)"
-                )
-                continue
+            if row_is_simulated:
+                balance = float(row['amount'] or 0.0)
+            else:
+                try:
+                    decimals = await get_spl_decimals(mint)
+                except Exception:
+                    decimals = 6  # safe fallback for the balance call only
+
+                try:
+                    balance = await self._get_token_balance(mint, decimals)
+                except Exception as e:
+                    logger.warning(
+                        f"Reconcile: balance fetch failed for {mint[:8]}: {e} — leaving row, skipping restore"
+                    )
+                    continue
+
+                if balance <= 0:
+                    await self._remove_position_from_db(mint)
+                    phantom += 1
+                    logger.warning(
+                        f"👻 Phantom position dropped: {row.get('token_symbol') or mint[:8]} (on-chain balance 0)"
+                    )
+                    continue
 
             strategy_name = row['strategy'] or 'jupiter'
             try:
@@ -1954,7 +2535,7 @@ class SolanaTradingEngine:
                     trade.close_reason,
                     trade.opened_at,
                     trade.closed_at,
-                    int((trade.closed_at - trade.opened_at).total_seconds()),
+                    int((_as_utc(trade.closed_at) - _as_utc(trade.opened_at)).total_seconds()),
                     trade.is_simulated,
                     self.sol_price_usd,
                     None  # metadata - can be extended later
@@ -2117,6 +2698,15 @@ class SolanaTradingEngine:
                 old_price = position.current_price
                 position.current_price = current_price
 
+                # Feed the rolling price buffer (wave-3 P1-07 follow-up).
+                # No-op consumer side until solana_pump_predictor_enabled
+                # flips, but the deque has to start filling now so the
+                # gate has 60 bars by the time the flag is enabled.
+                try:
+                    self.price_buffer.append(token_mint, current_price)
+                except Exception as exc:
+                    logger.debug(f"price_buffer.append failed: {exc}")
+
                 # Calculate PnL
                 if position.side == TradeSide.BUY:
                     pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
@@ -2177,11 +2767,24 @@ class SolanaTradingEngine:
             try:
                 token_mint = stuck.token_mint
 
+                # MB-06 fix: emergency-close path previously hardcoded
+                # decimals=6 in both the balance read AND raw-amount
+                # conversion. BONK (5), WIF (6), modern launches (9) all
+                # broke under this — 10x oversell rejected by Jupiter,
+                # 1000x undersell left position open.
+                try:
+                    token_decimals = await get_spl_decimals(token_mint)
+                except Exception as exc:
+                    logger.warning(
+                        f"⚠️ emergency-close: get_spl_decimals failed for {token_mint[:10]}: {exc} — skipping retry"
+                    )
+                    continue
+
                 # Check if position is still in our active tracking
                 # (might have been manually closed or sold externally)
                 if token_mint not in self.active_positions:
                     # Check actual wallet balance
-                    actual_balance = await self._get_token_balance(token_mint, 6)
+                    actual_balance = await self._get_token_balance(token_mint, token_decimals)
                     if actual_balance <= 0:
                         logger.info(f"✅ {stuck.token_symbol} no longer in wallet - removing from stuck list")
                         self.safety_engine.record_close_success(token_mint)
@@ -2201,7 +2804,7 @@ class SolanaTradingEngine:
                 )
 
                 # Get actual token balance
-                actual_balance = await self._get_token_balance(token_mint, 6)
+                actual_balance = await self._get_token_balance(token_mint, token_decimals)
 
                 if actual_balance <= 0:
                     logger.info(f"✅ {stuck.token_symbol} balance is 0 - position already closed")
@@ -2213,7 +2816,7 @@ class SolanaTradingEngine:
                         del self.active_positions[token_mint]
                     continue
 
-                token_amount_raw = int(actual_balance * (10 ** 6))
+                token_amount_raw = int(actual_balance * (10 ** token_decimals))
 
                 logger.info(f"   Selling {actual_balance:.2f} tokens with {close_slippage}bps slippage")
 
@@ -2328,7 +2931,7 @@ class SolanaTradingEngine:
             return "take_profit"
 
         # Time-based exits (use UTC for consistency with opened_at)
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
 
         # Jupiter time-based auto exit - IMPROVED: only exit if profitable or past max time
         if position.strategy == Strategy.JUPITER:
@@ -2437,7 +3040,7 @@ class SolanaTradingEngine:
 
         # ============ MAX HOLD TIME CHECK (before trailing logic) ============
         # Force-close pump.fun positions held beyond max time regardless of trailing state
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
         max_hold_seconds = 7200  # 2 hours default
         if self.config_manager:
             max_hold_seconds = self.config_manager.get('pumpfun_max_hold_seconds', 7200)
@@ -2482,14 +3085,19 @@ class SolanaTradingEngine:
         last_check_time = trailing.get('last_check_time', time.time())
         time_since_last_check = time.time() - last_check_time
 
-        # Calculate decline from last check
-        if last_price > 0 and time_since_last_check > 0:
+        # Calculate decline from last check.
+        # Guard on current_price > 0: a zero/None price is a FEED FAILURE
+        # (Jupiter/Birdeye quote miss), not a real crash. Without this guard a
+        # single bad read yields decline_pct == 100% and fires "RAPID CRASH
+        # DETECTED" every cycle (last_price is never updated because we return
+        # before line 3030), which is the repeated-firing symptom on the VPS.
+        if last_price > 0 and current_price > 0 and time_since_last_check > 0:
             decline_pct = ((last_price - current_price) / last_price) * 100
 
             # EMERGENCY EXIT CRITERIA:
             # 1. Price dropped >40% since last check (rapid crash)
             # 2. OR price dropped >30% AND we've held for <5 minutes (new position crashing fast)
-            time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+            time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
 
             if decline_pct >= 40:
                 logger.error(f"🚨 RAPID CRASH DETECTED: {position.token_symbol} dropped {decline_pct:.1f}% since last check!")
@@ -2504,7 +3112,7 @@ class SolanaTradingEngine:
                             mint=position.token_mint,
                             symbol=position.token_symbol,
                             drop_pct=decline_pct,
-                            time_seconds=int((datetime.utcnow() - position.opened_at).total_seconds())
+                            time_seconds=int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds())
                         )
                         # Force immediate database sync
                         await self.scam_blacklist._sync_to_db()
@@ -2613,7 +3221,7 @@ class SolanaTradingEngine:
             tier0_sl_pct = self.config_manager.pumpfun_tier0_sl
 
         # Time-based stop widening: In first 2 minutes, use wider SL to handle initial volatility
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
         early_volatility_window = 120  # 2 minutes
         if time_held < early_volatility_window:
             # Use slightly wider SL in early period (add 5% buffer)
@@ -2729,7 +3337,7 @@ class SolanaTradingEngine:
             return "partial_exit_tier5"
 
         # Log trailing status periodically (every 30 seconds)
-        time_held = (datetime.utcnow() - position.opened_at).total_seconds()
+        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
         if int(time_held) % 30 == 0 and current_gain_pct > 10:
             logger.info(
                 f"📊 {position.token_symbol}: Gain={current_gain_pct:.1f}% Peak={peak_gain_pct:.1f}% "
@@ -2865,21 +3473,109 @@ class SolanaTradingEngine:
             logger.error(f"Error in Jupiter scan: {e}", exc_info=True)
 
     async def _scan_drift_opportunities(self):
-        """Scan for Drift perpetual opportunities"""
+        """Scan Drift perp markets for a funding-carry opportunity (Issue 11).
+
+        Previously a no-op stub that also gated on self.drift_client (never
+        set on the engine — only drift_helper is), so Drift produced ZERO
+        activity even when enabled. Now it reads the live funding rate per
+        configured market and, when |funding| exceeds the signal threshold,
+        takes the carry side (short positive funding, long negative funding)
+        via DriftHelper.open_position. The helper short-circuits in DRY_RUN
+        (sentinel sig) and enforces the MB-15 leverage/oracle/funding guards
+        in LIVE, so this is safe to run with DRY_RUN=true to see uptake.
+        """
+        # The engine only ever holds drift_helper; drift_client stays None.
+        if not self.drift_helper:
+            return
+
+        now = time.time()
+        if (now - self._drift_last_scan_ts) < self._drift_scan_interval_s:
+            return
+        self._drift_last_scan_ts = now
+
         if len(self.active_positions) >= self.max_positions:
             logger.debug(f"Max positions ({self.max_positions}) reached, skipping Drift scan")
             return
 
-        if not self.drift_client:
-            return
+        cm = self.config_manager
+        markets = cm.drift_markets if cm else ['SOL-PERP']
 
-        try:
-            # Log that Drift is being scanned
-            # In production, check funding rates, order book depth, etc.
-            logger.debug("🔍 Drift scanning for perpetual opportunities...")
+        for market_name in markets:
+            market_index = self.DRIFT_MARKET_INDEX.get(market_name.upper())
+            if market_index is None:
+                logger.debug(f"🔍 Drift: unknown market {market_name}, skipping")
+                continue
 
-        except Exception as e:
-            logger.error(f"Error in Drift scan: {e}")
+            try:
+                funding_pct = await self.drift_helper.get_funding_rate(market_index)
+            except Exception as e:
+                logger.debug(f"🔍 Drift funding read failed for {market_name}: {e}")
+                funding_pct = 0.0
+
+            # In DRY_RUN, if the chain funding read is unavailable (no driftpy /
+            # no collateral / RPC miss → 0.0), synthesize a deterministic signal
+            # so the operator can VERIFY the Drift wiring end-to-end without
+            # funding a live account. Never used in LIVE.
+            if self.dry_run and funding_pct == 0.0:
+                funding_pct = self._drift_funding_signal_pct + 2.0
+                logger.info(
+                    f"🔶 [DRY_RUN] Drift {market_name}: no chain funding available — "
+                    f"using simulated {funding_pct:+.2f}%/yr to exercise wiring"
+                )
+
+            if abs(funding_pct) < self._drift_funding_signal_pct:
+                logger.debug(
+                    f"🔍 Drift {market_name}: funding {funding_pct:+.2f}%/yr "
+                    f"below {self._drift_funding_signal_pct:.1f}% signal — no trade"
+                )
+                continue
+
+            # Collect the funding carry: SHORT when funding is positive (longs
+            # pay shorts), LONG when negative.
+            direction = 'SHORT' if funding_pct > 0 else 'LONG'
+            leverage = float(cm.drift_leverage if cm else 1)
+            base_amount = max(float(self.position_size_sol) * leverage, 0.0)
+
+            logger.info(
+                f"🎯 Drift signal: {market_name} funding={funding_pct:+.2f}%/yr "
+                f"→ {direction} (base≈{base_amount:.4f}, lev={leverage:.0f}x)"
+            )
+
+            # Cross-module risk gate before any (even simulated) entry.
+            if self.risk_manager:
+                try:
+                    allowed = await self.risk_manager.validate_trade(market_name, base_amount)
+                    if not allowed:
+                        logger.warning(f"⛔ Drift {market_name} blocked by RiskManager")
+                        continue
+                except Exception as e:
+                    logger.warning(f"⚠️ Drift RiskManager check failed: {e} — skipping entry")
+                    continue
+
+            try:
+                tx_sig = await self.drift_helper.open_position(
+                    market_index=market_index,
+                    direction=direction,
+                    base_amount=base_amount,
+                )
+            except Exception as e:
+                logger.error(f"❌ Drift open_position failed for {market_name}: {e}")
+                continue
+
+            if tx_sig:
+                sim_tag = "[DRY_RUN] " if self.dry_run else ""
+                logger.info(f"✅ {sim_tag}Drift {direction} {market_name} opened: {tx_sig}")
+                self._log_trade('OPEN', {
+                    'token': market_name,
+                    'mint': market_name,
+                    'strategy': Strategy.DRIFT.value,
+                    'side': direction,
+                    'amount_sol': base_amount,
+                    'funding_pct_annual': funding_pct,
+                    'tx': tx_sig,
+                })
+            else:
+                logger.info(f"🔶 Drift {market_name}: open_position returned None (guard refused)")
 
     async def _scan_pumpfun_opportunities(self):
         """Scan for Pump.fun new token launches"""
@@ -2944,6 +3640,17 @@ class SolanaTradingEngine:
                 if token_mint in self.active_positions:
                     continue
 
+                # Record candidate price into the rolling buffer so the
+                # pump-predictor gate has history by the time we attempt
+                # the next bar for this mint. Pump.fun metadata carries
+                # `price` (USD) for filtered candidates.
+                cand_price = token.get('price') or token.get('priceUsd') or token.get('price_usd')
+                if cand_price:
+                    try:
+                        self.price_buffer.append(token_mint, float(cand_price))
+                    except (TypeError, ValueError, Exception):
+                        pass
+
                 logger.info(f"🎯 Pump.fun: Opening position on {token.get('symbol', 'UNKNOWN')}")
 
                 # Open position - returns True if successful
@@ -2970,6 +3677,98 @@ class SolanaTradingEngine:
         if self.jupiter_client:
             return await self.jupiter_client.get_price(token_mint)
         return None
+
+    async def _execute_swap_via_jito(
+        self,
+        input_mint: str,
+        output_mint: str,
+        amount: int,
+        slippage_bps: int,
+        token_symbol: str = '',
+    ) -> Optional[str]:
+        """Wave-4: route a Jupiter swap through a Jito MEV bundle.
+
+        Composes: signed Jupiter swap tx + tip tx, submits as a bundle,
+        returns the swap signature on landed confirmation. Returns None
+        on any failure so the caller can fall back to vanilla execute.
+
+        Every Jito attempt + outcome is logged so the operator can see
+        uptake.
+        """
+        if not (self.jito and self.jito_enabled and self.jupiter_helper and JITO_CLIENT_AVAILABLE):
+            return None
+
+        keypair = getattr(self.jupiter_helper, 'keypair', None)
+        if keypair is None:
+            logger.warning("🛡️ Jito attempt SKIPPED for %s — no keypair on JupiterHelper", token_symbol)
+            return None
+
+        # Cheap pre-check: if Jito is in global backoff, skip to fallback
+        # so we don't burn a quote + signing round-trip we can't submit.
+        available, wait_s = JitoClient.is_available()
+        if not available:
+            logger.info(
+                "🛡️ Jito attempt SKIPPED for %s — rate-limited (%.1fs wait)",
+                token_symbol, wait_s,
+            )
+            return None
+
+        try:
+            quote = await self.jupiter_helper.get_quote(
+                input_mint, output_mint, amount, slippage_bps,
+            )
+            if not quote:
+                logger.warning("🛡️ Jito attempt ABORT for %s — no Jupiter quote", token_symbol)
+                return None
+
+            pubkey_str = str(keypair.pubkey())
+            swap_data = await self.jupiter_helper.get_swap_transaction(quote, pubkey_str)
+            if not swap_data or not swap_data.get('swapTransaction'):
+                logger.warning("🛡️ Jito attempt ABORT for %s — no swap transaction from Jupiter", token_symbol)
+                return None
+
+            signed_swap_b64 = self.jupiter_helper.sign_transaction(swap_data['swapTransaction'])
+            if not signed_swap_b64:
+                logger.warning("🛡️ Jito attempt ABORT for %s — sign_transaction failed", token_symbol)
+                return None
+
+            tip_tx_b64 = await self.jito.create_tip_transaction(keypair, self.jito_tip_lamports)
+            bundle_txs = [signed_swap_b64, tip_tx_b64] if tip_tx_b64 else [signed_swap_b64]
+            if not tip_tx_b64:
+                logger.warning(
+                    "🛡️ Jito attempt PROCEEDING WITHOUT TIP for %s — tip tx build failed (low landing odds)",
+                    token_symbol,
+                )
+
+            logger.info(
+                "🛡️ Jito attempt SEND for %s — tip=%d lamports, bundle_size=%d",
+                token_symbol, self.jito_tip_lamports, len(bundle_txs),
+            )
+            bundle_id = await self.jito.send_bundle(bundle_txs, tip_lamports=self.jito_tip_lamports)
+            if not bundle_id:
+                logger.warning("🛡️ Jito attempt REJECTED for %s — bundle dropped or unconfirmed", token_symbol)
+                return None
+
+            # Extract the swap tx signature so the caller's position
+            # bookkeeping (tx_signature, balance-poll) keeps working.
+            try:
+                import base64
+                from solders.transaction import VersionedTransaction
+                raw = base64.b64decode(signed_swap_b64)
+                tx = VersionedTransaction.from_bytes(raw)
+                signature = str(tx.signatures[0]) if tx.signatures else bundle_id
+            except Exception as se:
+                logger.debug(f"Could not extract swap signature from bundle ({se}); using bundle_id")
+                signature = bundle_id
+
+            logger.info(
+                "🛡️ Jito attempt LANDED for %s — bundle=%s sig=%s",
+                token_symbol, bundle_id[:16], str(signature)[:16],
+            )
+            return signature
+        except Exception as e:
+            logger.warning(f"🛡️ Jito attempt ERROR for {token_symbol}: {e}")
+            return None
 
     async def _open_position(
         self,
@@ -3122,6 +3921,55 @@ class SolanaTradingEngine:
                     logger.warning(f"🚫 BLOCKED: {token_symbol} heavy sell pressure ({sells_5m} sells vs {buys_5m} buys in 5min)")
                     return False
 
+            # 6. ML rug gate (P1-07). Off by default; flip
+            # solana_ml_enabled=True in DB config to engage. The
+            # RugClassifier is fail-soft: if no trained model is loaded
+            # it returns None and we proceed without the gate
+            # (refuse-to-predict pattern, MB-19). When loaded, refuses
+            # entry above solana_ml_max_rug_prob.
+            if self.config_manager and getattr(self.config_manager, 'solana_ml_enabled', False):
+                try:
+                    rug_prob = await self._ml_rug_probability(token_mint, token_symbol, metadata or {})
+                    if rug_prob is not None:
+                        max_rug = float(getattr(self.config_manager, 'solana_ml_max_rug_prob', 0.40))
+                        if rug_prob > max_rug:
+                            logger.warning(
+                                f"⛔ ML rug gate: {token_symbol} rug_prob={rug_prob:.3f} > cap={max_rug:.3f}"
+                            )
+                            return False
+                        logger.info(
+                            f"✅ ML rug gate passed: {token_symbol} rug_prob={rug_prob:.3f} ≤ cap={max_rug:.3f}"
+                        )
+                except Exception as exc:
+                    logger.debug(f"ML rug gate raised, continuing without it: {exc}")
+
+            # 7. Pump-predictor gate (wave-3 P1-07 follow-up). Off by
+            # default; flip solana_pump_predictor_enabled=True in DB
+            # config to engage. Reads the rolling price buffer; if
+            # buffer has < sequence_length bars OR no trained model
+            # is present, the gate silently no-ops and the existing
+            # scam-pattern checks above stay authoritative.
+            if (
+                self.config_manager
+                and getattr(self.config_manager, 'solana_pump_predictor_enabled', False)
+            ):
+                try:
+                    pump_prob = await self._pump_predict_probability(token_mint, token_symbol)
+                    if pump_prob is not None:
+                        min_pump = float(
+                            getattr(self.config_manager, 'solana_ml_min_pump_prob', 0.55)
+                        )
+                        if pump_prob < min_pump:
+                            logger.warning(
+                                f"⛔ Pump gate: {token_symbol} pump_prob={pump_prob:.3f} < min={min_pump:.3f}"
+                            )
+                            return False
+                        logger.info(
+                            f"✅ Pump gate passed: {token_symbol} pump_prob={pump_prob:.3f} ≥ min={min_pump:.3f}"
+                        )
+                except Exception as exc:
+                    logger.debug(f"Pump gate raised, continuing without it: {exc}")
+
             # ============ END PRE-BUY SAFETY CHECKS ============
 
             # Get token price - try multiple sources
@@ -3205,7 +4053,7 @@ class SolanaTradingEngine:
             else:
                 # Check wallet balance before executing swap
                 try:
-                    wallet_balance = await self._get_wallet_balance()
+                    wallet_balance = await self._get_wallet_balance(force=True)
                     # Need enough SOL for swap amount plus gas (0.01 SOL buffer)
                     min_required = amount_sol + 0.01
                     if wallet_balance < min_required:
@@ -3280,14 +4128,51 @@ class SolanaTradingEngine:
                             trade_slippage = max(200, self.slippage_bps)  # Min 2% for other strategies
 
                     if self.jupiter_helper:
-                        # Use JupiterHelper for full swap execution
+                        # P1 cross-module risk gate (matches arbitrage_engine.py:1600).
+                        # Skipped if no risk_manager wired (DRY_RUN paths, tests).
+                        # Only the entry leg is gated; exits should always be
+                        # allowed because closing a position reduces exposure.
+                        if self.risk_manager is not None:
+                            try:
+                                allowed, reason = await self.risk_manager.validate_trade(
+                                    token_mint, amount_sol
+                                )
+                            except Exception as e:
+                                logger.warning(f"validate_trade raised: {e}; refusing entry")
+                                return False
+                            if not allowed:
+                                logger.warning(
+                                    f"⛔ Risk manager rejected SOL entry {token_symbol} "
+                                    f"({token_mint[:10]}): {reason}"
+                                )
+                                return False
+
+                        # Use JupiterHelper for full swap execution.
+                        # Wave-4: if Jito bundle is enabled, try MEV-protected
+                        # path first; on rejection (rate-limit, bundle drop,
+                        # no result) we fall back to the vanilla path.
                         logger.info(f"🔄 Executing LIVE swap: {amount_sol} SOL → {token_symbol} (slippage: {trade_slippage}bps)")
-                        tx_signature = await self.jupiter_helper.execute_swap(
-                            input_mint=SOL_MINT,
-                            output_mint=token_mint,
-                            amount=int(amount_sol * self.LAMPORTS_PER_SOL),
-                            slippage_bps=trade_slippage
-                        )
+                        tx_signature = None
+                        if self.jito_enabled and self.jito is not None:
+                            tx_signature = await self._execute_swap_via_jito(
+                                input_mint=SOL_MINT,
+                                output_mint=token_mint,
+                                amount=int(amount_sol * self.LAMPORTS_PER_SOL),
+                                slippage_bps=trade_slippage,
+                                token_symbol=token_symbol,
+                            )
+                            if not tx_signature:
+                                logger.info(
+                                    "⤵️ Jito bundle path returned no signature for %s — falling back to vanilla Jupiter",
+                                    token_symbol,
+                                )
+                        if not tx_signature:
+                            tx_signature = await self.jupiter_helper.execute_swap(
+                                input_mint=SOL_MINT,
+                                output_mint=token_mint,
+                                amount=int(amount_sol * self.LAMPORTS_PER_SOL),
+                                slippage_bps=trade_slippage
+                            )
 
                         if tx_signature:
                             logger.info(f"🟢 LIVE SWAP executed: {tx_signature}")
@@ -3302,9 +4187,12 @@ class SolanaTradingEngine:
                                 # Increased delays: Solana Finalized commitment takes 6-12s
                                 # Now using Confirmed (~0.5s) but still need time for ATA creation
                                 balance_delays = [3.0, 5.0, 8.0, 12.0]  # 4 attempts, up to 28s total
+                                # MB-06: rely on on-chain decimals (decimals=None → _get_token_balance
+                                # resolves via get_spl_decimals + parsed tokenAmount.decimals). Passing
+                                # 6 here previously misreported BONK/WIF/9-dec launches by 10x/1000x.
                                 for balance_retry, delay in enumerate(balance_delays):
                                     await asyncio.sleep(delay)
-                                    actual_tokens = await self._get_token_balance(token_mint, 6)
+                                    actual_tokens = await self._get_token_balance(token_mint)
                                     if actual_tokens > 0:
                                         logger.info(f"   Balance verified on attempt {balance_retry+1} (after {sum(balance_delays[:balance_retry+1]):.0f}s)")
                                         break
@@ -3716,7 +4604,7 @@ class SolanaTradingEngine:
                 pnl_pct=pnl_pct,
                 entry_time=position.opened_at,
                 exit_time=datetime.now(),
-                duration_seconds=int((datetime.now() - position.opened_at).total_seconds()),
+                duration_seconds=int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()),
                 is_simulated=position.is_simulated
             )
             self.pnl_tracker.record_trade(trade_record)
@@ -3726,7 +4614,9 @@ class SolanaTradingEngine:
                 # For LIVE trading, get actual remaining balance to keep tracking accurate
                 if not self.dry_run:
                     try:
-                        remaining_balance = await self._get_token_balance(token_mint, 6)
+                        # MB-06: omit hardcoded decimals; let _get_token_balance
+                        # resolve via parsed tokenAmount.decimals / get_spl_decimals.
+                        remaining_balance = await self._get_token_balance(token_mint)
                         if remaining_balance > 0:
                             position.amount = remaining_balance  # Use actual remaining balance
                             logger.info(f"📊 Updated position tracking: {remaining_balance:.2f} tokens remaining")
@@ -3775,7 +4665,7 @@ class SolanaTradingEngine:
             logger.info(f"   Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL")
 
             # Calculate duration
-            duration_seconds = int((datetime.utcnow() - position.opened_at).total_seconds())
+            duration_seconds = int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds())
 
             # Log trade to separate trade file
             self._log_trade('CLOSE', {
@@ -3924,6 +4814,10 @@ class SolanaTradingEngine:
             'rpc_connected': rpc_connected,
             'rpc_url': self.rpc_manager.current_url[:50] + '...',
             'dry_run': self.dry_run,
+            # Issue 15: public address only — NEVER the keypair. Sourced from the
+            # SOLANA_MODULE_PRIVATE_KEY secret, derived at load time. Operator
+            # uses this to know which wallet to fund before going live.
+            'wallet_address': self.wallet_pubkey,
             'wallet_balance_sol': wallet_balance,
             'risk_can_trade': self.risk_metrics.can_trade,
             'active_positions': len(self.active_positions),
@@ -3948,6 +4842,12 @@ class SolanaTradingEngine:
                 await self.jupiter_helper.close()
             except Exception as e:
                 logger.debug(f"Error closing Jupiter helper: {e}")
+
+        if self.jito:
+            try:
+                await self.jito.close()
+            except Exception as e:
+                logger.debug(f"Error closing Jito client: {e}")
 
         if self.drift_helper:
             try:

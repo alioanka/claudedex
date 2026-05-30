@@ -801,9 +801,34 @@
             const data = await response.json();
 
             if (data.success && data.wallets && data.wallets.length > 0) {
-                displayHotWallets(data.wallets.slice(0, 10));
-                document.getElementById('hotWalletsRefreshInfo').textContent =
-                    'Updated: ' + new Date().toLocaleTimeString();
+                // Operator complaint: hot wallets card was full of
+                // 0-trade 0-PnL configured wallets. Filter to ACTIVE
+                // wallets only (>0 trades OR nonzero PnL), then sort
+                // by trades DESC, then PnL DESC. If nothing's active,
+                // show a clear empty state instead of inactive noise.
+                const active = data.wallets.filter(w =>
+                    (Number(w.total_trades) || 0) > 0 ||
+                    Math.abs(Number(w.total_pnl) || 0) > 0.0001
+                );
+                active.sort((a, b) => {
+                    const ta = Number(a.total_trades) || 0;
+                    const tb = Number(b.total_trades) || 0;
+                    if (tb !== ta) return tb - ta;
+                    return (Number(b.total_pnl) || 0) - (Number(a.total_pnl) || 0);
+                });
+                if (active.length > 0) {
+                    displayHotWallets(active.slice(0, 10));
+                    document.getElementById('hotWalletsRefreshInfo').textContent =
+                        'Updated: ' + new Date().toLocaleTimeString() +
+                        ' — showing ' + active.length + ' active wallet(s)';
+                } else {
+                    container.innerHTML = `
+                        <div style="text-align: center; padding: 30px; color: var(--text-secondary);">
+                            <i class="fas fa-fire-alt" style="font-size: 2rem; margin-bottom: 12px; opacity: 0.5;"></i>
+                            <p>No active wallets yet. Configured wallets need at least one mirrored trade before they appear here. Use the search form below to find new candidates.</p>
+                        </div>
+                    `;
+                }
             } else {
                 container.innerHTML = `
                     <div style="text-align: center; padding: 30px; color: var(--text-secondary);">
@@ -832,6 +857,21 @@
             const rankClass = index === 0 ? 'gold' : index === 1 ? 'silver' : index === 2 ? 'bronze' : 'default';
             const pnlClass = wallet.total_pnl >= 0 ? 'positive' : 'negative';
             const isTracked = trackedWallets.includes(wallet.address);
+            // Wave-5: split realized vs unrealized for hot wallets
+            const realized = wallet.realized_pnl || 0;
+            const unrealized = wallet.unrealized_pnl || 0;
+            const pendingN = wallet.pending_count || 0;
+            let pnlLabel = '';
+            if (unrealized !== 0 && realized !== 0) {
+                pnlLabel = '<div style="font-size:0.65rem;color:var(--text-secondary);margin-top:2px;">R: $' + realized.toFixed(0) + ' + Live: $' + unrealized.toFixed(0) + '</div>';
+            } else if (unrealized !== 0) {
+                pnlLabel = '<div style="font-size:0.65rem;color:var(--text-secondary);margin-top:2px;">(live)</div>';
+            } else if (realized !== 0) {
+                pnlLabel = '<div style="font-size:0.65rem;color:var(--text-secondary);margin-top:2px;">(realized)</div>';
+            }
+            const pendingNote = pendingN > 0
+                ? `<div style="font-size:0.65rem;color:#f59e0b;margin-top:2px;">${pendingN} legacy row(s)</div>`
+                : '';
 
             html += `
                 <div class="hot-wallet-card">
@@ -862,6 +902,8 @@
                         <div class="hot-wallet-stat">
                             <div class="hot-wallet-stat-label">PnL</div>
                             <div class="hot-wallet-stat-value ${pnlClass}">$${wallet.total_pnl.toFixed(0)}</div>
+                            ${pnlLabel}
+                            ${pendingNote}
                         </div>
                     </div>
                 </div>
@@ -872,10 +914,38 @@
         container.innerHTML = html;
     }
 
-    // Load hot wallets on page load
-    loadHotWallets();
+    // Hot Wallets discovery hits paid Helius/Birdeye quota. Make it
+    // opt-in instead of firing on every page open + every 5 min:
+    //   - First load: render a "Click to load top traders" placeholder
+    //     in the container.
+    //   - User-triggered refresh button reloads on demand.
+    //   - When the tab is hidden the auto-interval is suspended so
+    //     leaving the page open doesn't quietly burn credits.
+    const hotContainer = document.getElementById('hotWalletsContainer');
+    if (hotContainer) {
+        hotContainer.innerHTML =
+            '<div style="text-align:center;padding:24px;color:var(--text-secondary);">' +
+            '<p>Hot Wallets discovery uses paid Helius/Birdeye quota.</p>' +
+            '<button class="btn btn-primary" id="loadHotWalletsBtn">' +
+            '<i class="fas fa-search"></i> Load Top Traders</button>' +
+            '</div>';
+        const btn = document.getElementById('loadHotWalletsBtn');
+        if (btn) btn.addEventListener('click', () => loadHotWallets());
+    }
 
-    // Refresh hot wallets every 5 minutes
-    setInterval(loadHotWallets, 5 * 60 * 1000);
+    // Auto-refresh every 30 min — only when the tab is visible and the
+    // user has already opted in (clicked Load once). The flag flips
+    // the first time loadHotWallets succeeds.
+    let _hotAutoRefreshArmed = false;
+    const _origLoad = loadHotWallets;
+    loadHotWallets = async function() {
+        _hotAutoRefreshArmed = true;
+        return _origLoad();
+    };
+    setInterval(() => {
+        if (!_hotAutoRefreshArmed) return;
+        if (document.hidden) return;
+        loadHotWallets();
+    }, 30 * 60 * 1000);
 </script>
 {% endblock %}

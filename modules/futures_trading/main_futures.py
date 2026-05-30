@@ -38,7 +38,11 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 load_dotenv()
 
 # Configure futures-specific logging with multiple log files
-log_dir = Path("logs/futures")
+# Aligned with main.py's per-subprocess stdout/stderr log dir
+# (self.name "Futures Trading" → logs/futures_trading/). Earlier this
+# was logs/futures/ which left the operator with two parallel dirs
+# for the same module and confused log-tail commands.
+log_dir = Path("logs/futures_trading")
 log_dir.mkdir(parents=True, exist_ok=True)
 
 # Custom filter for trade-related messages (positions and stats only, not signal analysis)
@@ -602,11 +606,21 @@ class FuturesTradingApplication:
 
             # Phase 2 #5: inject FuturesRiskManager so MB-17's entry validator is live.
             # FuturesTradingEngine.set_risk_manager (commit c53b73b) had no caller until now.
+            #
+            # FUT-RM-01 (b1b8df9 follow-up): commit b1b8df9 patched the dashboard
+            # wrapper (FuturesTradingModule.initialize) to merge futures_max_leverage
+            # into the risk dict, but this main_futures.py subprocess path bypassed
+            # the wrapper entirely and still constructed FuturesRiskManager from
+            # FuturesRiskConfig only — which has NO max_leverage / max_positions /
+            # max_total_exposure fields. Result: the risk manager silently
+            # defaulted to max_leverage=3, max_positions=3, max_total_exposure=500
+            # regardless of operator settings, and every entry at >3x was rejected.
+            # Now we merge leverage_config + position_config into risk_cfg so all
+            # three sources of truth land on the runtime manager.
             try:
                 from modules.futures_trading.futures_risk_manager import FuturesRiskManager
                 risk_cfg: dict = {}
                 if self.config_manager is not None:
-                    # FuturesConfigManager exposes get_risk() returning a Pydantic model.
                     if hasattr(self.config_manager, 'get_risk'):
                         risk_obj = self.config_manager.get_risk()
                         if hasattr(risk_obj, 'model_dump'):
@@ -615,9 +629,61 @@ class FuturesTradingApplication:
                             risk_cfg = risk_obj.dict()
                         elif isinstance(risk_obj, dict):
                             risk_cfg = risk_obj
+                    # Merge leverage cap from FuturesLeverageConfig.
+                    lev_cfg = self.config_manager.get_leverage()
+                    if lev_cfg and getattr(lev_cfg, 'max_leverage', None) is not None:
+                        risk_cfg['max_leverage'] = int(lev_cfg.max_leverage)
+                    # FUT-RM-08: per-symbol leverage cap overrides.
+                    if lev_cfg:
+                        overrides = getattr(lev_cfg, 'max_leverage_overrides', None)
+                        if overrides:
+                            risk_cfg['max_leverage_overrides'] = dict(overrides)
+                    # Merge position cap + exposure cap from FuturesPositionConfig.
+                    pos_cfg = self.config_manager.get_position()
+                    if pos_cfg:
+                        if getattr(pos_cfg, 'max_positions', None) is not None:
+                            risk_cfg['max_positions'] = int(pos_cfg.max_positions)
+                        # max_total_exposure: prefer explicit cap, fall back to
+                        # capital_allocation * default_leverage as a soft cap.
+                        cap_alloc = float(getattr(pos_cfg, 'capital_allocation', 0) or 0)
+                        if cap_alloc > 0:
+                            risk_cfg.setdefault(
+                                'max_total_exposure',
+                                cap_alloc * float(getattr(lev_cfg, 'default_leverage', 1) or 1)
+                            )
+                    # liquidation_buffer on settings page is a percentage
+                    # (e.g. 20 = 20%); FuturesRiskManager expects a fraction.
+                    lb = risk_cfg.get('liquidation_buffer')
+                    if lb is not None and float(lb) > 1.0:
+                        risk_cfg['liquidation_buffer'] = float(lb) / 100.0
+                    # FUT-RM-05: pull directional funding thresholds from
+                    # FuturesFundingConfig and forward to the risk manager.
+                    if hasattr(self.config_manager, 'get_funding'):
+                        try:
+                            fund_cfg = self.config_manager.get_funding()
+                            if fund_cfg is not None:
+                                for key in (
+                                    'skip_long_funding_bps',
+                                    'skip_short_funding_bps',
+                                ):
+                                    val = getattr(fund_cfg, key, None)
+                                    if val is not None:
+                                        risk_cfg[key] = float(val)
+                        except Exception as e:
+                            self.logger.debug(f"funding config not available: {e}")
                 self.risk_manager = FuturesRiskManager(risk_cfg)
                 self.engine.set_risk_manager(self.risk_manager)
-                self.logger.info("✅ FuturesRiskManager injected — MB-17 entry validator is active")
+
+                # FUT-RM-02: startup assertion — runtime risk manager must
+                # reflect the DB-configured caps. Surfaces silent regressions.
+                self._assert_runtime_risk_matches_config()
+
+                self.logger.info(
+                    "✅ FuturesRiskManager injected — MB-17 entry validator is active "
+                    f"(max_leverage={self.risk_manager.max_leverage}, "
+                    f"max_positions={self.risk_manager.max_positions}, "
+                    f"max_total_exposure=${self.risk_manager.max_total_exposure:.2f})"
+                )
             except Exception as e:
                 self.logger.warning(f"FuturesRiskManager wiring failed: {e}; engine will run without validator (legacy behaviour)")
 
@@ -627,6 +693,54 @@ class FuturesTradingApplication:
         except Exception as e:
             self.logger.error(f"Failed to initialize: {e}", exc_info=True)
             raise
+
+    def _assert_runtime_risk_matches_config(self) -> None:
+        """FUT-RM-02: Startup assertion that runtime FuturesRiskManager caps
+        match the DB-backed config. A mismatch means the wiring above silently
+        regressed (e.g. someone re-introduced the hard-coded default=3).
+
+        Soft-fail by default: logs a loud error + an alert if available. The
+        operator can flip FUTURES_RISK_ASSERT_HARD=1 in .env to raise instead
+        (preferred for CI / canary runs)."""
+        try:
+            if not self.config_manager or not self.risk_manager:
+                return
+            lev_cfg = self.config_manager.get_leverage()
+            pos_cfg = self.config_manager.get_position()
+            expected_max_lev = int(getattr(lev_cfg, 'max_leverage', 0) or 0)
+            expected_max_pos = int(getattr(pos_cfg, 'max_positions', 0) or 0)
+            mismatches = []
+            if expected_max_lev and int(self.risk_manager.max_leverage) != expected_max_lev:
+                mismatches.append(
+                    f"max_leverage runtime={self.risk_manager.max_leverage} "
+                    f"db={expected_max_lev}"
+                )
+            if expected_max_pos and int(self.risk_manager.max_positions) != expected_max_pos:
+                mismatches.append(
+                    f"max_positions runtime={self.risk_manager.max_positions} "
+                    f"db={expected_max_pos}"
+                )
+            if mismatches:
+                msg = (
+                    "🚨 FUTURES RISK CONFIG MISMATCH at startup: "
+                    + "; ".join(mismatches)
+                )
+                self.logger.error(msg)
+                hard = os.getenv('FUTURES_RISK_ASSERT_HARD', '').strip().lower() in (
+                    '1', 'true', 'yes'
+                )
+                if hard:
+                    raise RuntimeError(msg)
+            else:
+                self.logger.info(
+                    f"✅ Runtime risk caps match DB config: "
+                    f"max_leverage={expected_max_lev}, "
+                    f"max_positions={expected_max_pos}"
+                )
+        except RuntimeError:
+            raise
+        except Exception as e:
+            self.logger.warning(f"Risk-config assertion errored (non-fatal): {e}")
 
     async def run(self):
         """Main application loop"""
@@ -641,7 +755,33 @@ class FuturesTradingApplication:
             # Initialize Telegram controller for remote control (credentials from secrets manager)
             if get_telegram_controller:
                 try:
-                    self.telegram_controller = get_telegram_controller(self.db_pool)
+                    # ISSUE-19 fix (mirrors AI cca8d94): the shared
+                    # TelegramBotController.__init__ resolves the token via the
+                    # SYNCHRONOUS secrets.get(), which deliberately short-circuits
+                    # the DB lookup when called from inside a running event loop
+                    # (see secrets_manager._get_from_database_sync "use get_async()
+                    # in async context" guard at L341). Operators who store the
+                    # token in the Secure Engine (encrypted secure_credentials DB
+                    # row) but NOT in .env therefore got a None token and the
+                    # controller logged "TELEGRAM_BOT_TOKEN not set". DEX/Solana
+                    # never hit this because they resolve the token via get_async.
+                    # Pre-warm the secrets cache here with the async resolver so the
+                    # controller's sync get() finds the value in secrets._cache.
+                    try:
+                        from security.secrets_manager import secrets as _secrets
+                        for _k in (
+                            'TELEGRAM_BOT_TOKEN',
+                            'TELEGRAM_CHAT_ID',
+                            'TELEGRAM_ADMIN_IDS',
+                        ):
+                            await _secrets.get_async(_k, log_access=False)
+                    except Exception as _warm_err:
+                        self.logger.debug(
+                            f"Telegram secret pre-warm skipped (non-fatal): {_warm_err}"
+                        )
+                    # Wave-11 FIX 2: tag with module_name so the singleton's
+                    # start_polling() honors TELEGRAM_POLL_OWNER (default dashboard).
+                    self.telegram_controller = get_telegram_controller(self.db_pool, module_name='futures')
                     if await self.telegram_controller.initialize():
                         self.telegram_controller.register_module(
                             name='futures',
@@ -807,13 +947,16 @@ async def main():
     if args.exchange:
         os.environ['FUTURES_EXCHANGE'] = args.exchange
 
-    # Handle dry-run
-    dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-    is_dry_run = dry_run_env in ('true', '1', 'yes')
-
+    # Handle dry-run — honors per-module override (Phase 3 A5).
+    # Precedence: --dry-run CLI > FUTURES_DRY_RUN env > DRY_RUN env >
+    # default True. DB row check happens later in the engine once the
+    # config manager has connected.
+    from core.dry_run import resolve_module_dry_run
+    is_dry_run = resolve_module_dry_run('futures', default=True)
     if args.dry_run:
         is_dry_run = True
-
+    # Mirror the resolved value into DRY_RUN so downstream `os.getenv
+    # ('DRY_RUN')` checks in the engine pick up the per-module flip.
     os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
 
     if args.debug:

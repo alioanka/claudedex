@@ -25,10 +25,9 @@
                                     <div class="form-text">Allow AI to execute trades automatically based on sentiment.</div>
                                 </div>
 
-                                <div class="mb-3 form-check form-switch">
-                                    <input class="form-check-input" type="checkbox" id="dry_run" checked>
-                                    <label class="form-check-label" for="dry_run">DRY RUN Mode</label>
-                                    <div class="form-text">Simulate trades without real execution. <strong class="text-danger">Disable for LIVE trading.</strong></div>
+                                <div class="alert alert-info py-2 mb-3" style="font-size:0.85em">
+                                    <i class="fas fa-info-circle me-1"></i>
+                                    DRY/LIVE is controlled by the banner at the top of this page.
                                 </div>
 
                                 <div class="mb-3">
@@ -739,7 +738,7 @@
                 const settings = data.settings;
                 // Basic settings
                 document.getElementById('direct_trading').checked = settings.direct_trading === true;
-                document.getElementById('dry_run').checked = settings.dry_run !== false; // Default true
+                // dry_run owned by DryRunWidget banner.
                 document.getElementById('confidence_threshold').value = settings.confidence_threshold || 85;
                 document.getElementById('trade_amount_usd').value = settings.trade_amount_usd || 50;
                 document.getElementById('trading_pair').value = settings.trading_pair || 'BTCUSDT';
@@ -830,7 +829,7 @@
         const settings = {
             // Basic settings
             direct_trading: document.getElementById('direct_trading').checked,
-            dry_run: document.getElementById('dry_run').checked,
+            // dry_run omitted — banner-only.
             confidence_threshold: parseFloat(document.getElementById('confidence_threshold').value),
             trade_amount_usd: parseFloat(document.getElementById('trade_amount_usd').value),
             trading_pair: document.getElementById('trading_pair').value,
@@ -887,7 +886,7 @@
         try {
             const response = await fetch('/api/ai/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: withCsrfHeaders('POST'),
                 body: JSON.stringify(settings)
             });
             const data = await response.json();
@@ -903,4 +902,6 @@
         }
     }
 </script>
+<script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
+<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('ai'); });</script>
 {% endblock %}

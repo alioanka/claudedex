@@ -70,18 +70,46 @@ class HoneypotChecker:
     """Advanced multi-API honeypot detection system"""
 
     def __init__(self, config_manager, chain_rpc_urls: Dict[str, List[str]]):
-        """Initialize honeypot checker with configuration and RPC URLs."""
+        """Initialize honeypot checker with configuration and RPC URLs.
+
+        Wave-11 FIX 3: ``config_manager`` may be ``None`` when the caller
+        (``core.risk_manager.RiskManager``) was itself constructed without
+        a ConfigManager — the AI and Copy modules wire RiskManager with
+        ``config_manager=None`` so their fall-soft path raises here, and
+        the resulting ``'NoneType' object has no attribute 'get_api_config'``
+        exception causes RiskManager construction to fail, which in turn
+        makes the cross-module risk gate silently inert in both modules.
+        Guard the lookup: when no config_manager is available, fall back
+        to an empty API-key dict (honeypot.is / tokensniffer / goplus are
+        all optional — the checker still runs via the GoPlus public
+        endpoint and the on-chain heuristics, just without per-API keys).
+        This unblocks RiskManager construction without loosening any
+        actual safety check.
+        """
         self.config_mgr = config_manager
         self.chain_rpc_urls = chain_rpc_urls
         self.session = None
         self.web3_connections = {}
 
         # --- FIX: Load API keys from the config manager ---
-        api_config = self.config_mgr.get_api_config()
+        api_config = None
+        if self.config_mgr is not None:
+            try:
+                api_config = self.config_mgr.get_api_config()
+            except Exception as e:
+                # Fail-soft: bad config_manager shouldn't block construction.
+                logger.warning(f"HoneypotChecker: get_api_config failed ({e}); running without API keys")
+                api_config = None
+        else:
+            logger.debug(
+                "HoneypotChecker: no config_manager supplied; running without API keys "
+                "(GoPlus public endpoint + on-chain heuristics still active)"
+            )
+
         self.api_keys = {
-            "honeypot_is": api_config.honeypot_is_api_key if hasattr(api_config, 'honeypot_is_api_key') else "",
-            "tokensniffer": api_config.tokensniffer_api_key if hasattr(api_config, 'tokensniffer_api_key') else "",
-            "goplus": api_config.goplus_api_key if hasattr(api_config, 'goplus_api_key') else ""
+            "honeypot_is": getattr(api_config, 'honeypot_is_api_key', '') if api_config is not None else '',
+            "tokensniffer": getattr(api_config, 'tokensniffer_api_key', '') if api_config is not None else '',
+            "goplus": getattr(api_config, 'goplus_api_key', '') if api_config is not None else '',
         }
         
         self.cache = {}

@@ -373,13 +373,13 @@
         </div>
 
         <div class="stat-card">
-            <div class="stat-label">Tokens Detected</div>
+            <div class="stat-label">Snipe Attempts (24h)</div>
             <div class="stat-value" id="stat-detected">0</div>
-            <div class="stat-change" id="stat-detected-detail">Last 24h</div>
+            <div class="stat-change" id="stat-detected-detail">From sniper_trades</div>
         </div>
 
         <div class="stat-card">
-            <div class="stat-label">Tokens Sniped</div>
+            <div class="stat-label">Total Snipes (All-Time)</div>
             <div class="stat-value" id="stat-sniped">0</div>
             <div class="stat-change" id="stat-sniped-detail">Active: 0</div>
         </div>
@@ -408,6 +408,7 @@
         <div class="section-title">
             <i class="fas fa-radar"></i>
             Pool Detection Activity
+            <span id="wss-concurrency-note" style="margin-left:auto;font-size:0.75rem;color:var(--text-secondary);font-weight:400;"></span>
         </div>
         <div class="detection-stats">
             <div class="detection-stat">
@@ -420,7 +421,7 @@
             </div>
             <div class="detection-stat">
                 <div class="detection-stat-value" id="pools-passed">0</div>
-                <div class="detection-stat-label">Passed Safety</div>
+                <div class="detection-stat-label" id="pools-passed-label">Passed Filters</div>
             </div>
             <div class="detection-stat">
                 <div class="detection-stat-value" id="pools-rejected">0</div>
@@ -458,6 +459,14 @@
                 <tbody id="positionsTableBody">
                 </tbody>
             </table>
+            <div id="positions-footer" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 4px; color: var(--text-secondary); font-size: 0.85rem;">
+                <span id="positions-footer-info">Showing 0 of 0</span>
+                <span>
+                    <button class="btn btn-sm" id="positions-prev" onclick="changePositionsPage(-1)" disabled>Prev</button>
+                    <button class="btn btn-sm" id="positions-next" onclick="changePositionsPage(1)" disabled>Next</button>
+                    <a href="/sniper/trades" style="margin-left: 12px;">Open full trade history</a>
+                </span>
+            </div>
         </div>
     </div>
 
@@ -544,6 +553,12 @@ const pnlChart = new Chart(ctx, {
     }
 });
 
+// Active-positions pagination state. With 1000s of open snipes the DOM
+// table would otherwise lock the browser, so we render at most pageSize.
+const positionsPageSize = 50;
+let positionsOffset = 0;
+let positionsTotal = 0;
+
 async function loadSniperData() {
     try {
         // Load stats
@@ -555,11 +570,12 @@ async function loadSniperData() {
             }
         }
 
-        // Load positions
-        const posResponse = await fetch('/api/sniper/positions');
+        // Load positions (paginated)
+        const posResponse = await fetch(`/api/sniper/positions?limit=${positionsPageSize}&offset=${positionsOffset}`);
         if (posResponse.ok) {
             const posData = await posResponse.json();
             if (posData.success && posData.positions) {
+                positionsTotal = typeof posData.total === 'number' ? posData.total : posData.positions.length;
                 updatePositions(posData.positions);
             }
         }
@@ -612,26 +628,82 @@ function updateStats(data) {
     // Tokens detected
     document.getElementById('stat-detected').textContent = data.tokens_detected || 0;
 
-    // Tokens sniped
+    // Tokens sniped. Active count surfaces cap-saturation visually:
+    // if the active count is at or near the configured cap, badge it
+    // with a warning chip so operators see the throttle is active.
     document.getElementById('stat-sniped').textContent = data.tokens_sniped || 0;
-    document.getElementById('stat-sniped-detail').textContent = `Active: ${data.active_positions || 0}`;
+    // Prefer the effective count (max of in-memory and db_open) — that's
+    // what the engine actually checks against the cap. Falls back to the
+    // DB count if the engine hasn't published a snapshot yet.
+    const active = (data.active_positions_effective != null)
+        ? data.active_positions_effective
+        : (data.active_positions || 0);
+    const cap = data.max_active_positions || 0;
+    let activeText = `Active: ${active}`;
+    if (cap > 0) {
+        const pct = (active / cap) * 100;
+        if (pct >= 95) {
+            activeText = `Active: ${active}/${cap} ⛔ CAPPED — new snipes blocked`;
+        } else if (pct >= 80) {
+            activeText = `Active: ${active}/${cap} ⚠ near cap`;
+        } else {
+            activeText = `Active: ${active}/${cap}`;
+        }
+    }
+    document.getElementById('stat-sniped-detail').textContent = activeText;
 
     // P&L
     const pnl = data.total_pnl || 0;
     const pnlEl = document.getElementById('stat-pnl');
     pnlEl.textContent = `$${pnl.toFixed(2)}`;
     pnlEl.className = 'stat-value ' + (pnl >= 0 ? 'positive' : 'negative');
-    document.getElementById('stat-pnl-detail').textContent = `Win Rate: ${data.win_rate || 0}%`;
+    // Format win_rate; backend returns a raw float (e.g. 0.04900452) — without
+    // .toFixed it renders a 17-digit decimal in the header chip.
+    document.getElementById('stat-pnl-detail').textContent =
+        `Win Rate: ${(parseFloat(data.win_rate) || 0).toFixed(2)}%`;
 
-    // Trade amount
+    // Trade amount. unit is per-chain; 'all' / unknown defaults to a
+    // chain-agnostic display rather than misreporting SOL trades as ETH.
     const amount = data.trade_amount || 0.1;
-    const unit = chain === 'solana' ? 'SOL' : 'ETH';
-    document.getElementById('stat-amount').textContent = `${amount} ${unit}`;
+    let unit = '';
+    if (chain === 'solana') unit = 'SOL';
+    else if (chain === 'ethereum' || chain === 'eth') unit = 'ETH';
+    else if (chain === 'bsc' || chain === 'binance') unit = 'BNB';
+    else if (chain === 'all') unit = '(multi-chain)';
+    else unit = (chain || '').toUpperCase();
+    document.getElementById('stat-amount').textContent = `${amount} ${unit}`.trim();
     document.getElementById('stat-slippage').textContent = `Slippage: ${data.slippage || 10}%`;
 
     // Safety
     document.getElementById('stat-safety').textContent = data.safety_enabled ? 'Enabled' : 'Disabled';
     document.getElementById('stat-safety-detail').textContent = `Test Mode: ${data.test_mode ? 'On' : 'Off'}`;
+
+    // Annotate the "Passed Filters" label so operators don't read it as
+    // "passed safety check" when safety_check_enabled is false. With
+    // safety disabled, the count reflects liquidity + tax filters only.
+    const passedLabel = document.getElementById('pools-passed-label');
+    if (passedLabel) {
+        passedLabel.textContent = data.safety_enabled
+            ? 'Passed Filters + Safety'
+            : 'Passed Filters (safety off)';
+    }
+
+    // WSS concurrency observability. wss_inflight_peak counts all
+    // dispatched tasks pending OR running — including those queued
+    // for the semaphore — so it can legitimately exceed the semaphore
+    // cap of 16. Label reflects that: "queued+running" is the task
+    // set; concurrent RPC execution is still bounded at 16.
+    const wssNote = document.getElementById('wss-concurrency-note');
+    if (wssNote) {
+        const peak = data.wss_inflight_peak;
+        const dispatched = data.wss_dispatched;
+        if (peak != null && peak > 0) {
+            wssNote.textContent =
+                `WSS task peak (queued+running): ${peak} · ${dispatched || 0} dispatched (concurrent RPC capped at 16)`;
+        } else {
+            wssNote.textContent = '';
+        }
+    }
 
     // Detection stats
     document.getElementById('pools-detected').textContent = data.pools_detected || 0;
@@ -663,7 +735,8 @@ function updateActivityFeed(activity) {
     }
 
     feed.innerHTML = activity.map(item => {
-        const time = item.timestamp ? new Date(item.timestamp).toLocaleTimeString() : '';
+        const _dt = item.timestamp ? window.parseUtcTimestamp(item.timestamp) : null;
+        const time = _dt ? _dt.toLocaleTimeString() : '';
         return `
             <div class="activity-item">
                 <div class="activity-icon ${item.icon}">
@@ -691,6 +764,13 @@ function getActivityIcon(iconType) {
     return icons[iconType] || 'info-circle';
 }
 
+function changePositionsPage(delta) {
+    const newOffset = positionsOffset + delta * positionsPageSize;
+    if (newOffset < 0 || newOffset >= positionsTotal) return;
+    positionsOffset = newOffset;
+    loadSniperData();
+}
+
 function updatePositions(positions) {
     const container = document.getElementById('positions-container');
     const emptyState = document.getElementById('positions-empty');
@@ -698,10 +778,12 @@ function updatePositions(positions) {
     const countEl = document.getElementById('position-count');
     const closeAllBtn = document.getElementById('closeAllBtn');
 
-    countEl.textContent = positions.length;
-    closeAllBtn.disabled = positions.length === 0;
+    // Show TOTAL open positions in header (not just the visible page slice).
+    const headerTotal = positionsTotal || positions.length;
+    countEl.textContent = headerTotal;
+    closeAllBtn.disabled = headerTotal === 0;
 
-    if (positions.length === 0) {
+    if (headerTotal === 0) {
         emptyState.style.display = 'block';
         container.style.display = 'none';
         return;
@@ -709,6 +791,18 @@ function updatePositions(positions) {
 
     emptyState.style.display = 'none';
     container.style.display = 'block';
+
+    // Pagination footer
+    const footerInfo = document.getElementById('positions-footer-info');
+    const prevBtn = document.getElementById('positions-prev');
+    const nextBtn = document.getElementById('positions-next');
+    if (footerInfo) {
+        const start = positions.length === 0 ? 0 : positionsOffset + 1;
+        const end = positionsOffset + positions.length;
+        footerInfo.textContent = `Showing ${start}-${end} of ${headerTotal}`;
+    }
+    if (prevBtn) prevBtn.disabled = positionsOffset === 0;
+    if (nextBtn) nextBtn.disabled = positionsOffset + positions.length >= headerTotal;
 
     tableBody.innerHTML = positions.map(pos => {
         const pnl = pos.unrealized_pnl || 0;
@@ -761,7 +855,7 @@ function updateTrades(trades) {
     tableBody.innerHTML = trades.slice(0, 10).map(trade => {
         const pnl = trade.pnl || 0;
         const chain = trade.chain || 'solana';
-        const time = new Date(trade.closed_at).toLocaleString();
+        const time = window.formatLocalDateTime(trade.closed_at);
 
         return `
             <tr>
@@ -806,7 +900,10 @@ function shortenAddress(address) {
 
 function formatAge(timestamp) {
     if (!timestamp) return '-';
-    const diff = Date.now() - new Date(timestamp).getTime();
+    // parseUtcTimestamp handles naive UTC ISO (W6 fix).
+    const d = window.parseUtcTimestamp(timestamp);
+    if (!d) return '-';
+    const diff = Date.now() - d.getTime();
     const mins = Math.floor(diff / 60000);
     const hours = Math.floor(mins / 60);
     if (hours > 0) return `${hours}h ${mins % 60}m`;
@@ -835,7 +932,8 @@ async function closePosition(tokenAddress) {
     try {
         const response = await fetch('/api/sniper/position/close', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin',
             body: JSON.stringify({ symbol: tokenAddress })
         });
 
@@ -855,7 +953,11 @@ async function closeAllPositions() {
     if (!confirm('Close ALL positions?')) return;
 
     try {
-        const response = await fetch('/api/sniper/positions/close-all', { method: 'POST' });
+        const response = await fetch('/api/sniper/positions/close-all', {
+            method: 'POST',
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin'
+        });
         const data = await response.json();
         alert(data.message || 'Closed all positions');
     } catch (e) {

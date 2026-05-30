@@ -35,13 +35,32 @@ load_dotenv()
 log_dir = Path("logs/dashboard")
 log_dir.mkdir(parents=True, exist_ok=True)
 
+from logging.handlers import RotatingFileHandler as _RotatingFileHandler
+
+_main_handler = _RotatingFileHandler(
+    log_dir / 'dashboard.log', maxBytes=10*1024*1024, backupCount=5
+)
+_main_handler.setLevel(logging.INFO)
+
+# Errors-only handler — keeps a focused stream for postmortem grep
+# without trawling through the verbose INFO/DEBUG stream.
+_errors_handler = _RotatingFileHandler(
+    log_dir / 'dashboard_errors.log', maxBytes=5*1024*1024, backupCount=3
+)
+_errors_handler.setLevel(logging.ERROR)
+
+_console_handler = logging.StreamHandler()
+_console_handler.setLevel(logging.INFO)
+
+_fmt = logging.Formatter(
+    '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s", "module": "%(module)s", "function": "%(funcName)s", "line": %(lineno)d}'
+)
+for _h in (_main_handler, _errors_handler, _console_handler):
+    _h.setFormatter(_fmt)
+
 logging.basicConfig(
     level=logging.INFO,
-    format='{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "message": "%(message)s", "module": "%(module)s", "function": "%(funcName)s", "line": %(lineno)d}',
-    handlers=[
-        logging.FileHandler(log_dir / 'dashboard.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[_main_handler, _errors_handler, _console_handler],
 )
 logger = logging.getLogger("Dashboard")
 

@@ -680,6 +680,68 @@
         </div>
     </div>
 
+    <!-- FUT-RM-09 (Wave 3): Funding Cost — predicted vs realized -->
+    <div class="section-card">
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-coins"></i>
+                Funding Cost (last <span id="funding-hours-label">24</span>h)
+            </div>
+            <div>
+                <select id="funding-hours-select" class="setting-select" onchange="loadFundingCost()" style="width:auto;">
+                    <option value="6">6h</option>
+                    <option value="12">12h</option>
+                    <option value="24" selected>24h</option>
+                    <option value="72">72h</option>
+                </select>
+            </div>
+        </div>
+        <div class="setting-description" style="margin-bottom:10px;">
+            Positive = cost to the book (you paid funding). Negative = revenue.
+            Realized populates after the exchange-income importer ships.
+        </div>
+        <div class="chart-container">
+            <canvas id="fundingCostChart"></canvas>
+        </div>
+    </div>
+
+    <!-- FUT-RM-09b (Wave 4): Per-symbol 24h forward funding-cost forecast -->
+    <div class="section-card">
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-binoculars"></i>
+                Funding Forecast (next <span id="funding-forecast-window">24</span>h)
+            </div>
+            <div id="funding-forecast-total" style="font-weight:600;">
+                Total: $0.00
+            </div>
+        </div>
+        <div class="setting-description" style="margin-bottom:10px;">
+            Projects the most recent per-interval funding rate forward across
+            the funding-interval cadence (Binance/Bybit USDT perps = 8h, so
+            24h = 3 intervals). Positive = cost to the book.
+        </div>
+        <div class="table-responsive">
+            <table class="position-table" id="funding-forecast-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Side</th>
+                        <th>Notional ($)</th>
+                        <th>Per Interval ($)</th>
+                        <th>24h Forecast ($)</th>
+                        <th>Implied APR</th>
+                    </tr>
+                </thead>
+                <tbody id="fundingForecastBody">
+                    <tr><td colspan="6" style="text-align:center;opacity:0.6;">
+                        No active funding snapshots yet.
+                    </td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
     <!-- Active Positions -->
     <div class="section-card">
         <div class="section-header">
@@ -789,6 +851,116 @@ const pnlChart = new Chart(ctx, {
     }
 });
 
+// FUT-RM-09: Funding Cost chart (predicted vs realized)
+let fundingCostChart = null;
+function initFundingCostChart() {
+    const el = document.getElementById('fundingCostChart');
+    if (!el) return;
+    const fctx = el.getContext('2d');
+    fundingCostChart = new Chart(fctx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [
+                {
+                    label: 'Predicted ($)',
+                    data: [],
+                    backgroundColor: 'rgba(139, 92, 246, 0.6)',
+                    borderColor: '#8b5cf6',
+                    borderWidth: 1,
+                },
+                {
+                    label: 'Realized ($)',
+                    data: [],
+                    backgroundColor: 'rgba(16, 185, 129, 0.6)',
+                    borderColor: '#10b981',
+                    borderWidth: 1,
+                },
+            ],
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: { legend: { display: true, position: 'top' } },
+            scales: {
+                y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' } },
+                x: { grid: { display: false } },
+            },
+        },
+    });
+}
+async function loadFundingCost() {
+    if (!fundingCostChart) initFundingCostChart();
+    if (!fundingCostChart) return;
+    const sel = document.getElementById('funding-hours-select');
+    const lbl = document.getElementById('funding-hours-label');
+    const hours = sel ? parseInt(sel.value, 10) || 24 : 24;
+    if (lbl) lbl.textContent = String(hours);
+    try {
+        const resp = await fetch('/api/futures/funding-cost?hours=' + hours);
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success || !data.buckets) return;
+        const labels = data.buckets.map(b => {
+            const d = new Date(b.hour);
+            // HH:00 form for compact axis
+            return ('0' + d.getHours()).slice(-2) + ':00';
+        });
+        fundingCostChart.data.labels = labels;
+        fundingCostChart.data.datasets[0].data = data.buckets.map(b => Number(b.predicted_usd || 0));
+        fundingCostChart.data.datasets[1].data = data.buckets.map(b => Number(b.realized_usd  || 0));
+        fundingCostChart.update();
+    } catch (e) {
+        console.debug('Could not load funding-cost chart:', e);
+    }
+}
+
+// FUT-RM-09b: Per-symbol 24h forward funding-cost forecast
+async function loadFundingForecast() {
+    try {
+        const resp = await fetch('/api/futures/funding-forecast?window_hours=24');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success) return;
+        const body = document.getElementById('fundingForecastBody');
+        const totalEl = document.getElementById('funding-forecast-total');
+        const windowEl = document.getElementById('funding-forecast-window');
+        if (windowEl) windowEl.textContent = String(data.window_hours || 24);
+        const total = Number(data.total_forecast_usd || 0);
+        if (totalEl) {
+            const sign = total >= 0 ? '' : '-';
+            totalEl.textContent = 'Total: ' + sign + '$' + Math.abs(total).toFixed(2);
+            totalEl.style.color = total > 0 ? '#dc2626' : (total < 0 ? '#10b981' : '');
+        }
+        if (!body) return;
+        if (!data.rows || data.rows.length === 0) {
+            body.innerHTML = '<tr><td colspan="6" style="text-align:center;opacity:0.6;">No active funding snapshots yet.</td></tr>';
+            return;
+        }
+        const fmt = (v, d) => {
+            const n = Number(v || 0);
+            const s = n >= 0 ? '' : '-';
+            return s + '$' + Math.abs(n).toFixed(d == null ? 2 : d);
+        };
+        const rowsHtml = data.rows.map(r => {
+            const fc = Number(r.forecast_24h_usd || 0);
+            const apr = Number(r.implied_apr_pct || 0);
+            const fcColor = fc > 0 ? '#dc2626' : (fc < 0 ? '#10b981' : '');
+            return '<tr>' +
+                '<td><b>' + r.symbol + '</b></td>' +
+                '<td>' + r.side + '</td>' +
+                '<td>' + fmt(r.notional_usd) + '</td>' +
+                '<td>' + fmt(r.per_interval_usd, 4) + '</td>' +
+                '<td style="color:' + fcColor + ';font-weight:600;">' + fmt(fc) + '</td>' +
+                '<td>' + apr.toFixed(2) + '%</td>' +
+                '</tr>';
+        }).join('');
+        body.innerHTML = rowsHtml;
+    } catch (e) {
+        console.debug('Could not load funding-forecast widget:', e);
+    }
+}
+
 // Fetch futures data from API
 async function loadFuturesData() {
     try {
@@ -800,6 +972,11 @@ async function loadFuturesData() {
                 updateStats(data.futures);
             }
         }
+
+        // FUT-RM-09: refresh funding cost widget alongside main data.
+        loadFundingCost();
+        // FUT-RM-09b: refresh per-symbol forward forecast next to it.
+        loadFundingForecast();
 
         // Fetch positions directly from futures module for full details (SL/TP/TSL)
         const posResponse = await fetch('/api/futures/positions');
@@ -891,7 +1068,14 @@ async function loadPerformanceChart() {
 function updateStats(stats) {
     // Mode and Network
     document.getElementById('stat-mode').textContent = stats.mode || 'DRY_RUN';
-    document.getElementById('stat-network').textContent = `${stats.exchange || 'BINANCE'} ${stats.network || 'TESTNET'}`;
+    // Mode / Network. Don't fabricate "BINANCE TESTNET" when the
+    // backend hasn't reported exchange/network — misleading for Bybit
+    // V5 deployments (the project's actual futures surface per
+    // modules/futures_trading/CLAUDE.md). Render '--' until real data.
+    const exch = stats.exchange ? String(stats.exchange).toUpperCase() : '';
+    const net  = stats.network  ? String(stats.network).toUpperCase()  : '';
+    document.getElementById('stat-network').textContent =
+        (exch || net) ? `${exch} ${net}`.trim() : '--';
 
     // P&L
     const netPnl = stats.net_pnl || '$0.00';
@@ -1057,7 +1241,7 @@ function updateTrades(trades) {
         const pnl = trade.pnl || 0;
         const pnlPct = trade.pnl_pct || 0;
         const exitReason = formatExitReason(trade.close_reason || trade.exit_reason || 'unknown');
-        const closedAt = new Date(trade.closed_at).toLocaleString();
+        const closedAt = window.formatLocalDateTime(trade.closed_at);
 
         return `
             <tr>
@@ -1178,7 +1362,8 @@ async function closeFuturesPosition(symbol) {
     try {
         const response = await fetch('/api/futures/position/close', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin',
             body: JSON.stringify({ symbol })
         });
         const data = await response.json();
@@ -1209,7 +1394,11 @@ async function closeAllPositions() {
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i>';
 
     try {
-        const response = await fetch('/api/futures/positions/close-all', { method: 'POST' });
+        const response = await fetch('/api/futures/positions/close-all', {
+            method: 'POST',
+            headers: window.withCsrfHeaders('POST'),
+            credentials: 'same-origin'
+        });
         const data = await response.json();
         if (data.success) {
             alert(data.message);

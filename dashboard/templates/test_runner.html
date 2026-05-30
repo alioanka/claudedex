@@ -1,0 +1,487 @@
+{% extends "base.html" %}
+
+{% block title %}Test Runner - DexScreener Trading Bot{% endblock %}
+
+{#
+  Single-screen verification page for the session-18 fixes.
+  Operators land here, eyeball Section A's UI clones, click the Section
+  B/C/D buttons to run the catalogued scripts/probes, then hit Section
+  E's "Copy All Results" to paste a single markdown blob back to the
+  conversation. Frontend-only; backend contract is documented in JS.
+#}
+
+{% block extra_css %}
+<style>
+  .tr-page {
+    color: var(--text-primary, #f1f5f9);
+  }
+  .tr-section {
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin-bottom: 18px;
+  }
+  .tr-section h2 {
+    font-size: 1.1rem;
+    margin: 0 0 6px 0;
+    color: var(--text-primary, #f1f5f9);
+    pointer-events: auto;
+  }
+  .tr-section .tr-sub {
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.85rem;
+    margin-bottom: 14px;
+  }
+  .tr-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 14px;
+  }
+  .tr-card {
+    background: var(--bg-tertiary, #0f172a);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 8px;
+    padding: 12px 14px;
+  }
+  .tr-card-title {
+    font-weight: 600;
+    margin-bottom: 8px;
+    pointer-events: auto;
+  }
+  .tr-expected {
+    font-size: 0.8rem;
+    color: var(--text-secondary, #94a3b8);
+    margin-top: 8px;
+    font-style: italic;
+  }
+  .chip {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 700;
+    margin-left: 6px;
+    vertical-align: middle;
+  }
+  .chip-pass    { background: #10b981; color: #fff; }
+  .chip-fail    { background: #ef4444; color: #fff; }
+  .chip-pending { background: #64748b; color: #fff; }
+  .chip-warn    { background: #f59e0b; color: #fff; }
+
+  /* Tag pills — small badges next to each test title so the operator
+     can spot must-run / new / p0 / flaky / expected-empty entries at
+     a glance without reading the description. Sizes are intentionally
+     smaller than status chips so they don't crowd the title row. */
+  .tr-tag-row {
+    display: inline-flex;
+    gap: 4px;
+    margin-left: 6px;
+    vertical-align: middle;
+    flex-wrap: wrap;
+  }
+  .tag-pill {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 999px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    line-height: 1.3;
+    text-transform: uppercase;
+    color: #fff;
+    white-space: nowrap;
+  }
+  .tag-must            { background: #dc2626; }              /* red    */
+  .tag-new             { background: #16a34a; }              /* green  */
+  .tag-p0              { background: #ea580c; }              /* orange */
+  .tag-flaky           { background: #eab308; color: #1f2937; } /* yellow */
+  .tag-expected-empty  { background: #64748b; }              /* grey   */
+
+  .tr-output {
+    background: #0a0f1c;
+    color: #cbd5e1;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #1e293b;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    max-height: 280px;
+    overflow: auto;
+    margin-top: 8px;
+  }
+  .tr-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 6px;
+  }
+  .tr-copy-btn {
+    font-size: 0.7rem;
+    padding: 2px 8px !important;
+    min-height: 22px !important;
+  }
+
+  /* ── Sticky toolbar (search + filter chips + Run Filtered) ─────── */
+  .tr-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--bg-primary, #0f172a);
+    border-bottom: 1px solid var(--border-color, #334155);
+    padding: 10px 12px 12px 12px;
+    margin: -8px -8px 14px -8px;
+    box-shadow: 0 4px 10px -6px rgba(0,0,0,0.5);
+  }
+  .tr-toolbar input[type="search"] {
+    width: 100%;
+    background: var(--bg-tertiary, #0a0f1c);
+    color: var(--text-primary, #f1f5f9);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    outline: none;
+  }
+  .tr-toolbar input[type="search"]:focus {
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59,130,246,0.25);
+  }
+  .tr-filter-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+  }
+  .tr-filter-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    border: 1px solid var(--border-color, #334155);
+    background: var(--bg-secondary, #1e293b);
+    color: var(--text-secondary, #94a3b8);
+    transition: background 120ms, color 120ms, border-color 120ms;
+  }
+  .tr-filter-chip:hover { color: var(--text-primary, #f1f5f9); }
+  .tr-filter-chip.active {
+    background: #3b82f6;
+    color: #fff;
+    border-color: #3b82f6;
+  }
+  .tr-filter-chip[data-filter="must"].active     { background:#dc2626;border-color:#dc2626; }
+  .tr-filter-chip[data-filter="new"].active      { background:#16a34a;border-color:#16a34a; }
+  .tr-filter-chip[data-filter="p0"].active       { background:#ea580c;border-color:#ea580c; }
+  .tr-filter-chip[data-filter="flaky"].active    { background:#eab308;border-color:#eab308;color:#1f2937; }
+  .tr-filter-chip[data-filter="expected-empty"].active { background:#64748b;border-color:#64748b; }
+  .tr-filter-chip .count {
+    font-size: 0.65rem;
+    opacity: 0.8;
+    font-weight: 500;
+  }
+  .tr-toolbar-progress {
+    font-size: 0.78rem;
+    color: var(--text-secondary, #94a3b8);
+    margin-left: auto;
+  }
+  .tr-count-chip {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    background: var(--bg-tertiary, #0f172a);
+    border: 1px solid var(--border-color, #334155);
+    color: var(--text-secondary, #94a3b8);
+    font-size: 0.72rem;
+    font-weight: 600;
+    margin-left: 8px;
+    vertical-align: middle;
+  }
+  /* hide cards when their data attrs don't match the active filters */
+  .tr-card.tr-hidden { display: none !important; }
+
+  /* Recently-run history strip — last 5 results per section. Each
+     item is a clickable chip that scrolls to the test card. */
+  .tr-recent {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin: 4px 0 12px 0;
+  }
+  .tr-recent:empty { display: none; }
+  .tr-recent-label {
+    font-size: 0.7rem;
+    color: var(--text-secondary, #94a3b8);
+    margin-right: 4px;
+    align-self: center;
+  }
+  .tr-recent-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border: 1px solid var(--border-color, #334155);
+    background: var(--bg-tertiary, #0f172a);
+    color: var(--text-primary, #f1f5f9);
+    cursor: pointer;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tr-recent-pill .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    display: inline-block;
+  }
+  .tr-recent-pill .dot.pass { background: #10b981; }
+  .tr-recent-pill .dot.fail { background: #ef4444; }
+  .tr-recent-pill .age {
+    color: var(--text-secondary, #94a3b8);
+    font-weight: 500;
+    margin-left: 4px;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="tr-page">
+  <!-- Sticky toolbar — search + filter chips + Run Filtered + Copy
+       All. Stays pinned to the top so the operator can narrow the
+       121-entry catalog without scrolling back. Wired in test_runner.js
+       (initToolbar). -->
+  <div class="tr-toolbar" id="tr-toolbar">
+    <input id="tr-search" type="search" autocomplete="off"
+           placeholder="Search by title or description…">
+    <div class="tr-filter-row" id="tr-filter-row">
+      <span style="font-size:0.75rem;color:var(--text-secondary,#94a3b8);">Filter:</span>
+      <span class="tr-filter-chip" data-filter="__all" title="Show every test (clear all tag filters)">All</span>
+      <span class="tr-filter-chip" data-filter="must"           title="Must-run sanity tests">Must <span class="count" data-tag-count="must">0</span></span>
+      <span class="tr-filter-chip" data-filter="new"            title="Wave-3 + Wave-4 additions">New <span class="count" data-tag-count="new">0</span></span>
+      <span class="tr-filter-chip" data-filter="p0"             title="Migration-present P0 probes">P0 <span class="count" data-tag-count="p0">0</span></span>
+      <span class="tr-filter-chip" data-filter="flaky"          title="Known-intermittent — deprioritize a red here">Flaky <span class="count" data-tag-count="flaky">0</span></span>
+      <span class="tr-filter-chip" data-filter="expected-empty" title="Returns 0 rows in DRY_RUN by design">Expected-empty <span class="count" data-tag-count="expected-empty">0</span></span>
+      <button id="tr-run-filtered" class="btn btn-sm btn-primary" type="button"
+              style="margin-left:8px;" title="Run every currently-visible test in sequence">
+        <i class="fas fa-bolt"></i> Run Filtered
+      </button>
+      <button id="tr-copy-all" class="btn btn-sm btn-secondary" type="button"
+              title="Build a single markdown blob of every run result">
+        <i class="fas fa-clipboard"></i> Copy All
+      </button>
+      <span id="tr-progress" class="tr-toolbar-progress"></span>
+    </div>
+  </div>
+
+  <div style="margin-bottom: 14px;">
+    <h1 style="pointer-events:auto;margin:0;">Test Runner</h1>
+    <div style="color: var(--text-secondary, #94a3b8); font-size: 0.9rem;">
+      One-screen verification with tag pills (Must / New / P0 / Flaky /
+      Expected-empty). Backend contract:
+      <code>/api/test-runner/{tests,run,probe/&lt;id&gt;}</code>
+      (owned by Agent 3 — pin to this shape).
+    </div>
+  </div>
+
+  <!-- Section A: UI Verification Clones -->
+  <section class="tr-section" id="tr-section-a">
+    <h2>A. UI Verification Clones</h2>
+    <div class="tr-sub">Inline reproductions of every UI element that
+      this-session's fixes touch. No browsing required — click each
+      Verify button to populate the chip.</div>
+    <div id="tr-section-a-body" class="tr-grid">
+
+      <!-- A1: MODE badge clone -->
+      <div class="tr-card" id="tr-clone-mode-badge">
+        <div class="tr-card-title">A1. MODE badge</div>
+        <div class="tr-row">
+          <div id="tr-mode-badge" class="bot-mode-badge bot-mode-unknown"
+               style="position:static;margin:0;">
+            <span id="tr-mode-text">checking…</span>
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Verify
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: <code>🔵 DRY-RUN</code> (blue) under DRY_RUN=true.
+          Was <code>UNKNOWN</code> (gray) before commit <code>5c7777b</code>
+          + cache-buster <code>f8375db</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
+      <!-- A2: Sniper cap tile clone -->
+      <div class="tr-card" id="tr-clone-sniper-cap">
+        <div class="tr-card-title">A2. Sniper cap tile</div>
+        <div class="tr-row">
+          <div id="tr-sniper-cap"
+               style="font-family:ui-monospace,Menlo,monospace;font-size:0.95rem;
+                      padding:6px 10px;border:1px solid var(--border-color,#334155);
+                      border-radius:6px;background:var(--bg-tertiary,#0f172a);">
+            Active: …
+          </div>
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Verify
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: <code>Active: N/500</code> (cap ≥ 1). Before fix
+          <code>118f2ae</code> the cap was 0 right after restart so the
+          tile showed just <code>Active: N</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
+      <!-- A3: Risk-critical CSS preview — purely visual, operator
+           confirms readability manually. Each input renders with
+           class="risk-critical" — the same global_settings.html
+           styling. PASS if BOTH inputs are legible. -->
+      <div class="tr-card" id="tr-clone-risk-css">
+        <div class="tr-card-title">A3. Risk-critical input CSS</div>
+        <div class="tr-row" style="flex-direction:column;align-items:stretch;">
+          <label style="font-size:0.8rem;" class="risk-critical-label">
+            max_drawdown_pct
+          </label>
+          <input type="number" class="risk-critical form-control"
+                 value="15" step="any" style="margin-bottom:8px;">
+          <label style="font-size:0.8rem;" class="risk-critical-label">
+            max_slippage
+          </label>
+          <input type="text" class="risk-critical form-control" value="2.5">
+        </div>
+        <div class="tr-row" style="margin-top:8px;">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            Mark legible
+          </button>
+          <button type="button" class="btn btn-sm btn-danger" data-action="fail">
+            Mark unreadable
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">manual</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: dark-red background, light-pink text (DARK theme)
+          OR light-pink bg + dark-red text (LIGHT theme). Both values
+          ("15", "2.5") must be clearly readable. Before fix
+          <code>bd0a0a6</code> the values were invisible (light pink
+          bg + inherited light-gray text).
+        </div>
+      </div>
+
+      <!-- A4: Module Overview clone — replicates /full-dashboard's
+           module-status grid. Pulls /api/modules; PASS if envs match
+           our local truth (Sniper + Arbitrage ENABLED, rest DISABLED). -->
+      <div class="tr-card" id="tr-clone-module-overview"
+           style="grid-column: 1 / -1;">
+        <div class="tr-card-title">A4. Module Overview (env-truth)</div>
+        <div class="tr-row">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Refetch
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div id="tr-module-grid" class="tr-grid"
+             style="grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                    gap:8px;margin-top:8px;">
+          <span style="color:var(--text-secondary,#94a3b8);">loading…</span>
+        </div>
+        <div class="tr-expected">
+          Expected (per VPS .env): Sniper=<code>ENABLED+RUNNING</code>,
+          Arbitrage=<code>ENABLED+RUNNING</code>, all others
+          =<code>DISABLED</code>. Before fix <code>118f2ae</code>
+          historical-data rows were mislabeled ENABLED.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
+      <!-- A5: Analytics module switcher clone — verifies each tab
+           routes to a working /api/analytics/performance/<mod> response. -->
+      <div class="tr-card" id="tr-clone-analytics-switcher"
+           style="grid-column: 1 / -1;">
+        <div class="tr-card-title">A5. Analytics module switcher</div>
+        <div class="tr-row">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-sync"></i> Test all tabs
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div id="tr-analytics-tabs"
+             style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+        </div>
+        <div class="tr-expected">
+          Expected: every tab fetches its own perf+risk data without
+          one-tab content leaking across (Agent 2 fix <code>3cb544b</code>).
+          PASS if every module returns HTTP 200 from
+          <code>/api/analytics/performance/&lt;mod&gt;?timeframe=all</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
+      <!-- A6: CSRF probe — fires a POST with the X-CSRF-Token header
+           against a SAFE endpoint (the test-runner's own /run). PASS
+           if not rejected with 403 "CSRF token missing or invalid". -->
+      <div class="tr-card" id="tr-clone-csrf-probe">
+        <div class="tr-card-title">A6. CSRF token plumbing</div>
+        <div class="tr-row">
+          <button type="button" class="btn btn-sm btn-primary" data-action="verify">
+            <i class="fas fa-shield-alt"></i> Probe CSRF
+          </button>
+          <span class="tr-status"><span class="chip chip-pending">pending</span></span>
+        </div>
+        <div class="tr-expected">
+          Expected: POST /api/test-runner/run with X-CSRF-Token header
+          returns 200 (test executes). Without the header it returns
+          403 "CSRF token missing or invalid" — exactly the failure
+          the operator saw on /pro-controls + /global-settings before
+          commits <code>dddb1a5</code> + <code>bd0a0a6</code>.
+        </div>
+        <pre class="tr-output" style="display:none;"></pre>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- Section B: Scripts. Count chip updates live as filters apply. -->
+  <section class="tr-section" id="tr-section-b" data-section="scripts">
+    <h2>B. Scripts <span class="tr-count-chip"
+          data-section-count="scripts">0</span></h2>
+    <div class="tr-sub">bash kind tests from <code>/api/test-runner/tests</code>.</div>
+    <div class="tr-recent" data-section-recent="scripts"></div>
+    <div id="tr-section-b-body"></div>
+  </section>
+
+  <!-- Section C: API Probes. -->
+  <section class="tr-section" id="tr-section-c" data-section="api">
+    <h2>C. API Probes <span class="tr-count-chip"
+          data-section-count="api">0</span></h2>
+    <div class="tr-sub">probe kind tests via <code>/api/test-runner/probe/&lt;id&gt;</code>.</div>
+    <div class="tr-recent" data-section-recent="api"></div>
+    <div id="tr-section-c-body"></div>
+  </section>
+
+  <!-- Section D: DB Probes. -->
+  <section class="tr-section" id="tr-section-d" data-section="db">
+    <h2>D. DB Probes <span class="tr-count-chip"
+          data-section-count="db">0</span></h2>
+    <div class="tr-sub">db_query kind tests via <code>/api/test-runner/run</code>.</div>
+    <div class="tr-recent" data-section-recent="db"></div>
+    <div id="tr-section-d-body"></div>
+  </section>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/test_runner.js?v={{ asset_version or 'dev' }}"></script>
+{% endblock %}

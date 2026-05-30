@@ -15,9 +15,19 @@ import logging
 
 from web3 import Web3
 from web3.contract import Contract
-from web3.middleware import geth_poa_middleware
+# web3.py renamed the PoA middleware: <6 = geth_poa_middleware,
+# 6.x = ExtraDataToPOAMiddleware. Import whichever is present so the
+# executor still initializes BSC/Polygon connections under either version.
+try:
+    from web3.middleware import ExtraDataToPOAMiddleware as _POA_MIDDLEWARE  # web3 >= 6
+except ImportError:  # pragma: no cover - legacy web3 fallback
+    from web3.middleware import geth_poa_middleware as _POA_MIDDLEWARE
 from eth_account import Account
-from eth_abi import encode_abi
+# eth-abi >=4 renamed encode_abi → encode; we don't currently call either
+# in this module, so the import was a vestige from an earlier draft that
+# crashed the entire module on import (every DEX swap path was dead).
+# If a future refactor needs to ABI-encode a struct, import:
+#   from eth_abi import encode as encode_abi
 
 from core.dry_run import should_skip_live
 from trading.orders.order_manager import Order, OrderType, OrderStatus
@@ -31,6 +41,30 @@ logger = logging.getLogger(__name__)
 UNISWAP_V2_ABI = json.loads('[{"inputs":[{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMin","type":"uint256"},{"internalType":"address[]","name":"path","type":"address[]"},{"internalType":"address","name":"to","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"}],"name":"swapExactTokensForTokens","outputs":[{"internalType":"uint256[]","name":"amounts","type":"uint256[]"}],"stateMutability":"nonpayable","type":"function"}]')
 
 UNISWAP_V3_ABI = json.loads('[{"inputs":[{"components":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"address","name":"recipient","type":"address"},{"internalType":"uint256","name":"deadline","type":"uint256"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint256","name":"amountOutMinimum","type":"uint256"}],"internalType":"struct ISwapRouter.ExactInputParams","name":"params","type":"tuple"}],"name":"exactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"}],"stateMutability":"payable","type":"function"}]')
+
+# Uniswap V3 QuoterV2 — `quoteExactInputSingle` returns (amountOut,
+# sqrtPriceX96After, initializedTicksCrossed, gasEstimate). Single-hop
+# only — multi-hop quoting uses `quoteExactInput(bytes path, uint256
+# amountIn)` which we keep as a fallback. SushiSwap V3 / PancakeSwap V3
+# use the same ABI (they are Uniswap forks).
+UNISWAP_V3_QUOTER_V2_ABI = json.loads('[{"inputs":[{"components":[{"internalType":"address","name":"tokenIn","type":"address"},{"internalType":"address","name":"tokenOut","type":"address"},{"internalType":"uint256","name":"amountIn","type":"uint256"},{"internalType":"uint24","name":"fee","type":"uint24"},{"internalType":"uint160","name":"sqrtPriceLimitX96","type":"uint160"}],"internalType":"struct IQuoterV2.QuoteExactInputSingleParams","name":"params","type":"tuple"}],"name":"quoteExactInputSingle","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160","name":"sqrtPriceX96After","type":"uint160"},{"internalType":"uint32","name":"initializedTicksCrossed","type":"uint32"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"},{"inputs":[{"internalType":"bytes","name":"path","type":"bytes"},{"internalType":"uint256","name":"amountIn","type":"uint256"}],"name":"quoteExactInput","outputs":[{"internalType":"uint256","name":"amountOut","type":"uint256"},{"internalType":"uint160[]","name":"sqrtPriceX96AfterList","type":"uint160[]"},{"internalType":"uint32[]","name":"initializedTicksCrossedList","type":"uint32[]"},{"internalType":"uint256","name":"gasEstimate","type":"uint256"}],"stateMutability":"nonpayable","type":"function"}]')
+
+# Canonical Uniswap V3 QuoterV2 addresses per chain. Override via
+# `config['v3_quoter_addresses'][chain]` to point at a fork quoter
+# (e.g. SushiSwap V3, PancakeSwap V3) when needed.
+UNISWAP_V3_QUOTER_V2_ADDRESSES: Dict[str, str] = {
+    'ethereum': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'polygon': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'arbitrum': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'base': '0x3d4e44Eb1374240CE5F1B871ab261CD16335B76a',
+    'optimism': '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',
+    'bsc': '0x78D78E420Da98ad378D7799bE8f4AF69033EB077',
+}
+
+# Uniswap V3 standard fee tiers (in 1/100ths of a bp): 100 = 0.01%,
+# 500 = 0.05% (stables), 3000 = 0.3% (most pairs), 10000 = 1% (exotics).
+UNISWAP_V3_FEE_TIERS: Tuple[int, ...] = (100, 500, 3000, 10000)
+
 
 @dataclass
 class DEXQuote:
@@ -87,7 +121,23 @@ class DirectDEXExecutor(BaseExecutor):
         self.gas_price_strategy = config.get('gas_strategy', 'fast')
         self.max_gas_price = config.get('max_gas_price', 50)  # gwei - FIXED: Was 500
         self.gas_buffer = config.get('gas_buffer', 1.2)
+
+        # Slippage default (fraction, 0.005 = 0.5%). Sourced from either
+        # `max_slippage` (fraction) or `max_slippage_bps` (basis points)
+        # to match DexTradingModule._setup_dex_settings naming. Fallback
+        # 0.005 = 50 bps matches the module default.
+        if 'max_slippage' in config:
+            self.max_slippage = float(config['max_slippage'])
+        elif 'max_slippage_bps' in config:
+            self.max_slippage = float(config['max_slippage_bps']) / 10000.0
+        else:
+            self.max_slippage = 0.005
         
+        # Price-impact ceiling (Wave-4). Refuses to surface a quote
+        # whose chunked-quoter round-trip impact exceeds this cap. 200
+        # bps default matches Uniswap-frontend "high impact" warning.
+        self.max_price_impact_bps = int(config.get('max_price_impact_bps', 200))
+
         # Sandwich protection
         self.use_commit_reveal = config.get('commit_reveal', False)
         self.randomize_gas = config.get('randomize_gas', True)
@@ -122,7 +172,7 @@ class DirectDEXExecutor(BaseExecutor):
 
                     # Add middleware for PoA chains
                     if chain in [Chain.BSC, Chain.POLYGON]:
-                        w3.middleware_onion.inject(geth_poa_middleware, layer=0)
+                        w3.middleware_onion.inject(_POA_MIDDLEWARE, layer=0)
 
                     if w3.is_connected():
                         self.w3_connections[chain] = w3
@@ -154,7 +204,7 @@ class DirectDEXExecutor(BaseExecutor):
                     abi = UNISWAP_V2_ABI
                     
                 contract = w3.eth.contract(
-                    address=Web3.toChecksumAddress(router_address),
+                    address=Web3.to_checksum_address(router_address),
                     abi=abi
                 )
                 
@@ -210,6 +260,30 @@ class DirectDEXExecutor(BaseExecutor):
 
     # PATCH for trading/executors/direct_dex.py - Complete the try block for get_best_quote
 
+    def _score_quote(self, quote: DEXQuote, gas_price_wei: int) -> Decimal:
+        """Route-quality score = expected net output after gas.
+
+        Picking the raw max(amount_out) is wrong: a Sushi quote that is
+        0.05% higher headline but costs 1.5x the gas of a Uni V2 quote is
+        a strictly worse fill once you net out gas. Score = amount_out *
+        (1 - price_impact) - gas_cost_in_output_token. Quoted in *output-
+        token* units so we can compare apples-to-apples across DEXes for
+        the same pair. Gas-cost conversion is best-effort: we treat gas
+        cost as a Decimal of native units and let the caller's gas-budget
+        layer normalize across chains.
+        """
+        try:
+            amount_out = Decimal(str(quote.amount_out))
+            impact = Decimal(str(max(0.0, float(quote.price_impact))))
+            gas_units = Decimal(int(quote.gas_estimate))
+            gas_wei = Decimal(int(gas_price_wei))
+            # Native gas cost in wei -> ether for a comparable scale.
+            gas_cost_ether = (gas_units * gas_wei) / Decimal(10 ** 18)
+            net = amount_out * (Decimal(1) - impact) - gas_cost_ether
+            return net
+        except Exception:
+            return Decimal(str(quote.amount_out))
+
     @measure_time
     async def get_best_quote(
         self,
@@ -218,10 +292,10 @@ class DirectDEXExecutor(BaseExecutor):
         amount: Decimal,
         chain: str = 'ethereum'
         ) -> Optional[DEXQuote]:
-        """Get best quote across all DEXes"""
+        """Get best quote across all DEXes (net of gas + price impact)."""
         try:
             quotes = []
-            
+
             # Query each available DEX
             for dex_name, contract in self.dex_contracts.get(chain, {}).items():
                 quote = await self._get_dex_quote(
@@ -232,23 +306,47 @@ class DirectDEXExecutor(BaseExecutor):
                     amount,
                     chain
                 )
-                
+
                 if quote:
                     quotes.append(quote)
-                    
+
             if not quotes:
                 logger.warning(f"No quotes found for {token_in} -> {token_out}")
                 return None
-            
-            # Find the best quote based on output amount
-            best_quote = max(quotes, key=lambda q: q.amount_out)
-            
+
+            # Wave-4: refuse any quote whose chunked-quoter price impact
+            # exceeds the configured ceiling (default 200 bps). The
+            # ceiling is per-trade — passing it would either eat the
+            # slippage tolerance whole-cloth or get re-quoted at a
+            # worse fill than headline. Drop early.
+            cap = self.max_price_impact_bps / 10000.0
+            filtered = [q for q in quotes if float(q.price_impact) <= cap]
+            if not filtered:
+                worst = min(quotes, key=lambda q: float(q.price_impact))
+                logger.warning(
+                    "All %d quotes exceed max_price_impact_bps=%d (best %.2f bps); "
+                    "refusing %s -> %s on %s",
+                    len(quotes), self.max_price_impact_bps,
+                    float(worst.price_impact) * 10000.0,
+                    token_in, token_out, chain,
+                )
+                return None
+            quotes = filtered
+
+            # Score by net-of-gas output, not raw headline output.
+            try:
+                gas_price_wei = await self._get_optimal_gas_price(chain)
+            except Exception:
+                gas_price_wei = 50 * 10 ** 9  # safe fallback (50 gwei)
+            best_quote = max(quotes, key=lambda q: self._score_quote(q, gas_price_wei))
+
             logger.info(
                 f"Best quote from {best_quote.dex.value}: "
                 f"{amount} {token_in} -> "
-                f"{best_quote.amount_out} {token_out}"
+                f"{best_quote.amount_out} {token_out} "
+                f"(net-of-gas scoring over {len(quotes)} dexes)"
             )
-            
+
             return best_quote
             
         except asyncio.TimeoutError:
@@ -451,7 +549,7 @@ class DirectDEXExecutor(BaseExecutor):
             ]
             
             token = w3.eth.contract(
-                address=Web3.toChecksumAddress(token_address),
+                address=Web3.to_checksum_address(token_address),
                 abi=erc20_abi
             )
             
@@ -558,31 +656,46 @@ class DirectDEXExecutor(BaseExecutor):
             w3 = self.w3_connections[order.chain]
             contract = self.dex_contracts[order.chain][quote.dex.value]
 
-            # Calculate minimum output with slippage.
-            # MB-01 fix: previously *10**18 hardcoded - wrong for USDC/USDT (6),
-            # WBTC (8), etc. Use the actual output-token decimals via core.units.
+            # Calculate input + minimum output in *raw* on-chain units.
+            # MB-01 (both legs): previously ether_to_wei(...) hardcoded 10**18
+            # which silently overstates input/output by 10**12 for USDC/USDT
+            # (6 dec) and 10**10 for WBTC (8 dec). Use the actual ERC-20
+            # decimals() via core.units cached per (chain, address).
             from core.units import to_raw_evm
             output_token = order.token_out or (quote.path[-1] if quote.path else None)
-            if not output_token:
-                raise ValueError("Cannot determine output token for min_amount_out")
+            input_token = order.token_in or (quote.path[0] if quote.path else None)
+            if not output_token or not input_token:
+                raise ValueError("Cannot determine input/output token for swap encoding")
             slippage = float(order.slippage or self.max_slippage)
             human_min_out = Decimal(str(quote.amount_out)) * (Decimal(1) - Decimal(str(slippage)))
             min_amount_out = await to_raw_evm(order.chain, output_token, human_min_out)
+            amount_in_raw = await to_raw_evm(order.chain, input_token, Decimal(str(order.amount)))
 
             # Deadline (20 minutes from now)
             deadline = int((datetime.now() + timedelta(minutes=20)).timestamp())
 
-            # Get optimal gas price
-            gas_price = await self._get_optimal_gas_price(order.chain)
-
-            # Common transaction parameters
-            tx_params = {
+            # Common transaction parameters — start with non-gas fields
+            tx_params: Dict[str, Any] = {
                 'from': Web3.to_checksum_address(order.wallet_address),
                 'gas': int(quote.gas_estimate * self.gas_buffer),
-                'gasPrice': gas_price,
                 'nonce': await self._get_next_nonce(order.chain),
-                'chainId': w3.eth.chain_id
+                'chainId': w3.eth.chain_id,
             }
+
+            # EIP-1559 (Type-2) where supported; legacy gasPrice elsewhere.
+            # Type-2 is strictly cheaper in expectation because it bids
+            # only the tip needed for next-block inclusion (vs `gasPrice`
+            # which the node bumps to current base). BSC stays legacy
+            # because validators don't accept Type-2.
+            fees_1559 = None
+            if self._chain_supports_1559(order.chain):
+                fees_1559 = await self._get_eip1559_fees(order.chain)
+            if fees_1559:
+                tx_params['type'] = 2
+                tx_params['maxFeePerGas'] = fees_1559['maxFeePerGas']
+                tx_params['maxPriorityFeePerGas'] = fees_1559['maxPriorityFeePerGas']
+            else:
+                tx_params['gasPrice'] = await self._get_optimal_gas_price(order.chain)
 
             # Build transaction based on DEX type
             if 'v3' in quote.dex.value.lower():
@@ -591,14 +704,14 @@ class DirectDEXExecutor(BaseExecutor):
                     self._encode_v3_path(quote.path),  # bytes path
                     Web3.to_checksum_address(order.recipient or order.wallet_address),  # address recipient
                     deadline,  # uint256 deadline
-                    ether_to_wei(order.amount),  # uint256 amountIn
+                    amount_in_raw,  # uint256 amountIn (decimals-correct)
                     min_amount_out  # uint256 amountOutMinimum
                 )
                 tx = contract.functions.exactInput(params).build_transaction(tx_params)
             else:
                 # Uniswap V2 style swap
                 tx = contract.functions.swapExactTokensForTokens(
-                    ether_to_wei(order.amount),
+                    amount_in_raw,
                     min_amount_out,
                     quote.path,
                     Web3.to_checksum_address(order.recipient or order.wallet_address),
@@ -618,27 +731,61 @@ class DirectDEXExecutor(BaseExecutor):
         amount: int,
         chain: str
     ) -> float:
-        """Estimate price impact of trade"""
+        """Estimate price impact via real chunked quoter round-trip.
+
+        Algorithm (Wave-4):
+          1. Quote `amount` (actual size)            -> amount_out_actual
+          2. Quote `max(1, amount * 0.01)` (1% probe) -> amount_out_tiny
+          3. effective_price_tiny   = amount_out_tiny   / tiny_amount
+             effective_price_actual = amount_out_actual / amount
+          4. price_impact = (eff_tiny - eff_actual) / eff_tiny
+
+        Both legs go through `_simulate_swap`, which already routes V3
+        paths through the real QuoterV2 and V2 paths through
+        `getAmountsOut`. The 1% probe is the smallest size that still
+        produces a non-degenerate per-tick quote on the deepest pools
+        (a 0.1% probe rounds to zero on USDC/USDT-quoted majors).
+
+        Returns 0.0 on any failure so the caller can still rank a quote
+        — refusal is enforced by `get_best_quote` against
+        `max_price_impact_bps`.
+        """
         try:
-            # Get output for small amount
-            small_amount = amount // 1000
-            small_output = await self._simulate_swap(dex, path, small_amount, chain)
-            
-            # Get output for actual amount
-            actual_output = await self._simulate_swap(dex, path, amount, chain)
-            
-            # Calculate impact
-            expected_output = (small_output * amount) // small_amount
-            
-            if expected_output > 0:
-                impact = 1 - (actual_output / expected_output)
-                return max(0, impact)
-            
-            return 0
-            
+            if amount <= 0:
+                return 0.0
+
+            # 1% of size, but never zero (small caps may use 6-dec stables).
+            tiny_amount = max(1, amount // 100)
+
+            amount_out_tiny = await self._simulate_swap(
+                dex, path, tiny_amount, chain
+            )
+            amount_out_actual = await self._simulate_swap(
+                dex, path, amount, chain
+            )
+
+            if amount_out_tiny <= 0 or amount_out_actual <= 0:
+                return 0.0
+
+            # Per-unit effective price for each leg. Float is fine here
+            # because we only need ~6 decimals for bps comparisons.
+            eff_tiny = amount_out_tiny / tiny_amount
+            eff_actual = amount_out_actual / amount
+
+            if eff_tiny <= 0:
+                return 0.0
+
+            impact = (eff_tiny - eff_actual) / eff_tiny
+            # Clamp negatives (rare numerical noise) and >1 (impossible).
+            if impact <= 0:
+                return 0.0
+            if impact > 1:
+                return 1.0
+            return float(impact)
+
         except Exception as e:
             logger.debug(f"Error estimating price impact: {e}")
-            return 0
+            return 0.0
             
     async def _estimate_gas(
         self,
@@ -764,32 +911,272 @@ class DirectDEXExecutor(BaseExecutor):
             
         raise Exception(f"Transaction not confirmed after {timeout} seconds")
         
+    # Per-chain gas-price ceiling in gwei. Falls through to
+    # self.max_gas_price if no chain-specific override is present.
+    # Ethereum sits at 30+ gwei daily, Polygon often 100+, Arb/Base ~0.1
+    # so a single global cap of 50 made ETH legal but Polygon hard-fail.
+    _CHAIN_MAX_GWEI_DEFAULTS: Dict[str, int] = {
+        'ethereum': 80,
+        'bsc': 5,
+        'polygon': 200,
+        'arbitrum': 5,
+        'base': 5,
+        'optimism': 5,
+    }
+
+    # EIP-1559 support per chain. BSC still requires legacy Type-0 (PoA
+    # validators do not accept Type-2 even though the RPC accepts it);
+    # everywhere else we want Type-2 because it bids only what's needed
+    # vs `gasPrice` which the node bumps to current base. Default-off
+    # for unknown chains — caller can opt in via config.
+    _CHAIN_SUPPORTS_1559: Dict[str, bool] = {
+        'ethereum': True,
+        'polygon': True,    # Polygon supports 1559 since EIP-1559 hardfork
+        'arbitrum': True,
+        'base': True,
+        'optimism': True,
+        'bsc': False,       # PoA — legacy Type-0 still required
+    }
+
+    def _resolve_chain_max_gwei(self, chain: str) -> int:
+        overrides = self.config.get('chain_max_gas_gwei', {}) or {}
+        chain_l = (chain or '').lower()
+        if chain_l in overrides:
+            return int(overrides[chain_l])
+        return self._CHAIN_MAX_GWEI_DEFAULTS.get(chain_l, int(self.max_gas_price))
+
+    def _chain_supports_1559(self, chain: str) -> bool:
+        """Return True iff the chain accepts EIP-1559 Type-2 txs.
+
+        Operator can override via config['chain_supports_1559'][chain].
+        """
+        overrides = self.config.get('chain_supports_1559', {}) or {}
+        chain_l = (chain or '').lower()
+        if chain_l in overrides:
+            return bool(overrides[chain_l])
+        return self._CHAIN_SUPPORTS_1559.get(chain_l, False)
+
+    async def _get_eip1559_fees(self, chain: str) -> Optional[Dict[str, int]]:
+        """Compute (maxPriorityFeePerGas, maxFeePerGas) in wei via
+        eth_feeHistory; fall back to w3.eth.max_priority_fee.
+
+        Returns dict with both keys, or None if 1559 unsupported / fetch
+        fails (caller should fall back to legacy gasPrice).
+
+        Strategy: pull the last 5 blocks of base-fee + tip distributions,
+        use the median 50th-percentile priority tip across recent blocks
+        as our tip bid, then maxFee = next-block predicted base * 2 +
+        tip (the 2x base headroom is the Uniswap/MetaMask convention to
+        survive base-fee spikes during the 12s wait).
+
+        Both values are clamped at the per-chain gwei ceiling so a
+        spiked tip never breaches our kill-switch.
+        """
+        w3 = self.w3_connections.get(chain) or self.w3_connections.get(chain.lower())
+        if not w3:
+            return None
+        loop = asyncio.get_event_loop()
+        try:
+            # eth_feeHistory(blocks, newest, reward_percentiles)
+            hist = await loop.run_in_executor(
+                None,
+                lambda: w3.eth.fee_history(5, 'latest', [50]),
+            )
+            base_fees = list(hist.get('baseFeePerGas', []))
+            rewards = list(hist.get('reward', []))
+            if not base_fees:
+                raise ValueError("fee_history missing baseFeePerGas")
+
+            # Median of 50th-percentile tips across the 5-block window
+            tips_p50 = [int(r[0]) for r in rewards if r]
+            if tips_p50:
+                tips_sorted = sorted(tips_p50)
+                tip = tips_sorted[len(tips_sorted) // 2]
+            else:
+                tip = await loop.run_in_executor(
+                    None, lambda: int(w3.eth.max_priority_fee)
+                )
+
+            # baseFeePerGas[-1] is the predicted next-block base
+            next_base = int(base_fees[-1])
+            max_fee = next_base * 2 + tip
+
+            # Clamp at per-chain ceiling — randomization/clamp in MEV
+            # layer also applies but enforce here too so the bid we
+            # build is already legal.
+            max_gwei = self._resolve_chain_max_gwei(chain)
+            ceil_wei = int(max_gwei) * 10 ** 9
+            if max_fee > ceil_wei:
+                max_fee = ceil_wei
+            if tip > ceil_wei:
+                tip = ceil_wei
+
+            return {
+                'maxPriorityFeePerGas': int(tip),
+                'maxFeePerGas': int(max_fee),
+            }
+        except Exception as e:
+            logger.debug("eth_feeHistory failed on %s (%s); falling back to max_priority_fee", chain, e)
+            try:
+                tip = await loop.run_in_executor(
+                    None, lambda: int(w3.eth.max_priority_fee)
+                )
+                base = await loop.run_in_executor(
+                    None, lambda: int(w3.eth.gas_price)
+                )
+                max_fee = base * 2 + tip
+                max_gwei = self._resolve_chain_max_gwei(chain)
+                ceil_wei = int(max_gwei) * 10 ** 9
+                return {
+                    'maxPriorityFeePerGas': min(int(tip), ceil_wei),
+                    'maxFeePerGas': min(int(max_fee), ceil_wei),
+                }
+            except Exception as fallback_err:
+                logger.debug("EIP-1559 fee fetch fully failed on %s: %s", chain, fallback_err)
+                return None
+
     async def _get_optimal_gas_price(self, chain: str) -> int:
-        """Get optimal gas price for chain"""
+        """Get optimal gas price for chain.
+
+        Returns wei. Runs the (blocking) JSON-RPC eth_gasPrice via the
+        event-loop executor so we don't block the async loop. Honors a
+        per-chain gwei ceiling because a single 50-gwei cap is wrong on
+        every chain that isn't 2021 Ethereum.
+
+        EIP-1559 (post-London Ethereum + most modern chains) is not yet
+        encoded here — callers that need maxFeePerGas / maxPriorityFeePerGas
+        should override; we still return a legacy gasPrice as a safe
+        floor that any Type-0 router accepts.
+        """
         w3 = self.w3_connections[chain]
-        
+
+        loop = asyncio.get_event_loop()
+        base = await loop.run_in_executor(None, lambda: w3.eth.gas_price)
+
         if self.gas_price_strategy == 'fast':
-            gas_price = w3.eth.gas_price * 1.2
+            gas_price = base * 1.2
         elif self.gas_price_strategy == 'standard':
-            gas_price = w3.eth.gas_price
+            gas_price = base
         else:  # slow
-            gas_price = w3.eth.gas_price * 0.8
-            
-        # Apply max gas price limit
-        max_gas = self.max_gas_price * 10**9  # Convert to wei
-        
+            gas_price = base * 0.8
+
+        max_gwei = self._resolve_chain_max_gwei(chain)
+        max_gas = int(max_gwei) * 10 ** 9  # Convert gwei to wei
+
         return min(int(gas_price), max_gas)
         
+    def _get_v3_quoter(self, chain: str) -> Optional[Contract]:
+        """Return a (cached) QuoterV2 contract for `chain`, or None.
+
+        Cache populated lazily on first use per chain so the hot quote
+        path doesn't pay the contract-instantiation cost every call.
+        """
+        chain_l = (chain or '').lower()
+        cache = getattr(self, '_v3_quoter_cache', None)
+        if cache is None:
+            cache = {}
+            self._v3_quoter_cache = cache
+        if chain_l in cache:
+            return cache[chain_l]
+        w3 = self.w3_connections.get(chain) or self.w3_connections.get(chain_l)
+        if not w3:
+            cache[chain_l] = None
+            return None
+        overrides = self.config.get('v3_quoter_addresses', {}) or {}
+        addr = overrides.get(chain_l) or UNISWAP_V3_QUOTER_V2_ADDRESSES.get(chain_l)
+        if not addr:
+            cache[chain_l] = None
+            return None
+        quoter = w3.eth.contract(
+            address=Web3.to_checksum_address(addr),
+            abi=UNISWAP_V3_QUOTER_V2_ABI,
+        )
+        cache[chain_l] = quoter
+        return quoter
+
     async def _quote_v3(
         self,
         contract: Contract,
         path: List[str],
-        amount: int
+        amount: int,
+        chain: Optional[str] = None,
     ) -> int:
-        """Get quote from Uniswap V3"""
-        # Would use quoter contract
-        # Simplified simulation
-        return int(amount * 0.997)  # Assume 0.3% fee
+        """Get a real Uniswap V3 quote via QuoterV2.
+
+        Picks the best `amountOut` across fee tiers {100, 500, 3000,
+        10000} for single-hop pairs. For multi-hop falls back to
+        `quoteExactInput(bytes,uint256)` with a 3000-bps fee between
+        every hop — iterating per-hop fee combinations explodes
+        combinatorially. Returns 0 when no fee tier has a pool, so
+        downstream best-quote ranking treats V3 as "no liquidity"
+        rather than silently scoring with the legacy `amount * 0.997`
+        placeholder.
+
+        `chain` is optional for backwards compatibility; if not given,
+        we try to infer from `contract.w3.eth.chain_id`.
+        """
+        try:
+            chain_l = (chain or '').lower()
+            if not chain_l:
+                try:
+                    cid = contract.w3.eth.chain_id
+                    from utils.constants import Chain
+                    for c in Chain:
+                        if int(c) == int(cid):
+                            chain_l = c.name.lower()
+                            break
+                except Exception:
+                    chain_l = ''
+            quoter = self._get_v3_quoter(chain_l) if chain_l else None
+            if quoter is None:
+                logger.debug(
+                    "V3 quoter unavailable for chain=%s; returning 0", chain_l
+                )
+                return 0
+
+            loop = asyncio.get_event_loop()
+            token_in = Web3.to_checksum_address(path[0])
+            token_out = Web3.to_checksum_address(path[-1])
+
+            if len(path) == 2:
+                best = 0
+                for fee in UNISWAP_V3_FEE_TIERS:
+                    params = (token_in, token_out, int(amount), int(fee), 0)
+                    try:
+                        out_tuple = await loop.run_in_executor(
+                            None,
+                            lambda f=fee, p=params: quoter.functions.quoteExactInputSingle(p).call(),
+                        )
+                        amount_out = int(out_tuple[0]) if out_tuple else 0
+                        if amount_out > best:
+                            best = amount_out
+                    except Exception as fee_err:
+                        # Pool does not exist at this fee tier — common
+                        logger.debug(
+                            "V3 quote miss fee=%s pair=%s/%s: %s",
+                            fee, token_in[:8], token_out[:8], fee_err
+                        )
+                        continue
+                return best
+
+            # Multi-hop fallback: bytes path with 3000-bps between hops
+            encoded = b''
+            for i, tok in enumerate(path):
+                encoded += bytes.fromhex(Web3.to_checksum_address(tok)[2:])
+                if i < len(path) - 1:
+                    encoded += (3000).to_bytes(3, 'big')
+            try:
+                out_tuple = await loop.run_in_executor(
+                    None,
+                    lambda: quoter.functions.quoteExactInput(encoded, int(amount)).call(),
+                )
+                return int(out_tuple[0]) if out_tuple else 0
+            except Exception as multi_err:
+                logger.debug("V3 multi-hop quote failed: %s", multi_err)
+                return 0
+        except Exception as e:
+            logger.debug("V3 quoter error: %s", e)
+            return 0
         
     async def cleanup(self) -> None:
         """Cleanup resources"""
@@ -826,11 +1213,12 @@ class DirectDEXExecutor(BaseExecutor):
             amount_wei = ether_to_wei(amount)
             
             if 'v3' in dex_name.lower():
-                # Uniswap V3 quoter logic
+                # Uniswap V3 quoter logic — real QuoterV2 binding now
                 amount_out = await self._quote_v3(
                     contract,
                     path,
-                    amount_wei
+                    amount_wei,
+                    chain,
                 )
             else:
                 # Uniswap V2 style
@@ -893,8 +1281,8 @@ class DirectDEXExecutor(BaseExecutor):
             if cache_key in self.route_cache:
                 return self.route_cache[cache_key]
                 
-            token_in = Web3.toChecksumAddress(token_in)
-            token_out = Web3.toChecksumAddress(token_out)
+            token_in = Web3.to_checksum_address(token_in)
+            token_out = Web3.to_checksum_address(token_out)
             
             # Direct path
             direct_path = [token_in, token_out]
@@ -902,7 +1290,7 @@ class DirectDEXExecutor(BaseExecutor):
             # Multi-hop paths through common bases
             multi_hop_paths = []
             for base in self.common_bases.get(chain, []):
-                base = Web3.toChecksumAddress(base)
+                base = Web3.to_checksum_address(base)
                 if base != token_in and base != token_out:
                     # Try token_in -> base -> token_out
                     multi_hop_paths.append([token_in, base, token_out])
@@ -910,7 +1298,7 @@ class DirectDEXExecutor(BaseExecutor):
                     # For 3 hops, try additional base
                     if self.max_hops >= 3:
                         for base2 in self.common_bases.get(chain, []):
-                            base2 = Web3.toChecksumAddress(base2)
+                            base2 = Web3.to_checksum_address(base2)
                             if base2 != base and base2 != token_in and base2 != token_out:
                                 multi_hop_paths.append([token_in, base, base2, token_out])
                                 
@@ -958,8 +1346,8 @@ class DirectDEXExecutor(BaseExecutor):
             contract = self.dex_contracts[chain][dex]
             
             if 'v3' in dex.lower():
-                # V3 simulation
-                return await self._quote_v3(contract, path, amount)
+                # V3 simulation — route through real QuoterV2
+                return await self._quote_v3(contract, path, amount, chain)
             else:
                 # V2 simulation
                 amounts = contract.functions.getAmountsOut(amount, path).call()
@@ -991,11 +1379,11 @@ class DirectDEXExecutor(BaseExecutor):
                 return False
             
             # Check token addresses
-            if not Web3.isAddress(order.token_in):
+            if not Web3.is_address(order.token_in):
                 logger.error(f"Invalid token_in address: {order.token_in}")
                 return False
                 
-            if not Web3.isAddress(order.token_out):
+            if not Web3.is_address(order.token_out):
                 logger.error(f"Invalid token_out address: {order.token_out}")
                 return False
             

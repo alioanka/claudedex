@@ -394,6 +394,7 @@ class ModuleProcess:
             self._stderr_file = stderr_file
 
             logger.info(f"✅ {self.name} started (PID: {self.process.pid})")
+            self._last_start_ts = datetime.now()
             logger.info(f"   Logs: {log_dir}/stdout.log, {log_dir}/stderr.log (rotating, max 10MB)")
             return True
         except Exception as e:
@@ -444,7 +445,26 @@ class ModuleProcess:
                     pass
 
     async def restart(self):
-        """Restart the module"""
+        """Restart the module.
+
+        Resets restart_count after RESTART_COUNT_RESET_AFTER seconds of
+        successful uptime so a module that crashes once a week does NOT
+        eventually exhaust its budget over months — only sustained
+        crash-restart cycles trip the permanent-failure latch.
+        """
+        # Reset budget if the module has been up long enough since
+        # the most recent restart. self._last_start_ts tracked below.
+        RESTART_COUNT_RESET_AFTER = 3600  # 1 hour uptime resets budget
+        last_start = getattr(self, '_last_start_ts', None)
+        if last_start is not None and self.restart_count > 0:
+            uptime = (datetime.now() - last_start).total_seconds()
+            if uptime > RESTART_COUNT_RESET_AFTER:
+                logger.info(
+                    f"♻️  {self.name} stable for {uptime:.0f}s — "
+                    f"resetting restart budget from {self.restart_count}"
+                )
+                self.restart_count = 0
+
         if self.restart_count >= self.max_restarts:
             logger.error(f"❌ {self.name} exceeded max restarts ({self.max_restarts})")
             return False
@@ -454,7 +474,10 @@ class ModuleProcess:
         await asyncio.sleep(5)  # Wait before restart
 
         self.restart_count += 1
-        return await self.start()
+        ok = await self.start()
+        if ok:
+            self._last_start_ts = datetime.now()
+        return ok
 
 
 class TradingBotOrchestrator:
@@ -497,7 +520,7 @@ class TradingBotOrchestrator:
         )
 
         self.modules['sniper'] = ModuleProcess(
-            name="Sniper Module",
+            name="Sniper",
             script_path="modules/sniper/main_sniper.py",
             enabled_env_var="SNIPER_MODULE_ENABLED",
             module_key="sniper"
@@ -511,17 +534,39 @@ class TradingBotOrchestrator:
         )
 
         self.modules['arbitrage'] = ModuleProcess(
-            name="Arbitrage Module",
+            name="Arbitrage",
             script_path="modules/arbitrage/main_arbitrage.py",
             enabled_env_var="ARBITRAGE_MODULE_ENABLED",
             module_key="arbitrage"
         )
 
         self.modules['copy_trading'] = ModuleProcess(
-            name="Copy Trading Module",
+            name="Copy Trading",
             script_path="modules/copy_trading/main_copy.py",
             enabled_env_var="COPY_TRADING_MODULE_ENABLED",
             module_key="copy_trading"
+        )
+
+        # Phase 3 D: AI/ML orchestrator (advisory layer).
+        # Reads each trading module's recent DRY_RUN performance,
+        # writes recommendations to orchestrator_recommendations table.
+        # Never trades. Operator approves via dashboard.
+        self.modules['orchestrator_ai'] = ModuleProcess(
+            name="Orchestrator AI",
+            script_path="modules/orchestrator_ai/main_orchestrator_ai.py",
+            enabled_env_var="ORCHESTRATOR_AI_MODULE_ENABLED",
+            module_key="orchestrator_ai",
+        )
+
+        # Phase 4B: per-module capital allocator (advisory).
+        # Reads each module's rolling Sharpe, proposes allocations to
+        # portfolio_allocations table. Operator approves manually.
+        # Never trades.
+        self.modules['portfolio_allocator'] = ModuleProcess(
+            name="Portfolio Allocator",
+            script_path="modules/portfolio_allocator/main_portfolio_allocator.py",
+            enabled_env_var="PORTFOLIO_ALLOCATOR_MODULE_ENABLED",
+            module_key="portfolio_allocator",
         )
 
         # Setup signal handlers
@@ -666,7 +711,8 @@ class TradingBotOrchestrator:
             tasks = [
                 asyncio.create_task(self.health_monitor()),
                 asyncio.create_task(self.status_reporter()),
-                asyncio.create_task(self._shutdown_monitor())
+                asyncio.create_task(self._shutdown_monitor()),
+                asyncio.create_task(self._restart_flag_monitor()),
             ]
 
             # Wait for shutdown signal or task failure
@@ -687,6 +733,59 @@ class TradingBotOrchestrator:
     async def _shutdown_monitor(self):
         """Wait for shutdown signal"""
         await self.shutdown_event.wait()
+
+    async def _restart_flag_monitor(self):
+        """Poll logs/.restart_<module> flag files. When present,
+        restart the named module (matches the killswitch / pause
+        flag-file pattern so the dashboard can ask the orchestrator
+        to restart a module without IPC).
+
+        Phase 3: this is the missing piece that turns "approve a
+        to_dry / to_live orchestrator recommendation" from a 2-step
+        (approve via dashboard + manually restart) into a 1-step
+        operator action — the dashboard writes the flag and the
+        orchestrator picks it up within the poll interval (5s).
+        """
+        from pathlib import Path
+        flag_dir = Path("logs")
+        flag_dir.mkdir(parents=True, exist_ok=True)
+        # Snapshot module keys to avoid mid-iteration mutation issues.
+        known_modules = list(self.modules.keys())
+        while not self.shutdown_event.is_set():
+            try:
+                for module_key in known_modules:
+                    flag = flag_dir / f".restart_{module_key}"
+                    if not flag.exists():
+                        continue
+                    module = self.modules.get(module_key)
+                    if module is None:
+                        # Stale flag for a removed module — clean up.
+                        try:
+                            flag.unlink()
+                        except OSError:
+                            pass
+                        continue
+                    logger.info(
+                        "🔁 Restart flag detected for %s — restarting module",
+                        module_key,
+                    )
+                    try:
+                        await module.restart()
+                    except Exception as e:
+                        logger.error(
+                            "module.restart(%s) raised: %s", module_key, e
+                        )
+                    # Always clear the flag, even on restart failure, so
+                    # we don't loop indefinitely. The next health-monitor
+                    # tick will retry a failed restart if the subprocess
+                    # is still down.
+                    try:
+                        flag.unlink()
+                    except OSError:
+                        pass
+            except Exception as e:
+                logger.error("restart-flag monitor error: %s", e)
+            await asyncio.sleep(5)
 
     async def shutdown(self):
         """Gracefully shutdown all modules"""

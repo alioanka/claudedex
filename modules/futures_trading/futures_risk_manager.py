@@ -43,9 +43,76 @@ class FuturesRiskManager:
         self.liquidation_buffer = config.get('liquidation_buffer', 0.20)  # 20% from liq price
         self.max_drawdown = config.get('max_drawdown', 0.10)  # 10%
 
+        # FUT-RM-05: funding-rate directional gate. Units = basis points
+        # of the per-interval funding rate (1 bp = 0.0001 fraction).
+        # Zero disables the gate on that side.
+        self.skip_long_funding_bps = float(
+            config.get('skip_long_funding_bps', 0.0) or 0.0
+        )
+        self.skip_short_funding_bps = float(
+            config.get('skip_short_funding_bps', 0.0) or 0.0
+        )
+
+        # FUT-RM-08 (Wave 3): per-symbol leverage cap overrides. Normalized to
+        # uppercased, slash-stripped form so 'btc/usdt', 'BTC/USDT', and
+        # 'BTCUSDT' all hit the same entry. An override of 0 / None / negative
+        # is treated as "no override" and we fall back to the global cap.
+        raw_overrides = config.get('max_leverage_overrides') or {}
+        self.max_leverage_overrides: Dict[str, int] = {}
+        if isinstance(raw_overrides, dict):
+            for sym, lev in raw_overrides.items():
+                try:
+                    norm = self._normalize_symbol(sym)
+                    lev_i = int(lev)
+                    if norm and lev_i > 0:
+                        self.max_leverage_overrides[norm] = lev_i
+                except (TypeError, ValueError):
+                    # Bad row in the JSON map — skip rather than block boot.
+                    continue
+
         # State tracking
         self.consecutive_losses = 0
         self.total_realized_pnl = 0.0
+
+        # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off.
+        # After N consecutive losses on the same symbol, refuse new entries
+        # on that symbol for `post_loss_cooloff_minutes` minutes. Tracks
+        # symbol -> int (consecutive losses) and symbol -> datetime
+        # (cool-off expiry; absent means no cool-off in effect).
+        self.post_loss_cooloff_minutes = int(
+            config.get('post_loss_cooloff_minutes', 240) or 0
+        )
+        self.post_loss_cooloff_threshold = int(
+            config.get('post_loss_cooloff_threshold', 2) or 0
+        )
+        self.per_symbol_consec_losses: Dict[str, int] = {}
+        self.per_symbol_cooloff_until: Dict[str, datetime] = {}
+
+    @staticmethod
+    def _normalize_symbol(sym: str) -> str:
+        """Canonical form for override lookup: uppercase, no slash, no spaces."""
+        if not sym:
+            return ''
+        return str(sym).strip().upper().replace('/', '').replace(' ', '')
+
+    def resolve_max_leverage(self, symbol: str) -> int:
+        """FUT-RM-08: return the effective per-symbol leverage cap.
+
+        Lookup order:
+          1. max_leverage_overrides[normalize(symbol)]
+          2. self.max_leverage (global)
+
+        Defensive: never returns < 1. Callers use the result as the cap to
+        compare requested leverage against in validate_new_position.
+        """
+        try:
+            norm = self._normalize_symbol(symbol)
+            override = self.max_leverage_overrides.get(norm)
+            if override is not None and override > 0:
+                return int(override)
+        except Exception:
+            pass
+        return max(1, int(self.max_leverage))
 
     def validate_new_position(
         self,
@@ -78,12 +145,18 @@ class FuturesRiskManager:
                     'reason': f'Max positions reached ({self.max_positions})'
                 }
 
-            # Check leverage limit
-            if leverage > self.max_leverage:
+            # Check leverage limit. FUT-RM-08: per-symbol override > global.
+            effective_max = self.resolve_max_leverage(symbol)
+            if leverage > effective_max:
+                # Make the reason explicit about which cap fired so the
+                # operator can tell an override-block from a global block.
+                src = 'override' if effective_max != self.max_leverage else 'global'
                 return {
                     'allowed': False,
-                    'reason': f'Leverage {leverage}x exceeds max {self.max_leverage}x',
-                    'suggested_leverage': self.max_leverage
+                    'reason': f'Leverage {leverage}x exceeds max {effective_max}x ({src})',
+                    'suggested_leverage': effective_max,
+                    'effective_max_leverage': effective_max,
+                    'cap_source': src,
                 }
 
             # Check capital availability
@@ -119,6 +192,81 @@ class FuturesRiskManager:
             return {
                 'allowed': False,
                 'reason': f'Validation error: {str(e)}'
+            }
+
+    def should_skip_for_funding(
+        self,
+        side: str,
+        funding_rate: Optional[float],
+    ) -> Dict:
+        """FUT-RM-05: directional funding-rate gate.
+
+        Args:
+            side: 'LONG' or 'SHORT' (case-insensitive)
+            funding_rate: per-interval funding rate as a FRACTION
+                (e.g. 0.0005 = 0.05% = 5 bps for one funding interval).
+                None when the rate is unavailable -> gate is bypassed
+                (we never block on missing data; the caller logs).
+
+        Returns:
+            dict with:
+              skip: bool
+              reason: human-readable string
+              rate_bps: float (funding rate converted to bps; 0 if missing)
+              threshold_bps: float (which side's threshold applied)
+        """
+        try:
+            if funding_rate is None:
+                return {
+                    'skip': False,
+                    'reason': 'funding rate unavailable',
+                    'rate_bps': 0.0,
+                    'threshold_bps': 0.0,
+                }
+            rate_bps = float(funding_rate) * 10000.0
+            side_u = (side or '').upper()
+            if side_u == 'LONG':
+                threshold = self.skip_long_funding_bps
+                if threshold > 0 and rate_bps > threshold:
+                    return {
+                        'skip': True,
+                        'reason': (
+                            f'funding {rate_bps:+.2f} bps > +{threshold:.2f} bps '
+                            f'(long would pay funding above cap)'
+                        ),
+                        'rate_bps': rate_bps,
+                        'threshold_bps': threshold,
+                    }
+            elif side_u == 'SHORT':
+                threshold = self.skip_short_funding_bps
+                # For shorts the bad direction is NEGATIVE funding (shorts pay).
+                if threshold > 0 and rate_bps < -threshold:
+                    return {
+                        'skip': True,
+                        'reason': (
+                            f'funding {rate_bps:+.2f} bps < -{threshold:.2f} bps '
+                            f'(short would pay funding above cap)'
+                        ),
+                        'rate_bps': rate_bps,
+                        'threshold_bps': threshold,
+                    }
+            return {
+                'skip': False,
+                'reason': 'funding within tolerance',
+                'rate_bps': rate_bps,
+                'threshold_bps': (
+                    self.skip_long_funding_bps if side_u == 'LONG'
+                    else self.skip_short_funding_bps
+                ),
+            }
+        except Exception as e:
+            self.logger.warning(f"should_skip_for_funding errored: {e}")
+            # Fail-open: never block trade on validator bug.
+            return {
+                'skip': False,
+                'reason': f'gate error: {e}',
+                'rate_bps': 0.0,
+                'threshold_bps': 0.0,
             }
 
     def check_reconciled_capacity(self, current_positions: List[Dict]) -> Dict:
@@ -280,12 +428,13 @@ class FuturesRiskManager:
             self.logger.error(f"Error calculating position size: {e}")
             return 0.0
 
-    def update_on_trade_close(self, pnl: float):
+    def update_on_trade_close(self, pnl: float, symbol: Optional[str] = None):
         """
         Update risk state after trade closes
 
         Args:
             pnl: Trade profit/loss
+            symbol: trading symbol (enables per-symbol cool-off tracking)
         """
         try:
             self.total_realized_pnl += pnl
@@ -302,8 +451,73 @@ class FuturesRiskManager:
                     f"⚠️ {self.consecutive_losses} consecutive losses in futures"
                 )
 
+            # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off.
+            if symbol:
+                norm = self._normalize_symbol(symbol)
+                if pnl < 0:
+                    self.per_symbol_consec_losses[norm] = (
+                        self.per_symbol_consec_losses.get(norm, 0) + 1
+                    )
+                    threshold = self.post_loss_cooloff_threshold
+                    if (
+                        threshold > 0
+                        and self.per_symbol_consec_losses[norm] >= threshold
+                        and self.post_loss_cooloff_minutes > 0
+                    ):
+                        from datetime import timedelta
+                        until = datetime.now() + timedelta(
+                            minutes=self.post_loss_cooloff_minutes
+                        )
+                        self.per_symbol_cooloff_until[norm] = until
+                        self.logger.warning(
+                            f"🛑 FUT-RM-17 cool-off armed for {symbol}: "
+                            f"{self.per_symbol_consec_losses[norm]} consecutive "
+                            f"losses; refusing entries until {until.isoformat()}"
+                        )
+                else:
+                    # Win resets per-symbol loss streak and clears cool-off.
+                    if norm in self.per_symbol_consec_losses:
+                        self.per_symbol_consec_losses[norm] = 0
+                    if norm in self.per_symbol_cooloff_until:
+                        del self.per_symbol_cooloff_until[norm]
+
         except Exception as e:
             self.logger.error(f"Error updating trade close: {e}")
+
+    def should_skip_for_cooloff(self, symbol: str) -> Dict:
+        """FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off gate.
+
+        Returns dict {skip: bool, reason: str, expires_at: Optional[str]}.
+        Fail-open on any error so a validator bug never silently blocks
+        every trade.
+        """
+        try:
+            if self.post_loss_cooloff_minutes <= 0:
+                return {'skip': False, 'reason': 'cooloff disabled'}
+            norm = self._normalize_symbol(symbol)
+            until = self.per_symbol_cooloff_until.get(norm)
+            if until is None:
+                return {'skip': False, 'reason': 'no cooloff'}
+            now = datetime.now()
+            if now >= until:
+                # Cool-off expired — clear it and reset the per-symbol counter
+                # so the symbol gets a fresh start without immediately re-arming
+                # on the next loss.
+                del self.per_symbol_cooloff_until[norm]
+                self.per_symbol_consec_losses[norm] = 0
+                return {'skip': False, 'reason': 'cooloff expired'}
+            remaining_min = int((until - now).total_seconds() / 60)
+            return {
+                'skip': True,
+                'reason': (
+                    f'{self.per_symbol_consec_losses.get(norm, 0)} consecutive '
+                    f'losses; cool-off ~{remaining_min} min remaining'
+                ),
+                'expires_at': until.isoformat(),
+            }
+        except Exception as e:
+            self.logger.warning(f"should_skip_for_cooloff errored: {e}")
+            return {'skip': False, 'reason': f'gate error: {e}'}
 
     def get_adjusted_leverage(
         self,

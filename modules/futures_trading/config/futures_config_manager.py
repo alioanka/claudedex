@@ -57,12 +57,44 @@ class FuturesPositionConfig(BaseModel):
     max_positions: int = 5
     min_trade_size: float = 10.0
 
+    # FUT-RM-06: ATR-based per-symbol sizing.
+    # When enabled, the engine sizes positions so that an `atr_stop_multiplier`
+    # × ATR move costs `atr_risk_pct` of capital_allocation per trade.
+    # Result: a volatile BTC trade and a quiet ALGO trade risk the same $.
+    # Multiplies cleanly with leverage — notional = (risk_$ / (ATR * stop_mult))
+    #   × price × leverage. Then capped by max_position_usd + min_trade_size.
+    atr_sizing_enabled: bool = False
+    atr_risk_pct: float = 1.0   # % of capital_allocation risked per trade
+    atr_stop_multiplier: float = 1.5  # SL distance in ATR units
+
 
 class FuturesLeverageConfig(BaseModel):
     """Leverage configuration"""
-    default_leverage: int = 10
+    # FUT-RM-18 (Wave 5): lowered from 10x to 5x. 10x left too little room
+    # before the static 2% SL triggered. Migration 031 lowers the seeded
+    # DB value to match. max_leverage stays 20x for opt-in per-trade
+    # aggression via the per-symbol override table (FUT-RM-08).
+    default_leverage: int = 5
     max_leverage: int = 20
     margin_mode: str = "isolated"  # isolated or cross
+    # FUT-RM-07: defense-in-depth on MB-17. When True, the engine verifies
+    # margin_type=ISOLATED via a position-read AFTER placing the entry
+    # order and immediately closes if a CROSS-margin fill is detected.
+    # No-op in DRY_RUN.
+    enforce_isolated_margin: bool = True
+    # FUT-RM-07b (Wave 4): high-priority Telegram alert on the
+    # FUT-RM-07 emergency-close path. Default True so an operator
+    # always learns when a CROSS-margin fill slipped through the
+    # MB-17 set_margin_type call and got force-closed. Fail-soft:
+    # if Telegram is not configured the engine just logs.
+    telegram_emergency_close_enabled: bool = True
+    # FUT-RM-08 (Wave 3): per-symbol leverage cap overrides. Operator may
+    # want different caps per pair (e.g. max 5x on PEPE/USDT but 10x on
+    # BTC/USDT). When the validator runs, override > global max_leverage.
+    # Keys are exchange-native symbols (e.g. "BTC/USDT" or "BTCUSDT");
+    # the resolver normalizes case + slash before lookup. Empty dict
+    # means "use global max_leverage for every pair" (current behavior).
+    max_leverage_overrides: Dict[str, int] = Field(default_factory=dict)
 
 
 class FuturesRiskConfig(BaseModel):
@@ -113,10 +145,53 @@ class FuturesRiskConfig(BaseModel):
     # Risk controls
     max_consecutive_losses: int = 4  # Reduced from 5 to pause earlier
 
+    # FUT-RM-10 (Wave 3): auto-deleverage on drawdown. When enabled, the
+    # monitor loop checks should_auto_deleverage(total_pnl, capital) every
+    # cycle. On trigger, the position with the worst unrealized PnL is
+    # halved (close 50% at market). Default OFF — operator must opt in
+    # via the settings page after canary.
+    auto_deleverage_enabled: bool = False
+    # Throttle so a single drawdown event doesn't fire on every cycle.
+    auto_deleverage_cooldown_seconds: int = 600   # 10 min between triggers
+
     # Market condition filters
     # Relaxed for live trading - strict filters were rejecting all trades in sideways markets
     require_trend_confirmation: bool = False  # Allow trading in sideways markets (was True)
     min_volume_multiplier: float = 0.8  # Allow 80% of average volume (was 1.2)
+
+    # FUT-RM-21 (Wave 7): regime gate. The signal stack mixes mean-reversion
+    # (RSI extremes scored as STRONG_BUY/SELL) with trend-following (Bollinger
+    # breakout, EMA cross) and sums them additively — so the engine happily
+    # buys a downtrend on an RSI bounce. That is the classic "catching a
+    # falling knife" loss the -$59.99 book kept paying. This gate is stricter
+    # than require_trend_confirmation: it HARD-BLOCKS counter-trend entries
+    # (no LONG when SMA20<SMA50 downtrend; no SHORT in an uptrend) while still
+    # allowing both directions in a `sideways` regime (range mean-reversion is
+    # legitimate there). Default ON. Set False to revert to the additive-only
+    # behaviour.
+    block_counter_trend_entries: bool = True
+
+    # FUT-RM-16 (Wave 5): ATR-scaled SL/TP per symbol. The static 1.2% / 1.8%
+    # SL/TP that ships above is the right number for a quiet majors book but
+    # gets stopped out instantly on a vol-name (FIL, NEAR, AAVE all moved 4%+
+    # against the operator at 10x). When enabled, SL becomes
+    #   max(atr_sl_min_pct, atr_sl_multiplier * ATR_pct)
+    # and TP becomes atr_tp_rr_ratio * SL distance (i.e. enforced R:R).
+    # Defaults are tuned to keep the existing 1.2% / 1.8%≈1.5R behavior for
+    # quiet symbols (ATR_pct ~0.8%) while widening for volatile ones. Set
+    # atr_dynamic_sl_tp_enabled=False to revert to the static SL/TP above.
+    atr_dynamic_sl_tp_enabled: bool = True
+    atr_sl_multiplier: float = 1.5     # SL = max(atr_sl_min_pct, 1.5 × ATR%)
+    atr_sl_min_pct: float = 1.5        # Floor on SL distance (price %)
+    atr_tp_rr_ratio: float = 2.0       # TP1 = 2 × SL distance
+
+    # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off. After
+    # `post_loss_cooloff_threshold` losses in a row on the same symbol,
+    # FuturesRiskManager refuses new entries on that pair for
+    # `post_loss_cooloff_minutes` minutes. A winning trade resets the
+    # per-symbol counter and clears any active cool-off.
+    post_loss_cooloff_threshold: int = 2
+    post_loss_cooloff_minutes: int = 240
 
 
 class FuturesPairsConfig(BaseModel):
@@ -153,6 +228,43 @@ class FuturesStrategyConfig(BaseModel):
     # Higher = fewer trades but better win rate
     min_signal_score: int = 4  # Increased from 3 for better entries
 
+    # FUT-RM-15 (Wave 5): multi-indicator CONFLUENCE gate. The aggregate
+    # signal_score above only checks SIGNED magnitude — a single very-strong
+    # indicator (e.g. STRONG_BUY RSI alone, +2) plus weak agreement can clear
+    # the +4 bar after generous rounding. After Wave-5 audit of 4 losing trades
+    # (AAVE / FIL / NEAR shorts, all hit SL at -20% on 10x), we now ALSO
+    # require at least N of the 4 directional indicators
+    # {RSI extreme, MACD cross, Bollinger touch, EMA alignment} to point the
+    # same way before opening. Volume is excluded — it's a confirmer, not a
+    # direction-giver. Default 2 keeps reasonable trade frequency while
+    # rejecting single-indicator setups. Set 0 to disable.
+    min_signal_confluence_count: int = 2
+
+    # FUT-RM-19 (Wave 7): fee + funding aware minimum-edge gate.
+    # The -$59.99 @ 39% loss was dominated by fee/funding bleed: at 39% win
+    # rate the strategy churns trades whose first realistic target (TP1) does
+    # not clear round-trip taker fees (Bybit 0.06% × 2 = 0.12%) + slippage +
+    # adverse funding. Before opening, the engine computes:
+    #   net_edge_pct = TP1_distance_pct
+    #                  - 2*taker_fee_pct - slippage_pct - funding_drag_pct
+    # and refuses entry unless net_edge_pct >= min_net_edge_pct. This directly
+    # subtracts costs from the expected move (the working-rule edge formula:
+    # funding*notional - taker_fees*2 - slippage - liquidation_premium). Set
+    # min_net_edge_pct=0 to disable the gate (NOT recommended for live).
+    min_edge_gate_enabled: bool = True
+    min_net_edge_pct: float = 0.30        # TP1 must beat costs by >= 0.30%
+    edge_slippage_pct: float = 0.05       # modeled round-trip slippage (price %)
+    # funding_drag_pct is computed live from the current funding rate when the
+    # price_client exposes it; this is the conservative fallback used when the
+    # funding rate is unavailable (per-interval, expressed as price %).
+    edge_funding_fallback_pct: float = 0.05
+
+    # FUT-RM-20 (Wave 7): one-entry-per-candle throttle. Scanning every 30s on
+    # a 15m candle re-evaluates the SAME bar ~30 times; without this the engine
+    # can fire repeatedly into the same chop. When enabled, a symbol that was
+    # scanned/entered within the current signal-timeframe candle is skipped.
+    one_entry_per_candle: bool = True
+
     # Additional filters for trade quality
     require_trend_alignment: bool = True  # Trade only in direction of trend
     require_volume_confirmation: bool = True  # Require above-average volume
@@ -162,9 +274,28 @@ class FuturesStrategyConfig(BaseModel):
 
 
 class FuturesFundingConfig(BaseModel):
-    """Funding rate settings"""
+    """Funding rate settings.
+
+    Funding economics:
+    - Perps converge to spot via funding payments. Positive funding => longs
+      pay shorts every funding interval (8h on Binance/Bybit USDT perps).
+    - Annualized: APR ~ funding_rate * 3 * 365 = funding_rate * 1095.
+    - 10 bps per 8h = ~109% APR — at that point a fresh long is paying more
+      in funding than most strategies can earn in price drift, so we gate it.
+    """
     funding_arbitrage_enabled: bool = False
     max_funding_rate: float = 0.1
+
+    # FUT-RM-05: funding-rate gate for directional entries.
+    # When current funding > skip_long_funding_bps, refuse new LONG entries
+    # (longs pay funding). When funding < -skip_short_funding_bps, refuse
+    # new SHORT entries. Units: basis points of the per-interval rate
+    # (1 bp = 0.0001). Zero disables the gate on that side.
+    skip_long_funding_bps: float = 5.0   # ~55% APR ceiling for longs
+    skip_short_funding_bps: float = 5.0  # symmetric for shorts
+    # Stale funding rate is worse than no funding rate — if the rate older
+    # than this many seconds, skip the gate rather than gate on stale data.
+    max_funding_age_seconds: int = 900   # 15 min
 
 
 class FuturesConfigManager:
@@ -434,6 +565,12 @@ class FuturesConfigManager:
                     elif isinstance(value, float):
                         value_type = 'float'
                         value_str = str(value)
+                    elif isinstance(value, (dict, list)):
+                        # FUT-RM-08: store dict/list as JSON so the loader's
+                        # value_type=='json' branch round-trips correctly.
+                        import json as _json
+                        value_type = 'json'
+                        value_str = _json.dumps(value)
                     else:
                         value_type = 'string'
                         value_str = str(value)
@@ -589,11 +726,18 @@ class FuturesConfigManager:
             'min_position_pct': FuturesConfigType.POSITION,
             'max_position_usd': FuturesConfigType.POSITION,
             'static_position_pct': FuturesConfigType.POSITION,
+            # FUT-RM-06: ATR-based sizing
+            'atr_sizing_enabled': FuturesConfigType.POSITION,
+            'atr_risk_pct': FuturesConfigType.POSITION,
+            'atr_stop_multiplier': FuturesConfigType.POSITION,
             # Leverage settings
             'leverage': FuturesConfigType.LEVERAGE,  # alias for default_leverage
             'default_leverage': FuturesConfigType.LEVERAGE,
             'max_leverage': FuturesConfigType.LEVERAGE,
             'margin_mode': FuturesConfigType.LEVERAGE,
+            'enforce_isolated_margin': FuturesConfigType.LEVERAGE,  # FUT-RM-07
+            'telegram_emergency_close_enabled': FuturesConfigType.LEVERAGE,  # FUT-RM-07b
+            'max_leverage_overrides': FuturesConfigType.LEVERAGE,   # FUT-RM-08
             # Risk settings - SL
             'stop_loss': FuturesConfigType.RISK,  # alias
             'stop_loss_pct': FuturesConfigType.RISK,
@@ -615,6 +759,9 @@ class FuturesConfigManager:
             'max_daily_loss_pct': FuturesConfigType.RISK,
             'max_consecutive_losses': FuturesConfigType.RISK,
             'liquidation_buffer': FuturesConfigType.RISK,
+            # FUT-RM-10 auto-deleverage
+            'auto_deleverage_enabled': FuturesConfigType.RISK,
+            'auto_deleverage_cooldown_seconds': FuturesConfigType.RISK,
             # Risk settings - Trailing stop
             'trailing_stop': FuturesConfigType.RISK,  # alias
             'trailing_stop_enabled': FuturesConfigType.RISK,
@@ -638,13 +785,26 @@ class FuturesConfigManager:
             'cooldown_minutes': FuturesConfigType.STRATEGY,
             'require_trend_alignment': FuturesConfigType.STRATEGY,
             'require_volume_confirmation': FuturesConfigType.STRATEGY,
+            'min_signal_confluence_count': FuturesConfigType.STRATEGY,
+            # FUT-RM-19/20 (Wave 7): edge gate + per-candle throttle
+            'min_edge_gate_enabled': FuturesConfigType.STRATEGY,
+            'min_net_edge_pct': FuturesConfigType.STRATEGY,
+            'edge_slippage_pct': FuturesConfigType.STRATEGY,
+            'edge_funding_fallback_pct': FuturesConfigType.STRATEGY,
+            'one_entry_per_candle': FuturesConfigType.STRATEGY,
             # Risk - new market filters
             'require_trend_confirmation': FuturesConfigType.RISK,
             'min_volume_multiplier': FuturesConfigType.RISK,
+            # FUT-RM-21 (Wave 7): regime / counter-trend gate
+            'block_counter_trend_entries': FuturesConfigType.RISK,
             # Funding settings
             'funding_arb': FuturesConfigType.FUNDING,  # alias
             'funding_arbitrage_enabled': FuturesConfigType.FUNDING,
             'max_funding_rate': FuturesConfigType.FUNDING,
+            # FUT-RM-05 directional funding gate
+            'skip_long_funding_bps': FuturesConfigType.FUNDING,
+            'skip_short_funding_bps': FuturesConfigType.FUNDING,
+            'max_funding_age_seconds': FuturesConfigType.FUNDING,
         }
 
         # Group settings by config type

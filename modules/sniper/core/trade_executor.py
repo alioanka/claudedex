@@ -9,7 +9,9 @@ IMPORTANT: Only executes real trades when DRY_RUN=false
 """
 
 import asyncio
+import hashlib
 import logging
+import random
 import aiohttp
 import json
 import os
@@ -213,14 +215,101 @@ class TradeExecutor:
         self.evm_private_key = await self._get_decrypted_key('PRIVATE_KEY') or await self._get_decrypted_key('EVM_PRIVATE_KEY')
         self.solana_private_key = await self._get_decrypted_key('SOLANA_MODULE_PRIVATE_KEY')
 
-        # Get wallet addresses from secrets manager
+        # Get STORED wallet addresses from secrets manager (reference-only;
+        # the derived addresses below are the authoritative funding identity).
         try:
             from security.secrets_manager import secrets
-            self.evm_wallet = secrets.get('WALLET_ADDRESS', log_access=False) or secrets.get('EVM_WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
-            self.solana_wallet = secrets.get('SOLANA_MODULE_WALLET', log_access=False) or os.getenv('SOLANA_MODULE_WALLET')
+            stored_evm = secrets.get('WALLET_ADDRESS', log_access=False) or secrets.get('EVM_WALLET_ADDRESS', log_access=False) or os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
+            stored_sol = secrets.get('SOLANA_MODULE_WALLET', log_access=False) or os.getenv('SOLANA_MODULE_WALLET')
         except Exception:
-            self.evm_wallet = os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
-            self.solana_wallet = os.getenv('SOLANA_MODULE_WALLET')
+            stored_evm = os.getenv('WALLET_ADDRESS') or os.getenv('EVM_WALLET_ADDRESS')
+            stored_sol = os.getenv('SOLANA_MODULE_WALLET')
+        self.stored_evm_wallet = stored_evm or None
+        self.stored_solana_wallet = stored_sol or None
+
+        # Wave-12 FIX 1: ALWAYS derive both public addresses from the
+        # decrypted private keys (mirrors DEX FIX 1 / Copy FIX 3 Wave-11
+        # pattern). The stored *_WALLET secrets were silently None for
+        # operators who funded only the PK, leaving `solana_wallet` /
+        # `evm_wallet` falsy and the sniper runtime-stats snapshot showing
+        # `solana=none evm=none` on the dashboard funding panel. The
+        # derived address is the authoritative funding identity; the
+        # stored secret is compared and a CRITICAL masked-address warning
+        # is logged on mismatch (funding the stale stored address in LIVE
+        # mode would lose money).
+        derived_evm = None
+        if self.evm_private_key:
+            try:
+                from eth_account import Account
+                _pk = self.evm_private_key if self.evm_private_key.startswith('0x') else f'0x{self.evm_private_key}'
+                derived_evm = Account.from_key(_pk).address
+            except Exception as e:
+                logger.debug(f"sniper EVM wallet derivation failed: {e}")
+        derived_sol = None
+        if self.solana_private_key:
+            try:
+                from solders.keypair import Keypair
+                import base58
+                pk = self.solana_private_key
+                key_bytes = None
+                if pk.startswith('['):
+                    try:
+                        key_bytes = bytes(json.loads(pk))
+                    except Exception:
+                        pass
+                if key_bytes is None:
+                    try:
+                        key_bytes = base58.b58decode(pk)
+                    except Exception:
+                        pass
+                if key_bytes is None:
+                    try:
+                        key_bytes = bytes.fromhex(pk)
+                    except Exception:
+                        pass
+                if key_bytes is not None:
+                    if len(key_bytes) == 64:
+                        kp = Keypair.from_bytes(key_bytes)
+                    elif len(key_bytes) == 32:
+                        kp = Keypair.from_seed(key_bytes)
+                    else:
+                        kp = None
+                    if kp is not None:
+                        derived_sol = str(kp.pubkey())
+            except Exception as e:
+                logger.debug(f"sniper Solana wallet derivation failed: {e}")
+
+        # Mismatch detection (logged at CRITICAL with masked addresses).
+        self.wallet_address_secret_mismatch = False
+        self.solana_wallet_secret_mismatch = False
+        if derived_evm:
+            self.evm_wallet = derived_evm
+            if stored_evm and stored_evm.lower() != derived_evm.lower():
+                self.wallet_address_secret_mismatch = True
+                stored_mask = (stored_evm[:6] + "..." + stored_evm[-4:]) if len(stored_evm) >= 10 else "***"
+                derived_mask = derived_evm[:6] + "..." + derived_evm[-4:]
+                logger.critical(
+                    "SNIPER WALLET_ADDRESS mismatch: stored=%s vs derived=%s. "
+                    "Using DERIVED (PRIVATE_KEY authoritative). Update stored "
+                    "secret — funding the stored address would lose money.",
+                    stored_mask, derived_mask,
+                )
+        else:
+            self.evm_wallet = stored_evm or None
+        if derived_sol:
+            self.solana_wallet = derived_sol
+            if stored_sol and stored_sol != derived_sol:
+                self.solana_wallet_secret_mismatch = True
+                stored_mask = (stored_sol[:6] + "..." + stored_sol[-4:]) if len(stored_sol) >= 10 else "***"
+                derived_mask = derived_sol[:6] + "..." + derived_sol[-4:]
+                logger.critical(
+                    "SNIPER SOLANA_MODULE_WALLET mismatch: stored=%s vs derived=%s. "
+                    "Using DERIVED (SOLANA_MODULE_PRIVATE_KEY authoritative). "
+                    "Update stored secret — funding the stored address would lose money.",
+                    stored_mask, derived_mask,
+                )
+        else:
+            self.solana_wallet = stored_sol or None
 
         # DRY_RUN check
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -689,8 +778,14 @@ class TradeExecutor:
                     amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
                     error=f"Quote failed: {quote_err}", timestamp=datetime.now()
                 )
-            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
-            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            # Primary path: caller passes slippage (already DB-plumbed via
+            # SniperEngine.slippage). Fallback only fires for direct
+            # callers that omit the arg; operator can override the floor
+            # via SNIPER_SLIPPAGE_FALLBACK_PCT env without redeploying.
+            if slippage is not None:
+                slippage_frac = max(float(slippage), 0.0) / 100.0
+            else:
+                slippage_frac = max(float(os.getenv('SNIPER_SLIPPAGE_FALLBACK_PCT', '3.0')), 0.0) / 100.0
             amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline: 2 minutes from now
@@ -789,8 +884,14 @@ class TradeExecutor:
                     amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
                     error=f"Quote failed: {quote_err}", timestamp=datetime.now()
                 )
-            slippage_frac = max(float(slippage), 0.0) / 100.0 if slippage is not None else 0.03
-            # TODO(config): plumb slippage_tolerance through ConfigManager.
+            # Primary path: caller passes slippage (already DB-plumbed via
+            # SniperEngine.slippage). Fallback only fires for direct
+            # callers that omit the arg; operator can override the floor
+            # via SNIPER_SLIPPAGE_FALLBACK_PCT env without redeploying.
+            if slippage is not None:
+                slippage_frac = max(float(slippage), 0.0) / 100.0
+            else:
+                slippage_frac = max(float(os.getenv('SNIPER_SLIPPAGE_FALLBACK_PCT', '3.0')), 0.0) / 100.0
             amount_out_min = int(expected_out * (1 - slippage_frac))
 
             # Deadline
@@ -856,7 +957,6 @@ class TradeExecutor:
         await asyncio.sleep(0.5)
 
         # Generate fake transaction hash
-        import hashlib
         fake_hash = hashlib.sha256(f"{token_address}{datetime.now().timestamp()}".encode()).hexdigest()
 
         # Simulate some output amount
@@ -882,15 +982,90 @@ class TradeExecutor:
         chain: str,
         amount_in: float
     ) -> TradeResult:
-        """Simulate a sell order (DRY RUN)"""
+        """Simulate a sell order (DRY RUN).
+
+        Wave-12 FIX 3 — the operator surfaced `+696226.17%` /
+        `+471681.10%` / `+762621.15%` TAKE PROFIT log lines on fresh
+        Pump.fun mints. Root cause is upstream of this function: the
+        engine's monitor (`SniperEngine._monitor_active_snipes`) divides
+        a non-zero but stale `current_price` by an `entry_price` derived
+        from a fabricated 1e6 buy quote and produces an unbounded
+        `pnl_pct`, which is then logged BEFORE control reaches us. We
+        don't own `sniper_engine.py` this wave (concurrent agent), so we
+        cannot touch that log line or the monitor's comparison itself.
+        What we DO own and have hardened here:
+
+        1. Hard cap the simulated `move` factor at +200% (`move <= 3.0`)
+           and -99% (`move >= 0.01`) so the `amount_out` we return —
+           and therefore the `profit_loss_pct` that `_log_exit_to_db`
+           later computes for the DB row — can never exceed ±200%
+           regardless of how broken the engine's monitor-side
+           comparison was. This is the DB-side sanity guard.
+        2. The DB row PnL is `(move - 1) * 100`% by construction because
+           the buy leg minted `amount_in_native * 1e6` tokens at
+           `entry_price = sol_price / 1e6` and the sell returns
+           `amount_in_native * move` SOL; so clamping `move` ∈
+           [0.01, 3.0] guarantees DB `profit_loss_pct` ∈ [-99%, +200%].
+        3. Wave-7 distribution (55% loss / 30% chop / 15% winner)
+           preserved — the winner bucket's upper tail is the only
+           thing trimmed (was +250% -> now +200%).
+
+        This is the "missing code path" for the Wave-7 cap: the engine-
+        side monitor reads its current_price from Pyth/Jupiter/Birdeye
+        and computes `pnl_pct` directly from that, bypassing
+        `_model_dry_run_exit_pct` whenever the upstream price source
+        returns *any* non-zero value (even a wildly stale one). The
+        clean fix lives in `sniper_engine.py`'s monitor (treat
+        `|pnl_pct| > 200` as a phantom-price signal and reroute through
+        the synthetic-close path); that change is the concurrent agent's
+        scope. Until they ship it, this clamp ensures the DB row stays
+        honest even if the LOG line is briefly noisy. See
+        `modules/sniper/CLAUDE.md` for the full Wave-12 note.
+        """
         logger.info(f"🧪 [DRY RUN] Simulating SELL: {amount_in} tokens -> {chain.upper()}")
 
         await asyncio.sleep(0.5)
 
-        import hashlib
         fake_hash = hashlib.sha256(f"{token_address}{datetime.now().timestamp()}".encode()).hexdigest()
 
-        simulated_output = amount_in / 1000000 * 1.1  # Slight profit
+        # The buy leg minted tokens at amount_in_native * 1e6 (see _simulate_buy),
+        # so a flat /1e6 round-trips to break-even. A constant *1.1 made EVERY
+        # simulated win identical (the "$0.84 on every trade" the operator saw).
+        # Model a realistic price move seeded by the token mint so the round-trip
+        # P&L varies per trade and re-runs are reproducible: ~55% lose, ~30%
+        # chop, ~15% pump. This is a MODEL for DRY_RUN data collection, not a
+        # measured exit price.
+        seed = int(hashlib.sha256(("exitmult:" + token_address).encode()).hexdigest()[:16], 16)
+        rng = random.Random(seed)
+        roll = rng.random()
+        if roll < 0.55:
+            move = 1.0 - rng.uniform(0.10, 0.85)   # loss: -10%..-85%
+        elif roll < 0.85:
+            move = 1.0 + rng.uniform(-0.08, 0.12)  # chop
+        else:
+            # Winner: +20%..+200%. Was +20%..+250% pre-Wave-12; tightened
+            # so the DB-side `profit_loss_pct` cannot exceed +200% even
+            # if the engine's monitor produced a phantom-price TAKE PROFIT.
+            move = 1.0 + rng.uniform(0.20, 2.00)
+        # Belt-and-suspenders ±200%/-99% clamp on the simulated move.
+        # `_log_exit_to_db` computes `profit_loss_pct = (exit_usd/entry_usd - 1)*100`
+        # and `exit_usd ≈ entry_usd * move` for DRY_RUN, so this directly
+        # bounds the DB row's profit_loss_pct to [-99%, +200%]. Hard cap
+        # exists as a sanity guard for the operator-reported +696226%
+        # phantom-price case.
+        if move > 3.0:
+            logger.warning(
+                f"🧪 [DRY RUN] sim_sell move {move:.2f} > 3.0 cap "
+                f"({token_address[:8]}); clamping to +200%."
+            )
+            move = 3.0
+        if move < 0.01:
+            logger.warning(
+                f"🧪 [DRY RUN] sim_sell move {move:.4f} < 0.01 floor "
+                f"({token_address[:8]}); clamping to -99%."
+            )
+            move = 0.01
+        simulated_output = amount_in / 1000000 * move
 
         logger.info(f"🧪 [DRY RUN] Simulated SELL complete: {simulated_output} {chain.upper()}")
 

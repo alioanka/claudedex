@@ -318,6 +318,7 @@
                 <tbody id="positionsTableBody">
                 </tbody>
             </table>
+            <div id="positionsPagination" style="padding:12px;text-align:center;font-size:0.9rem;"></div>
         </div>
 
         <!-- Mobile Cards -->
@@ -327,22 +328,52 @@
 </div>
 
 <script>
+// Pagination state — backend supports ?limit&offset; default 50/page.
+let positionsPage = 1;
+const POSITIONS_PAGE_SIZE = 50;
+let positionsTotal = 0;
+
 async function loadPositions() {
     try {
-        const response = await fetch('/api/sniper/positions');
+        const offset = (positionsPage - 1) * POSITIONS_PAGE_SIZE;
+        const response = await fetch(
+            `/api/sniper/positions?limit=${POSITIONS_PAGE_SIZE}&offset=${offset}`
+        );
         if (!response.ok) throw new Error('Failed to fetch');
 
         const data = await response.json();
         if (data.success && data.positions) {
+            positionsTotal = (data.total != null) ? data.total : data.positions.length;
             updatePositions(data.positions);
             updateStats(data.positions);
+            renderPositionsPagination();
         } else {
+            positionsTotal = 0;
             updatePositions([]);
             updateStats([]);
+            renderPositionsPagination();
         }
     } catch (error) {
         console.error('Error loading positions:', error);
     }
+}
+
+function renderPositionsPagination() {
+    const footer = document.getElementById('positionsPagination');
+    if (!footer) return;
+    const totalPages = Math.max(1, Math.ceil(positionsTotal / POSITIONS_PAGE_SIZE));
+    if (positionsTotal <= POSITIONS_PAGE_SIZE) {
+        footer.innerHTML = positionsTotal > 0
+            ? `<span style="color:var(--text-secondary);">${positionsTotal} position${positionsTotal === 1 ? '' : 's'}.</span>`
+            : '';
+        return;
+    }
+    const start = (positionsPage - 1) * POSITIONS_PAGE_SIZE + 1;
+    const end = Math.min(positionsPage * POSITIONS_PAGE_SIZE, positionsTotal);
+    footer.innerHTML =
+        `<button class="btn btn-sm" onclick="positionsPage = Math.max(1, positionsPage - 1); loadPositions();" ${positionsPage <= 1 ? 'disabled' : ''}>&laquo; Prev</button> ` +
+        `<span style="margin:0 12px;color:var(--text-secondary);">${start}-${end} of ${positionsTotal} (page ${positionsPage}/${totalPages})</span> ` +
+        `<button class="btn btn-sm" onclick="positionsPage = Math.min(${totalPages}, positionsPage + 1); loadPositions();" ${positionsPage >= totalPages ? 'disabled' : ''}>Next &raquo;</button>`;
 }
 
 function updateStats(positions) {

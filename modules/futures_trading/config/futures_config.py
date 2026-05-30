@@ -16,7 +16,8 @@ class FuturesConfig:
         self.testnet = os.getenv('FUTURES_TESTNET', 'true').lower() == 'true'
 
         # Trading parameters
-        self.leverage = int(os.getenv('FUTURES_LEVERAGE', '10'))
+        # FUT-RM-18 (Wave 5): default lowered from 10x to 5x; see migration 031.
+        self.leverage = int(os.getenv('FUTURES_LEVERAGE', '5'))
         self.max_positions = int(os.getenv('FUTURES_MAX_POSITIONS', '5'))
         self.position_size_usd = float(os.getenv('FUTURES_POSITION_SIZE_USD', '100'))
 

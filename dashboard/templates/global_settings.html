@@ -14,70 +14,201 @@
     </div>
 </div>
 
+<style>
+/* Risk-critical styling — has to be readable on BOTH themes.
+   The dark theme is the default (no body class), .theme-light is the
+   opt-in override. Previously the light pink (#fff5f5) background was
+   inherited together with the dark theme's light-gray text, leaving
+   the value invisible to operators on the VPS. Force foreground to
+   high-contrast tones for each theme. See VPS failure 4. */
+.risk-critical {
+    border: 2px solid #ff5468 !important;
+    background: #3a1a1a !important;
+    color: #ffd9dc !important;
+}
+.risk-critical:focus {
+    outline: 2px solid #ff5468 !important;
+    outline-offset: 1px;
+}
+.theme-light .risk-critical {
+    background: #fff5f5 !important;
+    color: #b00020 !important;
+}
+.risk-critical-label {
+    color: #ff8a95;
+    font-weight: 700;
+}
+.theme-light .risk-critical-label { color: #b00020; }
+.risk-critical-label::after { content: " ⚠ RISK"; font-size: 0.8em; }
+</style>
 <script>
+// Settings whose value directly controls how much capital can be lost.
+// Editing these without explicit confirmation has caused incidents
+// (operator typed 1.5 instead of 15 for drawdown_pct). See DASH-RM-11.
+const RISK_CRITICAL_KEYS = new Set([
+    'max_drawdown_pct',
+    'max_position_size',
+    'max_slippage',
+    'max_slippage_pct',
+    'daily_loss_limit',
+    'max_loss_per_trade',
+    'min_liquidity',
+    'min_liquidity_usd',
+    'kill_switch_drawdown_pct',
+    'circuit_breaker_threshold',
+]);
+
+function isRiskCritical(key) {
+    return RISK_CRITICAL_KEYS.has(key);
+}
+
+// Renders a single setting row with a type-appropriate input.
+// Previously every non-bool got <input type=text> regardless of the
+// underlying type, so numbers got coerced to strings and JSON
+// objects rendered as their stringified form with no validation.
+// Now: bool → checkbox, number → numeric input, object → JSON
+// textarea, anything else → text. data-type attribute preserves the
+// expected type so the submit handler can convert back correctly.
+// (Audit agent 3 #12.)
+function renderSettingInput(key, config) {
+    const v = config.value;
+    const dangerClass = isRiskCritical(key) ? ' risk-critical' : '';
+    if (typeof v === 'boolean') {
+        return `<input type="checkbox" class="form-check-input${dangerClass}" name="${key}" data-type="bool" ${v ? 'checked' : ''}>`;
+    }
+    if (typeof v === 'number') {
+        return `<input type="number" class="form-control${dangerClass}" name="${key}" value="${v}" step="any" data-type="number" data-original="${v}">`;
+    }
+    if (v !== null && typeof v === 'object') {
+        return `<textarea class="form-control${dangerClass}" name="${key}" rows="3" data-type="json">${JSON.stringify(v, null, 2)}</textarea>`;
+    }
+    const escaped = (v === null || v === undefined) ? '' : String(v);
+    return `<input type="text" class="form-control${dangerClass}" name="${key}" value="${escaped}" data-type="text">`;
+}
+
 async function loadSettings() {
     const response = await fetch('/api/settings/all');
     const data = await response.json();
     const container = document.getElementById('settings-editor');
 
-    if (data.success) {
-        let html = '<div class="accordion" id="settingsAccordion">';
-        for (const [category, settings] of Object.entries(data.data)) {
-            html += `
-            <div class="accordion-item bg-secondary">
-                <h2 class="accordion-header" id="heading${category}">
-                    <button class="accordion-button collapsed bg-dark text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${category}">
-                        ${category.toUpperCase()}
-                    </button>
-                </h2>
-                <div id="collapse${category}" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
-                    <div class="accordion-body">
-                        <form onsubmit="saveSettings(event, '${category}')">
-                            ${Object.entries(settings).map(([key, config]) => `
-                                <div class="mb-3">
-                                    <label class="form-label">${key}</label>
-                                    <input type="${typeof config.value === 'boolean' ? 'checkbox' : 'text'}"
-                                           class="form-control"
-                                           name="${key}"
-                                           value="${config.value}"
-                                           ${typeof config.value === 'boolean' && config.value ? 'checked' : ''}>
-                                    <small class="text-muted">${config.description || ''}</small>
-                                </div>
-                            `).join('')}
-                            <button type="submit" class="btn btn-primary">Save ${category}</button>
-                        </form>
-                    </div>
-                </div>
-            </div>`;
-        }
-        html += '</div>';
-        container.innerHTML = html;
+    if (!data.success) {
+        container.innerHTML = '<div class="alert alert-danger">Failed to load settings.</div>';
+        return;
     }
+
+    let html = '<div class="accordion" id="settingsAccordion">';
+    for (const [category, settings] of Object.entries(data.data)) {
+        const rowsHtml = Object.entries(settings).map(([key, config]) => {
+            const labelClass = isRiskCritical(key) ? 'form-label risk-critical-label' : 'form-label';
+            return `
+            <div class="mb-3">
+                <label class="${labelClass}">${key}</label>
+                ${renderSettingInput(key, config)}
+                <small class="text-muted">${config.description || ''}</small>
+            </div>
+        `;
+        }).join('');
+        html += `
+        <div class="accordion-item bg-secondary">
+            <h2 class="accordion-header" id="heading${category}">
+                <button class="accordion-button collapsed bg-dark text-white" type="button" data-bs-toggle="collapse" data-bs-target="#collapse${category}">
+                    ${category.toUpperCase()}
+                </button>
+            </h2>
+            <div id="collapse${category}" class="accordion-collapse collapse" data-bs-parent="#settingsAccordion">
+                <div class="accordion-body">
+                    <form onsubmit="saveSettings(event, '${category}')">
+                        ${rowsHtml}
+                        <button type="submit" class="btn btn-primary">Save ${category}</button>
+                    </form>
+                </div>
+            </div>
+        </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
 }
 
 async function saveSettings(event, category) {
     event.preventDefault();
-    const formData = new FormData(event.target);
+    const form = event.target;
     const updates = {};
+    const riskChanges = [];
 
-    for (const [key, value] of formData.entries()) {
-        updates[key] = value;
+    // Iterate all named inputs and convert by their data-type marker.
+    // FormData would otherwise turn every value into a string AND drop
+    // unchecked checkboxes. Surfacing JSON parse errors before the
+    // POST means the operator sees the problem on their own page
+    // instead of after a 500.
+    for (const el of form.querySelectorAll('input[name], textarea[name]')) {
+        const name = el.name;
+        const t = el.dataset.type;
+        if (t === 'bool') {
+            updates[name] = el.checked;
+        } else if (t === 'number') {
+            const n = parseFloat(el.value);
+            if (Number.isNaN(n)) {
+                alert(`Field "${name}" must be a number.`);
+                return;
+            }
+            updates[name] = n;
+            // Track risk-critical numeric changes for the confirmation
+            // step. data-original was set when the row rendered.
+            if (isRiskCritical(name) && el.dataset.original !== undefined) {
+                const orig = parseFloat(el.dataset.original);
+                if (!Number.isNaN(orig) && Math.abs(orig - n) > 1e-9) {
+                    riskChanges.push(`${name}: ${orig} → ${n}`);
+                }
+            }
+        } else if (t === 'json') {
+            try {
+                updates[name] = JSON.parse(el.value);
+            } catch (err) {
+                alert(`Field "${name}" is not valid JSON: ${err.message}`);
+                return;
+            }
+        } else {
+            updates[name] = el.value;
+        }
     }
 
-    // Handle checkboxes (unchecked ones are missing from FormData)
-    event.target.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        updates[cb.name] = cb.checked;
-    });
+    // Risk-critical confirmation. Operators have historically typed 1.5
+    // when they meant 15 for drawdown_pct — surfacing the old → new
+    // delta in the confirm dialog catches that class of typo. See
+    // DASH-RM-11.
+    if (riskChanges.length > 0) {
+        const msg = "You are changing RISK-CRITICAL values:\n\n  "
+            + riskChanges.join("\n  ")
+            + "\n\nThese controls how much capital can be lost. Confirm?";
+        if (!confirm(msg)) return;
+    }
 
-    await fetch('/api/settings/update', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            config_type: category,
-            updates: updates
-        })
-    });
-    alert('Settings saved!');
+    // CSRF: auth/csrf.py requires X-CSRF-Token on every state-changing
+    // request. Inline the cookie read (no main.js helper dependency for
+    // this template) — without it the save 403s with
+    // "CSRF token missing or invalid". See VPS failure 1.
+    const csrf = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+    let resp;
+    try {
+        resp = await fetch('/api/settings/update', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRF-Token': decodeURIComponent(csrf)
+            },
+            body: JSON.stringify({ config_type: category, updates: updates })
+        });
+    } catch (err) {
+        alert(`Save failed (network): ${err.message}`);
+        return;
+    }
+    let body = {};
+    try { body = await resp.json(); } catch (_) {}
+    if (!resp.ok || body.success === false) {
+        alert(`Save failed: ${body.error || resp.statusText || resp.status}`);
+        return;
+    }
+    alert(`Saved ${category} settings.`);
 }
 
 loadSettings();

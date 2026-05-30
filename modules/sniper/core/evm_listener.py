@@ -7,7 +7,8 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from web3 import Web3
 from web3.contract import Contract
@@ -40,6 +41,75 @@ FACTORIES = {
     # Add Base/Arbitrum factories here as needed
 }
 
+# Well-known QUOTE tokens per chain. New pairs are almost always
+# NEW_TOKEN / QUOTE_TOKEN; PairCreated emits token0/token1 sorted
+# by address so the QUOTE side is sometimes token0. _select_target_token
+# picks the non-quote side using this table.
+#
+# Chain IDs: 1 = Ethereum, 56 = BSC, 137 = Polygon, 8453 = Base,
+# 42161 = Arbitrum, 10 = Optimism, 43114 = Avalanche.
+EVM_QUOTE_TOKENS_BY_CHAIN = {
+    1: frozenset([  # Ethereum mainnet
+        '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2',  # WETH
+        '0xdac17f958d2ee523a2206206994597c13d831ec7',  # USDT
+        '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48',  # USDC
+        '0x6b175474e89094c44da98b954eedeac495271d0f',  # DAI
+    ]),
+    56: frozenset([  # BSC
+        '0xbb4cdb9cbd36b01bd1cbaebf2de08d9173bc095c',  # WBNB
+        '0x55d398326f99059ff775485246999027b3197955',  # USDT (BSC)
+        '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d',  # USDC (BSC)
+        '0xe9e7cea3dedca5984780bafc599bd69add087d56',  # BUSD
+    ]),
+    137: frozenset([  # Polygon
+        '0x0d500b1d8e8ef31e21c99d1db9a6444d3adf1270',  # WMATIC
+        '0xc2132d05d31c914a87c6611c10748aeb04b58e8f',  # USDT (Polygon)
+        '0x2791bca1f2de4661ed88a30c99a7a9449aa84174',  # USDC.e (Polygon)
+        '0x3c499c542cef5e3811e1192ce70d8cc03d5c3359',  # USDC native (Polygon)
+        '0x8f3cf7ad23cd3cadbd9735aff958023239c6a063',  # DAI (Polygon)
+    ]),
+    8453: frozenset([  # Base
+        '0x4200000000000000000000000000000000000006',  # WETH (Base)
+        '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',  # USDC (Base)
+        '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',  # DAI (Base)
+    ]),
+    42161: frozenset([  # Arbitrum
+        '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',  # WETH (Arb)
+        '0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9',  # USDT (Arb)
+        '0xaf88d065e77c8cc2239327c5edb3a432268e5831',  # USDC native (Arb)
+        '0xff970a61a04b1ca14834a43f5de4533ebddb5cc8',  # USDC.e (Arb)
+        '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1',  # DAI (Arb)
+    ]),
+    10: frozenset([  # Optimism
+        '0x4200000000000000000000000000000000000006',  # WETH (OP)
+        '0x94b008aa00579c1307b0ef2c499ad98a8ce58e58',  # USDT (OP)
+        '0x0b2c639c533813f4aa9d7837caf62653d097ff85',  # USDC (OP)
+        '0xda10009cbd5d07dd0cecc66161fc93d7c9000da1',  # DAI (OP)
+    ]),
+    43114: frozenset([  # Avalanche
+        '0xb31f66aa3c1e785363f0875a1b74e27b85fd66c7',  # WAVAX
+        '0x9702230a8ea53601f5cd2dc00fdbc13d4df4a8c7',  # USDT (Avax)
+        '0xb97ef9ef8734c71904d8002f8b6bc66dd9c48a6e',  # USDC native (Avax)
+    ]),
+}
+
+# Default fallback (mainnet) used when the connected chain isn't in the dict.
+_DEFAULT_QUOTE_TOKENS = EVM_QUOTE_TOKENS_BY_CHAIN[1]
+
+
+def _select_target_token(token0: str, token1: str, chain_id: int = 1) -> str:
+    """Pick the non-quote side of a PairCreated event using the per-chain
+    quote-token set. Falls back to mainnet WETH/USDT/USDC/DAI if the chain
+    isn't in our table (better than returning token0 blindly)."""
+    quote_set = EVM_QUOTE_TOKENS_BY_CHAIN.get(chain_id, _DEFAULT_QUOTE_TOKENS)
+    t0 = (token0 or '').lower()
+    t1 = (token1 or '').lower()
+    if t0 in quote_set and t1 not in quote_set:
+        return token1
+    if t1 in quote_set and t0 not in quote_set:
+        return token0
+    return token0  # fallback when both/neither are well-known
+
 class EVMListener:
     def __init__(self, config: Dict):
         self.config = config
@@ -47,6 +117,7 @@ class EVMListener:
         self.is_running = False
         self.is_configured = False  # Track if EVM is properly configured
         self.known_pairs = set()
+        self.chain_id: Optional[int] = None
 
         # Get RPC URL from config, PoolEngine (sync ctor), .env preserved as ultimate fallback
         self.rpc_url = (
@@ -61,11 +132,20 @@ class EVMListener:
         self.wss_url = os.getenv('SNIPER_EVM_WSS_URL', '').strip() or self._infer_wss_url()
         self._wss_queue: asyncio.Queue = asyncio.Queue()
         self.wss_task: Optional[asyncio.Task] = None
+        # Small LRU-ish cache mapping block_number -> Unix epoch seconds.
+        # Polling burst returns many logs from a small window of recent
+        # blocks; caching avoids one RPC roundtrip per log.
+        self._block_ts_cache: Dict[int, int] = {}
+        self._block_ts_cache_max = 200
         self._stats = {
             'wss_connects': 0,
             'wss_log_notifications': 0,
             'wss_pairs_queued': 0,
             'polling_pairs_emitted': 0,
+            # Block-time anchoring counters mirror the Solana listener so
+            # /sniper/timing can compare EVM polling staleness honestly.
+            'block_time_anchored': 0,
+            'block_time_missing': 0,
         }
 
     def _infer_wss_url(self) -> Optional[str]:
@@ -79,6 +159,37 @@ class EVMListener:
         if self.rpc_url.startswith('http://'):
             return 'ws://' + self.rpc_url[len('http://'):]
         return None
+
+    def _get_cached_block_timestamp(self, block_number: int) -> Optional[int]:
+        """Return the Unix-epoch timestamp for `block_number`, fetching
+        from web3 on miss and caching. Bounded by _block_ts_cache_max.
+        Returns None on any RPC failure so callers can fall back to
+        wall-clock without crashing the listener."""
+        if not isinstance(block_number, int):
+            try:
+                block_number = int(block_number)
+            except (TypeError, ValueError):
+                return None
+        cached = self._block_ts_cache.get(block_number)
+        if cached is not None:
+            return cached
+        if self.w3 is None:
+            return None
+        try:
+            blk = self.w3.eth.get_block(block_number)
+            ts = int(blk['timestamp'])
+        except Exception as e:
+            logger.debug(f"get_block({block_number}) failed: {e}")
+            return None
+        # Bound the cache; evict the oldest entry by insertion order.
+        if len(self._block_ts_cache) >= self._block_ts_cache_max:
+            try:
+                oldest = next(iter(self._block_ts_cache))
+                self._block_ts_cache.pop(oldest, None)
+            except StopIteration:
+                pass
+        self._block_ts_cache[block_number] = ts
+        return ts
 
     async def initialize(self):
         """Initialize Web3 connection"""
@@ -94,7 +205,11 @@ class EVMListener:
             self.w3 = Web3(Web3.HTTPProvider(self.rpc_url, request_kwargs={'timeout': 10}))
             if self.w3.is_connected():
                 chain_id = self.w3.eth.chain_id
-                chain_name = {1: 'Ethereum', 56: 'BSC', 8453: 'Base', 42161: 'Arbitrum'}.get(chain_id, f'Chain {chain_id}')
+                self.chain_id = chain_id  # stored for _select_target_token
+                chain_name = {
+                    1: 'Ethereum', 56: 'BSC', 137: 'Polygon', 8453: 'Base',
+                    42161: 'Arbitrum', 10: 'Optimism', 43114: 'Avalanche',
+                }.get(chain_id, f'Chain {chain_id}')
                 logger.info(f"✅ Connected to EVM Node ({chain_name}): {self.rpc_url[:50]}...")
                 self.is_configured = True
             else:
@@ -222,13 +337,33 @@ class EVMListener:
 
                         bn_raw = log.get('blockNumber')
                         block_number = int(bn_raw, 16) if isinstance(bn_raw, str) else bn_raw
+                        # EVM has no commitment-wait penalty (the log
+                        # itself carries everything we need), but stamp
+                        # rpc_receipt_perf anyway for cross-chain A/B
+                        # symmetry with Solana.
+                        rpc_receipt_perf = time.perf_counter()
+                        # Prefer cached block.timestamp (populated by the
+                        # polling backstop) to anchor t_detect; fall back
+                        # to wall-clock if missing rather than blocking
+                        # the WSS loop on an inline get_block call.
+                        block_ts = self._block_ts_cache.get(block_number)
+                        if block_ts is not None:
+                            ts_iso = datetime.fromtimestamp(int(block_ts), tz=timezone.utc).isoformat()
+                            self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
+                            anchored = True
+                        else:
+                            ts_iso = datetime.utcnow().isoformat()
+                            self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
+                            anchored = False
                         target = {
-                            'token_address': parsed['token0'],
+                            'token_address': _select_target_token(parsed['token0'], parsed['token1'], self.chain_id or 1),
                             'pair_address': pair_addr,
                             'chain': 'ethereum',
                             'block_number': block_number,
-                            'timestamp': datetime.utcnow().isoformat(),
+                            'timestamp': ts_iso,
                             'detection_path': 'wss',
+                            'rpc_receipt_perf': rpc_receipt_perf,
+                            'block_time_anchored': anchored,
                         }
                         self._stats['wss_pairs_queued'] += 1
                         try:
@@ -278,19 +413,40 @@ class EVMListener:
                 'toBlock': 'latest',
                 'topics': [event_signature_hash]
             })
+            # All logs in this batch share the same rpc_receipt: the
+            # get_logs response moment.
+            rpc_receipt_perf = time.perf_counter()
 
             for log in logs:
                 pair_address = self._parse_log(log)
                 if pair_address and pair_address['pair'] not in self.known_pairs:
                     self.known_pairs.add(pair_address['pair'])
 
+                    block_number = log['blockNumber']
+                    # Anchor t_detect on real block.timestamp instead of
+                    # wall-clock. On EVM mainnet the polling window scans
+                    # the last 5 blocks (~60s); without this anchor every
+                    # row stamps "now" and detect_to_rpc_receipt_ms
+                    # collapses to ~0ms, hiding real polling staleness.
+                    block_ts = self._get_cached_block_timestamp(block_number)
+                    if block_ts is not None:
+                        ts_iso = datetime.fromtimestamp(int(block_ts), tz=timezone.utc).isoformat()
+                        self._stats['block_time_anchored'] = self._stats.get('block_time_anchored', 0) + 1
+                        anchored = True
+                    else:
+                        ts_iso = datetime.utcnow().isoformat()
+                        self._stats['block_time_missing'] = self._stats.get('block_time_missing', 0) + 1
+                        anchored = False
+
                     target = {
-                        'token_address': pair_address['token0'],
+                        'token_address': _select_target_token(pair_address['token0'], pair_address['token1'], self.chain_id or 1),
                         'pair_address': pair_address['pair'],
                         'chain': 'ethereum',
-                        'block_number': log['blockNumber'],
-                        'timestamp': datetime.utcnow().isoformat(),
+                        'block_number': block_number,
+                        'timestamp': ts_iso,
                         'detection_path': 'polling',
+                        'rpc_receipt_perf': rpc_receipt_perf,
+                        'block_time_anchored': anchored,
                     }
                     self._stats['polling_pairs_emitted'] += 1
                     new_pairs.append(target)

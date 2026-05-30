@@ -502,6 +502,17 @@ function updateStats(metrics) {
     // Average Sentiment
     document.getElementById('avgSentiment').textContent = (metrics.avg_sentiment || 0).toFixed(2);
 
+    // Avg Hold Time — was always "--" because no backend field nor JS
+    // setter existed. Backend now computes AVG(exit - entry) in seconds.
+    const avgHold = metrics.avg_hold_seconds || 0;
+    const avgHoldEl = document.getElementById('avgHoldTime');
+    if (avgHoldEl) {
+        if (avgHold < 60) avgHoldEl.textContent = Math.round(avgHold) + 's';
+        else if (avgHold < 3600) avgHoldEl.textContent = Math.round(avgHold / 60) + 'm';
+        else if (avgHold < 86400) avgHoldEl.textContent = (avgHold / 3600).toFixed(1) + 'h';
+        else avgHoldEl.textContent = (avgHold / 86400).toFixed(1) + 'd';
+    }
+
     // Best/Worst Trade
     const bestEl = document.getElementById('bestTrade');
     const best = metrics.best_trade || 0;
@@ -526,9 +537,13 @@ function updateSentimentData(data) {
     document.getElementById('buySignals').textContent = buyCount;
     document.getElementById('sellSignals').textContent = sellCount;
 
-    if (data.length > 0) {
-        document.getElementById('avgSentiment').textContent = ((avgScore / data.length) * 100).toFixed(0);
-    }
+    // NOTE: do NOT write into #avgSentiment here. That stat card is
+    // populated by updateMetrics() from /api/ai/performance with the
+    // avg sentiment across CLOSED TRADES (a performance metric).
+    // The signal-list average computed above is a different number
+    // (avg over recent sentiment LOGS) and used to overwrite the
+    // performance figure depending on fetch order. If you need the
+    // signal-list average displayed, give it its own element.
 }
 
 function updateModeInfo(settings) {

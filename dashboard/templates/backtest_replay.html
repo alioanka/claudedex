@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+
+{% block title %}Backtest Replay - DexScreener Trading Bot{% endblock %}
+
+{#
+  Phase 4A operator surface for counterfactual replay.
+  Pick window + strategy → click Run → see per-module delta table
+  + sparkline equity curve. No charts library; unicode block
+  sparklines stay consistent with /orchestrator.
+#}
+
+{% block extra_css %}
+<style>
+  .bt-page { color: var(--text-primary, #f1f5f9); }
+  .bt-form {
+    display: flex; gap: 12px; flex-wrap: wrap;
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px;
+    padding: 14px 16px; margin-bottom: 16px;
+  }
+  .bt-form label {
+    display: flex; flex-direction: column;
+    font-size: 0.75rem; color: var(--text-secondary, #94a3b8);
+    gap: 4px;
+  }
+  .bt-form input, .bt-form select {
+    background: var(--bg-tertiary, #0f172a);
+    color: var(--text-primary, #f1f5f9);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    min-width: 180px;
+  }
+  .bt-run {
+    align-self: flex-end;
+    background: var(--accent-primary, #3b82f6);
+    color: #fff; border: none;
+    padding: 8px 16px; border-radius: 6px;
+    font-weight: 600; cursor: pointer;
+  }
+  .bt-run:disabled { opacity: 0.5; cursor: not-allowed; }
+  .bt-summary {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 12px; margin-bottom: 16px;
+  }
+  .bt-summary .stat {
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .bt-summary .label { color: var(--text-secondary, #94a3b8); font-size: 0.75rem; }
+  .bt-summary .value { font-size: 1.4rem; font-weight: 700; font-family: ui-monospace, Menlo, monospace; }
+  .bt-summary .value.pos { color: #10b981; }
+  .bt-summary .value.neg { color: #ef4444; }
+  .bt-table {
+    width: 100%; border-collapse: collapse;
+    background: var(--bg-secondary, #1e293b);
+    border-radius: 10px; overflow: hidden;
+    font-size: 0.8rem;
+  }
+  .bt-table th, .bt-table td {
+    padding: 8px 10px; text-align: left;
+    border-bottom: 1px solid var(--border-color, #334155);
+  }
+  .bt-table th {
+    background: var(--bg-tertiary, #0f172a);
+    color: var(--text-secondary, #94a3b8);
+    font-weight: 600;
+  }
+  .bt-table td.num { text-align: right; font-family: ui-monospace, Menlo, monospace; }
+  .bt-table td .spark {
+    font-family: ui-monospace, Menlo, monospace; font-size: 1rem;
+    letter-spacing: 0;
+  }
+  .bt-empty { color: var(--text-secondary, #94a3b8); padding: 24px 0; text-align: center; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="bt-page">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+      <h1 style="pointer-events:auto;">Backtest Replay</h1>
+      <div style="color: var(--text-secondary, #94a3b8); font-size: 0.9rem;">
+        Counterfactual simulation: pick a strategy + window, see what
+        the per-module P&amp;L would have been if you'd followed it.
+        Read-only — no live state is touched.
+      </div>
+    </div>
+  </div>
+
+  <form class="bt-form" id="bt-form">
+    <label>Start date
+      <input type="datetime-local" id="bt-start" />
+    </label>
+    <label>End date
+      <input type="datetime-local" id="bt-end" />
+    </label>
+    <label>Strategy
+      <select id="bt-strategy">
+        <option value="approve_all">approve_all</option>
+      </select>
+    </label>
+    <label>Confidence threshold
+      <input type="number" id="bt-threshold" min="0" max="1" step="0.05" value="0.8" />
+    </label>
+    <button type="button" id="bt-run" class="bt-run">Run replay</button>
+  </form>
+
+  <div id="bt-result" style="display:none;">
+    <div class="bt-summary" id="bt-summary"></div>
+    <h3 style="font-size:1rem;margin-top:8px;">Per-module breakdown</h3>
+    <table class="bt-table">
+      <thead>
+        <tr>
+          <th>Module</th>
+          <th class="num">Actual P&amp;L</th>
+          <th class="num">Counterfactual</th>
+          <th class="num">Delta</th>
+          <th class="num">Max DD</th>
+          <th class="num">Sharpe</th>
+          <th class="num">Trades</th>
+          <th class="num">Recs (approved/seen)</th>
+          <th>Equity curve</th>
+        </tr>
+      </thead>
+      <tbody id="bt-rows"></tbody>
+    </table>
+  </div>
+
+  <div id="bt-empty" class="bt-empty">Pick a window + strategy and click Run.</div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+(function () {
+  'use strict';
+
+  const SPARK_CHARS = ['▁','▂','▃','▄','▅','▆','▇','█'];
+  function sparkline(values, width = 32) {
+    if (!values || values.length === 0) return '—';
+    const step = Math.max(1, Math.floor(values.length / width));
+    const sampled = [];
+    for (let i = 0; i < values.length; i += step) sampled.push(values[i]);
+    const min = Math.min(...sampled);
+    const max = Math.max(...sampled);
+    const range = max - min || 1;
+    return sampled.map(v => {
+      const idx = Math.min(7, Math.max(0, Math.floor(((v - min) / range) * 7)));
+      return SPARK_CHARS[idx];
+    }).join('');
+  }
+  function fmt(v) {
+    if (v == null) return '—';
+    if (Math.abs(v) >= 1000) return v.toFixed(0);
+    return v.toFixed(2);
+  }
+  function fmtUsd(v) {
+    if (v == null) return '—';
+    const sign = v >= 0 ? '+' : '-';
+    return sign + '$' + Math.abs(v).toFixed(2);
+  }
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+  function csrfHeaders() {
+    const m = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+    return {
+      'Content-Type': 'application/json',
+      'X-CSRF-Token': decodeURIComponent(m),
+    };
+  }
+
+  async function loadStrategies() {
+    try {
+      const r = await fetch('/api/backtest/strategies');
+      const data = await r.json();
+      const sel = document.getElementById('bt-strategy');
+      sel.innerHTML = '';
+      (data.strategies || ['approve_all']).forEach(s => {
+        const o = document.createElement('option');
+        o.value = s; o.textContent = s;
+        sel.appendChild(o);
+      });
+    } catch (_) {}
+  }
+
+  function initDates() {
+    const end = new Date();
+    const start = new Date(end.getTime() - 30 * 24 * 3600 * 1000);
+    // datetime-local needs YYYY-MM-DDTHH:MM (no seconds, no Z)
+    document.getElementById('bt-start').value = start.toISOString().slice(0, 16);
+    document.getElementById('bt-end').value = end.toISOString().slice(0, 16);
+  }
+
+  async function run() {
+    const btn = document.getElementById('bt-run');
+    btn.disabled = true; btn.textContent = 'Running…';
+    const start = document.getElementById('bt-start').value;
+    const end = document.getElementById('bt-end').value;
+    const strategy = document.getElementById('bt-strategy').value;
+    const threshold = parseFloat(document.getElementById('bt-threshold').value);
+    try {
+      const r = await fetch('/api/backtest/replay', {
+        method: 'POST',
+        headers: csrfHeaders(),
+        body: JSON.stringify({
+          start_ts: start ? start + ':00' : undefined,
+          end_ts: end ? end + ':00' : undefined,
+          strategy,
+          strategy_params: { confidence_threshold: threshold },
+        }),
+      });
+      const data = await r.json();
+      if (!r.ok || data.success === false) {
+        alert('Replay failed: ' + (data.error || r.statusText));
+        return;
+      }
+      render(data);
+    } catch (e) {
+      alert('Replay error: ' + (e.message || e));
+    } finally {
+      btn.disabled = false; btn.textContent = 'Run replay';
+    }
+  }
+
+  function render(data) {
+    document.getElementById('bt-empty').style.display = 'none';
+    document.getElementById('bt-result').style.display = 'block';
+    const rep = data.report;
+    const summary = document.getElementById('bt-summary');
+    const delta = rep.total_pnl_delta_usd;
+    summary.innerHTML = `
+      <div class="stat">
+        <div class="label">Window</div>
+        <div class="value" style="font-size:0.9rem;">
+          ${esc(rep.start_ts.slice(0,10))} → ${esc(rep.end_ts.slice(0,10))}
+        </div>
+      </div>
+      <div class="stat">
+        <div class="label">Strategy</div>
+        <div class="value" style="font-size:0.9rem;">${esc(rep.strategy)}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Actual total P&amp;L</div>
+        <div class="value">${fmtUsd(rep.total_actual_pnl_usd)}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Counterfactual total P&amp;L</div>
+        <div class="value">${fmtUsd(rep.total_counterfactual_pnl_usd)}</div>
+      </div>
+      <div class="stat">
+        <div class="label">Delta (strategy − actual)</div>
+        <div class="value ${delta >= 0 ? 'pos' : 'neg'}">${fmtUsd(delta)}</div>
+      </div>
+    `;
+    const tbody = document.getElementById('bt-rows');
+    if (!rep.per_module || rep.per_module.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="9" class="bt-empty">No data in window.</td></tr>';
+      return;
+    }
+    tbody.innerHTML = rep.per_module.map(m => {
+      const sparkVals = (m.equity_curve || []).map(p => p[1]);
+      const d = m.pnl_delta_usd;
+      return `<tr>
+        <td>${esc(m.module)}</td>
+        <td class="num">${fmtUsd(m.actual_pnl_usd)}</td>
+        <td class="num">${fmtUsd(m.counterfactual_pnl_usd)}</td>
+        <td class="num" style="color:${d>=0?'#10b981':'#ef4444'};">${fmtUsd(d)}</td>
+        <td class="num">${fmt(m.max_drawdown_pct)}%</td>
+        <td class="num">${m.sharpe != null ? m.sharpe.toFixed(3) : '—'}</td>
+        <td class="num">${m.n_trades}</td>
+        <td class="num">${m.n_recs_approved}/${m.n_recs_seen}</td>
+        <td><span class="spark">${esc(sparkline(sparkVals))}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    initDates();
+    loadStrategies();
+    document.getElementById('bt-run').addEventListener('click', run);
+  });
+})();
+</script>
+{% endblock %}

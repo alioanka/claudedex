@@ -380,10 +380,12 @@
                 <span class="metric-label">Total Trades</span>
                 <span class="metric-value" id="totalTrades">0</span>
             </div>
-            <div class="metric-row">
-                <span class="metric-label">Win Rate</span>
-                <span class="metric-value text-success" id="winRate">0%</span>
-            </div>
+            <!-- Win Rate intentionally NOT duplicated here — it lives
+                 in the #winRateStat hero card at the top of the page
+                 (audit agent 1 #7). #winRate kept as a hidden element
+                 so updateHistoricalStats() doesn't blow up if it
+                 references the old ID. -->
+            <span id="winRate" style="display:none;">0%</span>
             <div class="metric-row">
                 <span class="metric-label">Avg Win</span>
                 <span class="metric-value text-success" id="avgWin">$0.00</span>
@@ -1022,6 +1024,36 @@
 // BLOCK STATUS MANAGEMENT
 // ========================================
 
+// loadInsights — was called from initial-load + refresh-tick but never
+// defined, throwing a silent ReferenceError on every page load. Now
+// fetches /api/insights and renders each item as an <li> in
+// #insightsList. Empty state renders a single placeholder row.
+async function loadInsights() {
+    const list = document.getElementById('insightsList');
+    if (!list) return;
+    try {
+        const r = await fetch('/api/insights');
+        if (!r.ok) return;
+        const j = await r.json();
+        const items = (j && (j.data || j.insights || [])) || [];
+        if (!items.length) {
+            list.innerHTML = '<li class="text-muted">No insights yet — populates as more trades close.</li>';
+            return;
+        }
+        list.innerHTML = items.slice(0, 10).map(it => {
+            const title = (it && it.title) ? `<strong>${it.title}: </strong>` : '';
+            const text = (it && (it.message || it.text || it.insight)) || String(it);
+            // Backend emits 'type' (info/warning/success/danger);
+            // accept 'severity' too for forward-compat with other producers.
+            const sev = (it && (it.type || it.severity)) || 'info';
+            return `<li class="insight-${sev}">${title}${text}</li>`;
+        }).join('');
+    } catch (e) {
+        // Silent; don't spam console on every refresh tick if the
+        // endpoint is briefly unavailable.
+    }
+}
+
 async function loadBlockStatus() {
     try {
         const response = await fetch('/api/portfolio/block-status');
@@ -1417,9 +1449,25 @@ async function loadWinRateChart() {
                 existingChart.destroy();
             }
             
-            // ✅ FIX: Use actual trade counts, not percentages
-            const chartData = totalTrades > 0 ? [winningTrades, losingTrades] : [1, 0];
-            
+            // ✅ FIX: Use actual trade counts, not percentages.
+            // Previously fell back to [1, 0] when totalTrades was 0,
+            // which rendered as "1 Win, 0 Losses" — misleading. Now
+            // render an explicit empty-state caption on the canvas
+            // instead of fabricating data.
+            if (totalTrades === 0) {
+                const c2 = ctx.getContext ? ctx.getContext('2d') : ctx;
+                c2.save();
+                c2.clearRect(0, 0, ctx.width, ctx.height);
+                c2.fillStyle = 'rgba(148, 163, 184, 0.9)';
+                c2.textAlign = 'center';
+                c2.textBaseline = 'middle';
+                c2.font = '500 13px system-ui, -apple-system, sans-serif';
+                c2.fillText('No closed trades yet', ctx.width / 2, ctx.height / 2);
+                c2.restore();
+                return;
+            }
+            const chartData = [winningTrades, losingTrades];
+
             // Create new chart
             new Chart(ctx, {
                 type: 'doughnut',

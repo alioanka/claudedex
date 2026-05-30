@@ -79,6 +79,27 @@
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
         gap: 16px;
     }
+    /* ISSUE 15: Funding / Accounts panel */
+    .funding-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+        gap: 14px;
+    }
+    .funding-card {
+        background: #1e293b; border-radius: 12px; padding: 16px;
+        border: 1px solid #334155;
+    }
+    .funding-card h4 { margin: 0 0 10px 0; font-size: 0.95rem; color: #e2e8f0; }
+    .funding-row { display: flex; justify-content: space-between; gap: 10px; margin: 6px 0; font-size: 0.82rem; }
+    .funding-row .label { color: #94a3b8; white-space: nowrap; }
+    .funding-row .addr {
+        color: #e2e8f0; font-family: monospace; word-break: break-all; text-align: right;
+        cursor: pointer;
+    }
+    .funding-row .addr:hover { color: #60a5fa; }
+    .funding-badge { font-size: 0.7rem; padding: 2px 8px; border-radius: 10px; }
+    .funding-badge.ok { background: rgba(16,185,129,0.2); color: #10b981; }
+    .funding-badge.pending { background: rgba(245,158,11,0.2); color: #f59e0b; }
     .module-card {
         background: #1e293b;
         border-radius: 12px;
@@ -112,8 +133,32 @@
         text-transform: uppercase;
     }
     .module-status.running { background: rgba(16, 185, 129, 0.2); color: #10b981; }
+    .module-status.enabled { background: rgba(245, 158, 11, 0.2); color: #f59e0b; }
+    .module-status.disabled { background: rgba(100, 116, 139, 0.2); color: #64748b; }
     .module-status.stopped { background: rgba(100, 116, 139, 0.2); color: #64748b; }
     .module-status.error { background: rgba(239, 68, 68, 0.2); color: #ef4444; }
+    /* Phase 3 B2: DRY / LIVE micro-chip alongside the status badge. */
+    .dry-live-chip {
+        display: inline-block;
+        margin-left: 6px;
+        padding: 2px 8px;
+        border-radius: 999px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        vertical-align: middle;
+    }
+    .dry-live-chip.dry  { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+    .dry-live-chip.live { background: rgba(239, 68, 68, 0.25); color: #fca5a5;
+                          box-shadow: 0 0 0 1px rgba(239, 68, 68, 0.5); }
+    /* historical tag — shown next to P&L/Win Rate/Trades on DISABLED modules
+       so operators don't mistake stale DB numbers for live trading activity */
+    .hist-tag {
+        margin-left: 4px; padding: 1px 6px; border-radius: 8px;
+        font-size: 0.62rem; font-weight: 600; text-transform: uppercase;
+        background: rgba(148, 163, 184, 0.15); color: #94a3b8;
+        letter-spacing: 0.04em; vertical-align: middle;
+    }
     .module-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .stat-item { }
     .stat-label { color: #64748b; font-size: 0.75rem; margin-bottom: 2px; }
@@ -254,6 +299,19 @@
     </div>
 </div>
 
+<!-- Funding / Accounts Section (ISSUE 15) -->
+<div class="modules-section" id="fundingSection">
+    <div class="section-header">
+        <h2><i class="fas fa-wallet"></i> Funding / Accounts</h2>
+        <span style="color:#64748b;font-size:0.85rem;">Public addresses only — which wallet/exchange funds each module for LIVE</span>
+    </div>
+    <div class="funding-grid" id="fundingGrid">
+        <div class="loading-placeholder" style="grid-column: 1 / -1; text-align:center; padding:24px; color:#64748b;">
+            <i class="fas fa-spinner fa-spin"></i> Loading accounts...
+        </div>
+    </div>
+</div>
+
 <!-- Charts Section -->
 <div class="charts-section">
     <div class="section-header">
@@ -340,7 +398,7 @@
 <script>
     // =============== CONFIGURATION ===============
     const ALL_MODULES = [
-        { id: 'dex_trading', name: 'DEX Trading', icon: 'fa-cube', color: 'dex', dashboard: '/dashboard' },
+        { id: 'dex_trading', name: 'DEX Trading', icon: 'fa-cube', color: 'dex', dashboard: '/dex/dashboard' },
         { id: 'futures_trading', name: 'Futures', icon: 'fa-chart-line', color: 'futures', dashboard: '/futures/dashboard' },
         { id: 'solana_strategies', name: 'Solana', icon: 'fa-coins', color: 'solana', dashboard: '/solana/dashboard' },
         { id: 'sniper', name: 'Sniper', icon: 'fa-crosshairs', color: 'sniper', dashboard: '/sniper/dashboard' },
@@ -441,15 +499,27 @@
 
     // =============== DATA LOADING ===============
     async function loadAllData() {
+        // Stamp the attempt time first so the "Last updated" indicator
+        // never silently freezes when fetches fail — previously a
+        // network blip left the timestamp showing a stale time that
+        // looked recent, giving false confidence in dashboard liveness.
+        // Show success/failure separately so operators see the truth.
+        const lastEl = document.getElementById('lastUpdated');
+        const attemptTime = new Date().toLocaleTimeString();
         try {
             await Promise.all([
                 loadPortfolioData(),
                 loadModulesData(),
+                loadFundingAccounts(),
                 loadChartsData()
             ]);
-            document.getElementById('lastUpdated').textContent = new Date().toLocaleTimeString();
+            if (lastEl) lastEl.textContent = attemptTime;
         } catch (e) {
             console.error('Error loading dashboard data:', e);
+            if (lastEl) {
+                lastEl.textContent = `${attemptTime} ⚠`;
+                lastEl.title = 'Last fetch attempt failed — data may be stale';
+            }
         }
     }
 
@@ -474,10 +544,29 @@
                 pnlEl.textContent = formatCurrency(pnl);
                 pnlEl.className = pnl >= 0 ? 'card-value' : 'card-value negative';
 
-                const initial = 400;
-                const pnlPct = initial > 0 ? (pnl / initial * 100) : 0;
+                // Wave-12 FIX 4(b): read starting_balance from the API
+                // (PortfolioConfig.initial_balance, default 400) instead
+                // of hardcoding 400 in the template. Guard against a
+                // tiny / zero base that previously produced absurd
+                // percentages (operator saw +100186.72%). Anything outside
+                // a sane window falls back to showing the absolute P&L only,
+                // so a misconfigured capital field cannot generate a
+                // meaningless 5-digit percentage.
                 const pnlPctEl = document.getElementById('pnlPercent');
-                pnlPctEl.textContent = (pnl >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+                const startingBalance = Number(d.starting_balance) || 0;
+                if (startingBalance >= 1) {
+                    let pnlPct = (pnl / startingBalance) * 100;
+                    // Clamp absurd values — a real bot percentage above
+                    // 10000% over the lifetime is almost certainly a data
+                    // bug, not a real PnL ratio.
+                    if (pnlPct > 10000) pnlPct = 10000;
+                    if (pnlPct < -10000) pnlPct = -10000;
+                    pnlPctEl.textContent = (pnl >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%';
+                    pnlPctEl.title = `Starting balance: $${startingBalance.toFixed(2)}`;
+                } else {
+                    pnlPctEl.textContent = '—';
+                    pnlPctEl.title = 'Starting balance unknown — % hidden';
+                }
                 pnlPctEl.className = pnl >= 0 ? 'card-sub positive' : 'card-sub negative';
 
                 document.getElementById('openPositions').textContent = d.open_positions || 0;
@@ -515,36 +604,63 @@
         ALL_MODULES.forEach(mod => {
             const data = modulesData[mod.id] || {};
             const metrics = data.metrics || { pnl: 0, total_trades: 0, win_rate: 0, positions: 0 };
-            const isRunning = data.status === 'RUNNING' || data.enabled;
-            const status = data.status || (isRunning ? 'RUNNING' : 'STOPPED');
+            // FAILURE A/C: trust the backend status string. Possible values:
+            //   "ENABLED + RUNNING" — env=true AND subprocess responding
+            //   "ENABLED (no health)" — env=true AND no health response
+            //   "DISABLED"           — env=false (label numbers "historical")
+            const status = data.status || 'DISABLED';
+            const isRunning = status === 'ENABLED + RUNNING';
+            const isDisabled = status === 'DISABLED';
+            const isHistorical = !!data.historical || isDisabled;
 
-            if (status === 'RUNNING') activeCount++;
-            totalTrades += metrics.total_trades || 0;
-            totalPnl += metrics.pnl || 0;
+            if (isRunning) activeCount++;
+            // Do NOT add disabled-module historical trades/P&L to the
+            // dashboard-wide running totals — those should reflect the
+            // currently-live system, not stale data.
+            if (!isDisabled) {
+                totalTrades += metrics.total_trades || 0;
+                totalPnl += metrics.pnl || 0;
+            }
 
             const pnlClass = metrics.pnl >= 0 ? 'positive' : 'negative';
+            // Status badge styling: dot-class derived from the head word.
+            const badgeClass = isRunning ? 'running'
+                : (status.startsWith('ENABLED') ? 'enabled' : 'disabled');
+            const histTag = isHistorical
+                ? '<span class="hist-tag" title="Historical data — module is DISABLED">historical</span>'
+                : '';
+            // Phase 3 B2: DRY / LIVE micro-chip next to the status
+            // badge. Only shown for ENABLED modules — DISABLED rows
+            // are inherently inert and the chip would be misleading.
+            const effDry = data.effective_dry_run;
+            let dryLiveChip = '';
+            if (!isDisabled && effDry !== undefined && effDry !== null) {
+                dryLiveChip = effDry
+                    ? '<span class="dry-live-chip dry"  title="Module is paper-trading (DRY_RUN)">DRY</span>'
+                    : '<span class="dry-live-chip live" title="Module is trading LIVE capital">LIVE</span>';
+            }
 
             const card = document.createElement('div');
-            card.className = `module-card ${status === 'RUNNING' ? 'active' : 'inactive'}`;
+            card.className = `module-card ${isRunning ? 'active' : 'inactive'}`;
             card.innerHTML = `
                 <div class="module-header">
                     <div class="module-name">
                         <div class="module-icon ${mod.color}"><i class="fas ${mod.icon}"></i></div>
                         <h4>${mod.name}</h4>
                     </div>
-                    <span class="module-status ${status.toLowerCase()}">${status}</span>
+                    <span class="module-status ${badgeClass}">${status}</span>${dryLiveChip}
                 </div>
                 <div class="module-stats">
                     <div class="stat-item">
-                        <div class="stat-label">P&L</div>
+                        <div class="stat-label">P&L ${histTag}</div>
                         <div class="stat-value ${pnlClass}">${formatCurrency(metrics.pnl || 0)}</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Win Rate</div>
+                        <div class="stat-label">Win Rate ${histTag}</div>
                         <div class="stat-value">${(metrics.win_rate || 0).toFixed(1)}%</div>
                     </div>
                     <div class="stat-item">
-                        <div class="stat-label">Trades</div>
+                        <div class="stat-label">Trades ${histTag}</div>
                         <div class="stat-value">${metrics.total_trades || 0}</div>
                     </div>
                     <div class="stat-item">
@@ -559,8 +675,101 @@
             grid.appendChild(card);
         });
 
+        // Wave-12 FIX 4(c): list the offline module NAMES in the tooltip
+        // and surface them in the moduleHealth text so the operator can
+        // immediately reconcile "6/7" against the grid below (previously
+        // operator saw all 7 cards green but the count said "1 offline"
+        // with no hint which one). offlineNames is derived from the same
+        // status check that produced activeCount, so the two cannot drift.
+        const offlineNames = [];
+        ALL_MODULES.forEach(mod => {
+            const d = modulesData[mod.id] || {};
+            const s = d.status || 'DISABLED';
+            if (s !== 'ENABLED + RUNNING' && s !== 'DISABLED') {
+                offlineNames.push(mod.name);
+            }
+        });
         document.getElementById('activeModules').textContent = `${activeCount}/${ALL_MODULES.length}`;
-        document.getElementById('moduleHealth').textContent = activeCount === ALL_MODULES.length ? 'All systems operational' : `${ALL_MODULES.length - activeCount} module(s) offline`;
+        const healthEl = document.getElementById('moduleHealth');
+        if (activeCount === ALL_MODULES.length) {
+            healthEl.textContent = 'All systems operational';
+            healthEl.title = '';
+        } else if (offlineNames.length > 0) {
+            healthEl.textContent = `${offlineNames.length} offline: ${offlineNames.join(', ')}`;
+            healthEl.title = offlineNames.join(', ');
+        } else {
+            // activeCount < total but no "ENABLED (no health)" rows —
+            // remainder is DISABLED (intentional). Say so.
+            const disabledCount = ALL_MODULES.length - activeCount;
+            healthEl.textContent = `${disabledCount} disabled`;
+            healthEl.title = 'Set the matching *_MODULE_ENABLED=true to start';
+        }
+    }
+
+    // =============== FUNDING / ACCOUNTS (ISSUE 15) ===============
+    // Wave-12 FIX 5: include `dex_solana` so the row that
+    // /api/funding/accounts has been emitting since 0824fcd actually
+    // renders. Operator screenshots showed the DEX-Solana wallet missing
+    // because the template iterated only this key map and dex_solana was
+    // absent — the row was structured server-side but never displayed.
+    // Placed right after DEX so it sits next to its parent module.
+    const FUNDING_LABELS = {
+        dex_trading: 'DEX Trading',
+        dex_solana: 'DEX-Solana (separate from Solana module)',
+        solana_trading: 'Solana', futures_trading: 'Futures',
+        sniper: 'Sniper', arbitrage: 'Arbitrage', copy_trading: 'Copy Trading',
+        ai_analysis: 'AI Analysis',
+    };
+
+    async function loadFundingAccounts() {
+        try {
+            const res = await fetch('/api/funding/accounts');
+            const data = await res.json();
+            renderFundingAccounts((data.success && data.data && data.data.accounts) || {});
+        } catch (e) {
+            console.error('Error loading funding accounts:', e);
+            renderFundingAccounts({});
+        }
+    }
+
+    function _fundRow(label, value, isAddr) {
+        if (value === undefined || value === null || value === '') return '';
+        const cls = isAddr ? 'addr' : '';
+        const onclick = isAddr ? ` onclick="navigator.clipboard && navigator.clipboard.writeText('${value}')" title="Click to copy"` : '';
+        return `<div class="funding-row"><span class="label">${label}</span><span class="${cls}"${onclick}>${value}</span></div>`;
+    }
+
+    function renderFundingAccounts(accounts) {
+        const grid = document.getElementById('fundingGrid');
+        if (!grid) return;
+        const ids = Object.keys(FUNDING_LABELS);
+        grid.innerHTML = ids.map(id => {
+            const a = accounts[id] || { status: 'not initialized' };
+            const ok = a.status === 'initialized';
+            const badgeCls = ok ? 'ok' : 'pending';
+            let rows = '';
+            // EVM / Solana / generic wallet
+            rows += _fundRow('Wallet', a.wallet_address, true);
+            rows += _fundRow('Solana', a.solana_wallet_address, true);
+            rows += _fundRow('EVM', a.evm_wallet_address, true);
+            rows += _fundRow('EVM', a.evm_execution_wallet, true);
+            rows += _fundRow('Solana', a.solana_execution_wallet, true);
+            // Exchange (futures)
+            rows += _fundRow('Exchange', a.exchange, false);
+            rows += _fundRow('Network', a.network, false);
+            rows += _fundRow('API key', a.api_key_fingerprint, false);
+            rows += _fundRow('Chains', a.chains, false);
+            if (!rows) {
+                rows = `<div class="funding-row"><span class="label">${a.status || 'no account info'}</span></div>`;
+            }
+            return `
+                <div class="funding-card">
+                    <h4>${FUNDING_LABELS[id]}
+                        <span class="funding-badge ${badgeCls}" style="float:right;">${a.status || 'unknown'}</span>
+                    </h4>
+                    ${rows}
+                </div>`;
+        }).join('');
     }
 
     // =============== CHARTS ===============
@@ -603,6 +812,9 @@
             chartStreaks: { type: 'bar', options: commonOptions }
         };
 
+        // Cache the configs so loadChartsData() can rebuild a chart
+        // after destroying it for an empty-overlay render.
+        _chartConfigsCache = chartConfigs;
         for (const [id, config] of Object.entries(chartConfigs)) {
             const el = document.getElementById(id);
             if (el) {
@@ -615,24 +827,81 @@
         }
     }
 
+    function _hasChartData(chartData) {
+        // A chart is "empty" if it has no labels OR every dataset's
+        // data array is empty/zero. Used to render the no-data overlay
+        // instead of a misleading blank-axes Chart.js render.
+        if (!chartData || !Array.isArray(chartData.labels) || chartData.labels.length === 0) {
+            return false;
+        }
+        const datasets = chartData.datasets || [];
+        if (datasets.length === 0) return false;
+        return datasets.some(ds => Array.isArray(ds.data) && ds.data.some(v =>
+            v !== null && v !== undefined && Number(v) !== 0
+        ));
+    }
+
+    function _renderEmptyOverlay(chartId, message) {
+        const el = document.getElementById(chartId);
+        if (!el) return;
+        const ctx = el.getContext('2d');
+        ctx.save();
+        ctx.clearRect(0, 0, el.width, el.height);
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.9)';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.font = '500 13px system-ui, -apple-system, sans-serif';
+        ctx.fillText(message, el.width / 2, el.height / 2);
+        ctx.restore();
+    }
+
+    // Keep the original chartConfigs around so we can rebuild a chart
+    // after destroying it for an empty-overlay render.
+    let _chartConfigsCache = null;
+
     async function loadChartsData() {
+        // Loop through every initialized chart and either populate it
+        // with real data OR draw an explicit empty-state overlay.
+        // Previously 14 of the 15 charts initialized with empty
+        // {labels:[], datasets:[]} and STAYED empty (rendering blank
+        // axes that operators read as "no data yet" when really the
+        // backend had nothing to send for that chart_id). Now the
+        // distinction is visible at a glance. (Audit agent 3 #10.)
         try {
             const res = await fetch('/api/dashboard/charts/full');
             const result = await res.json();
+            const data = (result.success && result.data) ? result.data : {};
 
-            if (result.success && result.data) {
-                const data = result.data;
-
-                // Update each chart with data
-                for (const [chartId, chartData] of Object.entries(data)) {
-                    if (fullDashCharts[chartId] && chartData && chartData.labels) {
+            for (const chartId of Object.keys(fullDashCharts)) {
+                const chartData = data[chartId];
+                if (_hasChartData(chartData)) {
+                    // If the chart was destroyed last tick, recreate it.
+                    if (!fullDashCharts[chartId] && _chartConfigsCache && _chartConfigsCache[chartId]) {
+                        const el = document.getElementById(chartId);
+                        if (el) {
+                            fullDashCharts[chartId] = new Chart(el, {
+                                type: _chartConfigsCache[chartId].type,
+                                data: chartData,
+                                options: _chartConfigsCache[chartId].options,
+                            });
+                            continue;
+                        }
+                    }
+                    if (fullDashCharts[chartId]) {
                         fullDashCharts[chartId].data = chartData;
                         fullDashCharts[chartId].update('none');
                     }
+                } else {
+                    try { if (fullDashCharts[chartId]) fullDashCharts[chartId].destroy(); } catch (_) {}
+                    fullDashCharts[chartId] = null;
+                    _renderEmptyOverlay(chartId, 'No data yet');
                 }
             }
         } catch (e) {
             console.error('Error loading charts data:', e);
+            for (const chartId of Object.keys(fullDashCharts)) {
+                _renderEmptyOverlay(chartId, 'Failed to load — retrying');
+            }
         }
     }
 

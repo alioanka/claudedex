@@ -544,6 +544,62 @@
         <span id="restart-alert-banner-text"></span>
         <a href="/modules" style="color:#fff; text-decoration:underline; margin-left:12px;">View modules</a>
     </div>
+    <!-- Phase 4C: circuit breaker banner. Lights up red when any
+         module has tripped its daily-loss breaker in the last 24h
+         and the operator hasn't acknowledged. Banner is sticky so
+         the alert follows the operator across every dashboard page. -->
+    <div id="cb-alert-banner" style="display:none; position:sticky; top:0; z-index:9998;
+         background:#f59e0b; color:#1a1a1a; padding:8px 16px; text-align:center; font-weight:700;
+         box-shadow:0 2px 4px rgba(0,0,0,0.3);">
+        <i class="fas fa-bolt"></i>
+        <span id="cb-alert-banner-text"></span>
+        <a href="/orchestrator" style="color:#1a1a1a; text-decoration:underline; margin-left:12px;">View trips</a>
+    </div>
+    <script>
+    // Global CSRF helper (MB-27 double-submit cookie). The dashboard's CSRF
+    // middleware (auth/csrf.py) 403s any POST/PUT/DELETE/PATCH whose
+    // X-CSRF-Token header does not match the csrf_token cookie. Define this
+    // once on window so every page (including module close buttons) echoes
+    // the cookie token. Fixes issue 9 (Solana close "CSRF token missing or
+    // invalid") and issue 6 (Solana/Futures/Sniper close buttons).
+    if (typeof window.withCsrfHeaders !== 'function') {
+        window.withCsrfHeaders = function (method, extra) {
+            const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+            const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            const mutating = ['POST', 'PUT', 'DELETE', 'PATCH'];
+            if (m && (method === undefined || mutating.indexOf(String(method).toUpperCase()) !== -1)) {
+                headers['X-CSRF-Token'] = decodeURIComponent(m[1]);
+            }
+            return headers;
+        };
+    }
+    </script>
+    <script>
+    (function () {
+        async function checkBreakerAlerts() {
+            try {
+                const r = await fetch('/api/circuit-breaker/active');
+                if (!r.ok) return;
+                const data = await r.json();
+                const banner = document.getElementById('cb-alert-banner');
+                const text = document.getElementById('cb-alert-banner-text');
+                if (data.count && data.count > 0) {
+                    const modules = data.active.map(e =>
+                        `${e.module} (${e.pct_loss.toFixed(2)}% loss)`
+                    ).join(', ');
+                    text.textContent = ` CIRCUIT BREAKER tripped — ${data.count} module(s) auto-flipped to DRY_RUN: ${modules}`;
+                    banner.style.display = 'block';
+                } else {
+                    banner.style.display = 'none';
+                }
+            } catch (_) { /* silent */ }
+        }
+        document.addEventListener('DOMContentLoaded', () => {
+            checkBreakerAlerts();
+            setInterval(checkBreakerAlerts, 30000);
+        });
+    })();
+    </script>
     <script>
     (function(){
         async function checkRestartAlerts() {
@@ -640,6 +696,16 @@
                 </a>
             </li>
 
+            <!-- Analytics (cross-module). Placed directly below Full Dashboard
+                 per VPS-feedback FAILURE B — operators couldn't find it
+                 when it was buried as the 8th entry inside the DEX submenu. -->
+            <li class="nav-item {% if page == 'analytics' %}active{% endif %}">
+                <a href="/analytics">
+                    <i class="fas fa-chart-bar"></i>
+                    <span>Analytics</span>
+                </a>
+            </li>
+
             <!-- Main Dashboard (Overview) -->
             <li class="nav-item {% if page == 'main_dashboard' %}active{% endif %}">
                 <a href="/">
@@ -665,47 +731,45 @@
                         </a>
                     </li>
                     <li class="nav-item {% if page == 'dex_positions' %}active{% endif %}">
-                        <a href="/positions">
+                        <a href="/dex/positions">
                             <i class="fas fa-wallet"></i>
                             <span>Positions</span>
                         </a>
                     </li>
                     <li class="nav-item {% if page == 'dex_trades' %}active{% endif %}">
-                        <a href="/trades">
+                        <a href="/dex/trades">
                             <i class="fas fa-exchange-alt"></i>
                             <span>Trades</span>
                         </a>
                     </li>
                     <li class="nav-item {% if page == 'dex_performance' %}active{% endif %}">
-                        <a href="/performance">
+                        <a href="/dex/performance">
                             <i class="fas fa-chart-bar"></i>
                             <span>Performance</span>
                         </a>
                     </li>
                     <li class="nav-item {% if page == 'backtest' %}active{% endif %}">
-                        <a href="/backtest">
+                        <a href="/dex/backtest">
                             <i class="fas fa-history"></i>
                             <span>Backtesting</span>
                         </a>
                     </li>
                     <li class="nav-item {% if page == 'reports' %}active{% endif %}">
-                        <a href="/reports">
+                        <a href="/dex/reports">
                             <i class="fas fa-file-alt"></i>
                             <span>Reports</span>
                         </a>
                     </li>
                     <li class="nav-item {% if page == 'analysis' %}active{% endif %}">
-                        <a href="/analysis">
+                        <a href="/dex/analysis">
                             <i class="fas fa-chart-pie"></i>
                             <span>Analysis</span>
                         </a>
                     </li>
-                    <li class="nav-item {% if page == 'analytics' %}active{% endif %}">
-                        <a href="/analytics">
-                            <i class="fas fa-chart-bar"></i>
-                            <span>Analytics</span>
-                        </a>
-                    </li>
+                    <!-- /analytics moved to the top-level sidebar (above
+                         "Main Overview") per FAILURE B; it is cross-module,
+                         not DEX-specific. Removed from the DEX submenu to
+                         avoid the duplicate nav-item highlight bug. -->
                     <li class="nav-item {% if page == 'dex_settings' %}active{% endif %}">
                         <a href="/dex/settings">
                             <i class="fas fa-cog"></i>
@@ -1033,6 +1097,40 @@
                 </a>
             </li>
 
+            <!-- Test Runner — one-screen verification for session-18
+                 fixes; bundles UI clones, scripts, API probes, DB
+                 probes, and a Copy-All-Results button. -->
+            <li class="nav-item {% if page == 'test_runner' %}active{% endif %}">
+                <a href="/test-runner">
+                    <i class="fas fa-vial"></i>
+                    <span>Test Runner</span>
+                </a>
+            </li>
+
+            <!-- Orchestrator AI — advisory recommendations page. -->
+            <li class="nav-item {% if page == 'orchestrator' %}active{% endif %}">
+                <a href="/orchestrator">
+                    <i class="fas fa-robot"></i>
+                    <span>Orchestrator AI</span>
+                </a>
+            </li>
+
+            <!-- Backtest Replay — Phase 4A counterfactual simulator. -->
+            <li class="nav-item {% if page == 'backtest_replay' %}active{% endif %}">
+                <a href="/backtest-replay">
+                    <i class="fas fa-history"></i>
+                    <span>Backtest Replay</span>
+                </a>
+            </li>
+
+            <!-- Portfolio Allocation — Phase 4B per-module capital sizing. -->
+            <li class="nav-item {% if page == 'allocation' %}active{% endif %}">
+                <a href="/allocation">
+                    <i class="fas fa-chart-pie"></i>
+                    <span>Allocation</span>
+                </a>
+            </li>
+
             <li class="nav-divider"></li>
 
             <!-- Bot Control Buttons -->
@@ -1111,10 +1209,20 @@
     <!-- Toast Notifications -->
     <div class="toast-container" id="toastContainer"></div>
     
-    <!-- Core JavaScript -->
-    <script src="/static/js/websocket.js"></script>
-    <script src="/static/js/dashboard.js"></script>
-    <script src="/static/js/main.js"></script>
+    <!-- Core JavaScript. ?v={{ asset_version }} is injected by
+         EnhancedDashboard.__init__ (git HEAD short SHA) so every deploy
+         invalidates browser caches. VPS failure 2: without this, the
+         MODE badge fix (5c7777b) was masked by stale cached main.js.
+         timezone.js exposes window.parseUtcTimestamp /
+         formatLocalDateTime / formatTimeAgo and MUST load before any
+         page-specific scripts that render timestamps. The server emits
+         naive UTC ISO strings; without these helpers JS would parse
+         them as LOCAL time and shift displays by the operator's offset
+         (UTC+3 -> "3h ago" on fresh rows). -->
+    <script src="/static/js/timezone.js?v={{ asset_version or 'dev' }}"></script>
+    <script src="/static/js/websocket.js?v={{ asset_version or 'dev' }}"></script>
+    <script src="/static/js/dashboard.js?v={{ asset_version or 'dev' }}"></script>
+    <script src="/static/js/main.js?v={{ asset_version or 'dev' }}"></script>
 
     <script>
     // Handle collapsible navigation groups

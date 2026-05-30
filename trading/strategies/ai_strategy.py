@@ -418,9 +418,10 @@ class AIStrategy(BaseStrategy):
                         pump_v1 = pump_arr.flatten().tolist()
                     elif isinstance(pump_arr, (list, tuple)):
                         pump_v1 = list(pump_arr)
-                    if pump_v1 is not None and len(pump_v1) != 27:
+                    if pump_v1 is not None and len(pump_v1) != EXPECTED_PUMP_FEATURE_COUNT:
                         logger.warning(
-                            f"feature-store: pump_v1 length={len(pump_v1)} (expected 27); "
+                            f"feature-store: pump_v1 length={len(pump_v1)} "
+                            f"(expected {EXPECTED_PUMP_FEATURE_COUNT}); "
                             f"training script width-guard will skip this row."
                         )
                 except Exception as e:

@@ -23,7 +23,7 @@ from eth_account.messages import encode_defunct
 import aiohttp
 
 from core.dry_run import should_skip_live
-from trading.orders.order_manager import Order
+from trading.orders.order_manager import Order, OrderStatus
 from trading.executors.base_executor import BaseExecutor
 from utils.helpers import retry_async, measure_time
 from security.encryption import EncryptionManager
@@ -100,14 +100,32 @@ class MEVProtectionLayer(BaseExecutor):
             config.get('protection_level', 'ADVANCED').upper()
         ]
         
-        # Flashbots configuration
+        # Flashbots configuration (Ethereum mainnet only)
         self.flashbots_enabled = config.get('flashbots_enabled', True)
         self.flashbots_relay = config.get(
             'flashbots_relay',
             'https://relay.flashbots.net'
         )
         self.flashbots_signer = None
-        
+
+        # bloXroute BSC private-tx relay (Wave-4). Flashbots does not
+        # service BSC — bloXroute's BDN does, via the `blxr_private_tx`
+        # JSON-RPC method on https://api.blxrbdn.com. Auth header is
+        # operator-provisioned (Cloud-API key); without it we fall
+        # through to the public-mempool send path.
+        self.bloxroute_enabled = config.get('bloxroute_enabled', False)
+        self.bloxroute_bsc_endpoint = config.get(
+            'bloxroute_bsc_endpoint',
+            'https://api.blxrbdn.com'
+        )
+        # Header value is "Authorization: <CLOUD_API_KEY>". Read from
+        # config first (operator may wire encrypted secret), then env.
+        import os as _os
+        self.bloxroute_auth_header = (
+            config.get('bloxroute_auth_header')
+            or _os.environ.get('BLOXROUTE_AUTH_HEADER')
+        )
+
         # Private mempool providers
         self.private_pools = config.get('private_pools', [
             'https://api.bloxroute.com',
@@ -183,46 +201,72 @@ class MEVProtectionLayer(BaseExecutor):
         try:
             protection_methods = []
             protected_tx = transaction.copy()
-            
+            bundle_id: Optional[str] = None  # default; only set if Flashbots bundle is created
+
             # Analyze MEV risk
             risk_score = await self._analyze_mev_risk(order, transaction)
-            
+
             # Apply protection based on level and risk
             if self.protection_level >= MEVProtectionLevel.BASIC:
                 protected_tx = self._apply_gas_randomization(protected_tx)
                 protection_methods.append('gas_randomization')
-                
+
             if self.protection_level >= MEVProtectionLevel.STANDARD:
                 protected_tx = await self._apply_time_delays(protected_tx)
                 protection_methods.append('time_delays')
-                
+
                 if risk_score > 0.5:
                     protected_tx = await self._apply_dynamic_routing(protected_tx)
                     protection_methods.append('dynamic_routing')
-                    
+
             if self.protection_level >= MEVProtectionLevel.ADVANCED:
-                if self.flashbots_enabled and risk_score > 0.3:
+                # Flashbots is only sensible on Ethereum mainnet. On other chains
+                # downgrade to private-mempool routing so we don't sign + ship a
+                # bundle to a relay that doesn't service that chain.
+                chain = (getattr(order, 'chain', '') or '').lower()
+                if (
+                    self.flashbots_enabled
+                    and risk_score > 0.3
+                    and chain in ('', 'ethereum', 'eth', 'mainnet')
+                ):
                     bundle_id = await self._create_flashbots_bundle(protected_tx)
                     protection_methods.append('flashbots')
+                elif (
+                    chain == 'bsc'
+                    and self.bloxroute_enabled
+                    and risk_score > 0.3
+                ):
+                    # Wave-4: bloXroute BDN private-tx on BSC. Returns
+                    # the same tx dict (annotated with relay metadata)
+                    # on success, or None when the auth header is
+                    # missing — in which case we fall through to the
+                    # generic private-mempool path so the tx still ships.
+                    bx_tx = await self._attempt_bloxroute_bsc(protected_tx)
+                    if bx_tx is not None:
+                        protected_tx = bx_tx
+                        protection_methods.append('bloxroute_bsc')
+                    else:
+                        protected_tx = await self._route_private_mempool(protected_tx)
+                        protection_methods.append('private_mempool')
                 else:
                     protected_tx = await self._route_private_mempool(protected_tx)
                     protection_methods.append('private_mempool')
-                    
+
             if self.protection_level == MEVProtectionLevel.MAXIMUM:
                 if self.use_decoys:
                     await self._send_decoy_transactions(order)
                     protection_methods.append('decoy_transactions')
-                    
+
                 protected_tx = await self._apply_commit_reveal(protected_tx)
                 protection_methods.append('commit_reveal')
-                
+
             # Calculate estimated savings
             estimated_savings = await self._estimate_mev_savings(
                 transaction,
                 protected_tx,
                 risk_score
             )
-            
+
             # Create protected transaction record
             protected = ProtectedTransaction(
                 original_tx=transaction,
@@ -289,18 +333,27 @@ class MEVProtectionLayer(BaseExecutor):
             return 0.5  # Default medium risk
             
     def _apply_gas_randomization(self, transaction: Dict) -> Dict:
-        """Apply gas price randomization"""
+        """Apply gas price randomization, clamped at the configured ceiling.
+
+        Without the clamp, the +5% upper edge of the random range could lift
+        gasPrice above max_gas_price (gwei) and silently turn a perfectly-
+        budgeted tx into one that breaches our gas-price kill-switch on the
+        next executor layer.
+        """
         try:
             # Add random variation to gas price
             variation = random.uniform(
                 1 - self.gas_randomization_range,
                 1 + self.gas_randomization_range
             )
-            
+
+            max_gas_wei = int(self.config.get('max_gas_price', 50)) * 10 ** 9
             if 'gasPrice' in transaction:
-                transaction['gasPrice'] = int(transaction['gasPrice'] * variation)
+                new_price = int(transaction['gasPrice'] * variation)
+                transaction['gasPrice'] = min(new_price, max_gas_wei)
             elif 'maxFeePerGas' in transaction:
-                transaction['maxFeePerGas'] = int(transaction['maxFeePerGas'] * variation)
+                new_fee = int(transaction['maxFeePerGas'] * variation)
+                transaction['maxFeePerGas'] = min(new_fee, max_gas_wei)
                 transaction['maxPriorityFeePerGas'] = int(
                     transaction['maxPriorityFeePerGas'] * variation
                 )
@@ -395,6 +448,92 @@ class MEVProtectionLayer(BaseExecutor):
         signed = self.flashbots_signer.sign_message(signable)
         return signed.signature.hex()
         
+    async def _attempt_bloxroute_bsc(self, transaction: Dict) -> Optional[Dict]:
+        """Submit a BSC tx through bloXroute's BDN private-tx relay.
+
+        bloXroute exposes `blxr_private_tx` over JSON-RPC at
+        `https://api.blxrbdn.com`. Auth is "Authorization: <KEY>" — the
+        Cloud-API key the operator provisions in the BDN dashboard.
+
+        Behaviour:
+          - No auth header  -> return None (caller falls back to public)
+          - Network/HTTP error -> return None (caller falls back)
+          - Success -> return the tx dict annotated with bloXroute
+            metadata (`bloxroute_tx_hash`, `bloxroute_endpoint`).
+
+        Returns None deliberately so callers cannot conflate a relay
+        miss with a successful private send. Gated upstream by
+        `chain == 'bsc' and config.get('bloxroute_enabled', False)`.
+        """
+        try:
+            if not self.bloxroute_auth_header:
+                logger.warning(
+                    "bloXroute BSC requested but BLOXROUTE_AUTH_HEADER "
+                    "not configured; falling back to public mempool"
+                )
+                return None
+
+            # Sign and serialise. bloXroute expects the raw hex of a
+            # signed RLP-encoded tx in `transaction` param.
+            pk = transaction.get('private_key')
+            if not pk:
+                logger.error("bloXroute BSC: no private_key in tx dict")
+                return None
+            signed = self.w3.eth.account.sign_transaction(
+                {k: v for k, v in transaction.items() if k != 'private_key'},
+                private_key=pk,
+            )
+            raw_hex = signed.rawTransaction.hex()
+            if not raw_hex.startswith('0x'):
+                raw_hex = '0x' + raw_hex
+
+            payload = {
+                'jsonrpc': '2.0',
+                'id': 1,
+                'method': 'blxr_private_tx',
+                'params': {'transaction': raw_hex[2:]},  # bloXroute wants no 0x
+            }
+            headers = {
+                'Authorization': self.bloxroute_auth_header,
+                'Content-Type': 'application/json',
+            }
+
+            if not self.session:
+                logger.error("bloXroute BSC: HTTP session not initialized")
+                return None
+
+            async with self.session.post(
+                self.bloxroute_bsc_endpoint,
+                json=payload,
+                headers=headers,
+                timeout=aiohttp.ClientTimeout(total=5),
+            ) as resp:
+                if resp.status != 200:
+                    body = await resp.text()
+                    logger.error(
+                        "bloXroute BSC submit failed http=%s body=%s",
+                        resp.status, body[:200],
+                    )
+                    return None
+                data = await resp.json()
+                if 'error' in data:
+                    logger.error("bloXroute BSC RPC error: %s", data['error'])
+                    return None
+                tx_hash = (data.get('result') or {}).get('txHash') if isinstance(data.get('result'), dict) else data.get('result')
+
+            annotated = dict(transaction)
+            annotated['bloxroute_tx_hash'] = tx_hash
+            annotated['bloxroute_endpoint'] = self.bloxroute_bsc_endpoint
+            logger.info("bloXroute BSC private-tx submitted: %s", tx_hash)
+            return annotated
+
+        except asyncio.TimeoutError:
+            logger.error("bloXroute BSC submit timed out")
+            return None
+        except Exception as e:
+            logger.error("bloXroute BSC submit error: %s", e)
+            return None
+
     async def _route_private_mempool(self, transaction: Dict) -> Dict:
         """Route through private mempool"""
         try:
@@ -850,8 +989,8 @@ class MEVProtectionLayer(BaseExecutor):
                 logger.error(f"Unsupported chain: {order.chain}")
                 return False
                 
-            # Check Web3 connection
-            if not self.w3 or not self.w3.isConnected():
+            # Check Web3 connection (web3 v6 dropped camelCase isConnected)
+            if not self.w3 or not self.w3.is_connected():
                 logger.error("Web3 not connected")
                 return False
                 

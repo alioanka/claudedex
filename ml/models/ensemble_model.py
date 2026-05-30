@@ -26,6 +26,62 @@ from dataclasses import dataclass
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 
+# ---------------------------------------------------------------------------
+# Wave-9 quant: CANONICAL feature contract.
+# This list mirrors `EnsemblePredictor.extract_features()` EXACTLY — same
+# fields, same order, same count (95). It is the single source of truth that
+# binds the TRAINING feature matrix to the INFERENCE feature vector. The
+# scaler is fitted at train time and `.transform()`'d at inference; if the two
+# sides disagree on column order or count the model silently consumes garbage.
+# `retrain()` reindexes its incoming DataFrame to this order before fitting,
+# so an activated ensemble is fed features in the same order it was trained on.
+# If you add/remove/reorder a feature in extract_features, update this list in
+# lock-step (and retrain — old artifacts become invalid).
+# ---------------------------------------------------------------------------
+ENSEMBLE_FEATURE_NAMES: List[str] = [
+    # price_data (8)
+    'current_price', 'price_change_1h', 'price_change_24h', 'price_change_7d',
+    'volatility_24h', 'price_std', 'price_skew', 'price_kurtosis',
+    # volume_data (7)
+    'volume_24h', 'volume_change_24h', 'buy_volume_ratio', 'large_trades_ratio',
+    'unique_traders_24h', 'avg_trade_size', 'volume_to_mcap_ratio',
+    # liquidity_data (5)
+    'total_liquidity', 'liquidity_change_24h', 'liquidity_locked_percent',
+    'liquidity_to_mcap_ratio', 'impermanent_loss_risk',
+    # holder_data (6)
+    'total_holders', 'holder_growth_24h', 'top_10_holders_percent',
+    'whale_count', 'avg_holding_time', 'holder_concentration_index',
+    # contract_data (7)
+    'is_verified', 'has_mint_function', 'has_pause_function',
+    'ownership_renounced', 'is_proxy', 'contract_age_days', 'transaction_count',
+    # social_data (7)
+    'twitter_followers', 'twitter_engagement_rate', 'telegram_members',
+    'telegram_growth_rate', 'reddit_mentions', 'sentiment_score', 'fomo_index',
+    # technical_data (10)
+    'rsi', 'macd', 'macd_signal', 'bollinger_upper', 'bollinger_lower',
+    'ema_9', 'ema_21', 'ema_50', 'obv', 'adx',
+    # risk_data (6)
+    'liquidity_risk', 'developer_risk', 'contract_risk', 'volume_risk',
+    'holder_risk', 'honeypot_probability',
+    # market_data (5)
+    'btc_correlation', 'eth_correlation', 'market_cap',
+    'fully_diluted_valuation', 'circulating_supply_percent',
+    # time_data (5)
+    'hour_of_day', 'day_of_week', 'days_since_launch',
+    'hours_since_ath', 'hours_since_atl',
+    # pattern_data (8)
+    'has_cup_handle', 'has_ascending_triangle', 'has_double_bottom',
+    'has_golden_cross', 'has_death_cross', 'trend_strength',
+    'support_level_distance', 'resistance_level_distance',
+    # mempool_data (4)
+    'pending_buy_volume', 'pending_sell_volume', 'large_pending_trades',
+    'sandwich_attack_risk',
+    # whale_data (4)
+    'whale_accumulation_score', 'whale_distribution_score',
+    'smart_money_flow', 'institutional_interest',
+]
+
+
 @dataclass
 class PredictionResult:
     """Result from ensemble prediction"""
@@ -169,7 +225,49 @@ class EnsemblePredictor:
         model_dir = config.get("model_dir", "models/")
         self.model_dir = Path(model_dir)
         self.model_dir.mkdir(parents=True, exist_ok=True)
-        
+
+        # AI-Q-07: per-token LSTM rolling buffer. OFF by default. When
+        # disabled, predict() preserves the legacy (1, 1, F) inference
+        # shape (effectively a single-bar LSTM call — degenerate but
+        # backward-compatible with already-deployed pipelines). When
+        # enabled, _predict_from_features maintains a deque per
+        # (token, chain) of the last `lstm_sequence_length` feature
+        # vectors and feeds the LSTM a real (1, T, F) tensor.
+        self.lstm_rolling_buffer_enabled = bool(
+            config.get('lstm_rolling_buffer_enabled', False)
+        )
+        # 20 matches the LSTM training seq_len in pump_predictor.py.
+        self.lstm_sequence_length = int(
+            config.get('lstm_sequence_length', 20)
+        )
+        # Per-token feature buffer keyed by (token, chain). Each entry is
+        # a list of numpy arrays of shape (F,). When length >= seq_len,
+        # we slice the trailing seq_len rows. Memory bound is
+        # buffer_max_tokens * seq_len * F * 4 bytes — at default
+        # (4096, 20, 95) ~= 30MB, capped via LRU eviction.
+        self._lstm_feature_buffer: dict = {}
+        self._lstm_buffer_max_tokens = int(
+            config.get('lstm_buffer_max_tokens', 4096)
+        )
+        self._lstm_buffer_order: list = []  # LRU eviction order
+
+        # AI-Q-05: calibrated booster wrap (inference side). OFF by default
+        # — operator flips `ai_calibrated_predictions_enabled` AFTER a
+        # calibration training run has produced `calibrated_<name>.pkl`
+        # files in `model_dir` (the trainer side AI-Q-06 in
+        # ml/training/auto_trainer.py also writes the legacy
+        # `<name>_calibrated.joblib` shape, which this loader accepts).
+        # When the flag is on, `_predict_from_features` consults the
+        # wrappers via `calibrated_predict_proba` in place of the raw
+        # booster's `predict_proba`. Base model files stay intact so
+        # toggling is a config-only round-trip (no retrain required).
+        self.calibrated_predictions_enabled = bool(
+            config.get('ai_calibrated_predictions_enabled', False)
+        )
+        # name -> fitted CalibratedClassifierCV (populated lazily in
+        # load_models when the flag is on AND a matching sidecar exists).
+        self.calibrated_models: dict = {}
+
         # Initialize models
         self.models = {
             'xgboost_rug': None,
@@ -287,12 +385,143 @@ class EnsemblePredictor:
             if features_path.exists():
                 with open(features_path, 'r') as f:
                     self.feature_names = json.load(f)
-                    
+
+            # AI-Q-05: load calibrated wrappers IF the flag is on. See
+            # `_load_calibrated_models` for the filename-pattern fallback.
+            if self.calibrated_predictions_enabled:
+                self._load_calibrated_models()
+
         except Exception as e:
             print(f"Error loading models: {e}")
             # Initialize with default models if loading fails
             self._initialize_default_models()
-            
+
+    # Eligible model names for AI-Q-05 calibration. Class-level so the
+    # loader / persist helper / inference path stay in sync.
+    _CALIBRATABLE_MODELS = (
+        'xgboost_rug', 'xgboost_pump',
+        'lightgbm_rug', 'lightgbm_pump',
+        'random_forest', 'gradient_boosting',
+    )
+    # Sidecar filename patterns. Loader tries each in order.
+    # `calibrated_<name>.pkl` is the deliverable wording;
+    # `<name>_calibrated.{pkl,joblib}` matches AutoMLTrainer (AI-Q-06).
+    _CAL_FILENAME_PATTERNS = (
+        'calibrated_{name}.pkl',
+        '{name}_calibrated.pkl',
+        '{name}_calibrated.joblib',
+    )
+
+    def _load_calibrated_models(self) -> None:
+        """AI-Q-05: load any calibrated-booster sidecars off disk.
+
+        Only the 6 tree-based base models are eligible — LSTM +
+        Transformer outputs already pass through sigmoid in forward(),
+        and IsolationForest emits an anomaly score, not a probability;
+        wrapping these would double-calibrate or miscalibrate them.
+        """
+        for name in self._CALIBRATABLE_MODELS:
+            for pattern in self._CAL_FILENAME_PATTERNS:
+                path = self.model_dir / pattern.format(name=name)
+                if path.exists():
+                    try:
+                        self.calibrated_models[name] = joblib.load(path)
+                        break
+                    except Exception as e:
+                        print(
+                            f"AI-Q-05: failed to load {path.name}: {e} "
+                            f"(falling back to raw {name})"
+                        )
+
+    def calibrated_predict_proba(
+        self, name: str, features_scaled: np.ndarray
+    ) -> float:
+        """AI-Q-05: per-model proba helper.
+
+        Returns the positive-class probability from the calibrated
+        wrapper when the flag is on AND the wrapper is loaded for
+        `name`; otherwise falls through to the raw model's
+        `predict_proba`. Caller must hold a valid scaled (1, F) array.
+        Returns 0.5 if nothing is available — same neutral default the
+        legacy code path already used for a missing model.
+        """
+        if (
+            self.calibrated_predictions_enabled
+            and name in self.calibrated_models
+        ):
+            try:
+                proba = self.calibrated_models[name].predict_proba(
+                    features_scaled
+                )[0]
+                if len(proba) > 1:
+                    return float(proba[1])
+                return 0.5
+            except Exception:
+                # Don't crash the inference loop because a calibration
+                # artifact got corrupted; fall through to raw model.
+                pass
+        raw = self.models.get(name)
+        if raw is None:
+            return 0.5
+        try:
+            proba = raw.predict_proba(features_scaled)[0]
+            if len(proba) > 1:
+                return float(proba[1])
+            return 0.5
+        except Exception:
+            return 0.5
+
+    def fit_and_persist_calibration(
+        self,
+        X_val: np.ndarray,
+        y_val: np.ndarray,
+        *,
+        method: str = 'sigmoid',
+        save_pkl: bool = True,
+    ) -> Dict[str, str]:
+        """AI-Q-05: fit `CalibratedClassifierCV(cv='prefit')` over each
+        loaded base classifier using a HELD-OUT validation split.
+
+        IMPORTANT: caller MUST pass a held-out set the base model has
+        never seen, otherwise calibration is fit on in-sample data and
+        the reported improvement will be optimistic. Use a forward-time
+        slice from `ai_feature_store` (rows newer than the training
+        window) — see `scripts/retrain_models.py` for the canonical
+        feature-store walk-forward split.
+
+        Persists each wrapper as `calibrated_<name>.pkl` (the deliverable
+        naming) alongside the base model. Returns {name: saved_path}.
+        Models not loaded are skipped.
+        """
+        from sklearn.calibration import CalibratedClassifierCV
+        if method not in ('sigmoid', 'isotonic'):
+            method = 'sigmoid'
+        saved: Dict[str, str] = {}
+        # Scale once — calibrator sees the same transformed features as
+        # the live predict path.
+        X_scaled = self.scaler.transform(X_val)
+        for name in self._CALIBRATABLE_MODELS:
+            base = self.models.get(name)
+            if base is None:
+                continue
+            try:
+                wrapper = CalibratedClassifierCV(
+                    base, method=method, cv='prefit'
+                )
+                wrapper.fit(X_scaled, y_val)
+            except Exception as e:
+                print(f"AI-Q-05: fit failed for {name}: {e}")
+                continue
+            self.calibrated_models[name] = wrapper
+            if save_pkl:
+                path = self.model_dir / f"calibrated_{name}.pkl"
+                try:
+                    joblib.dump(wrapper, path)
+                    saved[name] = str(path)
+                except Exception as e:
+                    print(f"AI-Q-05: persist failed for {name}: {e}")
+        return saved
+
     def _create_xgboost_model(self) -> xgb.XGBClassifier:
         """Create XGBoost model with optimized parameters"""
         return xgb.XGBClassifier(
@@ -518,14 +747,79 @@ class EnsemblePredictor:
 
     # Replace the current predict() method (around line 565) with this fixed version:
 
+    async def predict_decoupled(
+        self,
+        token: str,
+        chain: str,
+        features: Any,
+    ) -> Dict:
+        """AI-Q-08: prediction path that does NOT fetch token data.
+
+        `features` may be either:
+          * a numpy array of pre-extracted features (preferred — caller
+            already ran `extract_features(token_data)` or built the row
+            from its own feature store), or
+          * a dict matching the same schema `extract_features` consumes
+            (price_data / volume_data / liquidity_data / ...), in which
+            case the conversion happens locally.
+
+        This is the recommended call site for hot paths. The legacy
+        `predict(token, chain)` still works but synchronously hits
+        DexScreener inside the inference loop, adding 200-500ms latency
+        + a single point of failure and importing a data-collector
+        module name across what is supposed to be a pure-ML boundary.
+
+        OFF by default in callers: existing call sites continue to use
+        `predict()`. Migration plan is documented in
+        docs/agents/reports/AI_quant.md (AI-Q-08).
+        """
+        try:
+            if isinstance(features, dict):
+                feat_arr = self.extract_features(features)
+            else:
+                feat_arr = np.asarray(features, dtype=np.float32)
+            result = await self._predict_from_features(
+                feat_arr, cache_key=f"{chain}:{token}"
+            )
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': result.pump_probability,
+                'rug_probability': result.rug_probability,
+                'expected_return': result.expected_return,
+                'confidence': result.confidence,
+                'time_to_pump': result.time_to_pump,
+                'risk_adjusted_score': result.risk_adjusted_score,
+                'model_agreements': result.model_agreements,
+                'feature_importance': result.feature_importance,
+                'timestamp': result.prediction_timestamp.isoformat(),
+                'source': 'decoupled',
+            }
+        except Exception as e:
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': 0.5,
+                'rug_probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.1,
+                'time_to_pump': None,
+                'risk_adjusted_score': 0.0,
+                'model_agreements': {},
+                'feature_importance': {},
+                'timestamp': datetime.now().isoformat(),
+                'source': 'decoupled',
+                'error': str(e),
+            }
+
     async def predict(self, token: str, chain: str) -> Dict:
         """
         Predict pump/rug probability for a token (API-compliant signature)
-        
+
         Args:
             token: Token address
             chain: Blockchain network
-            
+
         Returns:
             Dictionary with prediction results
         """
@@ -561,9 +855,13 @@ class EnsemblePredictor:
             await collector.initialize()
             token_data = await collector.get_token_info(token, chain)
             
-            # Extract features and get prediction
+            # Extract features and get prediction. cache_key feeds the
+            # AI-Q-07 per-token LSTM rolling buffer; harmless when the
+            # toggle is off.
             features = self.extract_features(token_data)
-            result = await self._predict_from_features(features)
+            result = await self._predict_from_features(
+                features, cache_key=f"{chain}:{token}"
+            )
             
             # Return API-compliant format
             return {
@@ -596,8 +894,65 @@ class EnsemblePredictor:
                 'error': str(e)
             }
 
+    # ------------------------------------------------------------------
+    # AI-Q-07: LSTM rolling buffer helpers
+    # ------------------------------------------------------------------
+    def _lstm_push_features(self, cache_key: str,
+                            features_scaled: np.ndarray) -> np.ndarray:
+        """Append a single feature row to the per-token rolling buffer.
+
+        Returns the trailing-window slice of shape (T, F) where
+        T == min(buffer_len, self.lstm_sequence_length). Buffer is
+        evicted on LRU once it exceeds `self._lstm_buffer_max_tokens`.
+        """
+        seq_len = max(1, int(self.lstm_sequence_length))
+        # Always store the most recent row first; the LSTM consumes
+        # the oldest -> newest slice we hand back.
+        row = features_scaled.reshape(-1)
+        buf = self._lstm_feature_buffer.get(cache_key)
+        if buf is None:
+            buf = []
+            self._lstm_feature_buffer[cache_key] = buf
+            self._lstm_buffer_order.append(cache_key)
+            # LRU evict.
+            while (
+                len(self._lstm_buffer_order) > self._lstm_buffer_max_tokens
+            ):
+                oldest = self._lstm_buffer_order.pop(0)
+                self._lstm_feature_buffer.pop(oldest, None)
+        else:
+            # Promote on access for LRU recency.
+            try:
+                self._lstm_buffer_order.remove(cache_key)
+            except ValueError:
+                pass
+            self._lstm_buffer_order.append(cache_key)
+        buf.append(row)
+        # Trim to seq_len.
+        if len(buf) > seq_len:
+            del buf[: len(buf) - seq_len]
+        return np.asarray(buf, dtype=np.float32)
+
+    def _lstm_build_input(self, window: np.ndarray) -> 'torch.Tensor':
+        """Pad or pass-through window to shape (1, T, F) for the LSTM.
+
+        Pads with the earliest row (edge-pad) when buffer is shorter than
+        seq_len. Edge-pad avoids zero-injection which produces an
+        artificial post-launch trend artifact for fresh tokens.
+        """
+        seq_len = max(1, int(self.lstm_sequence_length))
+        if window.ndim == 1:
+            window = window.reshape(1, -1)
+        cur, feat_dim = window.shape
+        if cur < seq_len:
+            pad_rows = np.tile(window[0:1, :], (seq_len - cur, 1))
+            window = np.concatenate([pad_rows, window], axis=0)
+        return torch.from_numpy(window).float().unsqueeze(0)  # (1, T, F)
+
     # Rename existing predict method to _predict_from_features:
-    async def _predict_from_features(self, features: np.ndarray) -> PredictionResult:
+    async def _predict_from_features(self, features: np.ndarray,
+                                     cache_key: Optional[str] = None,
+                                     ) -> PredictionResult:
         """
         Internal method for making predictions from feature array
         (This is the current predict method, just renamed)
@@ -618,48 +973,67 @@ class EnsemblePredictor:
             # Get predictions from all models
             predictions = {}
             
-            # Tree-based models
-            if self.models['xgboost_rug'] is not None:
-                predictions['xgboost_rug'] = self.models['xgboost_rug'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['xgboost_rug'] = 0.5
-                
-            if self.models['xgboost_pump'] is not None:
-                predictions['xgboost_pump'] = self.models['xgboost_pump'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['xgboost_pump'] = 0.5
-                
-            if self.models['lightgbm_rug'] is not None:
-                predictions['lightgbm_rug'] = self.models['lightgbm_rug'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['lightgbm_rug'] = 0.5
-                
-            if self.models['lightgbm_pump'] is not None:
-                predictions['lightgbm_pump'] = self.models['lightgbm_pump'].predict_proba(features_scaled)[0][1]
-            else:
-                predictions['lightgbm_pump'] = 0.5
-                
-            if self.models['random_forest'] is not None:
-                rf_pred = self.models['random_forest'].predict_proba(features_scaled)[0]
-                predictions['random_forest_pump'] = rf_pred[1] if len(rf_pred) > 1 else 0.5
-                predictions['random_forest_rug'] = 1 - predictions['random_forest_pump']
-            else:
-                predictions['random_forest_pump'] = 0.5
-                predictions['random_forest_rug'] = 0.5
-                
-            if self.models['gradient_boosting'] is not None:
-                gb_pred = self.models['gradient_boosting'].predict_proba(features_scaled)[0]
-                predictions['gradient_boosting_pump'] = gb_pred[1] if len(gb_pred) > 1 else 0.5
-                predictions['gradient_boosting_rug'] = 1 - predictions['gradient_boosting_pump']
-            else:
-                predictions['gradient_boosting_pump'] = 0.5
-                predictions['gradient_boosting_rug'] = 0.5
+            # Tree-based models. AI-Q-05: route through
+            # `calibrated_predict_proba` so when the operator flips
+            # `ai_calibrated_predictions_enabled` on AND a
+            # `calibrated_<name>.pkl` sidecar is loaded, the ensemble
+            # consumes calibrated probabilities (Brier-improved for
+            # downstream confidence_threshold gating). Helper falls back
+            # to the raw booster otherwise — numerically identical to
+            # pre-AI-Q-05 when the flag is off.
+            predictions['xgboost_rug'] = self.calibrated_predict_proba(
+                'xgboost_rug', features_scaled
+            )
+            predictions['xgboost_pump'] = self.calibrated_predict_proba(
+                'xgboost_pump', features_scaled
+            )
+            predictions['lightgbm_rug'] = self.calibrated_predict_proba(
+                'lightgbm_rug', features_scaled
+            )
+            predictions['lightgbm_pump'] = self.calibrated_predict_proba(
+                'lightgbm_pump', features_scaled
+            )
+            # RF / GB use pump as primary target — derive rug as 1-pump.
+            predictions['random_forest_pump'] = self.calibrated_predict_proba(
+                'random_forest', features_scaled
+            )
+            predictions['random_forest_rug'] = (
+                1 - predictions['random_forest_pump']
+            )
+            predictions['gradient_boosting_pump'] = (
+                self.calibrated_predict_proba(
+                    'gradient_boosting', features_scaled
+                )
+            )
+            predictions['gradient_boosting_rug'] = (
+                1 - predictions['gradient_boosting_pump']
+            )
                 
             # Neural network predictions
+            # AI-Q-07: when the rolling buffer is enabled AND we have a
+            # cache_key, feed real (1, seq_len, F) inputs to LSTM and
+            # Transformer. Both nets were trained on multi-step
+            # sequences; the legacy (1, 1, F) shape made their hidden
+            # state degenerate (1-step unroll) and silently emitted
+            # noise. Backward-compat path (no key OR toggle off) keeps
+            # the old shape.
+            use_seq = (
+                self.lstm_rolling_buffer_enabled and cache_key is not None
+            )
+            if use_seq:
+                window = self._lstm_push_features(cache_key, features_scaled)
+                seq_input = self._lstm_build_input(window)
+            else:
+                seq_input = None
+
             if self.models['lstm'] is not None:
                 with torch.no_grad():
-                    lstm_input = torch.FloatTensor(features_scaled).unsqueeze(0)
-                    lstm_output = self.models['lstm'](lstm_input)
+                    lstm_in = (
+                        seq_input
+                        if seq_input is not None
+                        else torch.FloatTensor(features_scaled).unsqueeze(0)
+                    )
+                    lstm_output = self.models['lstm'](lstm_in)
                     predictions['lstm_pump'] = lstm_output[0][0].item()
                     predictions['lstm_rug'] = lstm_output[0][1].item()
                     predictions['lstm_return'] = lstm_output[0][2].item()
@@ -667,11 +1041,15 @@ class EnsemblePredictor:
                 predictions['lstm_pump'] = 0.5
                 predictions['lstm_rug'] = 0.5
                 predictions['lstm_return'] = 0.0
-                
+
             if self.models['transformer'] is not None:
                 with torch.no_grad():
-                    trans_input = torch.FloatTensor(features_scaled).unsqueeze(0)
-                    trans_output = self.models['transformer'](trans_input)
+                    trans_in = (
+                        seq_input
+                        if seq_input is not None
+                        else torch.FloatTensor(features_scaled).unsqueeze(0)
+                    )
+                    trans_output = self.models['transformer'](trans_in)
                     predictions['transformer_pump'] = trans_output[0][0].item()
                     predictions['transformer_rug'] = trans_output[0][1].item()
                     predictions['transformer_return'] = trans_output[0][2].item()
@@ -795,15 +1173,36 @@ class EnsemblePredictor:
         """
         try:
             # Prepare data
-            X = training_data.drop(['label', 'pump_label', 'rug_label'], axis=1, errors='ignore')
+            X = training_data.drop(['label', 'pump_label', 'rug_label', 'returns'],
+                                   axis=1, errors='ignore')
             y_pump = training_data.get('pump_label', pd.Series([0] * len(training_data)))
             y_rug = training_data.get('rug_label', pd.Series([0] * len(training_data)))
-            
+
+            # Wave-9 quant FEATURE-CONTRACT GUARD: the inference path scales a
+            # fixed-order vector produced by extract_features (== ENSEMBLE_FEATURE_NAMES).
+            # If we fit the scaler/models on the training DataFrame in its own
+            # arbitrary column order, scaler.transform() at inference would map
+            # each scaled column onto the WRONG feature -> silent garbage. So we
+            # reindex the training matrix to the canonical order before fitting.
+            # Missing canonical columns are filled with 0.0 (extract_features'
+            # own default) and a warning is emitted so the operator can see the
+            # gaps; extra columns are dropped. This makes train == inference by
+            # construction.
+            missing = [c for c in ENSEMBLE_FEATURE_NAMES if c not in X.columns]
+            extra = [c for c in X.columns if c not in ENSEMBLE_FEATURE_NAMES]
+            if missing:
+                print(f"⚠️  retrain: {len(missing)} canonical features absent from "
+                      f"training data, filled with 0.0: {missing}")
+            if extra:
+                print(f"ℹ️  retrain: dropping {len(extra)} non-canonical columns: {extra}")
+            X = X.reindex(columns=ENSEMBLE_FEATURE_NAMES, fill_value=0.0)
+
             # Scale features
             X_scaled = self.scaler.fit_transform(X)
-            
-            # Store feature names
-            self.feature_names = list(X.columns)
+
+            # Store feature names in CANONICAL order (matches extract_features /
+            # the persisted features.json that load_models reads back).
+            self.feature_names = list(ENSEMBLE_FEATURE_NAMES)
             
             # Train models in parallel
             new_models = {}

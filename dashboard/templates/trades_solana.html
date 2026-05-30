@@ -350,7 +350,8 @@ function mergeTradesIntoPositions(trades) {
 
     // Sort trades by timestamp (newest first for display)
     const sortedTrades = [...trades].sort((a, b) =>
-        new Date(b.timestamp || b.closed_at) - new Date(a.timestamp || a.closed_at)
+        (window.parseUtcTimestamp(b.timestamp || b.closed_at) || new Date(0)) -
+        (window.parseUtcTimestamp(a.timestamp || a.closed_at) || new Date(0))
     );
 
     sortedTrades.forEach(trade => {
@@ -475,8 +476,8 @@ function sortPositions() {
 
         switch (field) {
             case 'openTime':
-                aVal = new Date(a.openTime);
-                bVal = new Date(b.openTime);
+                aVal = window.parseUtcTimestamp(a.openTime) || new Date(0);
+                bVal = window.parseUtcTimestamp(b.openTime) || new Date(0);
                 break;
             case 'token':
                 aVal = a.token.toLowerCase();
@@ -554,8 +555,8 @@ function displayPositions() {
         const row = document.createElement('tr');
         row.style.borderBottom = '1px solid #374151';
 
-        // Format time
-        const openTime = new Date(pos.openTime).toLocaleString();
+        // Format time. window.formatLocalDateTime handles naive UTC ISO.
+        const openTime = window.formatLocalDateTime(pos.openTime);
 
         // Status badge
         const statusBadge = pos.status === 'OPEN'
@@ -631,8 +632,8 @@ function exportToExcel() {
 
     // Prepare data for export
     const exportData = filteredPositions.map(pos => ({
-        'Open Time': new Date(pos.openTime).toLocaleString(),
-        'Close Time': pos.closeTime ? new Date(pos.closeTime).toLocaleString() : '-',
+        'Open Time': window.formatLocalDateTime(pos.openTime),
+        'Close Time': pos.closeTime ? window.formatLocalDateTime(pos.closeTime) : '-',
         'Token': pos.token,
         'Strategy': pos.strategy,
         'Status': pos.status,

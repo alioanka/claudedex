@@ -9,6 +9,7 @@ import asyncio
 import signal
 import sys
 import os
+import json
 from pathlib import Path
 from dotenv import load_dotenv
 import logging
@@ -46,9 +47,15 @@ load_dotenv()
 logger = None
 
 def setup_logger(name: str, mode: str) -> logging.Logger:
-    """Setup logger using StructuredLogger"""
+    """Setup logger using StructuredLogger.
+
+    DEX subprocess writes its main/trades/errors logs into
+    logs/dex_trading/ so they live alongside the other module logs;
+    earlier versions dropped TradingBot.log / TradingBot_trades.log /
+    TradingBot_errors.log at the repo root, polluting logs/.
+    """
     from monitoring.logger import StructuredLogger
-    structured_logger = StructuredLogger(name, {'mode': mode})
+    StructuredLogger(name, {'mode': mode, 'log_dir': 'logs/dex_trading'})
     return logging.getLogger(name)
 
 async def test_connection():
@@ -202,7 +209,21 @@ class DEXHealthServer:
             'status': 'healthy' if self.app.engine else 'degraded',
             'module': 'dex',
             'timestamp': datetime.now().isoformat(),
-            'engine_running': self.app.engine is not None
+            'engine_running': self.app.engine is not None,
+            # Public EVM address only (issue 15) — never the private key.
+            # Wave-11 FIX 1: this is the address DERIVED from PRIVATE_KEY
+            # (the authoritative funding address). When it disagrees with
+            # the stored WALLET_ADDRESS secret the dashboard sees
+            # `wallet_address_secret_mismatch=true` and the stored value
+            # alongside for operator correction. Funding the derived
+            # address is always correct; funding the stored address when
+            # mismatched would lose money.
+            'wallet_address': getattr(self.app, 'wallet_address', None),
+            'wallet_address_secret_mismatch': bool(
+                getattr(self.app, 'wallet_address_secret_mismatch', False)
+            ),
+            'wallet_address_stored': getattr(self.app, 'wallet_address_stored', None),
+            'dry_run': getattr(self.app, 'is_dry_run', True),
         }
         return web.json_response(health)
 
@@ -221,7 +242,8 @@ class DEXHealthServer:
             'status': 'Running' if self.app.engine else 'Stopped',
             'active_positions': 0,
             'total_pnl': 0.0,
-            'win_rate': 0.0
+            'win_rate': 0.0,
+            'wallet_address': getattr(self.app, 'wallet_address', None),
         }
 
         if self.app.engine and hasattr(self.app.engine, 'active_positions'):
@@ -372,6 +394,17 @@ class TradingBotApplication:
         self.dashboard = None
         self.health_server = None
         self.telegram_controller = None
+        self.position_service = None
+        # Resolved public EVM wallet address (issue 15) — set in initialize().
+        self.wallet_address = None
+        # Wave-11 FIX 1: surfaced when the operator's stored WALLET_ADDRESS
+        # secret does NOT match the address derived from PRIVATE_KEY. The
+        # derived address always wins (safety: funding the stale stored
+        # address would lose money), but the dashboard needs to see the
+        # discrepancy so the operator can correct the stored secret.
+        self.wallet_address_secret_mismatch = False
+        self.wallet_address_stored = None
+        self.is_dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # DEX Health server port (for standalone dashboard communication)
         self.health_port = int(os.getenv('DEX_HEALTH_PORT', '8085'))
@@ -717,11 +750,37 @@ class TradingBotApplication:
             await self.engine.initialize()
             # --- FIX ENDS HERE ---
 
+            # Resolve the PUBLIC EVM wallet address (issue 15) so the operator
+            # knows which wallet to fund for live mode and the dashboard/health
+            # surface can display it. Private key is NEVER exposed.
+            self.wallet_address = self._resolve_wallet_address(
+                decrypted_key, nested_config.get('wallet_address')
+            )
+            if self.wallet_address:
+                self.logger.info(f"🔑 DEX EVM wallet: {self.wallet_address}")
+            else:
+                self.logger.warning("⚠️ Could not resolve DEX wallet address")
+
             # Initialize analytics engine for dashboard analytics
             self.logger.info("Initializing analytics engine...")
             self.analytics_engine = AnalyticsEngine(db_manager=self.db_manager)
             await self.analytics_engine.initialize()
             self.logger.info("✅ Analytics engine initialized")
+
+            # DB-first OPEN-position price refresh + manual-close flag poller.
+            # Source of truth for /dex/* dashboard PnL; fixes frozen prices on
+            # positions not held in the engine's in-memory active_positions.
+            try:
+                from data.collectors.dexscreener import DexScreenerCollector
+                from modules.dex_trading.position_service import DexPositionService
+                ps_collector = DexScreenerCollector({})
+                await ps_collector.initialize()
+                self.position_service = DexPositionService(
+                    self.db_manager, ps_collector, dry_run=self.is_dry_run
+                )
+                self.logger.info("✅ DEX position service initialized (price-refresh + close-flag)")
+            except Exception as e:
+                self.logger.warning(f"Could not initialize DEX position service: {e}")
 
             # Check if standalone dashboard is running (started by orchestrator)
             # If so, skip dashboard in DEX module to avoid port conflict
@@ -767,6 +826,68 @@ class TradingBotApplication:
         missing = self.config_manager.validate_environment()
         if missing:
             raise ValueError(f"Missing required environment variables: {missing}")
+
+    def _resolve_wallet_address(self, private_key, configured_address):
+        """Return the public EVM address.
+
+        Wave-11 FIX 1 (critical safety): ALWAYS derive from the decrypted
+        PRIVATE_KEY — that is the authoritative funding address (ARB Wave-7
+        pattern, `arbitrage_engine.py:_get_decrypted_key` + derivation in
+        `initialize()`). The stored WALLET_ADDRESS secret is reference-only:
+        when it disagrees with the derived address, the derived address
+        wins and `wallet_address_secret_mismatch` is set so the dashboard
+        can flag the stale secret. Funding the stale stored address would
+        lose money.
+
+        Only when PRIVATE_KEY is missing entirely do we fall back to the
+        stored WALLET_ADDRESS (operator-managed funding mode), with a
+        warning log so the operator knows derivation was bypassed.
+
+        Never logs or returns the private key; mismatch warnings mask all
+        addresses to the last 4 chars.
+        """
+        # Always remember what the operator stored so the dashboard can show
+        # the discrepancy if any.
+        self.wallet_address_stored = configured_address or None
+
+        derived = None
+        if private_key:
+            try:
+                from eth_account import Account
+                key = private_key if private_key.startswith('0x') else f'0x{private_key}'
+                derived = Account.from_key(key).address
+            except Exception as e:
+                self.logger.debug(f"wallet address derivation failed: {e}")
+                derived = None
+
+        if derived:
+            if configured_address and configured_address.lower() != derived.lower():
+                # CRITICAL: stored secret is stale. Funding the stored
+                # address would lose money. Prefer derived, surface warning.
+                self.wallet_address_secret_mismatch = True
+                stored_mask = (configured_address[:6] + "..." + configured_address[-4:]) if len(configured_address) >= 10 else "***"
+                derived_mask = derived[:6] + "..." + derived[-4:]
+                self.logger.critical(
+                    "WALLET_ADDRESS secret mismatch: stored=%s vs derived=%s. "
+                    "Using DERIVED address (PRIVATE_KEY is authoritative). "
+                    "Update the stored WALLET_ADDRESS secret to match — funding the "
+                    "stored address would lose money.",
+                    stored_mask, derived_mask,
+                )
+            else:
+                self.wallet_address_secret_mismatch = False
+            return derived
+
+        # No private key: last-resort fallback to the stored address. The
+        # operator must manage funding manually because we cannot sign txs.
+        if configured_address:
+            self.logger.warning(
+                "PRIVATE_KEY missing; falling back to stored WALLET_ADDRESS "
+                "as a reference-only value. Live signing is impossible "
+                "without PRIVATE_KEY — operator-managed funding mode."
+            )
+            return configured_address
+        return None
 
     async def _position_monitor(self):
         """Monitor positions separately to ensure it's running"""
@@ -844,7 +965,8 @@ class TradingBotApplication:
             # Initialize Telegram controller for remote control (credentials from secrets manager)
             if get_telegram_controller and self.db_manager and self.db_manager.pool:
                 try:
-                    self.telegram_controller = get_telegram_controller(self.db_manager.pool)
+                    # Wave-11 FIX 2: tag with module_name so start_polling honors TELEGRAM_POLL_OWNER.
+                    self.telegram_controller = get_telegram_controller(self.db_manager.pool, module_name='dex')
                     if await self.telegram_controller.initialize():
                         self.telegram_controller.register_module(
                             name='dex',
@@ -879,6 +1001,13 @@ class TradingBotApplication:
                 asyncio.create_task(self._shutdown_monitor()),
                 asyncio.create_task(self._position_monitor())
             ]
+
+            # DB-first OPEN-position price refresh + dashboard manual-close IPC.
+            if self.position_service:
+                tasks.append(asyncio.create_task(
+                    self.position_service.price_refresh_loop(), name="dex_price_refresh"))
+                tasks.append(asyncio.create_task(
+                    self.position_service.close_flag_loop(), name="dex_close_flag"))
 
             # Only start dashboard if standalone dashboard is NOT enabled
             if self.dashboard and not getattr(self, 'standalone_dashboard_enabled', False):
@@ -916,12 +1045,58 @@ class TradingBotApplication:
                 if self.engine:
                     stats = await self.engine.get_stats()
                     self.logger.info(f"📊 Status: {stats}")
+                    # Heartbeat: stamp a fresh dex_runtime_stats row so the
+                    # standalone dashboard can tell a LIVE-but-idle engine apart
+                    # from a dead one (mirrors sniper/arbitrage runtime_stats).
+                    # Fail-soft — a DB hiccup must never crash the loop.
+                    await self._persist_heartbeat(stats)
 
                 await asyncio.sleep(60)
 
             except Exception as e:
                 self.logger.error(f"Error in status reporter: {e}")
                 await asyncio.sleep(60)
+
+    async def _persist_heartbeat(self, stats=None):
+        """UPSERT a single-row liveness heartbeat into dex_runtime_stats.
+
+        Written every ~60s from _status_reporter. The only REQUIRED field is a
+        fresh updated_at (read by the dashboard /api/modules DEX freshness
+        fallback); `stats` carries optional diagnostics. Fail-soft: any error is
+        logged at debug and swallowed so the trading loop never dies on a DB
+        hiccup. Mirrors EVMArbitrageEngine._persist_runtime_stats.
+        """
+        if not self.db_manager or not getattr(self.db_manager, 'pool', None):
+            return
+        try:
+            snapshot = {
+                'wallet_address': self.wallet_address,
+                'wallet_address_secret_mismatch': bool(
+                    getattr(self, 'wallet_address_secret_mismatch', False)
+                ),
+                'wallet_address_stored': getattr(self, 'wallet_address_stored', None),
+                'dry_run': bool(getattr(self, 'is_dry_run', True)),
+                'open_positions': (
+                    len(self.engine.active_positions)
+                    if self.engine and getattr(self.engine, 'active_positions', None)
+                    else 0
+                ),
+            }
+            if isinstance(stats, dict):
+                snapshot['engine_stats'] = stats
+            async with self.db_manager.pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO dex_runtime_stats (id, updated_at, stats)
+                    VALUES (1, NOW(), $1::jsonb)
+                    ON CONFLICT (id) DO UPDATE
+                    SET updated_at = NOW(), stats = EXCLUDED.stats
+                    """,
+                    json.dumps(snapshot, default=str),
+                )
+        except Exception as e:
+            # Pure observability; never block trading.
+            self.logger.debug(f"_persist_heartbeat failed (non-fatal): {e}")
 
     async def _shutdown_monitor(self):
         """Monitor for shutdown signal"""
@@ -938,6 +1113,10 @@ class TradingBotApplication:
                 self.logger.info("Stopping Telegram controller...")
                 await self.telegram_controller.notify("DEX bot shutting down...", priority="high")
                 await self.telegram_controller.stop_polling()
+
+            # Stop position service loops
+            if self.position_service:
+                self.position_service.stop()
 
             # Stop health server if running
             if self.health_server:
@@ -1057,13 +1236,14 @@ async def main():
     """Main entry point"""
     args = parse_arguments()
 
-    # Load DRY_RUN from .env file first, then override with command-line arg if present
-    dry_run_env = os.getenv('DRY_RUN', 'true').strip().lower()
-    is_dry_run = dry_run_env in ('true', '1', 'yes')
-
+    # Per-module DRY_RUN override (Phase 3 A7).
+    # DEX_DRY_RUN env beats DRY_RUN; --dry-run CLI beats both.
+    from core.dry_run import resolve_module_dry_run
+    is_dry_run = resolve_module_dry_run('dex', default=True)
     if args.dry_run:
         is_dry_run = True
-
+    # Mirror into DRY_RUN so downstream os.getenv('DRY_RUN') in the
+    # shared trading_engine picks up the resolved value.
     os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
 
     if args.debug:

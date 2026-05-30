@@ -491,6 +491,30 @@
                 </select>
             </div>
         </div>
+
+        <!-- FUT-RM-08: Per-symbol leverage overrides (JSON map) -->
+        <div class="setting-grid" style="margin-top:16px;">
+            <div class="setting-item" style="grid-column: 1 / -1;">
+                <label class="setting-label">
+                    <i class="fas fa-table"></i>
+                    Per-Symbol Leverage Overrides (JSON)
+                </label>
+                <div class="setting-description">
+                    Optional per-pair cap. Wins over Maximum Leverage above.
+                    Symbols are matched case-insensitively with or without "/".
+                    Example: <code>{"BTC/USDT": 10, "PEPE/USDT": 5}</code>.
+                    Leave as <code>{}</code> to use the global cap for all pairs.
+                </div>
+                <textarea
+                    class="setting-input"
+                    id="futures_max_leverage_overrides"
+                    name="futures_max_leverage_overrides"
+                    rows="4"
+                    style="font-family: monospace; white-space: pre;"
+                    placeholder='{"BTC/USDT": 10, "PEPE/USDT": 5}'>{}</textarea>
+                <div id="futures_max_leverage_overrides_err" style="color:#dc2626;font-size:0.85rem;margin-top:6px;display:none;"></div>
+            </div>
+        </div>
     </div>
 
     <!-- Risk Management -->
@@ -786,6 +810,56 @@
             </div>
         </div>
 
+        <!-- Wave-5 Risk-Tightening (FUT-RM-15/16/17) -->
+        <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
+            <h4 style="color: #fbbf24; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-shield-alt"></i>
+                Wave-5 Risk Tightening (FUT-RM-15/16/17)
+            </h4>
+            <div class="info-box" style="background: rgba(251,191,36,0.10); border-color: rgba(251,191,36,0.30); color: #fbbf24;">
+                <i class="fas fa-lightbulb"></i>
+                <div>
+                    These three knobs ship default-ON. They reduce trade frequency
+                    but improve win rate. Operator's pre-W5 stats: 25% WR / -$15
+                    PnL on 4 trades at 10x leverage. Set confluence to 0 / ATR
+                    flag false / cool-off to 0 to revert any single one.
+                </div>
+            </div>
+            <div class="setting-grid">
+                <div class="setting-item">
+                    <label class="setting-label">Min Signal Confluence Count (FUT-RM-15)</label>
+                    <div class="setting-description">
+                        Require at least N of {RSI extreme, MACD cross, BB touch, EMA alignment} before opening. Default 2 = needs 2/4 indicators agreeing. Set 0 to disable.
+                    </div>
+                    <input type="number" class="setting-input"
+                           id="futures_min_signal_confluence_count"
+                           name="futures_min_signal_confluence_count"
+                           value="2" min="0" max="4" step="1">
+                </div>
+                <div class="setting-item">
+                    <label class="setting-label">ATR-Dynamic SL/TP (FUT-RM-16)</label>
+                    <div class="setting-description">
+                        Replace static 2%/4% with SL = max(1.5%, 1.5 × ATR_pct) and TP = 2 × SL. Adapts to each symbol's volatility.
+                    </div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="futures_atr_dynamic_sl_tp_enabled"
+                               name="futures_atr_dynamic_sl_tp_enabled" checked>
+                        <span>Enabled</span>
+                    </div>
+                </div>
+                <div class="setting-item">
+                    <label class="setting-label">Post-Loss Cool-off (minutes) (FUT-RM-17)</label>
+                    <div class="setting-description">
+                        Skip a symbol for N minutes after 2 consecutive losses. Default 240 = 4h. Set 0 to disable per-symbol cool-off.
+                    </div>
+                    <input type="number" class="setting-input"
+                           id="futures_post_loss_cooloff_minutes"
+                           name="futures_post_loss_cooloff_minutes"
+                           value="240" min="0" max="1440" step="5">
+                </div>
+            </div>
+        </div>
+
         <!-- NEW: Advanced Signal Filters -->
         <div style="margin-top: 24px; padding-top: 20px; border-top: 1px solid #2d3548;">
             <h4 style="color: #a78bfa; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
@@ -927,10 +1001,13 @@ async function checkModuleRunningStatus() {
                 enabledLabel.textContent = 'Running';
                 runningInfo.style.display = 'flex';
 
-                // Show mode info
-                const mode = data.futures.mode || 'DRY_RUN';
-                const network = data.futures.network || 'TESTNET';
-                const exchange = data.futures.exchange || 'BINANCE';
+                // Show mode info. Don't fabricate exchange/network/mode
+                // names when the API hasn't reported them — show '--' so
+                // an operator looking at a Bybit deployment doesn't see
+                // a stale 'BINANCE TESTNET' label.
+                const mode = data.futures.mode || '--';
+                const network = data.futures.network ? String(data.futures.network).toUpperCase() : '--';
+                const exchange = data.futures.exchange ? String(data.futures.exchange).toUpperCase() : '--';
                 const positions = data.futures.active_positions || 0;
                 runningInfoText.innerHTML = `<strong>Module Running:</strong> ${exchange} ${network} - ${mode} mode | ${positions} active position(s)`;
                 return;
@@ -959,6 +1036,10 @@ function populateSettings(settings) {
         if (element) {
             if (element.type === 'checkbox') {
                 element.checked = value;
+            } else if (element.tagName === 'TEXTAREA' && value !== null && typeof value === 'object') {
+                // FUT-RM-08: JSON map fields render as pretty JSON in textarea.
+                try { element.value = JSON.stringify(value, null, 2); }
+                catch (_) { element.value = '{}'; }
             } else {
                 element.value = value;
             }
@@ -980,7 +1061,36 @@ async function saveSettings() {
     const settings = {};
     const inputs = document.querySelectorAll('.setting-input, .setting-select, input[type="checkbox"]');
 
+    // FUT-RM-08: JSON map fields. id -> err-element id.
+    const jsonFields = {
+        'futures_max_leverage_overrides': 'futures_max_leverage_overrides_err',
+    };
+    let jsonOk = true;
+    for (const [fieldId, errId] of Object.entries(jsonFields)) {
+        const el = document.getElementById(fieldId);
+        const errEl = document.getElementById(errId);
+        if (!el) continue;
+        const txt = (el.value || '').trim() || '{}';
+        try {
+            const parsed = JSON.parse(txt);
+            if (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null) {
+                throw new Error('expected a JSON object (e.g. {"BTC/USDT": 10})');
+            }
+            settings[fieldId] = parsed;
+            if (errEl) { errEl.style.display = 'none'; errEl.textContent = ''; }
+        } catch (e) {
+            if (errEl) { errEl.style.display = 'block'; errEl.textContent = 'Invalid JSON: ' + e.message; }
+            jsonOk = false;
+        }
+    }
+    if (!jsonOk) {
+        showToast('Fix JSON errors before saving', 'error');
+        return;
+    }
+
     inputs.forEach(input => {
+        // Skip JSON-typed fields — already handled above.
+        if (input.id in jsonFields) return;
         if (input.type === 'checkbox') {
             settings[input.id] = input.checked;
         } else if (input.type === 'number') {
@@ -993,7 +1103,7 @@ async function saveSettings() {
     try {
         const response = await fetch('/api/settings/futures', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: withCsrfHeaders('POST'),
             body: JSON.stringify(settings)
         });
 
@@ -1121,4 +1231,6 @@ document.addEventListener('DOMContentLoaded', loadSettings);
 // Refresh module status every 30 seconds
 setInterval(checkModuleRunningStatus, 30000);
 </script>
+<script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
+<script>document.addEventListener('DOMContentLoaded', function () { DryRunWidget.init('futures'); });</script>
 {% endblock %}

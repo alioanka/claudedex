@@ -108,7 +108,7 @@ class RateLimiter:
 
     def __init__(self, requests_per_minute: int):
         self.rpm = requests_per_minute
-        self.tokens = requests_per_minute
+        self.tokens = float(requests_per_minute)
         self.last_refill = datetime.utcnow()
         self._lock = asyncio.Lock()
 
@@ -117,14 +117,21 @@ class RateLimiter:
             now = datetime.utcnow()
             elapsed = (now - self.last_refill).total_seconds()
 
-            # Refill tokens based on elapsed time
-            refill = int(elapsed * self.rpm / 60)
-            if refill > 0:
-                self.tokens = min(self.rpm, self.tokens + refill)
+            # Refill tokens based on elapsed time. Use float math
+            # internally — the previous `int(elapsed * rpm / 60)` floor
+            # rounded to zero for any (elapsed, rpm) where the product
+            # was below 1 (e.g. rpm=20 polled at 100ms → 20*0.1/60 =
+            # 0.033 → int → 0), so the bucket never refilled until 3+
+            # seconds had passed. Accumulate fractional tokens and only
+            # advance last_refill by the integer part actually used.
+            # AI-BE-09.
+            refill_f = elapsed * self.rpm / 60.0
+            if refill_f > 0:
+                self.tokens = min(float(self.rpm), self.tokens + refill_f)
                 self.last_refill = now
 
-            if self.tokens > 0:
-                self.tokens -= 1
+            if self.tokens >= 1.0:
+                self.tokens -= 1.0
                 return True
             return False
 
@@ -215,14 +222,31 @@ class AIProviderManager:
         return True
 
     async def _get_api_key(self, key_name: str) -> Optional[str]:
-        """Get API key from secrets manager or environment"""
+        """Get API key from secrets manager or environment.
+
+        Wave-6 fix: use get_async() so the DB-backed credentials path is
+        actually exercised. The sync `secrets.get(...)` short-circuits the
+        DB lookup when called from inside a running event loop — see
+        `_get_from_database_sync`'s "use get_async() in async context"
+        guard — so it silently returned None for ops who stored keys in
+        the encrypted `secure_credentials` table (which is the default
+        configured via /settings/credentials).
+        """
         try:
             from security.secrets_manager import secrets
-            key = secrets.get(key_name, log_access=False)
+            # Ensure secrets_manager has the db_pool so the DB lookup
+            # branch is reachable (bootstrap mode skips DB entirely).
+            if self.db_pool and (
+                not secrets._initialized
+                or secrets._db_pool is None
+                or secrets._bootstrap_mode
+            ):
+                secrets.initialize(self.db_pool)
+            key = await secrets.get_async(key_name, log_access=False)
             if key:
                 return key
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"secrets_manager lookup failed for {key_name}: {e}")
 
         return os.getenv(key_name)
 

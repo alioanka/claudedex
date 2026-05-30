@@ -376,6 +376,14 @@
             <div class="stat-value" id="stat-status">--</div>
             <div class="stat-change" id="stat-mode">DRY RUN</div>
         </div>
+
+        <!-- Wave-3: hourly gas-spend tile. Backed by /api/arbitrage/gas-spend
+             (reads arbitrage_runtime_stats persisted by the engine). -->
+        <div class="stat-card" id="gas-spend-card" title="Hourly gas-spend across all arbitrage chains. Engine refuses new flash-loan execution once budget is exceeded.">
+            <div class="stat-label">Gas Spend (1h)</div>
+            <div class="stat-value" id="stat-gas-spend">$0.00</div>
+            <div class="stat-change" id="stat-gas-budget">Cap: $0.00 / 0%</div>
+        </div>
     </div>
 
     <!-- Multi-Chain Stats -->
@@ -395,10 +403,13 @@
                 <div class="status-item-value" id="sol-trades">0 trades</div>
                 <div class="stat-change positive" id="sol-pnl">$0.00</div>
             </div>
-            <div class="status-item">
-                <div class="status-item-label"><i class="fas fa-route"></i> Triangular</div>
-                <div class="status-item-value" id="tri-trades">0 trades</div>
-                <div class="stat-change positive" id="tri-pnl">$0.00</div>
+            <div class="status-item" id="tri-tile" title="Triangular arbitrage is gated behind the MB-05 atomic-receiver contract (scope cut, not a defect). See modules/arbitrage/CLAUDE.md.">
+                <div class="status-item-label">
+                    <i class="fas fa-route"></i> Triangular
+                    <span class="badge badge-secondary" style="background:rgba(148,163,184,0.2);color:#94a3b8;font-size:0.65rem;margin-left:6px;">Disabled</span>
+                </div>
+                <div class="status-item-value" id="tri-trades">—</div>
+                <div class="stat-change" id="tri-pnl" style="color:var(--text-secondary);">scope cut</div>
             </div>
             <div class="status-item">
                 <div class="status-item-label"><i class="fas fa-exchange-alt"></i> Direct</div>
@@ -422,6 +433,52 @@
         <div id="tradingStatusContent">
             <div class="text-center text-muted">
                 <i class="fas fa-spinner fa-spin"></i> Loading status...
+            </div>
+        </div>
+    </div>
+
+    <!-- Wave-5: "Why no trades?" diagnostic panel. Reads /api/arbitrage/diagnostics
+         which surfaces per-chain near-misses (rejected opportunities), cost
+         profile, gas-spend, and engine liveness (>10 min snapshot = STALE).
+         Collapsible because most operators only open it when they suspect the
+         engine has stalled. -->
+    <div class="section-card">
+        <div class="section-header" style="cursor:pointer;" onclick="toggleDiagPanel()">
+            <div class="section-title" style="margin-bottom: 0;">
+                <i class="fas fa-stethoscope"></i>
+                Why no trades?
+                <span id="diag-summary" style="font-size:0.8rem;font-weight:normal;color:var(--text-secondary);margin-left:12px;"></span>
+            </div>
+            <span><i id="diag-toggle-icon" class="fas fa-chevron-down"></i></span>
+        </div>
+        <div id="diagPanelBody" style="display:none;margin-top:12px;">
+            <div id="diag-stale-banner" style="display:none;padding:10px 14px;border-radius:6px;background:rgba(239,68,68,0.15);color:#ef4444;margin-bottom:12px;font-weight:600;">
+                <i class="fas fa-exclamation-triangle"></i>
+                <span id="diag-stale-text">Engine snapshot is stale - the arbitrage subprocess may have crashed.</span>
+            </div>
+            <div id="diag-chains-grid"></div>
+            <div style="margin-top:16px;">
+                <h6 style="color:var(--text-secondary);margin-bottom:8px;">Last 20 rejected opportunities</h6>
+                <div id="diag-nearmiss-empty" class="text-muted" style="text-align:center;padding:14px;">
+                    No near-misses recorded yet (engine has not written a runtime snapshot).
+                </div>
+                <div class="table-wrapper" id="diag-nearmiss-wrapper" style="display:none;">
+                    <table class="trade-table" style="font-size:0.85rem;">
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Chain</th>
+                                <th>Reason</th>
+                                <th>Pair</th>
+                                <th>Route</th>
+                                <th>Profit bps</th>
+                                <th>Threshold bps</th>
+                                <th>Detail</th>
+                            </tr>
+                        </thead>
+                        <tbody id="diag-nearmiss-body"></tbody>
+                    </table>
+                </div>
             </div>
         </div>
     </div>
@@ -525,7 +582,7 @@ const TOKEN_SYMBOLS = {
     '0x6B3595068778DD592e39A122f4f5a5cF09C90fE2': 'SUSHI',
     '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48': 'USDC',
     '0xdAC17F958D2ee523a2206206994597C13D831ec7': 'USDT',
-    '0x6B175474E89094C44Da98b954EescdecB5E4bEda34': 'DAI'
+    '0x6B175474E89094C44Da98b954EEdeAC495271d0F': 'DAI'
 };
 
 function getTokenSymbol(address) {
@@ -608,10 +665,183 @@ async function loadArbitrageData() {
             }
         }
 
+        // Wave-3: hourly gas-spend tile (per-chain, rolled up across engines).
+        try {
+            const gsResp = await fetch('/api/arbitrage/gas-spend');
+            if (gsResp.ok) {
+                const gs = await gsResp.json();
+                updateGasSpendTile(gs);
+            }
+        } catch (err) {
+            console.debug('gas-spend fetch failed:', err);
+        }
+
+        // Wave-5: "Why no trades?" diagnostics (collapsible panel).
+        try {
+            const dgResp = await fetch('/api/arbitrage/diagnostics');
+            if (dgResp.ok) {
+                const dg = await dgResp.json();
+                updateDiagPanel(dg);
+            }
+        } catch (err) {
+            console.debug('diagnostics fetch failed:', err);
+        }
+
         // Load trading status
         await loadTradingStatus();
     } catch (error) {
         console.error('Error loading arbitrage data:', error);
+    }
+}
+
+function updateGasSpendTile(gs) {
+    const spendEl = document.getElementById('stat-gas-spend');
+    const budgetEl = document.getElementById('stat-gas-budget');
+    const cardEl = document.getElementById('gas-spend-card');
+    if (!spendEl || !budgetEl) return;
+    const spend = gs.total_spend_usd || 0;
+    const budget = gs.total_budget_usd || 0;
+    const ratio = gs.overall_ratio || 0;
+    spendEl.textContent = `$${spend.toFixed(2)}`;
+    // Color codes: green <50%, amber 50-85%, red >85% (engine refuses
+    // execution at 100%). Stale (>10 min no snapshot) = grey.
+    let color = '#10b981';
+    if (gs.stale) color = '#94a3b8';
+    else if (ratio >= 0.85) color = '#ef4444';
+    else if (ratio >= 0.50) color = '#f59e0b';
+    spendEl.style.color = color;
+    const pct = (ratio * 100).toFixed(0);
+    budgetEl.textContent = `Cap: $${budget.toFixed(2)} / ${pct}%`;
+    if (cardEl) {
+        const chains = Object.keys(gs.chains || {});
+        const detail = chains.length
+            ? chains.map(c => {
+                const r = gs.chains[c];
+                return `${c}: $${(r.spend_usd || 0).toFixed(2)} / $${(r.budget_usd || 0).toFixed(2)}`;
+            }).join(' | ')
+            : 'no engine snapshots yet';
+        const stale = gs.stale ? ' [STALE]' : '';
+        cardEl.title = `Per-chain hourly gas spend${stale}\n${detail}`;
+    }
+}
+
+// Wave-5: "Why no trades?" panel — render the diagnostics payload.
+function toggleDiagPanel() {
+    const body = document.getElementById('diagPanelBody');
+    const icon = document.getElementById('diag-toggle-icon');
+    if (!body) return;
+    const show = body.style.display === 'none';
+    body.style.display = show ? 'block' : 'none';
+    if (icon) {
+        icon.className = show ? 'fas fa-chevron-up' : 'fas fa-chevron-down';
+    }
+}
+
+function updateDiagPanel(dg) {
+    if (!dg) return;
+    const summaryEl = document.getElementById('diag-summary');
+    const staleBanner = document.getElementById('diag-stale-banner');
+    const staleText = document.getElementById('diag-stale-text');
+    const grid = document.getElementById('diag-chains-grid');
+    const emptyEl = document.getElementById('diag-nearmiss-empty');
+    const wrapEl = document.getElementById('diag-nearmiss-wrapper');
+    const bodyEl = document.getElementById('diag-nearmiss-body');
+    if (!grid || !bodyEl) return;
+
+    // Roll up all near-misses across chains, newest first.
+    const allMisses = [];
+    const chains = dg.chains || {};
+    const chainKeys = Object.keys(chains);
+    chainKeys.forEach(c => {
+        (chains[c].near_misses || []).forEach(m => allMisses.push(m));
+    });
+    allMisses.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+
+    // Summary line in the collapsed header so operator sees status at a glance.
+    let topReason = '';
+    let topCount = 0;
+    chainKeys.forEach(c => {
+        const cnts = chains[c].near_miss_counters || {};
+        Object.entries(cnts).forEach(([k, v]) => {
+            if (v > topCount) { topCount = v; topReason = k; }
+        });
+    });
+    if (summaryEl) {
+        const stale = dg.stale ? ' [STALE]' : '';
+        if (allMisses.length === 0 && chainKeys.length === 0) {
+            summaryEl.textContent = `(no snapshot yet)${stale}`;
+        } else {
+            const reason = topReason ? `top reason: ${topReason} (${topCount}x)` : 'no rejections';
+            summaryEl.textContent = `(${reason})${stale}`;
+        }
+    }
+
+    // Stale-engine banner (>10 min since last engine snapshot).
+    if (staleBanner) {
+        if (dg.stale) {
+            const ageMin = dg.max_age_s ? (dg.max_age_s / 60).toFixed(1) : '?';
+            staleText.textContent =
+                `Engine snapshot is stale (age ${ageMin}m). The arbitrage subprocess may have crashed — check logs/arbitrage/arbitrage_errors.log.`;
+            staleBanner.style.display = 'block';
+        } else {
+            staleBanner.style.display = 'none';
+        }
+    }
+
+    // Per-chain cost-profile / counters cards.
+    let html = '<div class="status-grid">';
+    chainKeys.forEach(c => {
+        const cp = chains[c].cost_profile || {};
+        const cnt = chains[c].counters || {};
+        const baseBps = ((cp.min_profit_threshold_base || 0) * 10000).toFixed(1);
+        const effBps = ((cp.min_profit_threshold_effective || 0) * 10000).toFixed(1);
+        const spike = (cp.gas_spike_multiplier || 1).toFixed(2);
+        const spent = (cp.gas_spend_usd_hour || 0).toFixed(2);
+        const budget = (cp.gas_budget_usd_per_hour || 0).toFixed(2);
+        const ratio = ((cp.gas_budget_ratio || 0) * 100).toFixed(0);
+        const age = chains[c].age_s ? `${chains[c].age_s.toFixed(0)}s ago` : '?';
+        html += `
+        <div class="status-item">
+            <div class="status-item-label">${c.toUpperCase()} <span style="color:var(--text-secondary);font-size:0.75rem;">(updated ${age})</span></div>
+            <div style="font-size:0.85rem;line-height:1.6;">
+                Min profit: <b>${effBps} bps</b> (base ${baseBps}, spike ${spike}x)<br>
+                Gas (1h): <b>$${spent}</b> / $${budget} (${ratio}%)<br>
+                Scans: ${cnt.scans || 0} | Found: ${cnt.opportunities_found || 0} | Executed: ${cnt.opportunities_executed || 0}
+            </div>
+        </div>`;
+    });
+    html += '</div>';
+    grid.innerHTML = html || '<div class="text-muted">No engine snapshots yet.</div>';
+
+    // Near-misses table (last 20 across chains).
+    if (allMisses.length === 0) {
+        emptyEl.style.display = 'block';
+        wrapEl.style.display = 'none';
+    } else {
+        emptyEl.style.display = 'none';
+        wrapEl.style.display = 'block';
+        const reasonColor = (r) => {
+            if (r === 'gas_budget') return '#ef4444';
+            if (r === 'risk_manager' || r === 'risk_manager_error') return '#ef4444';
+            if (r === 'min_profit') return '#f59e0b';
+            if (r === 'cooldown' || r === 'daily_cap') return '#3b82f6';
+            return '#94a3b8';
+        };
+        bodyEl.innerHTML = allMisses.slice(0, 20).map(m => {
+            const t = m.ts ? new Date(m.ts).toLocaleTimeString() : '';
+            const route = (m.buy_dex || m.sell_dex) ? `${m.buy_dex || '?'} → ${m.sell_dex || '?'}` : '';
+            const escape = (s) => String(s == null ? '' : s).replace(/</g, '&lt;');
+            return `<tr>
+                <td>${escape(t)}</td>
+                <td>${escape(m.chain || '')}</td>
+                <td><span style="color:${reasonColor(m.reason)};font-weight:600;">${escape(m.reason || '')}</span></td>
+                <td>${escape(m.pair || '')}</td>
+                <td>${escape(route)}</td>
+                <td>${m.profit_bps != null ? Number(m.profit_bps).toFixed(1) : ''}</td>
+                <td>${m.threshold_bps != null ? Number(m.threshold_bps).toFixed(1) : ''}</td>
+                <td style="max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escape(m.detail || '')}">${escape(m.detail || '')}</td>
+            </tr>`;
+        }).join('');
     }
 }
 
@@ -650,12 +880,17 @@ function updateStats(stats) {
 
     // Update trade type stats
     if (stats.trade_types) {
-        // Triangular
+        // Triangular leg is gated behind the MB-05 atomic-receiver
+        // contract (scope cut, not defect). If the backend ever starts
+        // reporting non-zero triangular trades the tile flips to live;
+        // otherwise it keeps the "Disabled / scope cut" placeholder.
         const triStats = stats.trade_types.triangular || {};
-        document.getElementById('tri-trades').textContent = `${triStats.trades || 0} trades`;
-        const triPnlEl = document.getElementById('tri-pnl');
-        triPnlEl.textContent = `$${(triStats.pnl || 0).toFixed(2)}`;
-        triPnlEl.className = 'stat-change ' + ((triStats.pnl || 0) >= 0 ? 'positive' : 'negative');
+        if ((triStats.trades || 0) > 0) {
+            document.getElementById('tri-trades').textContent = `${triStats.trades} trades`;
+            const triPnlEl = document.getElementById('tri-pnl');
+            triPnlEl.textContent = `$${(triStats.pnl || 0).toFixed(2)}`;
+            triPnlEl.className = 'stat-change ' + ((triStats.pnl || 0) >= 0 ? 'positive' : 'negative');
+        }
 
         // Direct
         const directStats = stats.trade_types.direct || {};
@@ -750,8 +985,8 @@ function renderTrades() {
         let aVal, bVal;
         switch (currentSort.column) {
             case 'time':
-                aVal = new Date(a.timestamp || a.entry_timestamp || 0).getTime();
-                bVal = new Date(b.timestamp || b.entry_timestamp || 0).getTime();
+                aVal = (window.parseUtcTimestamp(a.timestamp || a.entry_timestamp || 0) || new Date(0)).getTime();
+                bVal = (window.parseUtcTimestamp(b.timestamp || b.entry_timestamp || 0) || new Date(0)).getTime();
                 break;
             case 'token':
                 aVal = getTokenSymbol(a.token_address);
@@ -780,7 +1015,7 @@ function renderTrades() {
 
     tableBody.innerHTML = sortedTrades.map(trade => {
         const timestamp = trade.timestamp || trade.entry_timestamp;
-        const timeStr = timestamp ? new Date(timestamp).toLocaleString() : 'N/A';
+        const timeStr = timestamp ? window.formatLocalDateTime(timestamp) : 'N/A';
         const pnl = parseFloat(trade.profit_loss || 0);
         const spread = parseFloat(trade.spread_pct || 0);
         const amount = parseFloat(trade.amount_eth || trade.amount || 0);
@@ -799,8 +1034,14 @@ function renderTrades() {
         const tokenSymbol = getTokenSymbol(token);
         const shortToken = token.length > 10 ? `${token.slice(0, 6)}...${token.slice(-4)}` : token;
 
-        // Calculate approximate token size bought
-        const tokenSize = nativePrice > 0 && spread > 0 ? (amount * nativePrice / (spread + 1)).toFixed(2) : '-';
+        // Calculate approximate token size bought. `spread` is a percent
+        // (e.g. 2.5 means 2.5%), so the multiplier on the buy-side leg
+        // is (1 + spread/100), NOT (spread + 1) which would imply a
+        // 250% slippage hit. The previous expression made the column
+        // off by a factor of ~3 for typical 1-3% spreads.
+        const tokenSize = nativePrice > 0 && spread > 0
+            ? (amount * nativePrice / (1 + spread / 100)).toFixed(2)
+            : '-';
 
         return `
             <tr>

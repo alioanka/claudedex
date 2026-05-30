@@ -185,33 +185,72 @@ class PumpPredictor:
         
         return model
     
+    def fit_price_scaler_train_only(
+        self,
+        price_data: pd.DataFrame,
+        train_frac: float = 0.8,
+    ) -> int:
+        """Fit `scalers['price']` on a TEMPORAL prefix only (P1-08 leakage fix).
+
+        Time-series data must be split temporally — random splits leak future
+        bars into the train window and corrupt scaler statistics. Returns the
+        split index used so callers can mirror the same boundary downstream.
+        """
+        if not 0.0 < train_frac < 1.0:
+            raise ValueError(f"train_frac must be in (0,1), got {train_frac}")
+        data = price_data[self.price_features].values
+        split_idx = max(1, int(len(data) * train_frac))
+        self.scalers['price'].fit(data[:split_idx])
+        return split_idx
+
     def prepare_sequences(
         self,
         price_data: pd.DataFrame,
-        lookback: int = None
+        lookback: int = None,
+        fit_scaler: bool = False,
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepare sequences for LSTM training/prediction."""
+        """Prepare sequences for LSTM training/prediction.
+
+        P1-08 fix: scaler is NOT fit by default. Callers that need a scaler
+        fit must either call `fit_price_scaler_train_only(...)` first (the
+        train path) or pass `fit_scaler=True` explicitly (legacy / single-shot
+        usage). At inference time the scaler must already be fitted (loaded
+        from artefact) — we only `transform`, never `fit_transform`.
+        """
         if lookback is None:
             lookback = self.sequence_length
-        
+
         # Select features
         data = price_data[self.price_features].values
-        
-        # Scale data
-        scaled_data = self.scalers['price'].fit_transform(data)
-        
+
+        # Scale data — transform only by default; fit only when the caller
+        # explicitly opts in. The MinMaxScaler exposes `data_min_` once fit;
+        # absence means we'd implicitly fit on whatever window we got, which
+        # is the standardization-leakage bug at the heart of P1-08.
+        price_scaler = self.scalers['price']
+        if fit_scaler:
+            scaled_data = price_scaler.fit_transform(data)
+        else:
+            if not hasattr(price_scaler, 'data_min_'):
+                raise RuntimeError(
+                    "prepare_sequences: price scaler not fitted. Call "
+                    "fit_price_scaler_train_only() on training data, or "
+                    "pass fit_scaler=True for legacy single-shot usage."
+                )
+            scaled_data = price_scaler.transform(data)
+
         # Create sequences
         X, y = [], []
         for i in range(lookback, len(scaled_data)):
             X.append(scaled_data[i-lookback:i])
-            
+
             # Target: significant price increase in next period
             future_price = price_data.iloc[i]['price']
             current_price = price_data.iloc[i-1]['price']
             pump_threshold = 1.10  # 10% increase
-            
+
             y.append(1 if future_price > current_price * pump_threshold else 0)
-        
+
         return np.array(X), np.array(y)
     
     def extract_features(self, market_data: pd.DataFrame) -> np.ndarray:
@@ -366,8 +405,14 @@ class PumpPredictor:
     ) -> Dict[str, Any]:
         """Train pump prediction models."""
         logger.info("Starting pump predictor training...")
-        
-        # Prepare LSTM sequences
+
+        # P1-08: fit price scaler on the training prefix ONLY before
+        # building sequences. Random / full-dataset fit leaks future stats
+        # (post-split bars) into the scaler — biases LSTM training and
+        # inflates validation scores.
+        self.fit_price_scaler_train_only(price_history, train_frac=0.8)
+
+        # Prepare LSTM sequences — scaler is already fit; transform only.
         X_lstm, y_lstm = self.prepare_sequences(price_history)
         
         # Prepare features for tree-based models

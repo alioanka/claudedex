@@ -78,6 +78,13 @@ CONFIG_KEY_MAPPING = {
     'jupiter_take_profit': ('solana_jupiter', 'float'),
     'jupiter_auto_exit': ('solana_jupiter', 'int'),  # Time-based exit in seconds
     'jupiter_max_positions': ('solana_jupiter', 'int'),  # Separate max positions for Jupiter
+
+    # Wave-4: Jito bundle routing for SOLANA spot swaps (opt-in).
+    # When enabled the engine submits the signed Jupiter tx + a Jito tip
+    # transaction as a bundle; on bundle-rejection it falls back to the
+    # vanilla JupiterHelper.execute_swap path.
+    'solana_jito_bundle_enabled': ('solana_jupiter', 'bool'),
+    'solana_jito_tip_lamports': ('solana_jupiter', 'int'),
 }
 
 
@@ -169,6 +176,12 @@ class SolanaConfigManager:
         'jupiter_stop_loss': 5.0,  # Jupiter: tighter SL for established tokens
         'jupiter_take_profit': 10.0,  # Jupiter: realistic TP for established tokens
         'jupiter_auto_exit': 0,  # Time-based exit in seconds (0 = disabled)
+
+        # Wave-4: Jito bundle routing (opt-in). Off by default — the path
+        # only matters for MEV-protected entries; vanilla Jupiter is fine
+        # for everything else and avoids Jito's global rate-limit window.
+        'solana_jito_bundle_enabled': False,
+        'solana_jito_tip_lamports': 50_000,  # arbitrage uses 10k default; 50k is the documented competitive floor
     }
 
     def __init__(self, db_pool=None):
@@ -505,6 +518,16 @@ class SolanaConfigManager:
     def jupiter_auto_exit_seconds(self) -> int:
         """Get Jupiter time-based auto exit in seconds (0 = disabled)"""
         return self.get('jupiter_auto_exit', 0)
+
+    @property
+    def solana_jito_bundle_enabled(self) -> bool:
+        """Route Jupiter swaps via Jito bundle (off by default)."""
+        return bool(self.get('solana_jito_bundle_enabled', False))
+
+    @property
+    def solana_jito_tip_lamports(self) -> int:
+        """Tip lamports attached to each Jito bundle (min enforced by JitoClient = 1000)."""
+        return int(self.get('solana_jito_tip_lamports', 50_000))
 
     @property
     def priority_fee_lamports(self) -> int:

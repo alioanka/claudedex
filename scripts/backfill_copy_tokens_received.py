@@ -1,0 +1,321 @@
+#!/usr/bin/env python3
+"""
+Backfill metadata.tokens_received for OPEN copytrading_trades positions
+that were INSERTed before commit 14ce4a0. Without this field the
+dashboard cannot compute live PnL (we don't know how many tokens were
+actually bought — only the SOL amount spent).
+
+Usage (inside the trading-bot container):
+    docker exec trading-bot python scripts/backfill_copy_tokens_received.py
+    docker exec trading-bot python scripts/backfill_copy_tokens_received.py --dry-run
+    docker exec trading-bot python scripts/backfill_copy_tokens_received.py --trade-id <id>
+
+Resolution strategy per row:
+  1. Skip if metadata.tokens_received is already populated.
+  2. Try Jupiter Price v3 for the current USD price of token_address.
+     Compute tokens_received_estimate = entry_usd / current_price.
+     This is an APPROXIMATION — assumes price hasn't moved much since
+     entry. For positions held for hours this is fine within ~20%; for
+     long-held meme positions it can be wildly off. The dashboard will
+     show 'approximate' as a hint.
+  3. If Jupiter returns no price, log and leave the field absent.
+
+This is safe to run repeatedly — only INSERTs the field on rows where
+it's missing.
+"""
+import argparse
+import asyncio
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+
+# Make project root importable
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+try:
+    import asyncpg
+    import aiohttp
+except ImportError as e:
+    print(f"Missing dependency: {e}. Run inside the trading-bot container.", file=sys.stderr)
+    sys.exit(1)
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
+logger = logging.getLogger("backfill_tokens_received")
+
+JUPITER_PRICE_V3 = "https://api.jup.ag/price/v3"
+# Birdeye public price endpoint — same pattern wave-3 sniper R5 uses
+# (`modules/sniper/core/sniper_engine.py::_get_token_price_via_birdeye`).
+# Free tier needs no API key; BIRDEYE_API_KEY (secrets manager) raises the
+# rate limit if present.
+BIRDEYE_PRICE_URL = "https://public-api.birdeye.so/defi/price"
+HTTP_TIMEOUT_S = 8
+# Exponential backoff schedule for HTTP 429s (operator-reported regression
+# 2026-05-21: 1/6 rows failed when Jupiter rate-limited mid-run and the
+# script gave up immediately, leaving the row with the legacy SOL-priced
+# entry_price and a -100% PnL on the dashboard).
+JUPITER_429_BACKOFF_S = (5, 10, 20, 40)
+
+
+async def fetch_token_price_usd(session: aiohttp.ClientSession, mint: str) -> float | None:
+    """Return USD price for `mint` via Jupiter Price v3, or None on
+    any failure. Handles both v3 and legacy v2 response shapes.
+
+    Retries on HTTP 429 with exponential backoff (5s/10s/20s/40s, 4 retries
+    total). Any other HTTP error or network failure returns None immediately
+    — the caller logs the skip and moves on to the next row.
+    """
+    url = f"{JUPITER_PRICE_V3}?ids={mint}"
+    last_status: int | None = None
+    for attempt, wait_s in enumerate((0, *JUPITER_429_BACKOFF_S)):
+        if wait_s:
+            logger.info(
+                f"  Jupiter {mint[:10]} HTTP 429 — backing off {wait_s}s "
+                f"(retry {attempt}/{len(JUPITER_429_BACKOFF_S)})"
+            )
+            await asyncio.sleep(wait_s)
+        try:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_S)) as resp:
+                last_status = resp.status
+                if resp.status == 429:
+                    continue  # retry with next backoff window
+                if resp.status != 200:
+                    logger.warning(f"  Jupiter {mint[:10]} returned HTTP {resp.status}")
+                    return None
+                data = await resp.json()
+        except Exception as e:
+            logger.warning(f"  Jupiter fetch failed for {mint[:10]}: {e}")
+            return None
+        payload = data.get("data") if isinstance(data, dict) and "data" in data else data
+        if not isinstance(payload, dict):
+            return None
+        row = payload.get(mint)
+        if not isinstance(row, dict):
+            return None
+        raw = row.get("usdPrice") or row.get("price") or row.get("usd") or 0
+        try:
+            price = float(raw)
+            return price if price > 0 else None
+        except (TypeError, ValueError):
+            return None
+    logger.warning(
+        f"  Jupiter {mint[:10]} still HTTP {last_status} after "
+        f"{len(JUPITER_429_BACKOFF_S)} retries — giving up"
+    )
+    return None
+
+
+async def fetch_token_price_birdeye(session: aiohttp.ClientSession, mint: str) -> float | None:
+    """Birdeye `/defi/price` fallback for Solana mints.
+
+    Mirrors the sniper R5 pattern (`modules/sniper/core/sniper_engine.py`):
+    use BIRDEYE_API_KEY from the secrets manager when available; fall back
+    to the public endpoint otherwise. Returns USD price per whole token or
+    None on any failure — never raises.
+    """
+    try:
+        from security.secrets_manager import secrets
+        api_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False)
+    except Exception:
+        api_key = os.getenv('BIRDEYE_API_KEY')  # plain-env fallback only
+    headers = {'X-Chain': 'solana', 'accept': 'application/json'}
+    if api_key:
+        headers['X-API-KEY'] = api_key
+    url = f"{BIRDEYE_PRICE_URL}?address={mint}"
+    try:
+        async with session.get(
+            url, headers=headers,
+            timeout=aiohttp.ClientTimeout(total=HTTP_TIMEOUT_S),
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(f"  Birdeye {mint[:10]} returned HTTP {resp.status}")
+                return None
+            data = await resp.json()
+    except Exception as e:
+        logger.warning(f"  Birdeye fetch failed for {mint[:10]}: {e}")
+        return None
+    # Birdeye response shape: {success: bool, data: {value: float, ...}}
+    inner = (data.get('data') or {}) if isinstance(data, dict) else {}
+    try:
+        price = float(inner.get('value') or 0)
+        return price if price > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+async def get_db_url() -> str:
+    """Resolve DATABASE_URL the same way the rest of the bot does:
+    Docker secrets first, env var second."""
+    try:
+        from security.docker_secrets import get_database_url
+        url = get_database_url()
+        if url:
+            return url
+    except ImportError:
+        pass
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError(
+            "Could not resolve DATABASE_URL. Set the env var or run inside the trading-bot container."
+        )
+    return url
+
+
+async def main(args):
+    db_url = await get_db_url()
+    pool = await asyncpg.create_pool(db_url, min_size=1, max_size=2)
+
+    try:
+        # Pull every OPEN copytrading position that needs backfill.
+        # --force re-runs even on rows that already have tokens_received
+        # (use after the engine fix in fd51508/ce2f5f6 — older rows may
+        # have entry_price written as native SOL price even though
+        # metadata.tokens_received is present from an earlier partial
+        # backfill).
+        async with pool.acquire() as conn:
+            if args.force:
+                where = "status = 'open' AND chain = 'solana'"
+            else:
+                where = (
+                    "status = 'open' "
+                    "AND chain = 'solana' "
+                    "AND (metadata IS NULL "
+                    "     OR NOT (metadata::jsonb ? 'tokens_received'))"
+                )
+            params = ()
+            if args.trade_id:
+                where += " AND trade_id = $1"
+                params = (args.trade_id,)
+            rows = await conn.fetch(
+                f"SELECT trade_id, token_address, entry_usd, metadata "
+                f"FROM copytrading_trades WHERE {where} "
+                f"ORDER BY entry_timestamp ASC",
+                *params,
+            )
+
+        if not rows:
+            logger.info("No backfill candidates — every OPEN Solana position already has metadata.tokens_received.")
+            return 0
+
+        logger.info(f"Found {len(rows)} OPEN Solana position(s) needing backfill.")
+        if args.dry_run:
+            logger.info("--dry-run set: not writing to DB.")
+
+        # Outcome counters so the operator gets a single-line summary at the
+        # end instead of having to grep through the per-row INFO lines.
+        n_total = len(rows)
+        n_backfilled = 0
+        n_birdeye_fallback = 0
+        n_skipped_no_price = 0
+        n_skipped_missing_fields = 0
+        skipped_ids: list[str] = []
+
+        async with aiohttp.ClientSession() as session:
+            for r in rows:
+                trade_id = r["trade_id"]
+                mint = r["token_address"]
+                entry_usd = float(r["entry_usd"] or 0)
+                if not mint or entry_usd <= 0:
+                    logger.warning(f"  skip {trade_id}: missing mint or entry_usd")
+                    n_skipped_missing_fields += 1
+                    skipped_ids.append(trade_id)
+                    continue
+
+                # Primary: Jupiter Price v3 (with 429-retry).
+                price = await fetch_token_price_usd(session, mint)
+                price_source = "jupiter_v3"
+                # Tertiary: Birdeye /defi/price — same pattern wave-3 sniper
+                # R5 uses to survive Jupiter brown-outs. Skips automatically
+                # when both upstream calls fail and the row is logged as
+                # skipped (no_price) so the operator can retry later.
+                if not price:
+                    logger.info(f"  {trade_id} {mint[:10]}: trying Birdeye fallback…")
+                    price = await fetch_token_price_birdeye(session, mint)
+                    if price:
+                        price_source = "birdeye_defi_price"
+                        n_birdeye_fallback += 1
+                if not price:
+                    logger.warning(
+                        f"  skip {trade_id}: no price from Jupiter or Birdeye for {mint[:10]}"
+                    )
+                    n_skipped_no_price += 1
+                    skipped_ids.append(trade_id)
+                    continue
+
+                tokens_received = entry_usd / price
+                logger.info(
+                    f"  {trade_id} {mint[:10]}: "
+                    f"${entry_usd:.4f} ÷ ${price:.6f}/tok = {tokens_received:,.6f} tokens "
+                    f"(source={price_source})"
+                )
+
+                if args.dry_run:
+                    n_backfilled += 1  # would-be backfill, counted for summary parity
+                    continue
+
+                # Merge into existing metadata JSONB without clobbering keys.
+                meta = r["metadata"]
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except Exception:
+                        meta = {}
+                if not isinstance(meta, dict):
+                    meta = {}
+                meta["tokens_received"] = tokens_received
+                meta["tokens_received_source"] = f"backfill_{price_source}"
+                meta["tokens_received_approx"] = True  # warn dashboard this is post-hoc
+
+                # Also fix the legacy schema-semantic bug: entry_price was
+                # written as native (SOL) price and amount as SOL amount.
+                # Rewrite them to be per-token USD price + token count so
+                # the dashboard live-PnL path can compute correctly without
+                # the metadata-fallback branch.
+                token_entry_price_usd = entry_usd / tokens_received
+
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE copytrading_trades "
+                        "SET metadata = $1::jsonb, "
+                        "    entry_price = $2, "
+                        "    amount = $3 "
+                        "WHERE trade_id = $4",
+                        json.dumps(meta),
+                        token_entry_price_usd,
+                        tokens_received,
+                        trade_id,
+                    )
+                n_backfilled += 1
+        # Single-line operator summary. After the wave-6 retry change the
+        # 429-only failure should be 0; persistent skips are now actionable
+        # (re-run with --trade-id or wait for Jupiter to recover).
+        logger.info("Backfill complete.")
+        logger.info(
+            f"Summary: total={n_total} "
+            f"backfilled={n_backfilled} "
+            f"birdeye_fallback={n_birdeye_fallback} "
+            f"skipped_no_price={n_skipped_no_price} "
+            f"skipped_missing_fields={n_skipped_missing_fields}"
+            + (f" skipped_ids={skipped_ids}" if skipped_ids else "")
+        )
+        return 0
+    finally:
+        await pool.close()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Show what would be written without modifying the DB.")
+    parser.add_argument("--trade-id", type=str, default=None,
+                        help="Process only this specific trade_id.")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-backfill rows that already have tokens_received "
+                             "(useful after the entry_price-semantic fix to "
+                             "rewrite legacy entry_price/amount columns too).")
+    args = parser.parse_args()
+    sys.exit(asyncio.run(main(args)))

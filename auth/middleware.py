@@ -119,17 +119,29 @@ async def auth_middleware_factory(app: web.Application, handler: Callable) -> Ca
     Actively blocks unauthenticated requests except for public routes
     """
     async def middleware(request: web.Request):
-        # Public routes that don't require authentication
+        # Public routes that don't require authentication. /health is
+        # public so Docker healthchecks and scripts/health_check.py can
+        # probe without carrying an auth cookie.
         public_routes = [
             '/login',
             '/api/auth/login',
             '/api/auth/logout',
+            '/health',
+            '/__routes__',
         ]
+
+        # Public path prefixes. /socket.io/ is gated by the Socket.IO
+        # library's own session/origin checks; piggybacking aiohttp auth
+        # on top breaks the protocol (XHR doesn't follow CORS 302 redirects).
+        public_prefixes = (
+            '/static/',
+            '/socket.io/',
+        )
 
         # Check if this is a public route
         is_public = (
             request.path in public_routes or
-            request.path.startswith('/static/')
+            any(request.path.startswith(p) for p in public_prefixes)
         )
 
         if is_public:
