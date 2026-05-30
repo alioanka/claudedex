@@ -1,5 +1,8 @@
 # ClaudeDex Trading Bot .gitignore
 
+# Claude Code agent worktrees (transient sub-agent workspaces — never commit)
+.claude/worktrees/
+
 # Python
 __pycache__/
 *.py[cod]
