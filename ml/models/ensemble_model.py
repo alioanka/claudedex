@@ -1494,7 +1494,107 @@ class EnsemblePredictor:
         # Log weight updates
         print(f"Updated model weights: {self.model_weights}")
 
-# Add this at the END of ml/models/ensemble_model.py file:
+    async def predict_decoupled(
+        self,
+        token: str,
+        chain: str,
+        features,  # np.ndarray or nested dict
+    ) -> Dict:
+        """Prediction path that does NOT fetch token data (wave-13 port).
+
+        `features` may be either:
+          * a numpy array of pre-extracted features (preferred)
+          * a dict matching the nested schema extract_features() consumes
+
+        Returns a dict with pump_probability, rug_probability, confidence,
+        expected_return, model_agreements, feature_importance, error (on fail).
+        Errors surface the exception message in 'error' key and return neutral
+        0.5/0.5 rather than crashing the caller.
+        """
+        try:
+            if isinstance(features, dict):
+                feat_arr = self.extract_features(features)
+            else:
+                feat_arr = np.asarray(features, dtype=np.float32)
+            result = await self._predict_from_features(feat_arr)
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': result.pump_probability,
+                'rug_probability': result.rug_probability,
+                'expected_return': result.expected_return,
+                'confidence': result.confidence,
+                'time_to_pump': result.time_to_pump,
+                'risk_adjusted_score': result.risk_adjusted_score,
+                'model_agreements': result.model_agreements,
+                'feature_importance': result.feature_importance,
+                'timestamp': result.prediction_timestamp.isoformat(),
+                'source': 'decoupled',
+            }
+        except Exception as e:
+            return {
+                'token': token,
+                'chain': chain,
+                'pump_probability': 0.5,
+                'rug_probability': 0.5,
+                'expected_return': 0.0,
+                'confidence': 0.1,
+                'time_to_pump': None,
+                'risk_adjusted_score': 0.0,
+                'model_agreements': {},
+                'feature_importance': {},
+                'timestamp': datetime.now().isoformat(),
+                'source': 'decoupled',
+                'error': str(e),
+            }
+
+
+# Canonical feature name list (82 features, same order as extract_features).
+# Used by the offline trainer to guarantee train-time column order matches
+# inference-time order (no silent train/inference skew).
+ENSEMBLE_FEATURE_NAMES: List[str] = [
+    # price_data (8)
+    'current_price', 'price_change_1h', 'price_change_24h', 'price_change_7d',
+    'volatility_24h', 'price_std', 'price_skew', 'price_kurtosis',
+    # volume_data (7)
+    'volume_24h', 'volume_change_24h', 'buy_volume_ratio', 'large_trades_ratio',
+    'unique_traders_24h', 'avg_trade_size', 'volume_to_mcap_ratio',
+    # liquidity_data (5)
+    'total_liquidity', 'liquidity_change_24h', 'liquidity_locked_percent',
+    'liquidity_to_mcap_ratio', 'impermanent_loss_risk',
+    # holder_data (6)
+    'total_holders', 'holder_growth_24h', 'top_10_holders_percent',
+    'whale_count', 'avg_holding_time', 'holder_concentration_index',
+    # contract_data (7)
+    'is_verified', 'has_mint_function', 'has_pause_function',
+    'ownership_renounced', 'is_proxy', 'contract_age_days', 'transaction_count',
+    # social_data (7)
+    'twitter_followers', 'twitter_engagement_rate', 'telegram_members',
+    'telegram_growth_rate', 'reddit_mentions', 'sentiment_score', 'fomo_index',
+    # technical_data (10)
+    'rsi', 'macd', 'macd_signal', 'bollinger_upper', 'bollinger_lower',
+    'ema_9', 'ema_21', 'ema_50', 'obv', 'adx',
+    # risk_data (6)
+    'liquidity_risk', 'developer_risk', 'contract_risk', 'volume_risk',
+    'holder_risk', 'honeypot_probability',
+    # market_data (5)
+    'btc_correlation', 'eth_correlation', 'market_cap',
+    'fully_diluted_valuation', 'circulating_supply_percent',
+    # time_data (5)
+    'hour_of_day', 'day_of_week', 'days_since_launch',
+    'hours_since_ath', 'hours_since_atl',
+    # pattern_data (8)
+    'has_cup_handle', 'has_ascending_triangle', 'has_double_bottom',
+    'has_golden_cross', 'has_death_cross', 'trend_strength',
+    'support_level_distance', 'resistance_level_distance',
+    # mempool_data (4)
+    'pending_buy_volume', 'pending_sell_volume', 'large_pending_trades',
+    'sandwich_attack_risk',
+    # whale_data (4)
+    'whale_accumulation_score', 'whale_distribution_score',
+    'smart_money_flow', 'institutional_interest',
+]
+
 
 # Create alias for backward compatibility
 # Some tests/modules expect EnsembleModel instead of EnsemblePredictor
