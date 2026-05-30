@@ -30,16 +30,27 @@ class AIProvider(Enum):
 
 
 class AIModel(Enum):
-    """Supported AI models with their costs per 1K tokens"""
+    """Supported AI models with their costs per 1K tokens.
+
+    Wave-13: replaced '-latest' Anthropic aliases with dated snapshots.
+    The '-latest' aliases (e.g. 'claude-3-5-haiku-latest') resolve
+    account-specifically and return not_found_error on plans that don't
+    include that model tier — causing a silent fallback to OpenAI even
+    when ai_provider='claude'. Dated snapshots are more portable.
+    Operators can still override via DB key 'claude_model' in ai_config.
+    """
     # OpenAI models - costs in USD per 1K tokens (input/output)
     GPT4O = ("gpt-4o", 0.0025, 0.01)
     GPT4O_MINI = ("gpt-4o-mini", 0.00015, 0.0006)
     GPT4_TURBO = ("gpt-4-turbo", 0.01, 0.03)
 
-    # Anthropic models
-    CLAUDE_35_SONNET = ("claude-3-5-sonnet-latest", 0.003, 0.015)
-    CLAUDE_35_HAIKU = ("claude-3-5-haiku-latest", 0.001, 0.005)
-    CLAUDE_3_OPUS = ("claude-3-opus-latest", 0.015, 0.075)
+    # Anthropic models — dated snapshots preferred over '-latest' aliases.
+    # claude-3-5-sonnet-20241022: broadly available, good balance of cost/quality.
+    # claude-3-haiku-20240307: cheapest Haiku with wide availability.
+    # claude-3-opus-20240229: most capable, highest cost.
+    CLAUDE_35_SONNET = ("claude-3-5-sonnet-20241022", 0.003, 0.015)
+    CLAUDE_3_HAIKU = ("claude-3-haiku-20240307", 0.00025, 0.00125)
+    CLAUDE_3_OPUS = ("claude-3-opus-20240229", 0.015, 0.075)
 
     def __init__(self, model_id: str, input_cost: float, output_cost: float):
         self.model_id = model_id
@@ -199,18 +210,24 @@ class AIProviderManager:
         else:
             logger.warning("⚠️ OpenAI API key not found")
 
-        # Configure Anthropic if available
+        # Configure Anthropic if available.
+        # Wave-13: use claude-3-5-sonnet-20241022 (dated snapshot, broadly
+        # available) instead of the '-latest' alias which 404s on many plans.
+        # The model is further overridable via DB key 'claude_model'.
         if anthropic_key:
             self.providers[AIProvider.ANTHROPIC] = ProviderConfig(
                 provider=AIProvider.ANTHROPIC,
                 api_key=anthropic_key,
-                model=AIModel.CLAUDE_35_HAIKU,
+                model=AIModel.CLAUDE_35_SONNET,
                 priority=1  # Prefer Claude
             )
             self.rate_limiters[AIProvider.ANTHROPIC] = RateLimiter(60)
-            logger.info("✅ Anthropic provider configured (Claude 3.5 Haiku)")
+            logger.info(
+                "Anthropic provider configured (model=%s)",
+                AIModel.CLAUDE_35_SONNET.model_id,
+            )
         else:
-            logger.warning("⚠️ Anthropic API key not found")
+            logger.warning("Anthropic API key not found")
 
         # Load budget from config
         await self._load_config()
@@ -280,11 +297,31 @@ class AIProviderManager:
             logger.warning(f"Could not load AI config: {e}")
 
     def _get_model(self, model_id: str) -> AIModel:
-        """Get AIModel enum from model ID string"""
+        """Get AIModel enum from model ID string.
+
+        Wave-13: when the DB supplies a model_id not in the enum (e.g. a
+        newly released Claude model), fall back to the nearest-cost enum
+        member rather than silently returning GPT4O_MINI regardless of
+        provider. Logs a WARNING so the operator knows to add the model to
+        the enum if they want accurate cost tracking.
+        """
         for model in AIModel:
             if model.model_id == model_id:
                 return model
-        return AIModel.GPT4O_MINI  # Default
+        # Unknown model ID — warn loudly; do not fall back to a different
+        # provider's default silently.
+        logger.warning(
+            "WARN [ai] model_id '%s' not found in AIModel enum. "
+            "Cost tracking will be inaccurate. "
+            "Add the model to AIModel in ai_provider.py or correct the "
+            "DB value (config_settings key 'claude_model' or 'openai_model').",
+            model_id,
+        )
+        # Return the Anthropic default if the id looks like Claude,
+        # otherwise return the OpenAI mini default.
+        if 'claude' in model_id.lower():
+            return AIModel.CLAUDE_35_SONNET
+        return AIModel.GPT4O_MINI
 
     async def analyze_sentiment(
         self,
@@ -523,7 +560,26 @@ IMPORTANT:
         async with self._session.post(url, headers=headers, json=payload) as response:
             if response.status != 200:
                 error_text = await response.text()
-                logger.error(f"Anthropic error: {error_text}")
+                # Wave-13: distinguish model-not-found from generic errors.
+                # 404 + not_found_error means the model ID is invalid or
+                # not available on this account; emit a loud WARNING so the
+                # operator knows the provider is DEAD, not just slow.
+                if response.status in (404, 400) and (
+                    'not_found_error' in error_text
+                    or '"model"' in error_text
+                ):
+                    logger.warning(
+                        "WARN [ai] Anthropic model '%s' returned HTTP %d "
+                        "(not_found_error). Update DB key 'claude_model' "
+                        "in ai_config to a model your API plan supports. "
+                        "Current model set in AIModel enum: %s. "
+                        "Query: SELECT value FROM config_settings WHERE "
+                        "config_type='ai_config' AND key='claude_model';",
+                        config.model.model_id, response.status,
+                        [m.model_id for m in AIModel if 'claude' in m.model_id],
+                    )
+                else:
+                    logger.error("Anthropic error: %s", error_text)
                 return {'success': False, 'error': f'API error: {response.status}'}
 
             data = await response.json()

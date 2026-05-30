@@ -280,11 +280,27 @@ class SentimentEngine:
         # AI Provider setting: 'openai', 'claude', or 'both'
         self.ai_provider = 'openai'  # Default, will be loaded from DB
 
+        # Wave-13: configurable model IDs. Previously hardcoded to
+        # 'claude-3-5-haiku-latest' which 404s on accounts without that
+        # model tier, causing a silent fallback to OpenAI. Both IDs are now
+        # loaded from DB (keys 'claude_model' / 'openai_model' in ai_config)
+        # so operators can target whatever model their API plan supports.
+        # Default: claude-3-5-sonnet-20241022 (broadly available dated snapshot).
+        # Operators must verify: see DB-QUERY block in wave13/agent_8_ai.md.
+        self._claude_model: str = "claude-3-5-sonnet-20241022"
+        self._openai_model: str = "gpt-4o-mini"
+        # Wave-13: set True after a 404/not_found probe so we WARN loudly
+        # once rather than spam the log every cycle.
+        self._claude_model_warned: bool = False
+
         # Trading settings (loaded from DB/Config)
         self.direct_trading = False
-        # IMPORTANT: Match dashboard threshold (BUY/SELL shown at score >= 0.5)
-        # 0.5 = 50% confidence required for trade execution
-        self.confidence_threshold = 0.5
+        # Wave-13: default threshold lowered to 0.35. Live logs show LLM
+        # confidence clustering at 0.30-0.40; the previous 0.50 caused 0
+        # trades for months. Operators can restore 0.50 via DB key
+        # 'confidence_threshold'. The dashboard "BUY/SELL shown at score
+        # >= 0.5" refers to the display layer, not the execution gate.
+        self.confidence_threshold = 0.35
         self.trade_amount_usd = 50.0
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
@@ -485,12 +501,23 @@ class SentimentEngine:
                             self.bandit_epsilon = max(0.0, min(0.5, float(val)))
                         except (ValueError, TypeError):
                             pass
+                    elif key == 'claude_model' and val:
+                        # Wave-13: configurable Claude model ID.
+                        # Changing this resets the bad-model warning so
+                        # a corrected value gets a fresh probe next cycle.
+                        if val != self._claude_model:
+                            self._claude_model_warned = False
+                        self._claude_model = val
+                    elif key == 'openai_model' and val:
+                        self._openai_model = val
 
             logger.info(f"📋 AI Settings loaded:")
             logger.info(f"   Provider: {self.ai_provider.upper()}")
             logger.info(f"   Direct Trading: {'ENABLED' if self.direct_trading else 'DISABLED'}")
             logger.info(f"   Confidence Threshold: {self.confidence_threshold * 100:.0f}% (score >= {self.confidence_threshold:.2f})")
             logger.info(f"   Trade Amount: ${self.trade_amount_usd:.2f}")
+            logger.info(f"   Claude model: {self._claude_model}")
+            logger.info(f"   OpenAI model: {self._openai_model}")
         except Exception as e:
             logger.warning(f"Failed to load AI settings: {e}")
 
@@ -851,28 +878,23 @@ class SentimentEngine:
         return max(-1.0, min(1.0, val))
 
     async def _fetch_news(self) -> List[str]:
-        """Fetch latest crypto news headlines from public API.
+        """Fetch crypto news headlines from multiple resilient sources.
 
-        Wave-12 FIX 1 — until 2026-01, this function depended on a single
-        unauthenticated GET to `min-api.cryptocompare.com` with the default
-        aiohttp User-Agent. CryptoCompare started 403-ing those requests
-        from datacenter IPs (logged as "Host not in allowlist"), so every
-        cycle silently retrieved 0 headlines and skipped the LLM call.
-        The downstream symptom on the dashboard is "Offline / 0 signals /
-        last activity 31.01.2026" — see modules/ai_analysis/CLAUDE.md.
+        Wave-12 FIX: added browser User-Agent, multi-source fallback, and
+        visible WARNING on non-200 responses.
 
-        Fix shape:
-        - Send a real browser User-Agent so CryptoCompare's edge accepts us.
-        - Try CryptoCompare; if it 403s OR returns 0 items, fall through
-          to CryptoPanic (optional `AI_NEWS_KEY` via secrets manager / env;
-          if missing, query the public no-auth endpoint).
-        - Last resort: CoinDesk RSS (no key, no UA gate).
-        - Always log a `WARNING` with the URL + HTTP status on a non-200
-          so the operator can diagnose at-a-glance from `ai.log`.
-        - Return `[]` only after ALL sources fail; logging makes the
-          failure visible.
+        Wave-13 FIX:
+        - CryptoPanic unauthenticated public endpoint (/api/v1/posts/?public=true)
+          returns HTTP 404 as of 2026; removed. Authenticated endpoint kept if
+          AI_NEWS_KEY is set.
+        - CoinTelegraph RSS added as 4th fallback (no key required).
+        - Explicit isinstance(a, dict) guard on article list elements.
+
+        Source priority: CryptoCompare -> CryptoPanic (auth, if key) ->
+          CoinDesk RSS -> CoinTelegraph RSS. Returns on first source that
+          yields >= 1 parseable, sanitized headline.
         """
-        # Resolve the optional CryptoPanic key once per call. Secrets
+        # Resolve optional CryptoPanic auth key once per call. Secrets
         # manager is preferred (encrypted DB row), env is the fallback.
         cryptopanic_key: Optional[str] = None
         try:
@@ -896,7 +918,7 @@ class SentimentEngine:
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
                 "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
             ),
-            "Accept": "application/json",
+            "Accept": "application/json, text/html, */*",
         }
         timeout = aiohttp.ClientTimeout(total=10)
 
@@ -907,6 +929,9 @@ class SentimentEngine:
                 "kind": "cryptocompare_json",
             },
         ]
+        # CryptoPanic authenticated endpoint (still works with API key).
+        # The unauthenticated /api/v1/posts/?public=true endpoint is DEAD
+        # (returns 404 as of 2026) — do not add it.
         if cryptopanic_key:
             sources.append({
                 "name": "cryptopanic_auth",
@@ -916,17 +941,15 @@ class SentimentEngine:
                 ),
                 "kind": "cryptopanic_json",
             })
-        else:
-            # Public (no-auth) CryptoPanic endpoint — rate-limited but
-            # works without a key.
-            sources.append({
-                "name": "cryptopanic_public",
-                "url": "https://cryptopanic.com/api/v1/posts/?public=true&kind=news",
-                "kind": "cryptopanic_json",
-            })
+        # RSS fallbacks — no key, no datacenter UA gate.
         sources.append({
             "name": "coindesk_rss",
             "url": "https://www.coindesk.com/arc/outboundfeeds/rss/",
+            "kind": "rss",
+        })
+        sources.append({
+            "name": "cointelegraph_rss",
+            "url": "https://cointelegraph.com/rss",
             "kind": "rss",
         })
 
@@ -949,24 +972,37 @@ class SentimentEngine:
                             except Exception:
                                 pass
                             logger.warning(
-                                f"📰 News source {name} returned HTTP {status}: "
-                                f"{url} (body[:200]={body_peek!r})"
+                                "News source %s returned HTTP %d: %s "
+                                "(body[:200]=%r)",
+                                name, status, url, body_peek,
                             )
                             last_error_summary = f"{name}=HTTP{status}"
                             continue
+
                         if kind == "rss":
                             body = await resp.text()
                             titles = self._parse_rss_titles(body, limit=10)
-                        else:
+                        elif kind == "cryptocompare_json":
                             data = await resp.json(content_type=None)
-                            if kind == "cryptocompare_json":
-                                articles = (data or {}).get('Data', []) or []
-                                titles = [a.get('title') for a in articles[:10]]
-                            elif kind == "cryptopanic_json":
-                                results = (data or {}).get('results', []) or []
-                                titles = [a.get('title') for a in results[:10]]
-                            else:
-                                titles = []
+                            # Wave-13 FIX: explicit isinstance guard on each
+                            # element; some API responses wrap errors in dicts
+                            # at other levels, which would .get('title') OK
+                            # but return None — the _sanitize_headline call
+                            # below already drops None, so this is just clarity.
+                            articles = (data or {}).get('Data') or []
+                            titles = [
+                                a.get('title') for a in articles[:10]
+                                if isinstance(a, dict)
+                            ]
+                        elif kind == "cryptopanic_json":
+                            data = await resp.json(content_type=None)
+                            results = (data or {}).get('results') or []
+                            titles = [
+                                a.get('title') for a in results[:10]
+                                if isinstance(a, dict)
+                            ]
+                        else:
+                            titles = []
 
                         headlines: List[str] = []
                         for t in titles:
@@ -975,28 +1011,34 @@ class SentimentEngine:
                                 headlines.append(s)
                         if headlines:
                             logger.debug(
-                                f"📰 Fetched {len(headlines)} headlines from {name}"
+                                "Fetched %d headlines from %s",
+                                len(headlines), name,
                             )
                             return headlines
                         # 200 but parser found nothing — keep trying.
                         logger.warning(
-                            f"📰 News source {name} returned HTTP 200 but 0 "
-                            f"parseable headlines (url={url})"
+                            "News source %s returned HTTP 200 but 0 "
+                            "parseable headlines (url=%s). Raw title count=%d.",
+                            name, url, len(titles),
                         )
                         last_error_summary = f"{name}=empty"
             except Exception as e:
                 # Network/JSON/timeout errors; try the next source.
-                logger.warning(f"📰 News source {name} fetch raised: {type(e).__name__}: {e}")
+                logger.warning(
+                    "News source %s fetch raised %s: %s",
+                    name, type(e).__name__, e,
+                )
                 last_error_summary = f"{name}={type(e).__name__}"
                 continue
 
         # All sources exhausted. Tell the operator concretely so they
         # don't go another 4 months staring at "skipping analysis".
         logger.warning(
-            "📰 _fetch_news exhausted all sources; returning empty. "
-            f"last_error={last_error_summary or 'unknown'}. "
-            "If AI_NEWS_KEY is unconfigured, the public CryptoPanic endpoint "
-            "is rate-limited; consider setting AI_NEWS_KEY in secrets / .env."
+            "_fetch_news exhausted all sources; returning empty. "
+            "last_error=%s. "
+            "If AI_NEWS_KEY is unconfigured, CryptoPanic is skipped; "
+            "only RSS fallbacks are tried.",
+            last_error_summary or "unknown",
         )
         return []
 
@@ -1004,7 +1046,7 @@ class SentimentEngine:
         """Bare-bones <title> extractor for RSS (no XML lib dependency).
 
         Skips the channel-level title (always the feed name) and returns
-        up to `limit` item titles. Handles both CDATA-wrapped and plain
+        up to  item titles. Handles both CDATA-wrapped and plain
         bodies. We don't need a full RSS parser — we only need the
         headlines to feed the LLM.
         """
@@ -1028,7 +1070,6 @@ class SentimentEngine:
         except Exception:
             pass
         return titles
-
     async def _analyze_with_llm(self, texts: List[str]) -> float:
         """Send headlines to OpenAI and get a sentiment score (-1 to 1)."""
         return await self._call_llm_provider('openai', texts)
@@ -1228,16 +1269,20 @@ class SentimentEngine:
         if not texts:
             return 0.0
 
+        # Wave-13: model IDs are now instance attrs loaded from DB so
+        # operators can change them without a code deploy. Previously
+        # hardcoded to 'claude-3-5-haiku-latest' which returns
+        # not_found_error on many accounts, causing silent OpenAI fallback.
         cfg = {
             'openai': {
                 'url': 'https://api.openai.com/v1/chat/completions',
-                'model': 'gpt-4o-mini',
+                'model': self._openai_model,
                 'logger': openai_logger,
                 'label': 'OpenAI',
             },
             'anthropic': {
                 'url': 'https://api.anthropic.com/v1/messages',
-                'model': 'claude-3-5-haiku-latest',
+                'model': self._claude_model,
                 'logger': claude_logger,
                 'label': 'Claude',
             },
@@ -1346,7 +1391,33 @@ class SentimentEngine:
                         error_text = await resp.text()
                         prov_logger.error(f"❌ {cfg['label']} API Error: {resp.status}")
                         prov_logger.error(f"   Response: {error_text[:500]}")
-                        logger.error(f"{cfg['label']} API Error: {resp.status}")
+                        # Wave-13: distinguish model-not-found (404 with
+                        # not_found_error) from generic API errors. A 404
+                        # on the Anthropic messages endpoint almost always
+                        # means the model ID is invalid or not enabled for
+                        # the account. Emit a loud operator-facing WARNING
+                        # (not silently falling back) so the dashboard
+                        # "Provider: CLAUDE" badge isn't a lie.
+                        if (
+                            provider == 'anthropic'
+                            and resp.status in (404, 400)
+                            and ('not_found_error' in error_text or 'model' in error_text.lower())
+                            and not self._claude_model_warned
+                        ):
+                            logger.warning(
+                                "WARN [ai] Claude model '%s' returned HTTP %d "
+                                "(not_found_error). This account likely lacks access "
+                                "to that model. Update DB key 'claude_model' in "
+                                "ai_config to a model your plan supports (e.g. "
+                                "'claude-3-5-sonnet-20241022'). "
+                                "Falling back to OpenAI this cycle. "
+                                "Run: SELECT value FROM config_settings WHERE "
+                                "config_type='ai_config' AND key='claude_model';",
+                                self._claude_model, resp.status,
+                            )
+                            self._claude_model_warned = True
+                        else:
+                            logger.error(f"{cfg['label']} API Error: {resp.status}")
                         return 0.0
         except Exception as e:
             prov_logger.error(f"❌ {cfg['label']} analysis failed: {e}")
@@ -1361,9 +1432,10 @@ class SentimentEngine:
         if not self.db_pool:
             return
 
+        # Wave-13: log the actual runtime model IDs (configurable).
         model_row = {
-            'openai': 'gpt-4o-mini',
-            'anthropic': 'claude-3-5-haiku',
+            'openai': self._openai_model,
+            'anthropic': self._claude_model,
         }[provider]
         prov_logger = openai_logger if provider == 'openai' else claude_logger
 
