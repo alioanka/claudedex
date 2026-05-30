@@ -213,7 +213,7 @@ class Position:
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
     fees_paid: float = 0.0
-    opened_at: datetime = field(default_factory=datetime.utcnow)
+    opened_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     is_simulated: bool = False
     tx_signature: Optional[str] = None
     metadata: Dict = field(default_factory=dict)
@@ -2485,7 +2485,7 @@ class SolanaTradingEngine:
                     take_profit=row['take_profit'],
                     is_simulated=bool(row['is_simulated']),
                     tx_signature=row['tx_signature'],
-                    opened_at=row['opened_at'] or datetime.utcnow(),
+                    opened_at=_as_utc(row['opened_at']) if row['opened_at'] else datetime.now(timezone.utc),
                     metadata=metadata,
                 )
             except Exception as e:
@@ -2533,8 +2533,8 @@ class SolanaTradingEngine:
                     trade.pnl_pct,
                     trade.fees if hasattr(trade, 'fees') else 0,
                     trade.close_reason,
-                    trade.opened_at,
-                    trade.closed_at,
+                    _as_utc(trade.opened_at),
+                    _as_utc(trade.closed_at),
                     int((_as_utc(trade.closed_at) - _as_utc(trade.opened_at)).total_seconds()),
                     trade.is_simulated,
                     self.sol_price_usd,
@@ -2857,7 +2857,7 @@ class SolanaTradingEngine:
                             pnl_pct=pnl_pct,
                             fees=position.fees_paid,
                             opened_at=position.opened_at,
-                            closed_at=datetime.utcnow(),
+                            closed_at=datetime.now(timezone.utc),
                             close_reason="emergency_close",
                             is_simulated=position.is_simulated
                         )
@@ -4559,7 +4559,7 @@ class SolanaTradingEngine:
                 pnl_pct=pnl_pct,
                 fees=position.fees_paid * close_pct,  # Proportional fees
                 opened_at=position.opened_at,
-                closed_at=datetime.utcnow(),  # Fixed: Use UTC for consistency with opened_at
+                closed_at=datetime.now(timezone.utc),
                 close_reason=reason,
                 is_simulated=position.is_simulated
             )
