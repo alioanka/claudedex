@@ -65,6 +65,54 @@ logging.basicConfig(
 logger = logging.getLogger("Dashboard")
 
 
+# ---------------------------------------------------------------------------
+# Scanner-noise filter (Wave-15)
+# Internet scanners hit port 8080 with TLS ClientHello (\x16\x03\x01…),
+# HTTP/2 PRI+Upgrade probes, uptime-robot HEAD probes, and raw HELP/POST
+# requests.  aiohttp's internal HTTP parser rejects all of them with
+# BadStatusLine (HTTP 400) which the aiohttp.server logger emits at ERROR,
+# flooding dashboard_errors.log with multi-line tracebacks that have nothing
+# to do with the application.
+#
+# The filter below demotes these to DEBUG so they are invisible in the error
+# log but still available if the operator drops the aiohttp.server level to
+# DEBUG for deep troubleshooting.  Legitimate 500/application errors are
+# unaffected because they originate from a different code path and carry a
+# different message pattern.
+# ---------------------------------------------------------------------------
+_SCANNER_NOISE_PATTERNS = (
+    "bad status line",
+    "bad request",
+    "invalid method",
+    "400",
+    # TLS/SSL probes arrive as binary garbage that produces these substrings
+    "\\x16\\x03",   # TLS ClientHello
+    "pri * http",   # HTTP/2 upgrade probe
+    "mglndd",       # Uptime-Robot proprietary probe header
+)
+
+
+class _ScannerNoiseFilter(logging.Filter):
+    """Drop aiohttp.server ERROR records caused by external scanner probes."""
+
+    def filter(self, record: logging.LogRecord) -> bool:  # True = keep
+        if record.levelno != logging.ERROR:
+            return True
+        msg = record.getMessage().lower()
+        if any(pat in msg for pat in _SCANNER_NOISE_PATTERNS):
+            # Demote to DEBUG so it still shows up under -vv but never in
+            # dashboard_errors.log or the INFO console stream.
+            record.levelno = logging.DEBUG
+            record.levelname = "DEBUG"
+        return True
+
+
+# Install the filter on the aiohttp server logger that emits BadStatusLine.
+logging.getLogger("aiohttp.server").addFilter(_ScannerNoiseFilter())
+# aiohttp also logs connection-reset / bad-request events through aiohttp.access
+logging.getLogger("aiohttp.access").addFilter(_ScannerNoiseFilter())
+
+
 class StandaloneDashboard:
     """
     Standalone dashboard that runs independently of trading modules.

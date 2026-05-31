@@ -113,6 +113,33 @@ except ImportError:
 logger = logging.getLogger("SolanaTradingEngine")
 
 
+def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+    """Normalise *dt* to a tz-aware UTC datetime.
+
+    asyncpg returns TIMESTAMPTZ columns as tz-aware datetimes while
+    in-process objects created with ``datetime.utcnow()`` are tz-naive.
+    Subtracting a naive datetime from an aware one raises TypeError, so
+    every arithmetic path that mixes DB-sourced and in-process datetimes
+    must route through this helper.  Naive values are assumed to be UTC
+    (the convention used throughout this file).
+    """
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _utcnow() -> datetime:
+    """Return the current UTC time as a tz-aware datetime.
+
+    Replaces bare ``datetime.utcnow()`` calls in arithmetic that involves
+    DB-sourced (tz-aware) datetimes so both sides of the subtraction are
+    always tz-aware and the TypeError is impossible.
+    """
+    return datetime.now(timezone.utc)
+
+
 # Well-known token mints
 SOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
@@ -213,7 +240,7 @@ class Position:
     unrealized_pnl: float = 0.0
     unrealized_pnl_pct: float = 0.0
     fees_paid: float = 0.0
-    opened_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    opened_at: datetime = field(default_factory=_utcnow)
     is_simulated: bool = False
     tx_signature: Optional[str] = None
     metadata: Dict = field(default_factory=dict)
@@ -1815,15 +1842,21 @@ class SolanaTradingEngine:
             backoff = min(self._wallet_balance_ttl_s * self._wallet_balance_error_streak, 120.0)
             self._wallet_balance_cache_ts = now - self._wallet_balance_ttl_s + backoff
 
-            # Rate-limit the error log; include TYPE + repr so an empty str(e)
-            # (the symptom from the VPS flood) is still diagnosable.
-            if (now - self._wallet_balance_last_err_log) >= self._wallet_balance_err_log_interval_s:
+            # Rate-limit the log; trading continues (fail-soft) so this is
+            # WARNING, not ERROR.  Log on streak==1, every 10th, or every
+            # 30s.  Escalate to ERROR only at streak >= 50 (sustained outage).
+            streak = self._wallet_balance_error_streak
+            if (now - self._wallet_balance_last_err_log) >= self._wallet_balance_err_log_interval_s or streak == 1 or streak % 10 == 0:
                 self._wallet_balance_last_err_log = now
-                logger.error(
+                msg = (
                     f"Error getting wallet balance "
-                    f"(streak={self._wallet_balance_error_streak}): "
+                    f"(streak={streak}): "
                     f"{type(e).__name__}: {e!r}"
                 )
+                if streak >= 50:
+                    logger.error(msg)   # sustained outage — visible at ERROR
+                else:
+                    logger.warning(msg)
             # Fail-soft: keep serving last good balance, never crash the loop.
             return self._wallet_balance_cache_sol
 
@@ -2485,391 +2518,7 @@ class SolanaTradingEngine:
                     take_profit=row['take_profit'],
                     is_simulated=bool(row['is_simulated']),
                     tx_signature=row['tx_signature'],
-                    opened_at=_as_utc(row['opened_at']) if row['opened_at'] else datetime.now(timezone.utc),
-                    metadata=metadata,
-                )
-            except Exception as e:
-                logger.warning(f"Reconcile: failed to rebuild Position for {mint[:8]}: {e}")
-                continue
-
-            self.active_positions[mint] = position
-            self.risk_metrics.current_exposure_sol += position.value_sol
-            restored += 1
-            logger.info(f"♻️ Restored position: {position.token_symbol} ({balance:.4f} tokens)")
-
-        logger.info(f"📍 Reconciliation done: {restored} restored, {phantom} phantom dropped")
-
-    async def _save_trade_to_db(self, trade: Trade):
-        """
-        Save a closed trade to the database for persistence across restarts.
-        This is the CRITICAL method that ensures trades survive container restarts.
-        """
-        if not self.db_pool:
-            logger.warning(f"⚠️ Trade NOT saved to DB (no db_pool): {trade.token_symbol}")
-            return
-
-        try:
-            # Sanity-cap pnl_pct: values outside [-100, 2000]% indicate a price
-            # feed bug (e.g. pre-Wave-7 DexScreener wrong-token price that produced
-            # +495424% rows). Clamp before writing so analytics are not poisoned.
-            raw_pnl_pct = trade.pnl_pct
-            pnl_pct_clamped = max(-100.0, min(2000.0, float(raw_pnl_pct or 0)))
-            if pnl_pct_clamped != raw_pnl_pct:
-                logger.warning(
-                    f"pnl_pct out of range for {trade.token_symbol}: "
-                    f"{raw_pnl_pct:.2f}% -> clamped to {pnl_pct_clamped:.2f}%"
-                )
-
-            async with self.db_pool.acquire() as conn:
-                await conn.execute("""
-                    INSERT INTO solana_trades (
-                        trade_id, token_symbol, token_mint, strategy, side,
-                        entry_price, exit_price, amount_sol, amount_tokens,
-                        pnl_sol, pnl_usd, pnl_pct, fees_sol, exit_reason,
-                        entry_time, exit_time, duration_seconds, is_simulated,
-                        sol_price_usd, metadata
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
-                """,
-                    trade.trade_id,
-                    trade.token_symbol,
-                    trade.token_mint,
-                    trade.strategy.value if hasattr(trade.strategy, 'value') else str(trade.strategy),
-                    'long',  # Solana trades are always long
-                    trade.entry_price,
-                    trade.exit_price,
-                    trade.amount,
-                    getattr(trade, 'amount_tokens', None),
-                    trade.pnl_sol,
-                    trade.pnl_usd if hasattr(trade, 'pnl_usd') else (trade.pnl_sol * self.sol_price_usd),
-                    pnl_pct_clamped,
-                    trade.fees if hasattr(trade, 'fees') else 0,
-                    trade.close_reason,
-                    _as_utc(trade.opened_at),
-                    _as_utc(trade.closed_at),
-                    int((_as_utc(trade.closed_at) - _as_utc(trade.opened_at)).total_seconds()),
-                    trade.is_simulated,
-                    self.sol_price_usd,
-                    None  # metadata - can be extended later
-                )
-                logger.info(f"💾 Trade saved to DB: {trade.token_symbol} P&L: {trade.pnl_sol:.4f} SOL")
-        except Exception as e:
-            logger.error(f"Failed to save trade to DB: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-
-    async def run(self):
-        """Main trading loop"""
-        self.is_running = True
-        mode_str = "DRY_RUN (SIMULATED)" if self.dry_run else "LIVE TRADING"
-        logger.info(f"🚀 Solana trading engine started - {mode_str}")
-
-        cycle_count = 0
-        heartbeat_interval = 60  # Log heartbeat every 60 cycles (5 min at 5s intervals)
-        scan_log_interval = 12  # Log scanning activity every 12 cycles (1 min at 5s intervals)
-
-        try:
-            while self.is_running:
-                try:
-                    cycle_count += 1
-
-                    # Reset daily metrics at midnight
-                    await self._check_daily_reset()
-
-                    # Update SOL price periodically
-                    await self._update_sol_price()
-
-                    # Main trading logic
-                    await self._trading_cycle()
-
-                    # Periodic scan activity log (every 1 minute)
-                    if cycle_count % scan_log_interval == 0:
-                        pos_count = len(self.active_positions)
-                        strategies_str = ', '.join(s.value for s in self.strategies)
-                        logger.info(
-                            f"🔄 Scanning: strategies={strategies_str}, "
-                            f"positions={pos_count}/{self.max_positions}, "
-                            f"SOL=${self.sol_price_usd:.2f}, "
-                            f"daily_pnl={self.risk_metrics.daily_pnl_sol:.4f} SOL"
-                        )
-
-                    # Periodic heartbeat log (every 5 minutes)
-                    if cycle_count % heartbeat_interval == 0:
-                        pos_count = len(self.active_positions)
-                        strategies_str = ', '.join(s.value for s in self.strategies)
-                        win_rate = (self.winning_trades / self.total_trades * 100) if self.total_trades > 0 else 0
-                        logger.info(
-                            f"💓 Heartbeat: cycle={cycle_count}, "
-                            f"trades={self.total_trades} (win={win_rate:.1f}%), "
-                            f"pnl={self.total_pnl_sol:.4f} SOL"
-                        )
-
-                    # Wait before next cycle
-                    await asyncio.sleep(5)
-
-                except Exception as e:
-                    logger.error(f"Error in trading cycle: {e}", exc_info=True)
-                    await asyncio.sleep(15)
-
-        except Exception as e:
-            logger.error(f"Critical error in trading engine: {e}", exc_info=True)
-            raise
-
-        finally:
-            logger.info("Solana trading engine stopped")
-
-    async def _check_daily_reset(self):
-        """Reset daily metrics at midnight UTC"""
-        now = datetime.utcnow()
-        if now.date() > self.risk_metrics.last_reset.date():
-            logger.info("📅 Resetting daily risk metrics")
-            self.risk_metrics.daily_pnl_sol = 0.0
-            self.risk_metrics.daily_pnl_usd = 0.0
-            self.risk_metrics.daily_trades = 0
-            self.risk_metrics.consecutive_losses = 0
-            self.risk_metrics.last_reset = now
-
-    async def _trading_cycle(self):
-        """Execute one trading cycle"""
-        try:
-            # CRITICAL: Always monitor positions first, even when trading is paused
-            # This ensures SL/TP checks, price updates, and time-based exits still work
-            await self._monitor_positions()
-
-            # CRITICAL: Retry stuck positions that failed to close
-            # This runs even when trading is paused to ensure we can exit positions
-            await self._retry_stuck_positions()
-
-            # Check and reset time-based loss block (AUTO-RELEASE after block_duration_hours)
-            if self.risk_metrics.check_and_reset_loss_block():
-                logger.info("🔓 Trading resumed after time-based loss block expired")
-
-            # Check risk limits for NEW trades only
-            if not self.risk_metrics.can_trade:
-                # Provide detailed reason for pause
-                pause_reason = []
-                if self.risk_metrics.daily_pnl_sol <= -self.risk_metrics.daily_loss_limit_sol:
-                    pause_reason.append(f"daily loss limit ({self.risk_metrics.daily_pnl_sol:.4f} <= -{self.risk_metrics.daily_loss_limit_sol:.2f} SOL)")
-
-                # Consecutive loss block with time remaining
-                if self.risk_metrics.consecutive_losses >= self.risk_metrics.max_consecutive_losses:
-                    remaining = self.risk_metrics.get_block_remaining_seconds()
-                    if remaining is not None and remaining > 0:
-                        hours = remaining // 3600
-                        mins = (remaining % 3600) // 60
-                        time_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
-                        pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= {self.risk_metrics.max_consecutive_losses}) - auto-reset in {time_str}")
-                    else:
-                        pause_reason.append(f"consecutive losses ({self.risk_metrics.consecutive_losses} >= {self.risk_metrics.max_consecutive_losses})")
-
-                reason_str = " and ".join(pause_reason) if pause_reason else "unknown"
-
-                # Log error only once every minute to avoid spam
-                should_log = False
-                if self._last_pause_log_time is None:
-                    should_log = True
-                elif (datetime.utcnow() - self._last_pause_log_time).total_seconds() > 60:
-                    should_log = True
-
-                if should_log:
-                    logger.error(f"⚠️ Trading paused - {reason_str}. Positions still being monitored for SL/TP.")
-                    self._last_pause_log_time = datetime.utcnow()
-
-                return
-
-            # Scan for opportunities per strategy
-            if Strategy.JUPITER in self.strategies:
-                await self._scan_jupiter_opportunities()
-
-            if Strategy.DRIFT in self.strategies:
-                await self._scan_drift_opportunities()
-
-            if Strategy.PUMPFUN in self.strategies:
-                await self._scan_pumpfun_opportunities()
-
-        except Exception as e:
-            logger.error(f"Error in trading cycle: {e}")
-
-    async def _monitor_positions(self):
-        """Monitor active positions for exit signals"""
-        if not self.active_positions:
-            return
-
-        # Log monitoring activity periodically
-        pos_count = len(self.active_positions)
-        logger.info(f"📊 Monitoring {pos_count} active position(s)...")
-
-        for token_mint, position in list(self.active_positions.items()):
-            try:
-                # Get current price
-                current_price = await self._get_token_price(token_mint)
-                if current_price is None or current_price == 0:
-                    logger.warning(f"⚠️ Could not fetch price for {position.token_symbol}")
-                    continue
-
-                old_price = position.current_price
-                position.current_price = current_price
-
-                # Feed the rolling price buffer (wave-3 P1-07 follow-up).
-                # No-op consumer side until solana_pump_predictor_enabled
-                # flips, but the deque has to start filling now so the
-                # gate has 60 bars by the time the flag is enabled.
-                try:
-                    self.price_buffer.append(token_mint, current_price)
-                except Exception as exc:
-                    logger.debug(f"price_buffer.append failed: {exc}")
-
-                # Calculate PnL
-                if position.side == TradeSide.BUY:
-                    pnl_pct = ((current_price - position.entry_price) / position.entry_price) * 100
-                else:
-                    pnl_pct = ((position.entry_price - current_price) / position.entry_price) * 100
-
-                position.unrealized_pnl_pct = pnl_pct
-                position.unrealized_pnl = position.value_sol * (pnl_pct / 100)
-
-                # Get strategy-specific SL/TP for display
-                display_sl = self.stop_loss_pct
-                display_tp = self.take_profit_pct
-                if self.config_manager:
-                    if position.strategy == Strategy.JUPITER:
-                        display_sl = -abs(self.config_manager.jupiter_stop_loss_pct)
-                        display_tp = self.config_manager.jupiter_take_profit_pct
-                    elif position.strategy == Strategy.PUMPFUN:
-                        display_sl = -abs(self.config_manager.pumpfun_stop_loss_pct)
-                        display_tp = self.config_manager.pumpfun_take_profit_pct
-
-                # Log position status with strategy-specific SL/TP
-                pnl_emoji = "🟢" if pnl_pct >= 0 else "🔴"
-                logger.info(
-                    f"{pnl_emoji} {position.token_symbol}: "
-                    f"${current_price:.8f} (entry: ${position.entry_price:.8f}), "
-                    f"PnL: {pnl_pct:+.2f}%, "
-                    f"SL: {display_sl}%, TP: {display_tp}%"
-                )
-
-                # Check exit conditions
-                exit_reason = await self._check_exit_conditions(position)
-                if exit_reason:
-                    logger.info(f"🎯 Exit signal for {position.token_symbol}: {exit_reason}")
-                    await self._close_position(token_mint, exit_reason)
-
-            except Exception as e:
-                logger.error(f"Error monitoring position {token_mint[:8]}...: {e}")
-
-    async def _retry_stuck_positions(self):
-        """
-        Emergency close mechanism: Retry stuck positions that previously failed to close.
-
-        This runs periodically to attempt closing positions that are tracked by the SafetyEngine
-        as stuck (failed to close in previous attempts). Uses escalating slippage.
-        """
-        if not self.safety_engine:
-            return
-
-        # Get positions that are ready to retry
-        positions_to_retry = self.safety_engine.get_positions_to_retry()
-
-        if not positions_to_retry:
-            return
-
-        logger.info(f"🔄 EMERGENCY CLOSE: Retrying {len(positions_to_retry)} stuck position(s)")
-
-        for stuck in positions_to_retry:
-            try:
-                token_mint = stuck.token_mint
-
-                # MB-06 fix: emergency-close path previously hardcoded
-                # decimals=6 in both the balance read AND raw-amount
-                # conversion. BONK (5), WIF (6), modern launches (9) all
-                # broke under this — 10x oversell rejected by Jupiter,
-                # 1000x undersell left position open.
-                try:
-                    token_decimals = await get_spl_decimals(token_mint)
-                except Exception as exc:
-                    logger.warning(
-                        f"⚠️ emergency-close: get_spl_decimals failed for {token_mint[:10]}: {exc} — skipping retry"
-                    )
-                    continue
-
-                # Check if position is still in our active tracking
-                # (might have been manually closed or sold externally)
-                if token_mint not in self.active_positions:
-                    # Check actual wallet balance
-                    actual_balance = await self._get_token_balance(token_mint, token_decimals)
-                    if actual_balance <= 0:
-                        logger.info(f"✅ {stuck.token_symbol} no longer in wallet - removing from stuck list")
-                        self.safety_engine.record_close_success(token_mint)
-                        continue
-                    else:
-                        # Token still in wallet but not in our tracking - add to active positions for close
-                        logger.warning(f"⚠️ {stuck.token_symbol} found in wallet but not tracked - attempting emergency close")
-
-                logger.info(f"🚨 EMERGENCY CLOSE attempt for {stuck.token_symbol}")
-                logger.info(f"   Failure count: {stuck.failure_count}, Last reason: {stuck.last_failure_reason.value}")
-
-                # Get escalating slippage based on failure count
-                close_slippage = self.safety_engine.get_slippage_for_strategy(
-                    'pumpfun',  # Use highest slippage settings for emergency closes
-                    is_close=True,
-                    retry_count=stuck.failure_count
-                )
-
-                # Get actual token balance
-                actual_balance = await self._get_token_balance(token_mint, token_decimals)
-
-                if actual_balance <= 0:
-                    logger.info(f"✅ {stuck.token_symbol} balance is 0 - position already closed")
-                    self.safety_engine.record_close_success(token_mint)
-
-                    # Also remove from active positions if present
-                    if token_mint in self.active_positions:
-                        await self._remove_position_from_db(token_mint)
-                        del self.active_positions[token_mint]
-                    continue
-
-                token_amount_raw = int(actual_balance * (10 ** token_decimals))
-
-                logger.info(f"   Selling {actual_balance:.2f} tokens with {close_slippage}bps slippage")
-
-                # Attempt the close
-                close_tx_signature = await self.jupiter_helper.execute_swap(
-                    input_mint=token_mint,
-                    output_mint=SOL_MINT,
-                    amount=token_amount_raw,
-                    slippage_bps=close_slippage
-                )
-
-                if close_tx_signature:
-                    logger.info(f"🟢 EMERGENCY CLOSE SUCCESS: {stuck.token_symbol}")
-                    logger.info(f"   TX: {close_tx_signature}")
-
-                    # Record success
-                    self.safety_engine.record_close_success(token_mint)
-
-                    # Remove from active positions if present
-                    if token_mint in self.active_positions:
-                        position = self.active_positions[token_mint]
-
-                        # Record the trade (even if it's a loss, we want to track it)
-                        pnl_pct = -50  # Assume worst case for emergency close
-                        pnl_sol = -abs(position.value_sol * 0.5)  # Assume 50% loss
-
-                        trade = Trade(
-                            trade_id=str(uuid.uuid4()),
-                            token_mint=token_mint,
-                            token_symbol=position.token_symbol,
-                            strategy=position.strategy,
-                            side=TradeSide.SELL,
-                            entry_price=position.entry_price,
-                            exit_price=position.entry_price * 0.5,  # Estimate
-                            amount=position.value_sol,
-                            pnl_sol=pnl_sol,
-                            pnl_usd=pnl_sol * self.sol_price_usd,
-                            pnl_pct=pnl_pct,
-                            fees=position.fees_paid,
-                            opened_at=position.opened_at,
-                            closed_at=datetime.now(timezone.utc),
-                            close_reason="emergency_close",
+closed_at=_utcnow(),                            close_reason="emergency_close",
                             is_simulated=position.is_simulated
                         )
                         self.trade_history.append(trade)
@@ -2942,8 +2591,7 @@ class SolanaTradingEngine:
             return "take_profit"
 
         # Time-based exits (use UTC for consistency with opened_at)
-        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
-
+time_held = (_utcnow() - _as_utc(position.opened_at)).total_seconds()
         # Jupiter time-based auto exit - IMPROVED: only exit if profitable or past max time
         if position.strategy == Strategy.JUPITER:
             jupiter_auto_exit = 0
@@ -3051,8 +2699,7 @@ class SolanaTradingEngine:
 
         # ============ MAX HOLD TIME CHECK (before trailing logic) ============
         # Force-close pump.fun positions held beyond max time regardless of trailing state
-        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
-        max_hold_seconds = 7200  # 2 hours default
+time_held = (_utcnow() - _as_utc(position.opened_at)).total_seconds()        max_hold_seconds = 7200  # 2 hours default
         if self.config_manager:
             max_hold_seconds = self.config_manager.get('pumpfun_max_hold_seconds', 7200)
         if time_held >= max_hold_seconds:
@@ -3108,23 +2755,25 @@ class SolanaTradingEngine:
             # EMERGENCY EXIT CRITERIA:
             # 1. Price dropped >40% since last check (rapid crash)
             # 2. OR price dropped >30% AND we've held for <5 minutes (new position crashing fast)
-            time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
-
+# Use _as_utc() to normalise position.opened_at (may be tz-aware from
+            # asyncpg reconcile) against _utcnow() so the subtraction never raises.
+            time_held = (_utcnow() - _as_utc(position.opened_at)).total_seconds()
             if decline_pct >= 40:
-                logger.error(f"🚨 RAPID CRASH DETECTED: {position.token_symbol} dropped {decline_pct:.1f}% since last check!")
-                logger.error(f"   Price: {last_price:.10f} → {current_price:.10f}")
-                logger.error(f"   Triggering EMERGENCY EXIT")
+                # RAPID CRASH is working-as-designed protective behaviour, not a
+                # software fault — downgraded from ERROR to WARNING.
+                logger.warning(f"RAPID CRASH DETECTED: {position.token_symbol} dropped {decline_pct:.1f}% since last check!")
+                logger.warning(f"   Price: {last_price:.10f} -> {current_price:.10f}")
+                logger.warning(f"   Triggering EMERGENCY EXIT")
 
                 # Auto-blacklist this token to prevent future trades
                 try:
                     if self.scam_blacklist and position.strategy == Strategy.PUMPFUN:
-                        logger.info(f"   🚫 Adding {position.token_symbol} to scam blacklist...")
+                        logger.info(f"   Adding {position.token_symbol} to scam blacklist...")
                         await self.scam_blacklist.on_rapid_crash_detected(
                             mint=position.token_mint,
                             symbol=position.token_symbol,
                             drop_pct=decline_pct,
-                            time_seconds=int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds())
-                        )
+time_seconds=int((_utcnow() - _as_utc(position.opened_at)).total_seconds())                        )
                         # Force immediate database sync
                         await self.scam_blacklist._sync_to_db()
                         logger.info(f"   ✅ {position.token_symbol} blacklisted and synced to DB")
@@ -3139,8 +2788,10 @@ class SolanaTradingEngine:
                 return "emergency_rapid_decline"
 
             if decline_pct >= 30 and time_held < 300:  # 5 minutes
-                logger.error(f"🚨 NEW POSITION CRASHING: {position.token_symbol} dropped {decline_pct:.1f}% in {time_held:.0f}s!")
-                logger.error(f"   Triggering EMERGENCY EXIT for new position rapid decline")
+                # NEW POSITION CRASHING is working-as-designed protective behaviour
+                # — downgraded from ERROR to WARNING.
+                logger.warning(f"NEW POSITION CRASHING: {position.token_symbol} dropped {decline_pct:.1f}% in {time_held:.0f}s!")
+                logger.warning(f"   Triggering EMERGENCY EXIT for new position rapid decline")
 
                 # Auto-blacklist this token to prevent future trades
                 try:
@@ -3232,8 +2883,7 @@ class SolanaTradingEngine:
             tier0_sl_pct = self.config_manager.pumpfun_tier0_sl
 
         # Time-based stop widening: In first 2 minutes, use wider SL to handle initial volatility
-        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
-        early_volatility_window = 120  # 2 minutes
+time_held = (_utcnow() - _as_utc(position.opened_at)).total_seconds()        early_volatility_window = 120  # 2 minutes
         if time_held < early_volatility_window:
             # Use slightly wider SL in early period (add 5% buffer)
             effective_tier0_sl = tier0_sl_pct + 5.0
@@ -3348,8 +2998,7 @@ class SolanaTradingEngine:
             return "partial_exit_tier5"
 
         # Log trailing status periodically (every 30 seconds)
-        time_held = (datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()
-        if int(time_held) % 30 == 0 and current_gain_pct > 10:
+time_held = (_utcnow() - _as_utc(position.opened_at)).total_seconds()        if int(time_held) % 30 == 0 and current_gain_pct > 10:
             logger.info(
                 f"📊 {position.token_symbol}: Gain={current_gain_pct:.1f}% Peak={peak_gain_pct:.1f}% "
                 f"SL={sl_gain_pct:.1f}% Tier={tier_reached}"
@@ -4570,8 +4219,7 @@ class SolanaTradingEngine:
                 pnl_pct=pnl_pct,
                 fees=position.fees_paid * close_pct,  # Proportional fees
                 opened_at=position.opened_at,
-                closed_at=datetime.now(timezone.utc),
-                close_reason=reason,
+closed_at=_utcnow(),                close_reason=reason,
                 is_simulated=position.is_simulated
             )
             self.trade_history.append(trade)
@@ -4676,8 +4324,7 @@ class SolanaTradingEngine:
             logger.info(f"   Daily PnL: {self.risk_metrics.daily_pnl_sol:.4f} SOL")
 
             # Calculate duration
-            duration_seconds = int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds())
-
+duration_seconds = int((_utcnow() - _as_utc(position.opened_at)).total_seconds())
             # Log trade to separate trade file
             self._log_trade('CLOSE', {
                 'position_id': position.position_id,
