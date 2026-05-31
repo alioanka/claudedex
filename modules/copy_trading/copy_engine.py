@@ -1053,6 +1053,20 @@ class CopyTradingEngine(BaseModule):
         # Tune via config_settings.copytrading_config.copy_max_signal_age_s.
         self.copy_max_signal_age_s = 5.0
 
+        # Wave-15: concurrency cap for Solana wallet fan-out.
+        # Default 5 — caps Helius REST calls at 5 concurrent so the
+        # enhanced-tx endpoint doesn't 429 under 33-wallet configs.
+        # Tune via config_settings.copytrading_config.copy_max_concurrent_wallets.
+        self.copy_max_concurrent_wallets = 5
+
+        # Wave-15: per-wallet cursor (most-recent processed signature).
+        # On first run the cursor is absent; we record the newest sig
+        # returned by the API as the cursor and skip ALL history — old
+        # leader trades are never actionable and must not be replayed.
+        # On subsequent runs only sigs older than (i.e. returned before)
+        # the cursor are skipped, so no re-evaluation noise.
+        self._wallet_sig_cursors: Dict[str, str] = {}
+
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
 
@@ -1329,6 +1343,14 @@ class CopyTradingEngine(BaseModule):
                             self.cross_module_exposure_cap_usd = max(0.0, min(1e7, v))
                         except (TypeError, ValueError):
                             pass
+                    elif key == 'copy_max_concurrent_wallets':
+                        try:
+                            v = int(val) if val else 5
+                            # Clamp: at least 1, at most 20 (above that the
+                            # Helius plan rate limit is the binding constraint).
+                            self.copy_max_concurrent_wallets = max(1, min(20, v))
+                        except (TypeError, ValueError):
+                            pass
                     elif key == 'copy_max_signal_age_s':
                         # Wave-14 staleness guard. Clamp: floor at 1 s
                         # (below that no copy can physically execute),
@@ -1511,7 +1533,12 @@ class CopyTradingEngine(BaseModule):
         try:
             async with session.get(url, timeout=aiohttp.ClientTimeout(total=8)) as resp:
                 if resp.status == 429:
-                    logger.warning("Helius enhanced-tx rate limited (429)")
+                    logger.debug("Helius enhanced-tx rate limited (429) — backing off")
+                    try:
+                        from config.rpc_provider import RPCProvider
+                        await RPCProvider.report_rate_limit('HELIUS_API', 'api.helius.xyz', 60)
+                    except Exception:
+                        pass
                     return []
                 if resp.status != 200:
                     logger.debug(
@@ -1574,23 +1601,42 @@ class CopyTradingEngine(BaseModule):
         now_ts = _time.time()
         signal_age_s = float(getattr(self, 'copy_max_signal_age_s', 5.0))
         trades_copied = 0
+
+        # Wave-15 cursor: the first sig in the response is the newest.
+        # On first run (no cursor) record it and skip ALL history so we
+        # never replay old leader trades.  On subsequent runs only sigs
+        # not yet in _known_solana_sigs are evaluated; stale ones are
+        # remembered so they are silently ignored on the next cycle.
+        cursor = self._wallet_sig_cursors.get(wallet)
+        if not cursor and signatures:
+            newest_sig = signatures[0].get('signature')
+            if newest_sig:
+                self._wallet_sig_cursors[wallet] = newest_sig
+                self._remember_sol_sig(newest_sig)
+            return 0  # Skip history on first run
+
         for sig_info in signatures:
             sig = sig_info.get('signature')
             if not sig or sig in self._known_solana_sigs:
                 continue
             if sig_info.get('err') is not None:
+                self._remember_sol_sig(sig)  # don't revisit failed txs
                 continue
             block_time = sig_info.get('blockTime', 0)
             if not block_time:
                 continue
             age_s = now_ts - block_time
             if age_s > signal_age_s:
-                self._log_replay_decision(
-                    chain='solana', wallet=wallet, tx_hash=sig,
-                    decision='skipped', reason='signal_stale',
-                    extra={'age_s': round(age_s, 1), 'max_age_s': signal_age_s},
+                # Sig is stale: remember it so we never log it again.
+                self._remember_sol_sig(sig)
+                logger.debug(
+                    f"[replay] solana wallet={wallet[:10]} tx={sig[:14]} "
+                    f"decision=skipped reason=signal_stale "
+                    f"extra={{'age_s': {round(age_s, 1)}, 'max_age_s': {signal_age_s}}}"
                 )
                 continue
+            # Fresh signal — advance cursor, dispatch.
+            self._wallet_sig_cursors[wallet] = sig
             self._remember_sol_sig(sig)
             if await self._analyze_and_copy_solana(wallet, sig):
                 trades_copied += 1
@@ -1603,6 +1649,9 @@ class CopyTradingEngine(BaseModule):
         upfront, so we can skip stale signals without a second RPC call.
         Falls through to _analyze_and_copy_solana (which calls getTransaction)
         only for fresh signals.
+
+        Wave-15: stale sigs are remembered (so they are silently ignored on
+        the next cycle) and logged at DEBUG only (not INFO).
         """
         import time as _time
         sig = tx.get('signature')
@@ -1613,14 +1662,16 @@ class CopyTradingEngine(BaseModule):
             age_s = _time.time() - block_time
             signal_age_s = float(getattr(self, 'copy_max_signal_age_s', 5.0))
             if age_s > signal_age_s:
-                self._log_replay_decision(
-                    chain='solana', wallet=wallet, tx_hash=sig,
-                    decision='skipped', reason='signal_stale',
-                    extra={'age_s': round(age_s, 1), 'max_age_s': signal_age_s},
-                )
+                # Remember stale sig so it is silently skipped next cycle.
                 self._remember_sol_sig(sig)
+                logger.debug(
+                    f"[replay] solana wallet={wallet[:10]} tx={sig[:14]} "
+                    f"decision=skipped reason=signal_stale "
+                    f"extra={{'age_s': {round(age_s, 1)}, 'max_age_s': {signal_age_s}}}"
+                )
                 return False
         self._remember_sol_sig(sig)
+        self._wallet_sig_cursors[wallet] = sig  # advance cursor on fresh sig
         return await self._analyze_and_copy_solana(wallet, sig)
 
     async def _monitor_solana_wallets(self) -> int:
@@ -1663,20 +1714,31 @@ class CopyTradingEngine(BaseModule):
 
         use_helius = bool(helius_key)
 
+        # Wave-15: cap concurrency so we don't hammer Helius with 33
+        # simultaneous REST calls.  Default 5; operator-tunable via
+        # copy_max_concurrent_wallets in config_settings.
+        concurrency = int(getattr(self, 'copy_max_concurrent_wallets', 5))
+        sem = asyncio.Semaphore(concurrency)
+
         async def _handle_wallet(session: aiohttp.ClientSession, wallet: str) -> int:
-            try:
-                if use_helius:
-                    txs = await self._fetch_wallet_txs_helius(session, wallet, helius_key)
-                    if txs:
-                        sub_results = await asyncio.gather(
-                            *[self._process_helius_enhanced_tx(wallet, tx) for tx in txs],
-                            return_exceptions=True,
-                        )
-                        return sum(1 for r in sub_results if r is True)
-                return await self._poll_wallet_sigs(session, wallet)
-            except Exception as e:
-                logger.debug(f"_handle_wallet error for {wallet[:10]}: {e}")
-                return 0
+            import random as _random
+            async with sem:
+                # Small per-wallet jitter (0-200 ms) spreads bursts
+                # further and reduces synchronised 429 windows.
+                await asyncio.sleep(_random.uniform(0, 0.2))
+                try:
+                    if use_helius:
+                        txs = await self._fetch_wallet_txs_helius(session, wallet, helius_key)
+                        if txs:
+                            sub_results = await asyncio.gather(
+                                *[self._process_helius_enhanced_tx(wallet, tx) for tx in txs],
+                                return_exceptions=True,
+                            )
+                            return sum(1 for r in sub_results if r is True)
+                    return await self._poll_wallet_sigs(session, wallet)
+                except Exception as e:
+                    logger.debug(f"_handle_wallet error for {wallet[:10]}: {e}")
+                    return 0
 
         timeout = aiohttp.ClientTimeout(total=12)
         async with aiohttp.ClientSession(timeout=timeout) as session:
