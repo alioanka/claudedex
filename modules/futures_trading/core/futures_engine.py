@@ -357,6 +357,11 @@ class FuturesTradingEngine:
             self.atr_tp_rr_ratio = float(getattr(
                 risk_config, 'atr_tp_rr_ratio', 2.0))
 
+            # FUT-RM-23 (Wave 14): intraday max-hold cap (0 = disabled).
+            self.max_hold_minutes = int(getattr(risk_config, 'max_hold_minutes', 240))
+            # FUT-RM-24 (Wave 14): signal-reversal score threshold for early exit.
+            self.signal_reversal_threshold = int(getattr(risk_config, 'signal_reversal_threshold', 4))
+
             # Calculate max_daily_loss_usd from percentage and capital
             # If max_daily_loss_pct is set (from UI), use that. Otherwise use max_daily_loss_usd directly.
             if risk_config.max_daily_loss_pct and risk_config.max_daily_loss_pct > 0:
@@ -442,6 +447,9 @@ class FuturesTradingEngine:
             self.min_volume_multiplier = 0.8
             self.verbose_signals = True
             self.cooldown_duration = timedelta(minutes=5)
+            # FUT-RM-23/24 fallback defaults
+            self.max_hold_minutes = 240
+            self.signal_reversal_threshold = 4
 
         # DRY_RUN already resolved at top of __init__ via core.dry_run.resolve_dry_run_env
 
@@ -1153,6 +1161,25 @@ class FuturesTradingEngine:
         min_hold_seconds = 300  # 5 minutes minimum hold
         position_age = (datetime.now() - position.opened_at).total_seconds()
 
+        # FUT-RM-23 (Wave 14): intraday max-hold cap.
+        # 15m-signal trades drifting for hours bleed funding + fees with no
+        # incremental edge. Exit via time_limit when max_hold_minutes is set,
+        # the cap has elapsed, and the position has NOT yet hit TP1 (indicated
+        # by trailing_stop_price still being None — TP1 hit moves stop to BE).
+        # This is DRY_RUN-safe: _close_position simulates the close in paper mode.
+        max_hold_min = int(getattr(self, 'max_hold_minutes', 240))
+        if max_hold_min > 0:
+            hold_elapsed_min = position_age / 60.0
+            if hold_elapsed_min >= max_hold_min:
+                # Only time-exit if TP1 has NOT been hit yet (no breakeven stop set)
+                if position.trailing_stop_price is None:
+                    logger.info(
+                        f"FUT-RM-23 max-hold cap: {position.symbol} held "
+                        f"{hold_elapsed_min:.0f}min >= {max_hold_min}min limit, "
+                        f"no TP hit yet — time_limit exit"
+                    )
+                    return "time_limit"
+
         if position_age >= min_hold_seconds:
             signals = await self._get_technical_signals(position.symbol)
             if signals:
@@ -1165,13 +1192,17 @@ class FuturesTradingEngine:
                     signals.ema_signal.value
                 )
 
-                # Only exit on VERY strong reversal (score >= 6 or <= -6)
-                # This is more strict than entry signal to avoid whipsaws
-                if position.side == TradeSide.LONG and reversal_score <= -6:
+                # FUT-RM-24 (Wave 14): configurable reversal threshold.
+                # Pre-Wave-14 required score <= -6 which was practically
+                # impossible (needed all 5 indicators at STRONG_BUY/SELL).
+                # signal_reversal_threshold defaults to 4 = 2 strong reversals,
+                # above the entry bar of 3 to avoid whipsaw exits.
+                rev_thr = int(getattr(self, 'signal_reversal_threshold', 4))
+                if position.side == TradeSide.LONG and reversal_score <= -rev_thr:
                     # Additional check: only if we're in profit or at breakeven
                     if leveraged_pnl_pct >= -1.0:  # Allow small loss
                         return "Signal"
-                elif position.side == TradeSide.SHORT and reversal_score >= 6:
+                elif position.side == TradeSide.SHORT and reversal_score >= rev_thr:
                     if leveraged_pnl_pct >= -1.0:  # Allow small loss
                         return "Signal"
 

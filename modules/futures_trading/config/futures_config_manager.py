@@ -193,6 +193,23 @@ class FuturesRiskConfig(BaseModel):
     post_loss_cooloff_threshold: int = 2
     post_loss_cooloff_minutes: int = 240
 
+    # FUT-RM-23 (Wave 14): intraday max-hold cap.
+    # 15m-signal trades that drift unclosed for hours bleed funding + fees
+    # with no incremental edge. When a position exceeds max_hold_minutes AND
+    # has not hit TP1 yet (trailing_stop_price == None means stop is still at
+    # entry SL, not yet moved to breakeven), it is time-exited.
+    # Wave-14 DRY_RUN data: avg_hold 231-1825 min caused net -$113 on 18
+    # symbols in 21h. 0 = disabled. Default 240 min = 16 × the 15m signal bar.
+    max_hold_minutes: int = 240
+
+    # FUT-RM-24 (Wave 14): signal-reversal threshold for early exit.
+    # Pre-Wave-14 code required reversal_score <= -6 (all 5 indicators
+    # strongly reversed) which is practically impossible — max score is
+    # ±10 and 6 requires 3 STRONG + any 1 other fully aligned. Lowering
+    # to 4 = 2 strong reversals aligns with entry threshold and allows
+    # the path to actually fire. Minimum 3 to avoid whipsaw exits on noise.
+    signal_reversal_threshold: int = 4
+
 
 class FuturesPairsConfig(BaseModel):
     """Trading pairs configuration"""
