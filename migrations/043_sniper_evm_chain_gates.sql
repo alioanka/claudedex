@@ -1,4 +1,4 @@
--- Migration 041: Sniper per-chain EVM enable switch + tighter EVM-specific filters
+-- Migration 043: Sniper per-chain EVM enable switch + tighter EVM-specific filters
 --
 -- Context: 21h DRY_RUN data (3686 closed EVM trades) shows:
 --   EVM:    12.7% win-rate / -0.09% avg P&L  (negative expectancy)
