@@ -723,6 +723,71 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.error(f"Failed to save trade to DB: {e}")
 
+    @staticmethod
+    def _ccxt_transient_error_types() -> tuple:
+        """Return ccxt transient-error base classes, importing lazily.
+
+        Wave-15: used by _load_markets_with_retry to distinguish network
+        hiccups (retryable) from auth errors (fail-fast).
+        """
+        try:
+            import ccxt.base.errors as _ccxt_errs
+            return (
+                _ccxt_errs.RequestTimeout,
+                _ccxt_errs.NetworkError,
+                _ccxt_errs.ExchangeNotAvailable,
+                _ccxt_errs.DDoSProtection,
+            )
+        except Exception:
+            return ()
+
+    @staticmethod
+    async def _load_markets_with_retry(client, label: str, max_attempts: int = 5) -> None:
+        """Call client.load_markets() with exponential backoff on transient errors.
+
+        Wave-15 fix: Binance fapi/v1/exchangeInfo can time out during brief
+        network hiccups on startup. Retry sequence: 2 s, 4 s, 8 s, 16 s, 32 s
+        (62 s total wait before giving up).
+
+        Only ccxt timeout / network errors are retried. Auth errors
+        (InvalidNonce, AuthenticationError, etc.) propagate immediately so the
+        operator sees the real problem quickly.
+        """
+        transient = FuturesTradingEngine._ccxt_transient_error_types()
+        delays = [2, 4, 8, 16, 32]
+        last_exc: Exception = RuntimeError("load_markets never attempted")
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await client.load_markets()
+                logger.info(
+                    f"Loaded {len(client.markets)} markets [{label}]"
+                    + (f" (attempt {attempt}/{max_attempts})" if attempt > 1 else "")
+                )
+                return
+            except Exception as exc:
+                last_exc = exc
+                if transient and isinstance(exc, transient):
+                    wait = delays[min(attempt - 1, len(delays) - 1)]
+                    logger.warning(
+                        f"Binance load_markets transient error [{label}] "
+                        f"(attempt {attempt}/{max_attempts}): "
+                        f"{type(exc).__name__}: {exc} — retrying in {wait}s"
+                    )
+                    if attempt < max_attempts:
+                        await asyncio.sleep(wait)
+                else:
+                    # Non-transient (auth, bad config): fail immediately.
+                    logger.error(
+                        f"Binance load_markets non-transient error [{label}]: "
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                    raise
+        # All retries exhausted.
+        logger.error(
+            f"Binance load_markets failed after {max_attempts} attempts [{label}]: {last_exc}"
+        )
+        raise last_exc
+
     async def _init_binance(self):
         """Initialize Binance Futures client"""
         try:
@@ -764,10 +829,13 @@ class FuturesTradingEngine:
             # ISSUE-15: record masked fingerprint of the active key.
             self._set_api_key_fingerprint(api_key)
 
+            # Wave-15: raise ccxt timeout from default 10 s to 30 s.
+            # Datacenter -> Binance fapi round-trips can exceed 10 s under load.
             self.exchange_client = ccxt.binance({
                 'apiKey': api_key,
                 'secret': api_secret,
                 'enableRateLimit': True,
+                'timeout': 30000,
                 'options': {
                     'defaultType': 'future',
                     'adjustForTimeDifference': True,
@@ -778,9 +846,8 @@ class FuturesTradingEngine:
             if sandbox_mode:
                 self.exchange_client.set_sandbox_mode(True)
 
-            # Load markets
-            await self.exchange_client.load_markets()
-            logger.info(f"✅ Loaded {len(self.exchange_client.markets)} markets")
+            # Wave-15: load_markets with retry + exponential backoff.
+            await self._load_markets_with_retry(self.exchange_client, label='primary')
 
             # Create mainnet price client for accurate prices (especially in DRY_RUN mode)
             # This ensures we always get live prices from mainnet, regardless of testnet setting
@@ -801,6 +868,7 @@ class FuturesTradingEngine:
                             'apiKey': mainnet_key,
                             'secret': mainnet_secret,
                             'enableRateLimit': True,
+                            'timeout': 30000,
                             'options': {
                                 'defaultType': 'future',
                                 'adjustForTimeDifference': True,
@@ -810,13 +878,15 @@ class FuturesTradingEngine:
                         # Public client without credentials (can still fetch prices)
                         self.price_client = ccxt.binance({
                             'enableRateLimit': True,
+                            'timeout': 30000,
                             'options': {
                                 'defaultType': 'future',
                             }
                         })
 
-                    await self.price_client.load_markets()
-                    logger.info("✅ Mainnet price client initialized for accurate live prices")
+                    # Wave-15: also use retry for the price client.
+                    await self._load_markets_with_retry(self.price_client, label='price-client')
+                    logger.info("Mainnet price client initialized for accurate live prices")
                 except Exception as e:
                     logger.warning(f"Could not initialize mainnet price client: {e}")
                     self.price_client = None
