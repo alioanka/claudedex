@@ -225,6 +225,10 @@ class RiskManager:
         self.risk_cache: Dict[str, RiskScore] = {}
         self.cache_duration = 300  # 5 minutes
 
+        # Wave-15: allocation guard (optional; injected via set_allocation_guard)
+        self._allocation_guard = None
+        self._module_name: str = "unknown"
+
         # ✅ Initialize tracking variables HERE (not in initialize())
         self._real_peak_balance = None
         self._daily_start_balance = None
@@ -257,6 +261,23 @@ class RiskManager:
         self.avg_slippage_bps = 0
         self.alert_manager = None  # Set by engine if available
 
+
+    def set_allocation_guard(self, guard, module_name: str = "unknown") -> None:
+        """Wire the wave-15 AllocationGuard into validate_trade.
+
+        Call this from each module's initialize() after constructing the guard:
+
+            from core.allocation_guard import AllocationGuard
+            guard = AllocationGuard(db_pool, dry_run=dry_run_flag, module="sniper")
+            risk_manager.set_allocation_guard(guard, module_name="sniper")
+
+        The guard is optional — validate_trade skips the allocation check when
+        not set. Fail-soft: any error in the guard allows the trade through.
+        """
+        self._allocation_guard = guard
+        self._module_name = module_name
+        log.info("allocation guard wired for module=%s dry_run=%s", module_name,
+                 getattr(guard, '_dry_run', '?'))
 
     def check_circuit_breakers(self, metrics: CircuitBreakerMetrics) -> Tuple[bool, Optional[str]]:
         """
@@ -1102,12 +1123,59 @@ class RiskManager:
             # Check position size limits
             available_balance = await self.wallet_manager.get_available_balance()
             max_position = available_balance * self.max_position_size_percent / 100
-            
+
             if amount > max_position:
                 return False, f"Position size exceeds maximum ({max_position})"
-                
+
+            # ====================================================================
+            # STEP 3: ALLOCATION GUARD (wave-15)
+            # Central cross-module capital accountant. Checks whether committing
+            # `amount` USD would breach this module's budget or the shared-wallet
+            # global cap. Fail-soft: any error in the guard allows the trade
+            # through (existing per-module caps are the safety net). Exits are
+            # never blocked by the guard (only entries reach this path).
+            # ====================================================================
+            if hasattr(self, '_allocation_guard') and self._allocation_guard is not None:
+                try:
+                    guard_module = getattr(self, '_module_name', 'unknown')
+                    # Convert native-token amount to USD via available_balance
+                    # as a proxy. The guard uses the DB-committed USD figure;
+                    # `amount` here is the trade request size in the module's
+                    # native unit. Modules that wire the guard directly can pass
+                    # USD directly; the RiskManager path does a best-effort USD
+                    # estimate (amount / available_balance * portfolio_value).
+                    # When portfolio_manager is available, use real portfolio value.
+                    try:
+                        if self.portfolio_manager:
+                            portfolio_usd = float(await self.portfolio_manager.get_portfolio_value())
+                        else:
+                            portfolio_usd = float(
+                                self.config.get('portfolio', {}).get('initial_balance', 400.0)
+                            )
+                        if available_balance > 0:
+                            # Fraction of available balance * total portfolio value
+                            amount_usd = (amount / float(available_balance)) * portfolio_usd
+                        else:
+                            amount_usd = amount  # fallback: treat as USD
+                    except Exception:
+                        amount_usd = amount
+
+                    guard_ok, guard_reason = await self._allocation_guard.check(
+                        guard_module, amount_usd
+                    )
+                    if not guard_ok:
+                        log.warning(
+                            "allocation guard veto on %s: %s", guard_module, guard_reason
+                        )
+                        return False, f"Allocation guard: {guard_reason}"
+                    log.debug("allocation guard pass: %s $%.2f ok", guard_module, amount_usd)
+                except Exception as guard_exc:
+                    log.warning(
+                        "allocation guard error (fail-soft, allowing trade): %s", guard_exc
+                    )
+
             return True, "Trade validated"
-            
+
         except Exception as e:
             return False, f"Validation error: {str(e)}"
 
