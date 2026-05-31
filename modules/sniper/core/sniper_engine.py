@@ -146,6 +146,20 @@ class SniperEngine:
         # so resolution falls through unaffected.
         self.sniper_pyth_feeds_enabled = True
 
+        # Wave-14: per-chain EVM enable switch + tighter EVM-specific filters.
+        # 21h DRY_RUN: EVM 12.7% WR / -0.09% avg (negative expectancy) vs
+        # Solana 50.8% WR / +2.81% avg. Default FALSE so EVM is gated off
+        # until an operator confirms a profitable sub-segment exists (higher
+        # safety score + liquidity floors likely required).
+        # Flip sniper_evm_enabled=true in config_settings to re-enable without
+        # a code deploy.
+        self.sniper_evm_enabled: bool = False
+        # EVM-specific filter overrides. Applied on top of (not instead of)
+        # global min_liquidity. 0 = inherit global value unchanged.
+        # Seeded to tighter-than-global defaults in migration 041.
+        self.evm_min_liquidity: float = 0.0   # USD; 0 = use global min_liquidity
+        self.evm_min_safety_score: int = 0    # 0-100; 0 = no extra score gate
+
         # Statistics tracking for rate-limited logging
         self._stats = {
             'tokens_analyzed': 0,
@@ -202,11 +216,23 @@ class SniperEngine:
         self.executor = TradeExecutor(self.config)
         await self.executor.initialize()
 
-        # Initialize Listeners based on enabled chains
-        if sniper_config.get('evm_enabled', True):
+        # Initialize Listeners based on enabled chains.
+        # EVM listener is further gated by sniper_evm_enabled (DB key loaded in
+        # _load_settings). sniper_evm_enabled defaults FALSE because 21h DRY_RUN
+        # showed EVM at 12.7% WR / -0.09% avg (negative expectancy). Set
+        # sniper_evm_enabled=true in config_settings to re-enable when EVM
+        # filter thresholds are tightened enough to restore positive expectancy.
+        if sniper_config.get('evm_enabled', True) and self.sniper_evm_enabled:
             from modules.sniper.core.evm_listener import EVMListener
             self.evm_listener = EVMListener(self.config)
             await self.evm_listener.initialize()
+        elif sniper_config.get('evm_enabled', True) and not self.sniper_evm_enabled:
+            logger.warning(
+                "EVM sniping DISABLED by sniper_evm_enabled=false (DB config). "
+                "Solana path is unaffected. To re-enable: UPDATE config_settings "
+                "SET value='true' WHERE config_type='sniper_config' "
+                "AND key='sniper_evm_enabled';"
+            )
 
         if sniper_config.get('solana_enabled', True):
             from modules.sniper.core.solana_listener import SolanaListener
@@ -282,6 +308,15 @@ class SniperEngine:
                             self.sniper_pyth_feeds_enabled = (
                                 val.lower() in ('true', '1', 'yes') if val else True
                             )
+                        # Wave-14: per-chain EVM enable + tighter EVM filters
+                        elif key == 'sniper_evm_enabled':
+                            self.sniper_evm_enabled = (
+                                val.lower() in ('true', '1', 'yes') if val else False
+                            )
+                        elif key == 'evm_min_liquidity':
+                            self.evm_min_liquidity = float(val) if val else 0.0
+                        elif key == 'evm_min_safety_score':
+                            self.evm_min_safety_score = int(val) if val else 0
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -305,6 +340,19 @@ class SniperEngine:
             else:
                 logger.info(f"   Safety: max_tax={self.max_buy_tax}%, min_liq=${self.min_liquidity}")
             logger.info(f"   Exit: TP={getattr(self, 'take_profit_pct', 50)}%, SL={getattr(self, 'stop_loss_pct', 20)}%")
+            evm_liq_msg = (
+                f"${self.evm_min_liquidity:,.0f}" if self.evm_min_liquidity > 0
+                else f"inherit global (${self.min_liquidity:,.0f})"
+            )
+            evm_score_msg = (
+                f">={self.evm_min_safety_score}" if self.evm_min_safety_score > 0
+                else "no extra gate"
+            )
+            logger.info(
+                f"   EVM sniping: {'ENABLED' if self.sniper_evm_enabled else 'DISABLED'} "
+                f"(sniper_evm_enabled={self.sniper_evm_enabled}) | "
+                f"evm_min_liq={evm_liq_msg} | evm_min_score={evm_score_msg}"
+            )
 
         except Exception as e:
             logger.error(f"Error loading sniper settings: {e}")
@@ -548,6 +596,17 @@ class SniperEngine:
             min_liquidity = self.min_liquidity
             allow_caution = False
 
+        # Wave-14: EVM-specific filter overrides applied on top of global gates.
+        # evm_min_liquidity>0 raises the liquidity floor for EVM-only candidates.
+        # evm_min_safety_score>0 adds a hard score floor (0-100 subtractive scale;
+        # higher score = safer token). Both ignored in test_mode.
+        if chain_type == 'evm' and not self.test_mode:
+            if self.evm_min_liquidity > 0:
+                min_liquidity = max(min_liquidity, self.evm_min_liquidity)
+            evm_score_floor = self.evm_min_safety_score  # 0 means gate disabled
+        else:
+            evm_score_floor = 0
+
         # Perform comprehensive safety check
         timing = target.get('_timing')
         try:
@@ -609,6 +668,20 @@ class SniperEngine:
                     self._stats['low_liquidity_rejected'] += 1
                     self._rejected_cache[token_address] = datetime.now()  # Add to cooldown
                     logger.debug(f"⚠️ Low liquidity: {token_address[:16]}... (${report.liquidity_usd:,.0f} < ${min_liquidity:,.0f})")
+                    if timing:
+                        timing.outcome = 'rejected_safety'
+                    return False
+
+                # Wave-14: EVM-specific safety score floor. score is a
+                # subtractive-penalty integer (0=DANGER, 100=perfect). Tokens
+                # below evm_score_floor are rejected even if rating is not
+                # DANGER — targeting the CAUTION band that drives EVM losses.
+                if evm_score_floor > 0 and report.score < evm_score_floor:
+                    self._rejected_cache[token_address] = datetime.now()
+                    logger.debug(
+                        f"EVM score floor: {token_address[:16]}... "
+                        f"(score {report.score} < floor {evm_score_floor})"
+                    )
                     if timing:
                         timing.outcome = 'rejected_safety'
                     return False
