@@ -402,6 +402,28 @@ class FuturesTradingEngine:
                 strategy_config, 'one_entry_per_candle', True))
             self.verbose_signals = strategy_config.verbose_signals
 
+            # FUT-RM-25 (Wave 14): funding-rate carry config.
+            # Optional; falls back to disabled if FuturesFundingConfig is absent.
+            try:
+                funding_config = config_manager.get_funding()
+                self.funding_carry_enabled = bool(getattr(
+                    funding_config, 'funding_carry_enabled', False))
+                self.carry_min_funding_bps = float(getattr(
+                    funding_config, 'carry_min_funding_bps', 8.0))
+                self.carry_exit_funding_bps = float(getattr(
+                    funding_config, 'carry_exit_funding_bps', 3.0))
+                self.carry_max_positions = int(getattr(
+                    funding_config, 'carry_max_positions', 2))
+                self.carry_max_hold_minutes = int(getattr(
+                    funding_config, 'carry_max_hold_minutes', 960))
+            except Exception:
+                # FuturesFundingConfig absent in very old DB seeds; disable carry.
+                self.funding_carry_enabled = False
+                self.carry_min_funding_bps = 8.0
+                self.carry_exit_funding_bps = 3.0
+                self.carry_max_positions = 2
+                self.carry_max_hold_minutes = 960
+
         else:
             # Fallback to defaults if no config manager (should not happen in production)
             logger.warning("⚠️ No config manager provided, using defaults")
@@ -450,6 +472,12 @@ class FuturesTradingEngine:
             # FUT-RM-23/24 fallback defaults
             self.max_hold_minutes = 240
             self.signal_reversal_threshold = 4
+            # FUT-RM-25 fallback defaults
+            self.funding_carry_enabled = False
+            self.carry_min_funding_bps = 8.0
+            self.carry_exit_funding_bps = 3.0
+            self.carry_max_positions = 2
+            self.carry_max_hold_minutes = 960
 
         # DRY_RUN already resolved at top of __init__ via core.dry_run.resolve_dry_run_env
 
@@ -457,6 +485,9 @@ class FuturesTradingEngine:
         self.active_positions: Dict[str, Position] = {}
         self.pending_orders: Dict[str, Dict] = {}
         self.trade_history: List[Trade] = []
+        # FUT-RM-25: track which symbols currently hold a carry-strategy position
+        # so the carry scan can exit when funding falls and not double-enter.
+        self._carry_position_symbols: set = set()
 
         # Reconcile observability (set by _sync_positions on startup)
         self.last_reconcile_at: Optional[datetime] = None
@@ -1016,7 +1047,11 @@ class FuturesTradingEngine:
             # 3. Check for new opportunities
             await self._scan_opportunities()
 
-            # 4. Execute pending orders
+            # 4. FUT-RM-25: funding-carry scan (parallel strategy, separate cap)
+            if getattr(self, 'funding_carry_enabled', False):
+                await self._scan_funding_carry_opportunities()
+
+            # 5. Execute pending orders
             await self._process_orders()
 
         except Exception as e:
@@ -1145,6 +1180,26 @@ class FuturesTradingEngine:
         if not position.tp_levels and actual_price_change_pct >= self.take_profit_pct:
             return "take_profit"
 
+        # FUT-RM-25: carry-specific funding-drop exit.
+        # A carry position's primary edge is funding; when funding drops below
+        # the exit threshold there is no longer a reason to hold the SHORT and
+        # the position should be exited to free capital for the next signal.
+        carry_exit_bps = position.metadata.get('carry_exit_bps')
+        if carry_exit_bps is not None and position.metadata.get('carry_trade'):
+            try:
+                rate = await self._get_funding_rate_cached(position.symbol)
+                if rate is not None:
+                    rate_bps = float(rate) * 10000.0
+                    if rate_bps < float(carry_exit_bps):
+                        logger.info(
+                            f"FUT-RM-25 carry funding-drop exit: {position.symbol} "
+                            f"funding {rate_bps:.2f} bps < exit threshold "
+                            f"{carry_exit_bps:.2f} bps"
+                        )
+                        return "carry_funding_dropped"
+            except Exception:
+                pass  # Fail open — keep position if rate unavailable
+
         # Liquidation protection (close at 80% of liquidation price)
         if position.liquidation_price:
             if position.side == TradeSide.LONG:
@@ -1167,7 +1222,13 @@ class FuturesTradingEngine:
         # the cap has elapsed, and the position has NOT yet hit TP1 (indicated
         # by trailing_stop_price still being None — TP1 hit moves stop to BE).
         # This is DRY_RUN-safe: _close_position simulates the close in paper mode.
-        max_hold_min = int(getattr(self, 'max_hold_minutes', 240))
+        # FUT-RM-25: carry positions use carry_max_hold_minutes from metadata
+        # instead of the global cap; carry DOES benefit from longer holds.
+        carry_meta = position.metadata.get('carry_max_hold_minutes')
+        if carry_meta is not None:
+            max_hold_min = int(carry_meta)
+        else:
+            max_hold_min = int(getattr(self, 'max_hold_minutes', 240))
         if max_hold_min > 0:
             hold_elapsed_min = position_age / 60.0
             if hold_elapsed_min >= max_hold_min:
@@ -1435,6 +1496,155 @@ class FuturesTradingEngine:
 
             except Exception as e:
                 logger.error(f"Error scanning {symbol}: {e}")
+
+    async def _scan_funding_carry_opportunities(self) -> None:
+        """FUT-RM-25 (Wave 14): funding-rate carry strategy scan.
+
+        Purpose
+        -------
+        Scan each configured symbol for extreme funding rates. When the
+        per-interval rate exceeds carry_min_funding_bps, enter SHORT to
+        collect the funding payment from long-side payers. This is a separate
+        profit motive from the momentum/signal stack: we are not predicting
+        price direction, we are harvesting a risk premium that exists because
+        over-leveraged longs must pay to maintain their positions.
+
+        Edge formula (working-rule per-interval):
+            carry_edge = funding_rate * notional
+            net_carry   = carry_edge - taker_fees_round_trip - expected_slippage
+        At 8 bps: net_carry on $100 notional ≈ $0.08 - $0.06 - $0.05 = -$0.03
+        per interval; the carry becomes positive after ~2–3 intervals. This
+        is why the hold cap is 2 × funding period (960 min default).
+
+        Risk controls
+        -------------
+        - Separate cap: carry_max_positions independent of max_positions so
+          carry does not crowd out the momentum book.
+        - Carries still go through the standard _open_position path so all
+          existing risk gates (funding gate, risk validator, margin verify)
+          apply; a synthetic `signals` object with neutral indicators is
+          passed so ATR sizing and TP levels work normally.
+        - Exit when funding drops below carry_exit_funding_bps: the carry
+          advantage is gone and holding a naked SHORT purely on hope is not
+          the strategy. This check runs during the position monitor via the
+          metadata 'carry_exit_bps' key read in _check_exit_conditions.
+        - DRY_RUN-safe: _open_position and _close_position both check
+          should_skip_live before any live order.
+
+        Operator instructions
+        ---------------------
+        Default OFF. Enable via DB: funding_carry_enabled=true in
+        futures_funding config. Observe the dashboard funding-forecast widget
+        (FUT-RM-09b) for at least 48h before enabling to confirm carry_min
+        threshold is achievable in your market. Start with carry_max_positions=1.
+        """
+        try:
+            carry_enabled = getattr(self, 'funding_carry_enabled', False)
+            if not carry_enabled:
+                return
+
+            carry_max = int(getattr(self, 'carry_max_positions', 2))
+            carry_min_bps = float(getattr(self, 'carry_min_funding_bps', 8.0))
+            carry_exit_bps = float(getattr(self, 'carry_exit_funding_bps', 3.0))
+            carry_max_hold = int(getattr(self, 'carry_max_hold_minutes', 960))
+
+            # Count active carry positions
+            current_carry_count = len(self._carry_position_symbols & set(self.active_positions.keys()))
+
+            for symbol in self.symbols:
+                try:
+                    # 1. Exit check: if we hold a carry position and funding has dropped,
+                    #    close it. This runs regardless of the carry-new-entry cap.
+                    if symbol in self._carry_position_symbols and symbol in self.active_positions:
+                        rate = await self._get_funding_rate_cached(symbol)
+                        if rate is not None:
+                            rate_bps = float(rate) * 10000.0  # fraction -> bps
+                            if rate_bps < carry_exit_bps:
+                                logger.info(
+                                    f"FUT-RM-25 carry exit: {symbol} funding "
+                                    f"{rate_bps:.2f} bps < exit threshold "
+                                    f"{carry_exit_bps:.2f} bps — closing"
+                                )
+                                await self._close_position(symbol, "carry_funding_dropped")
+                                self._carry_position_symbols.discard(symbol)
+                        continue
+
+                    # 2. Skip if already holding a non-carry position on this symbol
+                    if symbol in self.active_positions:
+                        continue
+
+                    # 3. Carry cap check
+                    if current_carry_count >= carry_max:
+                        if self.verbose_signals:
+                            logger.debug(
+                                f"FUT-RM-25: at carry cap "
+                                f"({current_carry_count}/{carry_max}), skipping {symbol}"
+                            )
+                        break
+
+                    # 4. Fetch live funding rate
+                    rate = await self._get_funding_rate_cached(symbol)
+                    if rate is None:
+                        continue
+                    rate_bps = float(rate) * 10000.0  # fraction -> bps
+
+                    if rate_bps < carry_min_bps:
+                        if self.verbose_signals:
+                            logger.debug(
+                                f"FUT-RM-25: {symbol} funding {rate_bps:.2f} bps "
+                                f"< entry threshold {carry_min_bps:.2f} bps — skip"
+                            )
+                        continue
+
+                    # 5. Positive funding: LONG pays SHORT. Enter SHORT.
+                    logger.info(
+                        f"FUT-RM-25 carry signal: {symbol} funding "
+                        f"{rate_bps:.2f} bps >= {carry_min_bps:.2f} bps — "
+                        f"entering SHORT to collect funding"
+                    )
+
+                    # Build a neutral TechnicalSignals so _open_position sizing
+                    # and TP/SL logic work without indicator data. The carry
+                    # edge is funding, not price direction — all indicator scores
+                    # are intentionally neutral.
+                    carry_signals = TechnicalSignals()
+                    # Tag the position so _check_exit_conditions can carry-exit it
+                    # and so _close_position updates _carry_position_symbols.
+                    carry_signals_meta = {
+                        'carry_trade': True,
+                        'entry_funding_bps': rate_bps,
+                        'carry_exit_bps': carry_exit_bps,
+                        'carry_max_hold_minutes': carry_max_hold,
+                    }
+
+                    # Open the carry position. _open_position handles all gates:
+                    # risk validator, margin verify, DRY_RUN, FUT-RM-19 edge gate.
+                    # We temporarily stash carry metadata so _open_position can
+                    # inject it into position.metadata via the signals object.
+                    carry_signals.carry_metadata = carry_signals_meta  # type: ignore[attr-defined]
+                    await self._open_position(symbol, TradeSide.SHORT, carry_signals)
+
+                    # Mark this symbol as a carry position if it opened
+                    if symbol in self.active_positions:
+                        pos = self.active_positions[symbol]
+                        pos.metadata['carry_trade'] = True
+                        pos.metadata['entry_funding_bps'] = rate_bps
+                        pos.metadata['carry_exit_bps'] = carry_exit_bps
+                        # Override max_hold for carry positions if configured
+                        if carry_max_hold > 0:
+                            pos.metadata['carry_max_hold_minutes'] = carry_max_hold
+                        self._carry_position_symbols.add(symbol)
+                        current_carry_count += 1
+                        logger.info(
+                            f"FUT-RM-25: carry position opened for {symbol} "
+                            f"(carry positions: {current_carry_count}/{carry_max})"
+                        )
+
+                except Exception as sym_err:
+                    logger.error(f"FUT-RM-25 error scanning {symbol}: {sym_err}")
+
+        except Exception as e:
+            logger.error(f"FUT-RM-25 _scan_funding_carry_opportunities error: {e}")
 
     async def _get_technical_signals(self, symbol: str) -> Optional[TechnicalSignals]:
         """Calculate technical indicators for a symbol using configurable timeframe"""
@@ -2408,6 +2618,8 @@ class FuturesTradingEngine:
 
             # Remove from active positions
             del self.active_positions[symbol]
+            # FUT-RM-25: clean up carry tracking on any close path.
+            self._carry_position_symbols.discard(symbol)
 
             # Set cooldown
             self.symbol_cooldowns[symbol] = datetime.now() + self.cooldown_duration

@@ -314,6 +314,32 @@ class FuturesFundingConfig(BaseModel):
     # than this many seconds, skip the gate rather than gate on stale data.
     max_funding_age_seconds: int = 900   # 15 min
 
+    # FUT-RM-25 (Wave 14): funding-rate carry strategy.
+    # When a symbol's per-interval funding rate exceeds carry_min_funding_bps,
+    # enter the SHORT side to collect funding payments as primary edge.
+    # The carry edge = funding_rate * notional * intervals_held. At 8 bps/8h
+    # that is ~87% APR on notional — net carry after 1 interval (8h) on a
+    # $100 notional = 100 * 0.0008 = $0.08. At 5x leverage that is $0.40
+    # net vs Bybit taker round-trip ~$0.12; carry breakeven is ~1.5 intervals.
+    # Exit when funding drops below carry_exit_funding_bps OR when the
+    # carry position hits its normal SL/TP/max-hold.
+    # Default OFF — operator must opt in after observing funding data in the
+    # dashboard funding-forecast widget (FUT-RM-09b) for several days.
+    funding_carry_enabled: bool = False
+    # Entry threshold: per-interval rate in bps (0.01% = 1 bp).
+    # 8 bps ≈ 87%/yr APR. Default 8 to ensure carry clears fees in ≤2 intervals.
+    carry_min_funding_bps: float = 8.0
+    # Exit threshold: close carry positions when funding drops below this.
+    # Below 3 bps the carry APR (~33%/yr) no longer compensates for position
+    # risk; the normal SL/TP/max-hold would close first anyway.
+    carry_exit_funding_bps: float = 3.0
+    # Cap on simultaneous carry positions to bound the carry-specific book.
+    carry_max_positions: int = 2
+    # Max hold for carry positions (minutes). Funding is 8h-periodic; cap at
+    # 2 intervals (960 min) so the strategy does not outlast the signal.
+    # 0 = use the engine's global max_hold_minutes.
+    carry_max_hold_minutes: int = 960
+
 
 class FuturesConfigManager:
     """
