@@ -113,23 +113,6 @@ except ImportError:
 logger = logging.getLogger("SolanaTradingEngine")
 
 
-def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
-    """Normalise *dt* to a tz-aware UTC datetime.
-
-    asyncpg returns TIMESTAMPTZ columns as tz-aware datetimes while
-    in-process objects created with ``datetime.utcnow()`` are tz-naive.
-    Subtracting a naive datetime from an aware one raises TypeError, so
-    every arithmetic path that mixes DB-sourced and in-process datetimes
-    must route through this helper.  Naive values are assumed to be UTC
-    (the convention used throughout this file).
-    """
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
 def _utcnow() -> datetime:
     """Return the current UTC time as a tz-aware datetime.
 
