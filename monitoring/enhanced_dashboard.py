@@ -14668,22 +14668,24 @@ class DashboardEndpoints:
         # SOLANA_WALLET (used by DEX-on-Solana). The Funding panel previously
         # rendered only one Solana row, which made the second wallet invisible
         # to operators trying to know which address to fund for DEX-on-Solana.
-        # Read the public address from secrets (never the private key).
-        dex_sol_addr = None
-        try:
-            from security.secrets_manager import secrets as _secrets
-            dex_sol_addr = _secrets.get('SOLANA_WALLET', log_access=False)
-        except Exception:
-            pass
-        if not dex_sol_addr:
-            dex_sol_addr = os.getenv('SOLANA_WALLET') or None
+        #
+        # Wave-15 FIX: the original code read the stored SOLANA_WALLET public-
+        # address secret directly. When no such secret exists (the common case —
+        # operators store a private key, not a pre-computed pubkey), this
+        # returned blank and the card showed "no SOLANA_WALLET secret set".
+        # The /wallet-balances page and Main Overview correctly derive the
+        # address from SOLANA_PRIVATE_KEY via _get_wallet_addresses_from_
+        # encrypted_keys(). Reuse that same helper here so the funding panel
+        # shows the same derived address — no logic duplicated.
+        _waddrs = await self._get_wallet_addresses_from_encrypted_keys()
+        dex_sol_addr = _waddrs.get('SOLANA') or None
         accounts['dex_solana'] = _entry(
             'solana_wallet',
             label='DEX-Solana (separate from solana_trading)',
-            secret_source='SOLANA_WALLET',
+            secret_source='SOLANA_PRIVATE_KEY (derived)',
             wallet_address=dex_sol_addr,
             status=('initialized' if dex_sol_addr
-                    else 'no SOLANA_WALLET secret set'),
+                    else 'no SOLANA_PRIVATE_KEY secret set'),
         )
 
         fut_h = await _probe_health('FUTURES_HEALTH_PORT', 8081)
