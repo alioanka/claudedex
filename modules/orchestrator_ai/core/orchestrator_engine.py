@@ -262,7 +262,95 @@ async def _supersede_module_pending(conn, module: str) -> None:
     )
 
 
-async def _insert_recommendation(conn, score_result, module: str, inputs) -> None:
+async def _read_guard_budget_defaults(conn) -> dict:
+    """Load allocation_guard_config budget defaults from config_settings.
+    Returns a dict {module: budget_usd, 'global_total': cap, ...}.
+    Fail-soft: returns empty dict on DB error."""
+    try:
+        rows = await conn.fetch(
+            "SELECT key, value FROM config_settings "
+            "WHERE config_type = 'allocation_guard_config' "
+            "  AND (key LIKE 'budget_usd_%' OR key = 'global_total_cap_usd')"
+        )
+        result = {}
+        for row in rows:
+            key, val = row["key"], row["value"]
+            try:
+                result[key] = float(val)
+            except (TypeError, ValueError):
+                pass
+        return result
+    except Exception as exc:
+        logger.debug("_read_guard_budget_defaults fail-soft: %s", exc)
+        return {}
+
+
+def _compute_budget_usd(
+    module: str,
+    score: float,
+    confidence: float,
+    recommended: str,
+    guard_defaults: dict,
+) -> Optional[float]:
+    """Derive a recommended capital budget for the module from its score.
+
+    Design:
+    - Start from the static default (budget_usd_<module> or 0 = unlimited).
+    - Scale by the score (0..1) to tighten budget for poor performers and
+      expand it for strong ones.
+    - Apply a confidence discount so a low-confidence recommendation does
+      not aggressively cut a module's budget.
+    - Never exceed the static default (orchestrator can tighten or hold,
+      never invent capital beyond the operator-set default).
+    - Return None when no meaningful budget can be derived (e.g. zero
+      default means unlimited; not_ready modules get None so the guard
+      falls back to its static default).
+    - A 'disable' recommendation zeros the budget; 'to_dry' halves it;
+      'to_live' / 'enable' leave it at the score-scaled value.
+
+    The global caps in config_settings are enforced by the AllocationGuard
+    itself; the orchestrator only sets per-module budgets.
+    """
+    key = f"budget_usd_{module}"
+    base_budget = guard_defaults.get(key, 0.0)
+
+    # 0 means "unlimited" — don't emit a budget recommendation that would
+    # accidentally cap an operator-set unlimited module.
+    if base_budget <= 0:
+        return None
+
+    # not_ready / insufficient data: emit None so guard keeps static default.
+    if score == 0.0 and confidence == 0.0:
+        return None
+
+    # Score multiplier: clamp score to [0.2, 1.0] — never cut below 20% of
+    # the base budget purely on score (extreme but recoverable drawdowns
+    # shouldn't fully starve a module before the operator reviews).
+    score_mult = max(0.2, min(1.0, score))
+
+    # Confidence discount: blend toward the base at low confidence.
+    # At confidence=1.0 → full score_mult.  At confidence=0.0 → no change.
+    effective_mult = 1.0 + (score_mult - 1.0) * confidence
+
+    recommended_budget = round(base_budget * effective_mult, 2)
+
+    # Verdict overrides:
+    if recommended == "disable":
+        recommended_budget = 0.0
+    elif recommended == "to_dry":
+        # Halve the budget to signal caution while allowing some DRY_RUN exposure.
+        recommended_budget = round(recommended_budget * 0.5, 2)
+
+    # Never exceed the operator-set base budget.
+    recommended_budget = min(recommended_budget, base_budget)
+
+    return recommended_budget
+
+
+async def _insert_recommendation(
+    conn, score_result, module: str, inputs,
+    budget_usd: Optional[float] = None,
+) -> None:
     metrics = {
         "closed_trades": inputs.closed_trades,
         "winning_trades": inputs.winning_trades,
@@ -272,15 +360,18 @@ async def _insert_recommendation(conn, score_result, module: str, inputs) -> Non
         "score": round(score_result.score, 4),
         "components": score_result.components,
     }
+    if budget_usd is not None:
+        metrics["recommended_budget_usd"] = round(budget_usd, 2)
     await conn.execute(
         "INSERT INTO orchestrator_recommendations "
-        "(module, recommended, confidence, reason, metrics) "
-        "VALUES ($1, $2, $3, $4, $5::jsonb)",
+        "(module, recommended, confidence, reason, metrics, budget_usd) "
+        "VALUES ($1, $2, $3, $4, $5::jsonb, $6)",
         module,
         score_result.recommended,
         round(score_result.confidence, 3),
         score_result.reason,
         json.dumps(metrics),
+        budget_usd,
     )
 
 
@@ -343,6 +434,15 @@ async def run_tick(
         except Exception as e:
             summary["errors"].append(f"supersede: {e}")
 
+        # Wave-15: load guard budget defaults once per tick so each module
+        # can derive a recommended budget_usd alongside its verdict.
+        # Fail-soft: empty dict means no budgets emitted this tick.
+        guard_defaults: dict = {}
+        try:
+            guard_defaults = await _read_guard_budget_defaults(conn)
+        except Exception as e:
+            logger.debug("guard budget defaults load fail-soft: %s", e)
+
         # 2. Score every module and emit ONE current recommendation per
         #    module (issue 20). Insufficient-data modules get a 'hold'
         #    tagged not_ready rather than being silently dropped.
@@ -388,6 +488,20 @@ async def run_tick(
                         result.components["raw_confidence"] = round(raw_conf, 3)
                         result.components["p_agree_ml"] = round(p_agree, 3)
                         result.confidence = round(calibrated, 3)
+
+            # Wave-15: derive a budget recommendation alongside the verdict.
+            # The AllocationGuard reads this to set the module's live budget.
+            # _compute_budget_usd returns None for not_ready modules or when
+            # no static default exists (0 = unlimited), so the guard falls
+            # back to its own static defaults in those cases.
+            budget_usd: Optional[float] = _compute_budget_usd(
+                module=module,
+                score=result.score,
+                confidence=result.confidence,
+                recommended=result.recommended,
+                guard_defaults=guard_defaults,
+            )
+
             # Supersede this module's prior pending row, then insert the
             # fresh one. This guarantees every scored module surfaces
             # exactly one current recommendation each tick (including
@@ -396,11 +510,16 @@ async def run_tick(
             # superseded_at on the old rows.
             try:
                 await _supersede_module_pending(conn, module)
-                await _insert_recommendation(conn, result, module, inputs)
+                await _insert_recommendation(conn, result, module, inputs,
+                                             budget_usd=budget_usd)
                 summary["recommendations_inserted"] += 1
+                budget_log = (
+                    f" budget=${budget_usd:.2f}" if budget_usd is not None else ""
+                )
                 logger.info(
-                    "tick: %s -> %s (conf=%.2f) %s",
-                    module, result.recommended, result.confidence, result.reason,
+                    "tick: %s -> %s (conf=%.2f)%s %s",
+                    module, result.recommended, result.confidence,
+                    budget_log, result.reason,
                 )
             except Exception as e:
                 summary["errors"].append(f"{module}: {e}")
