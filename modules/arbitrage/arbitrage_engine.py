@@ -916,10 +916,25 @@ class EVMArbitrageEngine:
         self.use_flash_loans = True
         self.use_flashbots = True
 
-        # Flash loan amount: read from config (in ETH units), convert to wei
-        # CRITICAL: 10 ETH ($25k) causes massive price impact on L2 V2 pools
-        # Arbitrum/Base V2 pools often have only $50-200k liquidity
-        flash_loan_eth = config.get('flash_loan_amount', 10)
+        # Flash loan amount: read from config (in ETH units), convert to wei.
+        # When not explicitly configured in the DB, L2 chains use a smaller
+        # default to avoid price impact that eats thin-but-real spreads.
+        # Arbitrum/Base V2 pools typically carry $50-200k TVL; routing 10 ETH
+        # (~$25k) through them produces ~0.5-1% one-way price impact, which
+        # makes all raw spreads negative before the fee+slippage cost model even
+        # runs.  L2 defaults: Arbitrum 1 ETH, Base 0.5 ETH.  The operator can
+        # override either value via the DB `flash_loan_amount` config key.
+        # ARB-W14-3: right-size L2 flash-loan scan amount.
+        is_l2 = bool(self.chain_config.get('is_l2', False))
+        if 'flash_loan_amount' in config:
+            flash_loan_eth = config['flash_loan_amount']
+        elif is_l2:
+            if self.EXPECTED_CHAIN_ID == 8453:  # Base
+                flash_loan_eth = 0.5
+            else:  # Arbitrum and other L2s
+                flash_loan_eth = 1.0
+        else:
+            flash_loan_eth = 10  # Ethereum mainnet: keep 10 ETH for USD gas frac visibility
         self.flash_loan_amount = int(flash_loan_eth * 10**18)
         self._flash_loan_eth = flash_loan_eth  # Store ETH units for scan amount scaling
 
@@ -2547,11 +2562,24 @@ class EVMArbitrageEngine:
             import uuid
             amount_eth = amount / 1e18
 
-            # Get real ETH price - CRITICAL: don't use fake prices
+            # Get real ETH price for USD P&L accounting.
+            # In DRY_RUN mode a CoinGecko outage must not silently swallow the
+            # DB record (which is the only signal that an opportunity cleared
+            # all gates).  Use a conservative $2000 fallback so the row is
+            # written; the `metadata.eth_price_fallback=true` flag lets the
+            # operator identify rows whose USD figures are approximate.
             eth_price = await self.price_fetcher.get_price('eth')
+            _eth_price_fallback = False
             if not eth_price:
-                self.logger.warning(f"Cannot log trade - ETH price unavailable")
-                return
+                if self.dry_run:
+                    eth_price = 2000.0
+                    _eth_price_fallback = True
+                    self.logger.warning(
+                        "ETH price unavailable - using $2000 fallback for DRY_RUN record"
+                    )
+                else:
+                    self.logger.warning("Cannot log trade - ETH price unavailable")
+                    return
 
             # A2-02 / A2-05: chain-aware cost deductions. Previously the
             # method used GAS_COST_USD=15 and SLIPPAGE_ESTIMATE_PCT=0.006
@@ -2650,6 +2678,7 @@ class EVMArbitrageEngine:
                         'slippage_source': slippage_source,
                         'gas_cost': gas_cost_usd,
                         'total_costs': total_costs,
+                        'eth_price_fallback': _eth_price_fallback,
                     })
                 )
             self.logger.debug(f"💾 Logged to arbitrage_trades: {trade_id} [{token_symbol}]")
