@@ -727,7 +727,7 @@ class FuturesTradingApplication:
                 )
             if mismatches:
                 msg = (
-                    "🚨 FUTURES RISK CONFIG MISMATCH at startup: "
+                    "FUTURES RISK CONFIG MISMATCH at startup: "
                     + "; ".join(mismatches)
                 )
                 self.logger.error(msg)
@@ -738,7 +738,7 @@ class FuturesTradingApplication:
                     raise RuntimeError(msg)
             else:
                 self.logger.info(
-                    f"✅ Runtime risk caps match DB config: "
+                    f"Runtime risk caps match DB config: "
                     f"max_leverage={expected_max_lev}, "
                     f"max_positions={expected_max_pos}"
                 )
@@ -747,11 +747,60 @@ class FuturesTradingApplication:
         except Exception as e:
             self.logger.warning(f"Risk-config assertion errored (non-fatal): {e}")
 
+    # Wave-15: retry interval (seconds) when initialize() fails after all
+    # per-attempt retries in _init_binance are exhausted.
+    _INIT_RETRY_INTERVAL_SECONDS: int = 300  # 5 minutes
+
+    async def _initialize_with_degraded_loop(self) -> None:
+        """Wave-15: call initialize(); if it fails, enter a degraded retry loop.
+
+        Rather than crashing the entire module process when Binance's API is
+        transiently unreachable, we log a clear ERROR and retry
+        _INIT_RETRY_INTERVAL_SECONDS later so the module self-heals once the
+        exchange comes back. The shutdown_event is checked between retries so
+        a SIGTERM / kill-switch still exits cleanly.
+        """
+        attempt = 0
+        while not self.shutdown_event.is_set():
+            attempt += 1
+            try:
+                await self.initialize()
+                if attempt > 1:
+                    self.logger.info(
+                        f"[wave-15] Futures engine initialized successfully on retry attempt {attempt}."
+                    )
+                return  # success — caller proceeds normally
+            except Exception as exc:
+                retry_in = self._INIT_RETRY_INTERVAL_SECONDS
+                self.logger.error(
+                    f"[wave-15] Futures engine init failed (attempt {attempt}): "
+                    f"{type(exc).__name__}: {exc}. "
+                    f"Module entering degraded mode — will retry in {retry_in}s. "
+                    f"(Set FUTURES_MODULE_ENABLED=false to suppress.)",
+                    exc_info=True,
+                )
+                # Reset engine so state is clean on the next attempt.
+                self.engine = None
+                # Wait, but wake immediately on shutdown.
+                try:
+                    await asyncio.wait_for(
+                        self.shutdown_event.wait(),
+                        timeout=float(retry_in),
+                    )
+                except asyncio.TimeoutError:
+                    pass  # timeout expired — loop and retry
+        # shutdown_event was set during the wait; raise so run() exits cleanly.
+        raise asyncio.CancelledError("Shutdown requested during degraded init loop")
+
     async def run(self):
         """Main application loop"""
         try:
             self.logger.info("Starting Futures Trading Bot...")
-            await self.initialize()
+
+            # Wave-15: use degraded-mode loop so a transient Binance outage at
+            # startup doesn't hard-crash the module and show "not initialized"
+            # forever on the dashboard.
+            await self._initialize_with_degraded_loop()
 
             # Start health server
             self.health_server = HealthServer(self, port=self.health_port)
@@ -796,7 +845,7 @@ class FuturesTradingApplication:
                             positions_attr='active_positions'
                         )
                         await self.telegram_controller.start_polling()
-                        self.logger.info("📱 Telegram remote control enabled")
+                        self.logger.info("Telegram remote control enabled")
                         await self.telegram_controller.notify(
                             "Futures Trading Bot started. Send /help for commands.",
                             priority="normal"
@@ -804,7 +853,7 @@ class FuturesTradingApplication:
                 except Exception as e:
                     self.logger.warning(f"Telegram controller failed to initialize: {e}")
 
-            self.logger.info("🎯 Starting futures trading engine...")
+            self.logger.info("Starting futures trading engine...")
 
             tasks = [
                 asyncio.create_task(self.engine.run()),
@@ -823,6 +872,9 @@ class FuturesTradingApplication:
 
             for task in pending:
                 task.cancel()
+
+        except asyncio.CancelledError:
+            self.logger.info("Futures bot cancelled (shutdown during init retry).")
 
         except Exception as e:
             self.logger.error(f"Critical error in main loop: {e}", exc_info=True)
