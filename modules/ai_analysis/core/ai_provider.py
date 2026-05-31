@@ -11,6 +11,7 @@ Supports:
 
 import asyncio
 import logging
+import time
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -20,6 +21,15 @@ import os
 import hashlib
 
 logger = logging.getLogger("AIProvider")
+
+# Wave-15: per-call prompt/response logging to logs/ai_analysis/{claude,openai}_api.log.
+# main_ai.py attaches RotatingFileHandlers to these named loggers. AIProviderManager
+# is the ACTIVE LLM path (analyze_sentiment -> _call_anthropic/_call_openai); the
+# sibling SentimentEngine._call_llm_provider path already logged to these but is
+# dormant when the provider manager is initialized — so these files were empty.
+_claude_api_logger = logging.getLogger("Claude_API")
+_openai_api_logger = logging.getLogger("OpenAI_API")
+
 
 
 class AIProvider(Enum):
@@ -523,10 +533,19 @@ IMPORTANT:
             "response_format": {"type": "json_object"}
         }
 
+        _openai_api_logger.info(
+            "🧠 OpenAI API Request | model=%s max_tokens=%s\n   Prompt: %s",
+            config.model.model_id, config.max_tokens, prompt
+        )
+        _t0 = time.monotonic()
         async with self._session.post(url, headers=headers, json=payload) as response:
             if response.status != 200:
                 error_text = await response.text()
                 logger.error(f"OpenAI error: {error_text}")
+                _openai_api_logger.warning(
+                    "❌ OpenAI API non-200 (status=%s): %s",
+                    response.status, error_text[:500]
+                )
                 return {'success': False, 'error': f'API error: {response.status}'}
 
             data = await response.json()
@@ -544,6 +563,11 @@ IMPORTANT:
             parsed['output_tokens'] = output_tokens
             parsed['raw_response'] = content
 
+            _openai_api_logger.info(
+                "✅ OpenAI API Response (200) | %.2fs | tokens in=%d out=%d\n"
+                "   Raw response: %s",
+                time.monotonic() - _t0, input_tokens, output_tokens, content
+            )
             return parsed
 
     async def _call_anthropic(self, config: ProviderConfig, prompt: str) -> Dict:
@@ -561,9 +585,18 @@ IMPORTANT:
             "messages": [{"role": "user", "content": prompt}]
         }
 
+        _claude_api_logger.info(
+            "🧠 Claude API Request | model=%s max_tokens=%s\n   Prompt: %s",
+            config.model.model_id, config.max_tokens, prompt
+        )
+        _t0 = time.monotonic()
         async with self._session.post(url, headers=headers, json=payload) as response:
             if response.status != 200:
                 error_text = await response.text()
+                _claude_api_logger.warning(
+                    "❌ Claude API non-200 (status=%s): %s",
+                    response.status, error_text[:500]
+                )
                 # Wave-13: distinguish model-not-found from generic errors.
                 # 404 + not_found_error means the model ID is invalid or
                 # not available on this account; emit a loud WARNING so the
@@ -601,6 +634,11 @@ IMPORTANT:
             parsed['output_tokens'] = output_tokens
             parsed['raw_response'] = content
 
+            _claude_api_logger.info(
+                "✅ Claude API Response (200) | %.2fs | tokens in=%d out=%d\n"
+                "   Raw response: %s",
+                time.monotonic() - _t0, input_tokens, output_tokens, content
+            )
             return parsed
 
     def _parse_sentiment_response(self, content: str) -> Dict:
