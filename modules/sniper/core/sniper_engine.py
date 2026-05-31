@@ -177,6 +177,17 @@ class SniperEngine:
         self.sniper_partial_take_size_pct: float = 50.0
         self.sniper_trail_after_partial: bool = True
 
+        # Wave-15 risk-gate fix (migration 047): controls whether the sniper
+        # runs new-launch targets through the DEX-oriented RiskManager.validate_trade
+        # (which rejects <$10k liquidity, blocking 100% of fresh memecoins).
+        # FALSE (default): skip DEX liquidity/honeypot/token-risk analysis; only
+        #   run capital-protection checks (circuit breakers + allocation guard).
+        #   The sniper's own _check_filters + TokenSafetyChecker remain the memecoin
+        #   risk layer. Healthy new launches that pass _check_filters are ALLOWED.
+        # TRUE: restore old full validate_trade behavior (useful for mature-token
+        #   or EVM sniping where DEX liquidity analysis is meaningful).
+        self.sniper_use_dex_risk_manager: bool = False
+
         # Statistics tracking for rate-limited logging
         self._stats = {
             'tokens_analyzed': 0,
@@ -360,6 +371,11 @@ class SniperEngine:
                             self.sniper_trail_after_partial = (
                                 val.lower() in ('true', '1', 'yes') if val else True
                             )
+                        # Wave-15 risk-gate fix (migration 047)
+                        elif key == 'sniper_use_dex_risk_manager':
+                            self.sniper_use_dex_risk_manager = (
+                                val.lower() in ('true', '1', 'yes') if val else False
+                            )
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -406,6 +422,11 @@ class SniperEngine:
                 f"max_dev_holding={self.sniper_max_dev_holding_pct}% "
                 f"min_buy_sell={self.sniper_min_buy_sell_ratio} "
                 f"min_score={self.sniper_min_safety_score}"
+            )
+            logger.info(
+                f"   W15 risk gate: sniper_use_dex_risk_manager="
+                f"{self.sniper_use_dex_risk_manager} "
+                f"({'full DEX validate_trade' if self.sniper_use_dex_risk_manager else 'sniper-own gates only (capital checks preserved)'})"
             )
 
         except Exception as e:
@@ -1191,15 +1212,54 @@ class SniperEngine:
                 seed = int(hashlib.sha256(("size:" + token_address).encode()).hexdigest()[:16], 16)
                 entry_amount = self.trade_amount * (0.8 + (random.Random(seed).random() * 0.4))
 
-            # Wave-13: cross-module RiskManager gate (entry-only, same pattern as
-            # SOLANA/ARB/COPY). Skipped when risk_manager is None (DRY_RUN paths,
-            # tests, or failed construction at startup). validate_trade failure
-            # refuses the snipe but does NOT count as a safety-check error.
+            # Wave-15 risk-gate fix: sniper-specific capital-protection check.
+            #
+            # When sniper_use_dex_risk_manager=False (default, seeded by migration 047):
+            #   Skip the DEX-oriented liquidity/honeypot/token-risk analysis inside
+            #   validate_trade — which always rejects new-launch targets with <$10k
+            #   liquidity. The sniper's _check_filters + TokenSafetyChecker (already
+            #   run above in _evaluate_target) are the correct memecoin risk layer.
+            #   Only the capital-protection half is preserved: circuit breakers (loss
+            #   rate, drawdown, consecutive losses) and the allocation guard (per-module
+            #   USD budget cap). Both are read from the risk_manager instance directly.
+            #
+            # When sniper_use_dex_risk_manager=True:
+            #   Full validate_trade is called, restoring Wave-13 behavior.
+            #
+            # Skipped entirely when risk_manager is None (tests or failed construction).
             if self.risk_manager is not None:
                 try:
-                    allowed, reason = await self.risk_manager.validate_trade(
-                        token_address, entry_amount
-                    )
+                    if self.sniper_use_dex_risk_manager:
+                        # Full DEX-oriented gate (Wave-13 behavior).
+                        allowed, reason = await self.risk_manager.validate_trade(
+                            token_address, entry_amount
+                        )
+                    else:
+                        # Sniper-safe capital-protection gate only:
+                        # 1. Circuit breakers (loss rate / drawdown / consecutive losses).
+                        metrics = await self.risk_manager._get_current_metrics()
+                        cb_ok, cb_reason = self.risk_manager.check_circuit_breakers(metrics)
+                        if not cb_ok:
+                            allowed, reason = False, f"Circuit breaker: {cb_reason}"
+                        else:
+                            # 2. Allocation guard (per-module USD budget cap).
+                            allowed, reason = True, "Capital checks passed"
+                            guard = getattr(self.risk_manager, '_allocation_guard', None)
+                            if guard is not None:
+                                try:
+                                    guard_module = getattr(
+                                        self.risk_manager, '_module_name', 'sniper'
+                                    )
+                                    g_ok, g_reason = await guard.check(
+                                        guard_module, float(entry_amount)
+                                    )
+                                    if not g_ok:
+                                        allowed, reason = False, f"Allocation guard: {g_reason}"
+                                except Exception as guard_exc:
+                                    logger.debug(
+                                        "allocation guard error (fail-soft): %s", guard_exc
+                                    )
+
                     if not allowed:
                         logger.warning(
                             f"⛔ Sniper entry blocked by RiskManager: "
@@ -1218,7 +1278,7 @@ class SniperEngine:
                         return
                 except Exception as rm_exc:
                     logger.warning(
-                        f"validate_trade raised: {rm_exc}; continuing without RiskManager gate"
+                        f"RiskManager gate raised: {rm_exc}; continuing without gate"
                     )
 
             # Execute buy using the trade executor
