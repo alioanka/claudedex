@@ -160,6 +160,23 @@ class SniperEngine:
         self.evm_min_liquidity: float = 0.0   # USD; 0 = use global min_liquidity
         self.evm_min_safety_score: int = 0    # 0-100; 0 = no extra score gate
 
+        # Wave-15: entry quality filters (all DB-configurable via migration 044)
+        # Defaults are conservative so the next DRY_RUN window measures the
+        # reworked strategy without requiring a manual DB update.
+        self.sniper_min_holder_count: int = 10        # 0 = disabled
+        self.sniper_min_token_age_seconds: int = 30   # 0 = disabled
+        self.sniper_max_dev_holding_pct: float = 30.0 # 100 = disabled
+        self.sniper_min_buy_sell_ratio: float = 1.5   # 0.0 = disabled (fail-open)
+        self.sniper_min_safety_score: int = 40        # 0 = disabled
+
+        # Wave-15: partial-take exit (all DB-configurable via migration 044)
+        # partial_take_pct  - fire partial exit at this P&L% (0 = disabled)
+        # partial_take_size - fraction of position (%) to sell at partial take
+        # trail_after_partial - use trailing stop on remainder after partial take
+        self.sniper_partial_take_pct: float = 20.0
+        self.sniper_partial_take_size_pct: float = 50.0
+        self.sniper_trail_after_partial: bool = True
+
         # Statistics tracking for rate-limited logging
         self._stats = {
             'tokens_analyzed': 0,
@@ -167,7 +184,13 @@ class SniperEngine:
             'danger_ratings': 0,
             'high_tax_rejected': 0,
             'low_liquidity_rejected': 0,
+            'low_holder_rejected': 0,
+            'too_young_rejected': 0,
+            'high_dev_holding_rejected': 0,
+            'low_buy_sell_ratio_rejected': 0,
+            'low_score_rejected': 0,
             'passed_safety': 0,
+            'partial_takes_fired': 0,
             'positions_synthetic_closed': 0,
             'capped_rejections': 0,
             'last_capped_log': datetime.now(),
@@ -317,6 +340,26 @@ class SniperEngine:
                             self.evm_min_liquidity = float(val) if val else 0.0
                         elif key == 'evm_min_safety_score':
                             self.evm_min_safety_score = int(val) if val else 0
+                        # Wave-15: entry quality gates
+                        elif key == 'sniper_min_holder_count':
+                            self.sniper_min_holder_count = int(val) if val else 10
+                        elif key == 'sniper_min_token_age_seconds':
+                            self.sniper_min_token_age_seconds = int(val) if val else 30
+                        elif key == 'sniper_max_dev_holding_pct':
+                            self.sniper_max_dev_holding_pct = float(val) if val else 30.0
+                        elif key == 'sniper_min_buy_sell_ratio':
+                            self.sniper_min_buy_sell_ratio = float(val) if val else 1.5
+                        elif key == 'sniper_min_safety_score':
+                            self.sniper_min_safety_score = int(val) if val else 40
+                        # Wave-15: exit rework
+                        elif key == 'sniper_partial_take_pct':
+                            self.sniper_partial_take_pct = float(val) if val else 20.0
+                        elif key == 'sniper_partial_take_size_pct':
+                            self.sniper_partial_take_size_pct = float(val) if val else 50.0
+                        elif key == 'sniper_trail_after_partial':
+                            self.sniper_trail_after_partial = (
+                                val.lower() in ('true', '1', 'yes') if val else True
+                            )
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -352,6 +395,17 @@ class SniperEngine:
                 f"   EVM sniping: {'ENABLED' if self.sniper_evm_enabled else 'DISABLED'} "
                 f"(sniper_evm_enabled={self.sniper_evm_enabled}) | "
                 f"evm_min_liq={evm_liq_msg} | evm_min_score={evm_score_msg}"
+            )
+            logger.info(
+                f"   W15 exit: PartialTake={self.sniper_partial_take_pct}%"
+                f"@{self.sniper_partial_take_size_pct}% trail={self.sniper_trail_after_partial}"
+            )
+            logger.info(
+                f"   W15 entry gates: min_holders={self.sniper_min_holder_count} "
+                f"min_age={self.sniper_min_token_age_seconds}s "
+                f"max_dev_holding={self.sniper_max_dev_holding_pct}% "
+                f"min_buy_sell={self.sniper_min_buy_sell_ratio} "
+                f"min_score={self.sniper_min_safety_score}"
             )
 
         except Exception as e:
@@ -686,10 +740,123 @@ class SniperEngine:
                         timing.outcome = 'rejected_safety'
                     return False
 
+                # Wave-15 entry quality gates (skip in test_mode for measurement)
+                if not self.test_mode:
+                    # Gate 1: minimum holder count.
+                    # report.holder_count populated by GoPlus for EVM; Solana
+                    # defaults to 0 when unavailable -> fail-open (don't mass-reject
+                    # Solana candidates on missing data).
+                    min_h = self.sniper_min_holder_count
+                    if min_h > 0 and report.holder_count > 0 and report.holder_count < min_h:
+                        self._stats['low_holder_rejected'] = (
+                            self._stats.get('low_holder_rejected', 0) + 1
+                        )
+                        self._rejected_cache[token_address] = datetime.now()
+                        logger.debug(
+                            f"Low holder count: {token_address[:16]}... "
+                            f"({report.holder_count} < {min_h})"
+                        )
+                        if timing:
+                            timing.outcome = 'rejected_quality'
+                        return False
+
+                    # Gate 2: token age window.
+                    # pool block_time stamped by listener into target['block_time']
+                    # or target['metadata']['pool_block_time']. Fail-open when absent.
+                    min_age = self.sniper_min_token_age_seconds
+                    if min_age > 0:
+                        pool_block_time = (
+                            target.get('block_time')
+                            or target.get('metadata', {}).get('pool_block_time')
+                        )
+                        if pool_block_time is not None:
+                            try:
+                                from datetime import timezone as _tz
+                                if isinstance(pool_block_time, (int, float)):
+                                    bt = datetime.fromtimestamp(pool_block_time, tz=_tz.utc)
+                                else:
+                                    bt = pool_block_time
+                                now_utc = datetime.now(tz=_tz.utc)
+                                age_secs = (now_utc - bt).total_seconds()
+                                if age_secs < min_age:
+                                    self._stats['too_young_rejected'] = (
+                                        self._stats.get('too_young_rejected', 0) + 1
+                                    )
+                                    self._rejected_cache[token_address] = datetime.now()
+                                    logger.debug(
+                                        f"Token too young: {token_address[:16]}... "
+                                        f"({age_secs:.1f}s < {min_age}s)"
+                                    )
+                                    if timing:
+                                        timing.outcome = 'rejected_quality'
+                                    return False
+                            except Exception as _age_err:
+                                logger.debug(
+                                    f"token age gate parse error (fail-open): {_age_err}"
+                                )
+
+                    # Gate 3: dev / top-holder concentration.
+                    # report.top_holder_percentage from GoPlus (EVM) + RugCheck (Solana).
+                    # Fail-open when 0 (data missing).
+                    max_dev = self.sniper_max_dev_holding_pct
+                    if max_dev < 100 and report.top_holder_percentage > 0:
+                        if report.top_holder_percentage > max_dev:
+                            self._stats['high_dev_holding_rejected'] = (
+                                self._stats.get('high_dev_holding_rejected', 0) + 1
+                            )
+                            self._rejected_cache[token_address] = datetime.now()
+                            logger.debug(
+                                f"Dev holding too high: {token_address[:16]}... "
+                                f"({report.top_holder_percentage:.1f}% > {max_dev}%)"
+                            )
+                            if timing:
+                                timing.outcome = 'rejected_quality'
+                            return False
+
+                    # Gate 4: minimum safety score floor (subtractive-penalty).
+                    # score=0 = DANGER, 100 = perfect. Floor at 40 rejects
+                    # low-CAUTION tokens that pass the DANGER/HONEYPOT check.
+                    min_score = self.sniper_min_safety_score
+                    if min_score > 0 and report.score < min_score:
+                        self._stats['low_score_rejected'] = (
+                            self._stats.get('low_score_rejected', 0) + 1
+                        )
+                        self._rejected_cache[token_address] = datetime.now()
+                        logger.debug(
+                            f"Safety score below floor: {token_address[:16]}... "
+                            f"(score {report.score} < floor {min_score})"
+                        )
+                        if timing:
+                            timing.outcome = 'rejected_quality'
+                        return False
+
+                    # Gate 5: buy/sell pressure ratio (fail-open if unavailable).
+                    # Solana only — calls Birdeye trade-stats asynchronously; any
+                    # error allows candidate through (Birdeye outage != reject all).
+                    min_bsr = self.sniper_min_buy_sell_ratio
+                    if min_bsr > 0 and chain_type == 'solana':
+                        bsr = await self._get_buy_sell_ratio(token_address)
+                        if bsr is not None and bsr < min_bsr:
+                            self._stats['low_buy_sell_ratio_rejected'] = (
+                                self._stats.get('low_buy_sell_ratio_rejected', 0) + 1
+                            )
+                            self._rejected_cache[token_address] = datetime.now()
+                            logger.debug(
+                                f"Buy/sell ratio too low: {token_address[:16]}... "
+                                f"({bsr:.2f} < {min_bsr})"
+                            )
+                            if timing:
+                                timing.outcome = 'rejected_quality'
+                            return False
+
                 # Token passed all checks - log this at INFO level
                 self._stats['passed_safety'] += 1
                 mode_tag = "[TEST] " if self.test_mode else ""
-                logger.info(f"✅ {mode_tag}Safety PASSED: {token_address} (Score: {report.score}/100, Liq: ${report.liquidity_usd:,.0f})")
+                logger.info(
+                    f"✅ {mode_tag}Safety PASSED: {token_address} "
+                    f"(Score: {report.score}/100, Liq: ${report.liquidity_usd:,.0f}, "
+                    f"Holders: {report.holder_count})"
+                )
                 return True
 
         except Exception as e:
@@ -709,6 +876,54 @@ class SniperEngine:
 
         return True
 
+    async def _get_buy_sell_ratio(self, token_address: str) -> Optional[float]:
+        """Wave-15: fetch buy/sell volume ratio from Birdeye trade-stats.
+
+        Returns the ratio buys/sells over the last ~50 recent swaps, or None
+        when data is unavailable (fail-open — caller treats None as pass).
+        Uses a 30s TTL stored in the rejected_cache namespace to avoid
+        hammering Birdeye on the hot filter path.
+        """
+        _cache_key = f"bsr:{token_address}"
+        cached = self._rejected_cache.get(_cache_key)
+        if cached and isinstance(cached, tuple):
+            ts, val = cached
+            if (datetime.now() - ts).total_seconds() < 30:
+                return val
+        try:
+            url = (
+                f"https://public-api.birdeye.so/defi/txs/token"
+                f"?address={token_address}&tx_type=swap&offset=0&limit=50"
+            )
+            headers = {'X-Chain': 'solana', 'accept': 'application/json'}
+            try:
+                from security.secrets_manager import secrets
+                api_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False)
+            except Exception:
+                api_key = None
+            if api_key:
+                headers['X-API-KEY'] = api_key
+
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, headers=headers, timeout=4) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+                    items = (data.get('data') or {}).get('items') or []
+                    if not items:
+                        return None
+                    buys = sum(1 for tx in items if tx.get('side') in ('buy', 'Buy'))
+                    sells = sum(1 for tx in items if tx.get('side') in ('sell', 'Sell'))
+                    if sells == 0:
+                        ratio: Optional[float] = float('inf') if buys > 0 else None
+                    else:
+                        ratio = buys / sells
+                    self._rejected_cache[_cache_key] = (datetime.now(), ratio)
+                    return ratio
+        except Exception as e:
+            logger.debug(f"buy_sell_ratio fetch error for {token_address}: {e}")
+        return None
+
     async def _log_stats_if_needed(self):
         """Log filter statistics every 1 minute (was 5; tightened for
         faster dashboard refresh + Phase 2 iteration loop)."""
@@ -720,13 +935,20 @@ class SniperEngine:
             passed = self._stats['passed_safety']
             pass_rate = (passed / total * 100) if total > 0 else 0
 
-            logger.info(f"📊 SNIPER STATS (Last 1 min): "
-                       f"Analyzed: {total} | "
-                       f"Passed: {passed} ({pass_rate:.1f}%) | "
-                       f"Honeypots: {self._stats['honeypots_detected']} | "
-                       f"Danger: {self._stats['danger_ratings']} | "
-                       f"High Tax: {self._stats['high_tax_rejected']} | "
-                       f"Low Liq: {self._stats['low_liquidity_rejected']}")
+            logger.info(
+                f"SNIPER STATS (Last 1 min): "
+                f"Analyzed: {total} | Passed: {passed} ({pass_rate:.1f}%) | "
+                f"Honeypots: {self._stats['honeypots_detected']} | "
+                f"Danger: {self._stats['danger_ratings']} | "
+                f"HighTax: {self._stats['high_tax_rejected']} | "
+                f"LowLiq: {self._stats['low_liquidity_rejected']} | "
+                f"LowHolders: {self._stats.get('low_holder_rejected', 0)} | "
+                f"TooYoung: {self._stats.get('too_young_rejected', 0)} | "
+                f"HighDev: {self._stats.get('high_dev_holding_rejected', 0)} | "
+                f"LowBSR: {self._stats.get('low_buy_sell_ratio_rejected', 0)} | "
+                f"LowScore: {self._stats.get('low_score_rejected', 0)} | "
+                f"PartialTakes: {self._stats.get('partial_takes_fired', 0)}"
+            )
 
             # Persist a snapshot for the standalone dashboard before
             # resetting the rolling window. Fail-soft.
@@ -742,7 +964,13 @@ class SniperEngine:
                 'danger_ratings': 0,
                 'high_tax_rejected': 0,
                 'low_liquidity_rejected': 0,
+                'low_holder_rejected': 0,
+                'too_young_rejected': 0,
+                'high_dev_holding_rejected': 0,
+                'low_buy_sell_ratio_rejected': 0,
+                'low_score_rejected': 0,
                 'passed_safety': 0,
+                'partial_takes_fired': 0,
                 'positions_synthetic_closed': 0,
                 'capped_rejections': 0,
                 'safety_check_errors': self._stats.get('safety_check_errors', 0),
@@ -1228,12 +1456,55 @@ class SniperEngine:
                             f"Current: ${current_price:.8f} | P&L: {pnl_pct:+.2f}%"
                         )
 
-                    # Check take profit
-                    if pnl_pct >= take_profit_pct:
+                    # Wave-15: update high-watermark for trailing stop
+                    ref_price = entry_price_usd if entry_price_usd > 0 else entry_price
+                    hw = data.get('high_watermark_price', ref_price)
+                    if current_price > hw:
+                        data['high_watermark_price'] = current_price
+                        hw = current_price
+
+                    already_partial = data.get('partial_taken', False)
+
+                    # Wave-15: partial take — fire when enabled and not yet fired
+                    partial_take_pct = self.sniper_partial_take_pct
+                    if (
+                        partial_take_pct > 0
+                        and not already_partial
+                        and pnl_pct >= partial_take_pct
+                    ):
+                        partial_size_pct = self.sniper_partial_take_size_pct
+                        amount_held = data.get('amount_bought', 0)
+                        partial_amount = amount_held * (partial_size_pct / 100.0)
+                        remaining_amount = amount_held - partial_amount
+                        logger.info(
+                            f"PARTIAL TAKE for {address[:8]}... "
+                            f"(+{pnl_pct:.1f}% >= +{partial_take_pct:.1f}%) "
+                            f"selling {partial_size_pct:.0f}% = {partial_amount:.4f} tokens"
+                        )
+                        await self._partial_exit(data, partial_amount, 'PARTIAL_TAKE')
+                        data['amount_bought'] = remaining_amount
+                        data['partial_taken'] = True
+                        data['partial_take_price'] = current_price
+                        data['high_watermark_price'] = current_price
+                        self._stats['partial_takes_fired'] = (
+                            self._stats.get('partial_takes_fired', 0) + 1
+                        )
+
+                    # Check take profit (remaining position)
+                    elif pnl_pct >= take_profit_pct:
                         logger.info(f"TAKE PROFIT triggered for {address[:8]}... ({pnl_pct:+.2f}%)")
                         await self._exit_position(data, 'TAKE_PROFIT')
 
-                    # Check stop loss
+                    # Stop loss: trailing after partial take, or fixed otherwise
+                    elif already_partial and self.sniper_trail_after_partial:
+                        stop_loss_pct_raw = abs(self.stop_loss_pct)
+                        trail_stop_price = hw * (1 - stop_loss_pct_raw / 100.0)
+                        if current_price <= trail_stop_price:
+                            logger.warning(
+                                f"TRAIL STOP for {address[:8]}... "
+                                f"(price {current_price:.8f} <= trail {trail_stop_price:.8f})"
+                            )
+                            await self._exit_position(data, 'TRAIL_STOP')
                     elif pnl_pct <= stop_loss_pct:
                         logger.warning(f"STOP LOSS triggered for {address[:8]}... ({pnl_pct:.2f}%)")
                         await self._exit_position(data, 'STOP_LOSS')
@@ -1249,7 +1520,7 @@ class SniperEngine:
                                 hold_minutes = (datetime.now() - entry_time).total_seconds() / 60.0
                                 if hold_minutes >= self.max_hold_minutes:
                                     logger.info(
-                                        f"⏰ TIME STOP triggered for {address[:8]}... "
+                                        f"TIME STOP triggered for {address[:8]}... "
                                         f"(held {hold_minutes:.0f}m, cap {self.max_hold_minutes}m, P&L {pnl_pct:+.2f}%)"
                                     )
                                     await self._exit_position(data, 'TIME_STOP')
@@ -1560,6 +1831,88 @@ class SniperEngine:
         except Exception as e:
             logger.debug(f"Birdeye fallback error for {token_address}: {e}")
         return 0
+
+    async def _partial_exit(self, data: Dict, partial_amount: float, reason: str):
+        """Wave-15: Sell a fraction of the position (partial take).
+
+        Executes execute_sell for partial_amount tokens, logs the partial exit
+        to sniper_trades as a supplementary 'sell' row (does NOT close the parent
+        open row — the parent remains open until the remaining position exits).
+        Fail-soft: any error is logged but does not crash the monitor loop.
+        """
+        token_address = data['target'].get('token_address')
+        chain = data.get('chain_type', 'solana')
+        try:
+            if not self.executor or partial_amount <= 0:
+                return
+            result = await self.executor.execute_sell(
+                token_address=token_address,
+                chain=chain,
+                amount_in=partial_amount,
+                slippage=self.slippage,
+                priority_fee=self.priority_fee
+            )
+            if result.success:
+                native_token = 'sol' if chain == 'solana' else 'eth'
+                native_price = await self.price_fetcher.get_price(native_token)
+                exit_usd = result.amount_out * native_price
+                full_amount = data.get('amount_bought', partial_amount) + partial_amount
+                fraction = partial_amount / full_amount if full_amount > 0 else 0
+                entry_usd_partial = data.get('entry_usd', 0) * fraction
+                pnl_usd = exit_usd - entry_usd_partial
+                pnl_pct = (pnl_usd / entry_usd_partial * 100) if entry_usd_partial > 0 else 0
+                logger.info(
+                    f"PARTIAL EXIT ok: {token_address[:8]}... "
+                    f"{partial_amount:.4f} tokens -> ${exit_usd:.2f} "
+                    f"(P&L ${pnl_usd:+.2f} / {pnl_pct:+.1f}%)"
+                )
+                if self.db_pool:
+                    try:
+                        import uuid as _uuid
+                        trade_id = f"snipe_pt_{_uuid.uuid4().hex[:12]}"
+                        parent_id = data.get('db_trade_id')
+                        async with self.db_pool.acquire() as conn:
+                            await conn.execute("""
+                                INSERT INTO sniper_trades (
+                                    trade_id, token_address, chain, side,
+                                    entry_price, exit_price, amount,
+                                    entry_usd, exit_usd,
+                                    profit_loss, profit_loss_pct,
+                                    status, exit_reason, is_simulated,
+                                    entry_timestamp, exit_timestamp,
+                                    exit_tx_hash, metadata
+                                ) VALUES (
+                                    $1,$2,$3,'sell',
+                                    $4,$5,$6,
+                                    $7,$8,
+                                    $9,$10,
+                                    'closed',$11,$12,
+                                    $13,$14,
+                                    $15,$16
+                                )
+                            """,
+                                trade_id, token_address, chain,
+                                data.get('entry_price', 0),
+                                (result.amount_out / partial_amount
+                                 if partial_amount else 0),
+                                partial_amount,
+                                entry_usd_partial, exit_usd,
+                                pnl_usd, pnl_pct,
+                                reason,
+                                should_skip_live(self.dry_run, module='sniper'),
+                                data.get('entry_time') or result.timestamp,
+                                result.timestamp,
+                                result.tx_hash,
+                                json.dumps({'partial_of': parent_id, 'reason': reason})
+                            )
+                    except Exception as db_e:
+                        logger.debug(f"partial exit DB log failed (non-fatal): {db_e}")
+            else:
+                logger.warning(
+                    f"PARTIAL EXIT failed for {token_address}: {result.error}"
+                )
+        except Exception as e:
+            logger.error(f"_partial_exit error for {token_address}: {e}")
 
     async def _exit_position(self, data: Dict, reason: str):
         """Exit a position (sell tokens)"""

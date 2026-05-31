@@ -2086,22 +2086,26 @@ class DashboardEndpoints:
                     # toward the most-recent 10K. COUNT(*) / SUM / FILTER let
                     # Postgres do the aggregation — no row-set is materialized
                     # in the event loop and the numbers reflect the full table.
+                    # Wave-15: add profit_loss_pct filter to exclude legacy absurd rows
                     try:
                         srow = await conn.fetchrow("""
                             SELECT
-                                COUNT(*) AS total,
                                 COUNT(*) FILTER (WHERE status='open') AS positions,
-                                COUNT(*) FILTER (WHERE status='closed') AS closed,
-                                COUNT(*) FILTER (WHERE status='closed' AND profit_loss > 0) AS wins,
-                                COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'), 0) AS pnl
+                                COUNT(*) FILTER (WHERE status='closed'
+                                    AND profit_loss_pct BETWEEN -100 AND 200) AS closed,
+                                COUNT(*) FILTER (WHERE status='closed'
+                                    AND profit_loss_pct BETWEEN -100 AND 200
+                                    AND profit_loss > 0) AS wins,
+                                COALESCE(SUM(profit_loss) FILTER (WHERE status='closed'
+                                    AND profit_loss_pct BETWEEN -100 AND 200), 0) AS pnl
                             FROM sniper_trades
                         """)
-                        if srow and (srow['total'] or 0) > 0:
-                            sniper_metrics['total_trades'] = int(srow['total'] or 0)
+                        if srow:
                             sniper_metrics['positions'] = int(srow['positions'] or 0)
                             sniper_metrics['pnl'] = float(srow['pnl'] or 0)
                             closed_n = int(srow['closed'] or 0)
                             wins_n = int(srow['wins'] or 0)
+                            sniper_metrics['total_trades'] = closed_n
                             sniper_metrics['win_rate'] = (wins_n / closed_n * 100) if closed_n else 0
                     except Exception:
                         pass
@@ -3822,37 +3826,67 @@ class DashboardEndpoints:
             except Exception:
                 pass
 
-            # Fetch sniper trades from dedicated sniper_trades table
+            # Fetch sniper trades from dedicated sniper_trades table.
+            # Wave-15 fix: use aggregate query for totals (all qualifying closed rows)
+            # + separate LIMIT 50 fetch for the recent-trades display widget.
+            # Old code summed PnL over only the 50 most-recent rows and reported
+            # that as total_pnl — producing the inflated +$111k dashboard figure.
+            # All three pages now use the same filter:
+            #   status='closed' AND profit_loss_pct BETWEEN -100 AND 200
             if self.db and self.db.pool:
                 try:
                     async with self.db.pool.acquire() as conn:
-                        sniper_trades = await conn.fetch("""
-                            SELECT trade_id, token_address, profit_loss, status, entry_timestamp, exit_timestamp
+                        # 1. Aggregate totals (full qualifying population)
+                        agg = await conn.fetchrow("""
+                            SELECT
+                                COUNT(*) AS closed_n,
+                                COALESCE(SUM(profit_loss), 0) AS total_pnl,
+                                COUNT(*) FILTER (WHERE profit_loss > 0) AS wins
                             FROM sniper_trades
                             WHERE status = 'closed'
-                            ORDER BY exit_timestamp DESC NULLS LAST, entry_timestamp DESC
+                              AND profit_loss_pct BETWEEN -100 AND 200
+                        """)
+                        closed_n = int(agg['closed_n'] or 0)
+                        total_pnl = float(agg['total_pnl'] or 0)
+                        wins = int(agg['wins'] or 0)
+                        # 2. Recent rows for the trade list widget (display only)
+                        recent_rows = await conn.fetch("""
+                            SELECT trade_id, token_address, profit_loss,
+                                   entry_timestamp, exit_timestamp
+                            FROM sniper_trades
+                            WHERE status = 'closed'
+                              AND profit_loss_pct BETWEEN -100 AND 200
+                            ORDER BY exit_timestamp DESC NULLS LAST,
+                                     entry_timestamp DESC
                             LIMIT 50
                         """)
                         trades_list = []
-                        total_pnl = 0
-                        wins = 0
-                        for t in sniper_trades:
+                        for t in recent_rows:
                             pnl = float(t.get('profit_loss') or 0)
-                            total_pnl += pnl
-                            if pnl > 0:
-                                wins += 1
                             trades_list.append({
                                 'trade_id': str(t.get('trade_id', '')),
-                                'symbol': t.get('token_address', '')[:16] + '...' if t.get('token_address') else 'UNKNOWN',
+                                'symbol': (
+                                    (t.get('token_address', '') or '')[:16] + '...'
+                                    if t.get('token_address') else 'UNKNOWN'
+                                ),
                                 'pnl': pnl,
-                                'time': t['exit_timestamp'].isoformat() if t.get('exit_timestamp') else (t['entry_timestamp'].isoformat() if t.get('entry_timestamp') else ''),
+                                'time': (
+                                    t['exit_timestamp'].isoformat()
+                                    if t.get('exit_timestamp')
+                                    else (
+                                        t['entry_timestamp'].isoformat()
+                                        if t.get('entry_timestamp') else ''
+                                    )
+                                ),
                                 'module': 'sniper'
                             })
                         sniper_data['trades'] = trades_list
-                        sniper_data['total_trades'] = len(sniper_trades)
+                        sniper_data['total_trades'] = closed_n
                         sniper_data['winning_trades'] = wins
                         sniper_data['total_pnl'] = f'${total_pnl:.2f}'
-                        sniper_data['win_rate'] = f'{(wins/len(sniper_trades)*100):.1f}%' if sniper_trades else '0%'
+                        sniper_data['win_rate'] = (
+                            f'{(wins / closed_n * 100):.1f}%' if closed_n else '0%'
+                        )
                 except Exception as e:
                     logger.debug(f"Error fetching sniper trades: {e}")
             simulator_data['sniper'] = sniper_data
@@ -9913,7 +9947,11 @@ class DashboardEndpoints:
 
             if self.db:
                 async with self.db.pool.acquire() as conn:
-                    # Get trade stats from sniper_trades table
+                    # Get trade stats from sniper_trades table.
+                    # Wave-15: add profit_loss_pct BETWEEN -100 AND 200 filter to
+                    # exclude legacy pre-fix rows with absurd values. Aligns
+                    # Performance page with Dashboard and Trades pages so all
+                    # three report consistent numbers from the same population.
                     row = await conn.fetchrow("""
                         SELECT
                             COUNT(*) as total_trades,
@@ -9923,6 +9961,7 @@ class DashboardEndpoints:
                             COALESCE(AVG(safety_score), 0) as avg_safety_score
                         FROM sniper_trades
                         WHERE status = 'closed'
+                          AND profit_loss_pct BETWEEN -100 AND 200
                     """)
                     if row:
                         stats['total_trades'] = row['total_trades'] or 0
@@ -10242,6 +10281,10 @@ class DashboardEndpoints:
         bootstrap paths leave self.db unset while self.db_pool is attached
         directly, which previously returned an empty list to /sniper/trades
         despite 439k rows in sniper_trades.
+
+        Wave-15: add optional status query param; when status=closed also apply
+        profit_loss_pct BETWEEN -100 AND 200 to exclude legacy absurd rows and
+        keep the Trades page consistent with Dashboard and Performance pages.
         """
         trades = []
         try:
@@ -10249,6 +10292,7 @@ class DashboardEndpoints:
             # Default raised from 100 -> 2000 to match the template request and
             # avoid silently truncating 439k -> 100 when a caller forgets ?limit.
             limit = max(1, min(int(request.query.get('limit', 2000)), 5000))
+            status_filter = request.query.get('status', '')  # '' = all rows
             pool = None
             if getattr(self, 'db', None) and getattr(self.db, 'pool', None):
                 pool = self.db.pool
@@ -10256,16 +10300,42 @@ class DashboardEndpoints:
                 pool = self.db_pool
             if pool is not None:
                 async with pool.acquire() as conn:
-                    rows = await conn.fetch("""
-                        SELECT
-                            trade_id, token_address, chain, side, entry_price, exit_price,
-                            amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
-                            safety_score, safety_rating, status, exit_reason, is_simulated,
-                            entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash
-                        FROM sniper_trades
-                        ORDER BY entry_timestamp DESC
-                        LIMIT $1
-                    """, limit)
+                    if status_filter == 'closed':
+                        rows = await conn.fetch("""
+                            SELECT
+                                trade_id, token_address, chain, side, entry_price, exit_price,
+                                amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                                safety_score, safety_rating, status, exit_reason, is_simulated,
+                                entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash
+                            FROM sniper_trades
+                            WHERE status = 'closed'
+                              AND profit_loss_pct BETWEEN -100 AND 200
+                            ORDER BY entry_timestamp DESC
+                            LIMIT $1
+                        """, limit)
+                    elif status_filter:
+                        rows = await conn.fetch("""
+                            SELECT
+                                trade_id, token_address, chain, side, entry_price, exit_price,
+                                amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                                safety_score, safety_rating, status, exit_reason, is_simulated,
+                                entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash
+                            FROM sniper_trades
+                            WHERE status = $2
+                            ORDER BY entry_timestamp DESC
+                            LIMIT $1
+                        """, limit, status_filter)
+                    else:
+                        rows = await conn.fetch("""
+                            SELECT
+                                trade_id, token_address, chain, side, entry_price, exit_price,
+                                amount, entry_usd, exit_usd, profit_loss, profit_loss_pct,
+                                safety_score, safety_rating, status, exit_reason, is_simulated,
+                                entry_timestamp, exit_timestamp, entry_tx_hash, exit_tx_hash
+                            FROM sniper_trades
+                            ORDER BY entry_timestamp DESC
+                            LIMIT $1
+                        """, limit)
                     for row in rows:
                         entry = float(row['entry_price'] or 0)
                         exit_p = float(row['exit_price'] or entry)
