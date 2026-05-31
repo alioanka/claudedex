@@ -1,4 +1,4 @@
--- Migration 044: Sniper Wave-15 entry quality + exit rework config seeds
+-- Migration 045: Sniper Wave-15 entry quality + exit rework config seeds
 --
 -- Context: last-1000-trade honest data shows 21.8% WR / -$1,523 PnL.
 -- Root cause: indiscriminate sniping of every launch with no minimum
