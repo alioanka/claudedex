@@ -1733,12 +1733,19 @@ class SentimentEngine:
 
         try:
             async with self.db_pool.acquire() as conn:
+                # DISTINCT ON (token_symbol) keeps one row per symbol — the
+                # most recent open position per symbol (largest entry_timestamp).
+                # Without it, multiple stale open rows for the same symbol
+                # would all be loaded and the last iteration wins (oldest row
+                # because DESC iteration reverses). Also prevents the per-symbol
+                # lock from being bypassed when duplicate open rows exist.
                 rows = await conn.fetch("""
-                    SELECT trade_id, token_symbol, side, entry_price, amount, entry_usd,
+                    SELECT DISTINCT ON (token_symbol)
+                           trade_id, token_symbol, side, entry_price, amount, entry_usd,
                            entry_timestamp, sentiment_score, entry_order_id
                     FROM ai_trades
                     WHERE status = 'open'
-                    ORDER BY entry_timestamp DESC
+                    ORDER BY token_symbol, entry_timestamp DESC
                 """)
 
                 for row in rows:
@@ -1794,8 +1801,19 @@ class SentimentEngine:
             else:
                 pnl_pct = ((entry_price - current_price) / entry_price) * 100
 
-            # Check time-based exit
-            hold_time = datetime.now() - entry_time
+            # Check time-based exit.
+            # entry_time loaded from DB is a tz-aware datetime (TIMESTAMPTZ
+            # after migration 034); entry_time set in-memory at open is naive
+            # (datetime.now()).  Mixing the two raises TypeError in the
+            # subtraction — swallowed by the outer except every 60 s, which
+            # silently prevents TP/SL/max_hold from ever firing.
+            # Fix: normalise both to UTC-naive before subtract.
+            now_naive = datetime.utcnow()
+            if hasattr(entry_time, 'tzinfo') and entry_time.tzinfo is not None:
+                entry_time_naive = entry_time.replace(tzinfo=None)
+            else:
+                entry_time_naive = entry_time
+            hold_time = now_naive - entry_time_naive
             hours_held = hold_time.total_seconds() / 3600
 
             exit_reason = None
