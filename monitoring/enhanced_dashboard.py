@@ -7327,6 +7327,15 @@ class DashboardEndpoints:
             # Signal settings
             'signal_timeframe': 'futures_strategy',
             'scan_interval_seconds': 'futures_strategy',
+            # Wave-14 exit controls (mig 040)
+            'max_hold_minutes': 'futures_risk',
+            'signal_reversal_threshold': 'futures_risk',
+            # Wave-14 funding-carry strategy (mig 041)
+            'funding_carry_enabled': 'futures_funding',
+            'carry_min_funding_bps': 'futures_funding',
+            'carry_exit_funding_bps': 'futures_funding',
+            'carry_max_positions': 'futures_funding',
+            'carry_max_hold_minutes': 'futures_funding',
         }
         return type_map.get(key)
 

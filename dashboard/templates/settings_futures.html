@@ -568,6 +568,25 @@
                 <div class="setting-description">Distance for trailing stop from current price</div>
                 <input type="number" class="setting-input" id="futures_trailing_distance" name="futures_trailing_distance" value="1.5" min="0.1" max="20" step="0.1">
             </div>
+
+            <!-- Wave-14 exit controls (mig 040) -->
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-clock"></i>
+                    Max Hold Time (minutes)
+                </label>
+                <div class="setting-description">Intraday max-hold cap. Positions past this limit without hitting TP1 are time-exited to prevent multi-hour fee bleed. 0 = disabled. Default: 240 (4h). (mig 040 FUT-RM-23)</div>
+                <input type="number" class="setting-input" id="futures_max_hold_minutes" name="futures_max_hold_minutes" value="240" min="0" max="1440" step="15">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-sync-alt"></i>
+                    Signal Reversal Threshold
+                </label>
+                <div class="setting-description">Reversal score needed to exit a position early on opposing signal (pre-W14 hardcoded: 6, effectively disabled). Minimum 3 to avoid whipsaws. Default: 4. (mig 040 FUT-RM-24)</div>
+                <input type="number" class="setting-input" id="futures_signal_reversal_threshold" name="futures_signal_reversal_threshold" value="4" min="3" max="10" step="1">
+            </div>
         </div>
     </div>
 
@@ -958,6 +977,55 @@
                 <div class="setting-description">Maximum funding rate before closing positions</div>
                 <input type="number" class="setting-input" id="futures_max_funding_rate" name="futures_max_funding_rate" value="0.1" min="0.01" max="1" step="0.01">
             </div>
+
+            <!-- Wave-14 funding-carry strategy (mig 041) -->
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-toggle-on"></i>
+                    Funding Carry Enabled
+                </label>
+                <div class="setting-description">Enter SHORT when funding exceeds carry_min_funding_bps to collect funding payments. Monitor funding forecast 48h before enabling. Default: off. (mig 041 FUT-RM-25)</div>
+                <div class="toggle-switch">
+                    <input type="checkbox" id="futures_funding_carry_enabled" name="futures_funding_carry_enabled">
+                    <span>Disabled</span>
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-arrow-up"></i>
+                    Carry Min Funding (bps/interval)
+                </label>
+                <div class="setting-description">Entry threshold. 8 bps ~= 87%/yr APR. Raise to 12+ for single-interval breakeven vs Bybit taker fees. Default: 8. (mig 041)</div>
+                <input type="number" class="setting-input" id="futures_carry_min_funding_bps" name="futures_carry_min_funding_bps" value="8" min="1" max="50" step="0.5">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-arrow-down"></i>
+                    Carry Exit Funding (bps/interval)
+                </label>
+                <div class="setting-description">Exit carry position when funding drops below this. Prevents holding dead carry positions. Default: 3. (mig 041)</div>
+                <input type="number" class="setting-input" id="futures_carry_exit_funding_bps" name="futures_carry_exit_funding_bps" value="3" min="0" max="20" step="0.5">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-layer-group"></i>
+                    Carry Max Positions
+                </label>
+                <div class="setting-description">Max simultaneous carry positions (independent of momentum max_positions). Start at 1 during initial observation. Default: 2. (mig 041)</div>
+                <input type="number" class="setting-input" id="futures_carry_max_positions" name="futures_carry_max_positions" value="2" min="1" max="10" step="1">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-clock"></i>
+                    Carry Max Hold (minutes)
+                </label>
+                <div class="setting-description">Max hold for carry positions. Default: 960 (2 x 8h funding intervals). Overrides global max_hold_minutes for carry trades. (mig 041)</div>
+                <input type="number" class="setting-input" id="futures_carry_max_hold_minutes" name="futures_carry_max_hold_minutes" value="960" min="60" max="2880" step="60">
+            </div>
         </div>
     </div>
 </div>
@@ -1162,6 +1230,15 @@ function resetSettings() {
         // Funding
         document.getElementById('futures_funding_arb').checked = false;
         document.getElementById('futures_max_funding_rate').value = 0.1;
+        // Wave-14 exit controls (mig 040)
+        document.getElementById('futures_max_hold_minutes').value = 240;
+        document.getElementById('futures_signal_reversal_threshold').value = 4;
+        // Wave-14 funding-carry strategy (mig 041)
+        document.getElementById('futures_funding_carry_enabled').checked = false;
+        document.getElementById('futures_carry_min_funding_bps').value = 8;
+        document.getElementById('futures_carry_exit_funding_bps').value = 3;
+        document.getElementById('futures_carry_max_positions').value = 2;
+        document.getElementById('futures_carry_max_hold_minutes').value = 960;
         // NEW: Advanced signal filters
         document.getElementById('futures_require_trend_confirmation').checked = true;
         document.getElementById('futures_require_trend_alignment').checked = true;
