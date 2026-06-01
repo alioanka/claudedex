@@ -249,18 +249,27 @@ ROUTERS_ETHEREUM = {
 }
 
 ROUTERS_ARBITRUM = {
-    # Note: All V2-compatible routers for getAmountsOut/swapExactTokensForTokens interface
-    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 Router (works!)
-    'camelot': '0xc873fEcbd354f5A56E00E710B90EF4201db2448d',    # Camelot DEX Router (V2 interface)
-    'zyberswap': '0x16e71B13fE6079B4312063F7E81F76d165Ad32Ad',  # Zyberswap V2 Router
+    # WAVE-17: Only V2-compatible routers with verified TVL on Arbitrum.
+    # REMOVED camelot — concentrated-liquidity V3 AMM; getAmountsOut uses
+    #   constant-product math and returns wrong/partial results for CL pools,
+    #   producing -2588 bps artifacts (root cause B, wave-17 diagnosis).
+    # REMOVED zyberswap — exploited April 2023, TVL near zero; getAmountsOut
+    #   on a ~$1k reserve pool returns garbage, producing -7033 bps artifacts
+    #   (root cause A, wave-17 diagnosis).
+    'sushiswap': '0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506',  # SushiSwap V2 — live, real TVL
 }
 
 ROUTERS_BASE = {
-    # Note: Using V2-compatible routers for getAmountsOut/swapExactTokensForTokens interface
-    # V3 routers require different interface (Quoter + SwapRouter)
-    'sushiswap': '0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891',   # SushiSwap V2 Router (works!)
-    'baseswap': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',    # BaseSwap V2 Router
-    'swapbased': '0xaaa3b1F1bd7BCc97fD1917c18ADE665C5D31F066',   # SwapBased V2 Router
+    # WAVE-17: Only V2-compatible routers with verified TVL on Base.
+    # REMOVED swapbased — thin liquidity, produced -25% spread artifacts.
+    # Aerodrome "Basic" pools use constant-product V2 AMM; Universal Router does
+    # NOT expose getAmountsOut. Aerodrome IRouter candidate noted below; add
+    # after on-chain reserve verification of WETH/USDC Basic pool.
+    'sushiswap': '0x6BDED42c6DA8FBf0d2bA55B2fa120C5e0c8D7891',   # SushiSwap V2 — live
+    'baseswap': '0x327Df1E6de05895d2ab08513aaDD9313Fe505d86',    # BaseSwap V2 — live
+    # CANDIDATE: 'aerodrome': '0xcF77a3Ba9A5CA399B7c97c74d54e5b1Beb874E43'
+    # Aerodrome V1 IRouter — same getAmountsOut signature (stable/volatile flag).
+    # Verify Basic WETH/USDC pool reserves > $50k USD before enabling.
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -397,6 +406,9 @@ CHAIN_CONFIGS = {
         # sell-leg RPC calls and avoids logging confusing -70xx bps near-misses
         # that are actually price-impact artefacts, not spread calculation errors.
         'min_price_spread_bps': 10.0,
+        # WAVE-17: upper sanity cap (bps). BUY-side divergence above this is a
+        # thin-pool or wrong-ABI artifact, not a real spread. DB-configurable.
+        'upper_spread_cap_bps': 500.0,
     },
     42161: {  # Arbitrum One
         'name': 'arbitrum',
@@ -415,6 +427,7 @@ CHAIN_CONFIGS = {
         'default_slippage_pct': 0.005,      # L2 V2 pools shallower -> ~0.5%
         'flash_loan_fee_pct': 0.0005,
         'min_price_spread_bps': 10.0,
+        'upper_spread_cap_bps': 500.0,
     },
     8453: {  # Base
         'name': 'base',
@@ -433,6 +446,7 @@ CHAIN_CONFIGS = {
         'default_slippage_pct': 0.005,
         'flash_loan_fee_pct': 0.0005,
         'min_price_spread_bps': 10.0,
+        'upper_spread_cap_bps': 500.0,
     },
 }
 
@@ -1993,6 +2007,29 @@ class EVMArbitrageEngine:
                         price_spread_bps=round(price_spread_bps, 2),
                         threshold_bps=round(_min_price_spread_bps, 2),
                     )
+                return False
+
+            # ============================================================
+            # WAVE-17 UPPER-SPREAD SANITY CAP: any BUY-side price_spread_bps
+            # above a sane ceiling is a data artifact, not an opportunity.
+            # Physical reality: liquid V2 pools on the same assets can diverge
+            # at most by ~200-400 bps before bots arbitrage them; 500 bps is a
+            # conservative ceiling that still allows genuine large opps.
+            # Values above this come from near-empty pools (e.g. 1 ETH TVL pool
+            # returning extreme amounts) that slipped through the min-spread floor
+            # because the other DEX quoted correctly. Record as thin_pool_artifact
+            # instead of logging raw_spread_negative -7000 bps which confused
+            # operators into thinking the spread formula was broken.
+            # ============================================================
+            _upper_spread_cap_bps = float(self.chain_config.get('upper_spread_cap_bps', 500.0))
+            if price_spread_bps > _upper_spread_cap_bps:
+                self._record_near_miss(
+                    'thin_pool_artifact',
+                    pair=pair_label_early,
+                    buy_dex=best_buy_dex, sell_dex=min_dex_name,
+                    price_spread_bps=round(price_spread_bps, 2),
+                    cap_bps=round(_upper_spread_cap_bps, 2),
+                )
                 return False
 
             # ============================================================
