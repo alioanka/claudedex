@@ -97,6 +97,27 @@
                                     <i class="fas fa-search me-2"></i>
                                     <strong>Need help finding wallets?</strong> Use the <a href="/copytrading/discovery" class="alert-link">Wallet Discovery</a> page to find and analyze profitable wallets to copy.
                                 </div>
+
+                                <hr class="my-3">
+                                <h6 class="text-uppercase text-muted mb-3">Signal Timing &amp; Concurrency (Wave-14/15/16)</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Signal Age (seconds)</label>
+                                    <input type="number" class="form-control" id="copy_max_signal_age_s" min="1" max="3600" step="0.5" value="5">
+                                    <div class="form-text">Run-time execution staleness guard: discard any leader signal older than N seconds before mirroring. Solana memecoin edge evaporates in ~1-2s. &ge;3600 effectively disables. Default: 5.0. (mig 042)</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Concurrent Wallets</label>
+                                    <input type="number" class="form-control" id="copy_max_concurrent_wallets" min="1" max="20" step="1" value="5">
+                                    <div class="form-text">Semaphore cap on simultaneous Helius REST calls. Raise to 10 on paid Helius plan; lower to 2 on free tier. Default: 5. (mig 044)</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Cursor Lookback (minutes)</label>
+                                    <input type="number" class="form-control" id="copy_cursor_lookback_minutes" min="0" max="120" step="1" value="15">
+                                    <div class="form-text">Startup catch-up window (first run only): process leader sigs within N minutes of now. 0 = skip all history (W15 behavior). Does NOT raise the run-time 5s guard. Default: 15. (mig 051)</div>
+                                </div>
                             </div>
                         </div>
                     </form>
@@ -366,6 +387,10 @@
                 // Cross-module exposure knobs
                 document.getElementById('copy_cross_module_exposure_check_enabled').checked = settings.copy_cross_module_exposure_check_enabled === true;
                 document.getElementById('copy_cross_module_exposure_cap_usd').value = settings.copy_cross_module_exposure_cap_usd != null ? settings.copy_cross_module_exposure_cap_usd : 500;
+                // Signal timing & concurrency (mig 042/044/051)
+                document.getElementById('copy_max_signal_age_s').value = settings.copy_max_signal_age_s != null ? settings.copy_max_signal_age_s : 5;
+                document.getElementById('copy_max_concurrent_wallets').value = settings.copy_max_concurrent_wallets != null ? settings.copy_max_concurrent_wallets : 5;
+                document.getElementById('copy_cursor_lookback_minutes').value = settings.copy_cursor_lookback_minutes != null ? settings.copy_cursor_lookback_minutes : 15;
             }
         } catch (error) {
             console.error('Error loading settings:', error);
@@ -389,6 +414,10 @@
             // Cross-module exposure knobs (wave-13 agent-7)
             copy_cross_module_exposure_check_enabled: document.getElementById('copy_cross_module_exposure_check_enabled').checked,
             copy_cross_module_exposure_cap_usd: parseFloat(document.getElementById('copy_cross_module_exposure_cap_usd').value),
+            // Signal timing & concurrency (mig 042/044/051)
+            copy_max_signal_age_s: parseFloat(document.getElementById('copy_max_signal_age_s').value),
+            copy_max_concurrent_wallets: parseInt(document.getElementById('copy_max_concurrent_wallets').value),
+            copy_cursor_lookback_minutes: parseFloat(document.getElementById('copy_cursor_lookback_minutes').value),
         };
 
         try {

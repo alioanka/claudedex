@@ -12599,6 +12599,10 @@ class DashboardEndpoints:
                 # Cross-module exposure knobs (wave-13 agent-7 handoff)
                 'copy_cross_module_exposure_check_enabled': False,
                 'copy_cross_module_exposure_cap_usd': 500.0,
+                # Signal timing & concurrency (wave-14/15/16)
+                'copy_max_signal_age_s': 5.0,         # mig 042
+                'copy_max_concurrent_wallets': 5,      # mig 044
+                'copy_cursor_lookback_minutes': 15.0,  # mig 051
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
