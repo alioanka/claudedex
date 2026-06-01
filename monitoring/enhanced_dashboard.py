@@ -7457,6 +7457,10 @@ class DashboardEndpoints:
             'take_profit': 'solana_risk',
             'daily_loss_limit': 'solana_risk',
             'priority_fee': 'solana_priority',
+
+            # Wave-16 kill-switch thresholds (mig 050) — DB key includes 'solana_' prefix
+            'solana_max_drawdown_pct': 'solana_general',
+            'solana_max_consecutive_losses': 'solana_general',
         }
         # Handle enabled flags and settings for sub-strategies
         if key.startswith('jupiter_'):

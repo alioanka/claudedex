@@ -471,6 +471,24 @@
                 <div class="setting-description">Priority fee for faster transaction inclusion</div>
                 <input type="number" class="setting-input" id="solana_priority_fee" name="solana_priority_fee" value="10000" min="1000" step="1000">
             </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-exclamation-triangle" style="color:#f59e0b"></i>
+                    Max Drawdown Kill-Switch (%)
+                </label>
+                <div class="setting-description">Disable new entries if realized daily PnL falls below -this% of starting capital. 0 = disabled. Default: 15. (mig 050)</div>
+                <input type="number" class="setting-input" id="solana_solana_max_drawdown_pct" name="solana_solana_max_drawdown_pct" value="15" min="0" max="100" step="0.5">
+            </div>
+
+            <div class="setting-item">
+                <label class="setting-label">
+                    <i class="fas fa-ban" style="color:#ef4444"></i>
+                    Max Consecutive Losses Kill-Switch
+                </label>
+                <div class="setting-description">Pause strategy after N consecutive losses. 0 = disabled. Default: 8. (mig 050)</div>
+                <input type="number" class="setting-input" id="solana_solana_max_consecutive_losses" name="solana_solana_max_consecutive_losses" value="8" min="0" max="50" step="1">
+            </div>
         </div>
     </div>
 
@@ -588,6 +606,49 @@
                     </label>
                     <div class="setting-description">Close position after X seconds (0 = disabled). Useful for time-based exits on established tokens.</div>
                     <input type="number" class="setting-input" id="solana_jupiter_auto_exit" name="solana_jupiter_auto_exit" value="0" min="0" max="86400" step="60">
+                </div>
+
+                <!-- Wave-16 Jupiter partial-take + trail (mig 050) -->
+                <div class="setting-item" style="border-top: 1px solid #2d3548; padding-top: 16px; margin-top: 4px;">
+                    <label class="setting-label">
+                        <i class="fas fa-percentage" style="color:#14f195"></i>
+                        Jupiter Partial Take Enabled
+                    </label>
+                    <div class="setting-description">Sell jupiter_partial_take_pct at TP level then trail the remainder. Raises avg win without touching WR. Default: off. (mig 050)</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="solana_jupiter_partial_take_enabled" name="solana_jupiter_partial_take_enabled">
+                        <span>Disabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-percentage"></i>
+                        Jupiter Partial Take Size (%)
+                    </label>
+                    <div class="setting-description">Pct of Jupiter position to realize at TP hit (default 50%). Remainder held with trail stop. (mig 050)</div>
+                    <input type="number" class="setting-input" id="solana_jupiter_partial_take_pct" name="solana_jupiter_partial_take_pct" value="50" min="1" max="100" step="5">
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-chart-line" style="color:#14f195"></i>
+                        Trail After Jupiter Partial Take
+                    </label>
+                    <div class="setting-description">Trail the remaining Jupiter position after partial TP exit. Default: off. (mig 050)</div>
+                    <div class="toggle-switch">
+                        <input type="checkbox" id="solana_jupiter_trail_after_partial_enabled" name="solana_jupiter_trail_after_partial_enabled">
+                        <span>Disabled</span>
+                    </div>
+                </div>
+
+                <div class="setting-item">
+                    <label class="setting-label">
+                        <i class="fas fa-arrows-alt-v"></i>
+                        Jupiter Trail Stop After Partial (%)
+                    </label>
+                    <div class="setting-description">Trail stop pct below peak price after Jupiter partial TP exit. Default: 3%. (mig 050)</div>
+                    <input type="number" class="setting-input" id="solana_jupiter_trail_after_partial_pct" name="solana_jupiter_trail_after_partial_pct" value="3" min="0.5" max="20" step="0.5">
                 </div>
             </div>
         </div>
@@ -997,6 +1058,9 @@ function resetSettings() {
         document.getElementById('solana_take_profit').value = 50;
         document.getElementById('solana_daily_loss_limit').value = 5;
         document.getElementById('solana_priority_fee').value = 10000;
+        // Wave-16 kill-switch thresholds (mig 050)
+        document.getElementById('solana_solana_max_drawdown_pct').value = 15;
+        document.getElementById('solana_solana_max_consecutive_losses').value = 8;
 
         // Jupiter
         document.getElementById('solana_jupiter_enabled').checked = true;
@@ -1008,6 +1072,11 @@ function resetSettings() {
         document.getElementById('solana_jupiter_stop_loss').value = 5;
         document.getElementById('solana_jupiter_take_profit').value = 10;
         document.getElementById('solana_jupiter_auto_exit').value = 0;
+        // Wave-16 Jupiter partial-take (mig 050)
+        document.getElementById('solana_jupiter_partial_take_enabled').checked = false;
+        document.getElementById('solana_jupiter_partial_take_pct').value = 50;
+        document.getElementById('solana_jupiter_trail_after_partial_enabled').checked = false;
+        document.getElementById('solana_jupiter_trail_after_partial_pct').value = 3;
 
         // Drift
         document.getElementById('solana_drift_enabled').checked = false;
