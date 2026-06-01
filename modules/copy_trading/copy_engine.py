@@ -1059,6 +1059,17 @@ class CopyTradingEngine(BaseModule):
         # Tune via config_settings.copytrading_config.copy_max_concurrent_wallets.
         self.copy_max_concurrent_wallets = 5
 
+        # Wave-16: throttle for fallback-poll rate-limit WARNING log.
+        # With 33 wallets the "Solana RPC rate limited in fallback poll"
+        # line fired once per wallet per 15 s cycle (33 WARNINGs / 15 s).
+        # Throttled to at most one WARNING per 60 s; all others demoted
+        # to DEBUG. Also tracks whether the last Helius call for a wallet
+        # was a true failure (vs empty == no new SWAPs) so the fallback
+        # poll is only invoked on genuine Helius transport failures, not
+        # on every empty response.
+        self._fallback_rl_last_warn: float = 0.0
+        self._fallback_rl_throttle_s: float = 60.0
+
         # Wave-15: per-wallet cursor (most-recent processed signature).
         # On first run the cursor is absent; we record the newest sig
         # returned by the API as the cursor and skip ALL history — old
@@ -1513,7 +1524,7 @@ class CopyTradingEngine(BaseModule):
         session: aiohttp.ClientSession,
         wallet: str,
         helius_key: str,
-    ) -> list:
+    ) -> Optional[list]:
         """Single Helius REST call returning SWAP-typed enhanced-tx dicts.
 
         GET /v0/addresses/{address}/transactions?type=SWAP&limit=5
@@ -1522,7 +1533,14 @@ class CopyTradingEngine(BaseModule):
 
         Pool-engine handoff: helius_key is resolved by _monitor_solana_wallets
         via pool_engine.get_endpoint('HELIUS_API'). This method is key-agnostic.
-        Returns [] on any error so caller falls through to the polling path.
+
+        Wave-16 return-value semantics (CHANGED from W15):
+          - list (possibly empty) = Helius call SUCCEEDED; [] means the
+            wallet had no SWAP txs in the last N slots.  Caller MUST NOT
+            fall back to _poll_wallet_sigs in this case — that would hammer
+            public SOLANA_RPC for every quiet wallet every 15 s cycle.
+          - None = transport failure (429 / non-200 / network error).
+            Caller MAY fall back to _poll_wallet_sigs.
         """
         url = (
             f"https://api.helius.xyz/v0/addresses/{wallet}/transactions"
@@ -1539,17 +1557,18 @@ class CopyTradingEngine(BaseModule):
                         await RPCProvider.report_rate_limit('HELIUS_API', 'api.helius.xyz', 60)
                     except Exception:
                         pass
-                    return []
+                    return None  # transport failure — caller may fall back
                 if resp.status != 200:
                     logger.debug(
                         f"Helius enhanced-tx non-200 for {wallet[:10]}: {resp.status}"
                     )
-                    return []
+                    return None  # transport failure — caller may fall back
                 txs = await resp.json()
+                # Successful response: empty list is valid (no SWAPs), not failure.
                 return txs if isinstance(txs, list) else []
         except Exception as e:
             logger.debug(f"Helius enhanced-tx fetch failed for {wallet[:10]}: {e}")
-            return []
+            return None  # transport failure — caller may fall back
 
     async def _poll_wallet_sigs(
         self,
@@ -1576,7 +1595,25 @@ class CopyTradingEngine(BaseModule):
                 timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 if resp.status == 429:
-                    logger.warning("Solana RPC rate limited in fallback poll - backing off")
+                    # Wave-16: throttle — emit WARNING at most once per
+                    # _fallback_rl_throttle_s (60 s default) regardless of
+                    # wallet count.  Subsequent hits are DEBUG to avoid the
+                    # 33-wallet * 15 s = 33 WARNINGs/15 s flood.
+                    import time as _rl_time
+                    _now_rl = _rl_time.time()
+                    _last = getattr(self, '_fallback_rl_last_warn', 0.0)
+                    _throttle = getattr(self, '_fallback_rl_throttle_s', 60.0)
+                    if _now_rl - _last >= _throttle:
+                        logger.warning(
+                            "Solana RPC rate limited in fallback poll - backing off "
+                            "(further occurrences demoted to DEBUG for %ds)", int(_throttle)
+                        )
+                        self._fallback_rl_last_warn = _now_rl
+                    else:
+                        logger.debug(
+                            "Solana RPC rate limited in fallback poll - backing off "
+                            "(throttled)"
+                        )
                     try:
                         on_helius = 'helius' in (self.solana_rpc_url or '').lower()
                         if not on_helius:
@@ -1729,12 +1766,22 @@ class CopyTradingEngine(BaseModule):
                 try:
                     if use_helius:
                         txs = await self._fetch_wallet_txs_helius(session, wallet, helius_key)
-                        if txs:
-                            sub_results = await asyncio.gather(
-                                *[self._process_helius_enhanced_tx(wallet, tx) for tx in txs],
-                                return_exceptions=True,
-                            )
-                            return sum(1 for r in sub_results if r is True)
+                        # Wave-16: txs=None means Helius transport failure
+                        # (429 / non-200 / timeout) — only then fall back
+                        # to the public SOLANA_RPC poll.  txs=[] (success,
+                        # no SWAP txs) is NOT a failure; do NOT poll — that
+                        # was the root cause of the fallback-rate-limit spam.
+                        if txs is None:
+                            # Helius failed — fall through to poll below.
+                            pass
+                        else:
+                            if txs:
+                                sub_results = await asyncio.gather(
+                                    *[self._process_helius_enhanced_tx(wallet, tx) for tx in txs],
+                                    return_exceptions=True,
+                                )
+                                return sum(1 for r in sub_results if r is True)
+                            return 0  # Helius succeeded, wallet had no SWAPs
                     return await self._poll_wallet_sigs(session, wallet)
                 except Exception as e:
                     logger.debug(f"_handle_wallet error for {wallet[:10]}: {e}")
