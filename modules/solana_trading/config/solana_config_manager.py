@@ -85,6 +85,16 @@ CONFIG_KEY_MAPPING = {
     # vanilla JupiterHelper.execute_swap path.
     'solana_jito_bundle_enabled': ('solana_jupiter', 'bool'),
     'solana_jito_tip_lamports': ('solana_jupiter', 'int'),
+
+    # Wave-16: Jupiter partial-take + trail remainder (mig 050)
+    'jupiter_partial_take_enabled':        ('solana_jupiter', 'bool'),
+    'jupiter_partial_take_pct':            ('solana_jupiter', 'float'),
+    'jupiter_trail_after_partial_enabled': ('solana_jupiter', 'bool'),
+    'jupiter_trail_after_partial_pct':     ('solana_jupiter', 'float'),
+
+    # Wave-16: kill-switch thresholds surfaced in DB (mig 050)
+    'solana_max_drawdown_pct':       ('solana_general', 'float'),
+    'solana_max_consecutive_losses': ('solana_general', 'int'),
 }
 
 
@@ -182,6 +192,22 @@ class SolanaConfigManager:
         # for everything else and avoids Jito's global rate-limit window.
         'solana_jito_bundle_enabled': False,
         'solana_jito_tip_lamports': 50_000,  # arbitrage uses 10k default; 50k is the documented competitive floor
+
+        # Wave-16 (mig 050): Jupiter partial-take + trail remainder.
+        # Off by default; flip on once LIVE confirms fill quality.
+        # When enabled, _check_exit_conditions sells jupiter_partial_take_pct
+        # of the position at the TP level and holds the remainder with a
+        # trailing stop at jupiter_trail_after_partial_pct below the peak.
+        'jupiter_partial_take_enabled':        False,
+        'jupiter_partial_take_pct':            50.0,   # % of position to exit at TP
+        'jupiter_trail_after_partial_enabled': False,
+        'jupiter_trail_after_partial_pct':     3.0,    # trail % below peak for remainder
+
+        # Wave-16 (mig 050): kill-switch thresholds surfaced in DB.
+        # Engine reads these in _check_daily_loss_limit (drawdown) and
+        # _open_position (consecutive losses). Conservative defaults.
+        'solana_max_drawdown_pct':       15.0,  # daily drawdown % of starting capital
+        'solana_max_consecutive_losses': 8,     # consecutive losses before pause
     }
 
     def __init__(self, db_pool=None):
@@ -528,6 +554,40 @@ class SolanaConfigManager:
     def solana_jito_tip_lamports(self) -> int:
         """Tip lamports attached to each Jito bundle (min enforced by JitoClient = 1000)."""
         return int(self.get('solana_jito_tip_lamports', 50_000))
+
+    # ---- Wave-16: Jupiter partial-take + trail remainder properties ----------
+
+    @property
+    def jupiter_partial_take_enabled(self) -> bool:
+        """Wave-16: sell partial at TP then trail remainder (off by default)."""
+        return bool(self.get('jupiter_partial_take_enabled', False))
+
+    @property
+    def jupiter_partial_take_pct(self) -> float:
+        """Wave-16: percentage of Jupiter position to exit at TP (default 50%)."""
+        return float(self.get('jupiter_partial_take_pct', 50.0))
+
+    @property
+    def jupiter_trail_after_partial_enabled(self) -> bool:
+        """Wave-16: trail remaining Jupiter position after partial TP exit."""
+        return bool(self.get('jupiter_trail_after_partial_enabled', False))
+
+    @property
+    def jupiter_trail_after_partial_pct(self) -> float:
+        """Wave-16: trail stop pct below peak after Jupiter partial TP exit (default 3%)."""
+        return float(self.get('jupiter_trail_after_partial_pct', 3.0))
+
+    # ---- Wave-16: kill-switch thresholds ------------------------------------
+
+    @property
+    def solana_max_drawdown_pct(self) -> float:
+        """Wave-16: daily drawdown % of starting capital that triggers pause."""
+        return float(self.get('solana_max_drawdown_pct', 15.0))
+
+    @property
+    def solana_max_consecutive_losses(self) -> int:
+        """Wave-16: consecutive losses before the strategy pauses new entries."""
+        return int(self.get('solana_max_consecutive_losses', 8))
 
     @property
     def priority_fee_lamports(self) -> int:

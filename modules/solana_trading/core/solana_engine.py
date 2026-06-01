@@ -2937,6 +2937,59 @@ class SolanaTradingEngine:
                     stop_loss_pct = -abs(self.config_manager.pumpfun_stop_loss_pct)
                     take_profit_pct = self.config_manager.pumpfun_take_profit_pct
 
+        # ---- Wave-16: Jupiter partial-take + trail remainder ----------------
+        # When jupiter_partial_take_enabled=True: on TP hit, signal a partial
+        # exit (realized jupiter_partial_take_pct of the position at TP) then
+        # hold the remainder with a trailing stop below the running peak.
+        # This raises avg_win without changing entry logic or WR.
+        # The _close_position caller handles partial sizing via exit_reason.
+        if (
+            position.strategy == Strategy.JUPITER
+            and self.config_manager
+            and self.config_manager.jupiter_partial_take_enabled
+        ):
+            meta = position.metadata if position.metadata else {}
+            # Track peak price for trailing on the remainder
+            current = position.current_price
+            entry = position.entry_price
+            if entry and entry > 0 and current and current > 0:
+                peak = meta.get('_jup_partial_peak', current)
+                if current > peak:
+                    meta['_jup_partial_peak'] = current
+                    peak = current
+                if not isinstance(position.metadata, dict):
+                    position.metadata = {}
+                position.metadata['_jup_partial_peak'] = peak
+
+                partial_taken = meta.get('_jup_partial_taken', False)
+                if not partial_taken and pnl_pct >= take_profit_pct:
+                    # First TP hit: take the partial, flag remainder
+                    position.metadata['_jup_partial_taken'] = True
+                    position.metadata['_jup_partial_peak'] = current
+                    logger.info(
+                        "📊 Jupiter partial-take triggered: %s pnl=%.2f%% >= TP=%.2f%% — "
+                        "exiting %.0f%% of position",
+                        position.token_symbol, pnl_pct, take_profit_pct,
+                        self.config_manager.jupiter_partial_take_pct,
+                    )
+                    return "jupiter_partial_take"
+
+                if (
+                    partial_taken
+                    and self.config_manager.jupiter_trail_after_partial_enabled
+                ):
+                    # Remainder is being trailed: trail stop below running peak
+                    trail_pct = self.config_manager.jupiter_trail_after_partial_pct
+                    trail_sl_pct = ((peak * (1.0 - trail_pct / 100.0) - entry) / entry) * 100.0
+                    if pnl_pct <= trail_sl_pct:
+                        logger.info(
+                            "📊 Jupiter trail-remainder stop hit: %s pnl=%.2f%% <= trail_sl=%.2f%% "
+                            "(peak=%.8f trail=%.1f%%)",
+                            position.token_symbol, pnl_pct, trail_sl_pct, peak, trail_pct,
+                        )
+                        return "jupiter_trail_stop"
+        # ---- End Wave-16 partial-take block ----------------------------------
+
         # Stop loss
         if pnl_pct <= stop_loss_pct:
             return "stop_loss"
@@ -4321,7 +4374,7 @@ class SolanaTradingEngine:
 
         try:
             # Determine if this is a partial exit
-            is_partial = reason.startswith("partial_exit_")
+            is_partial = reason.startswith("partial_exit_") or reason == "jupiter_partial_take"
             partial_pct = 0.20  # Default 20% partial exit per tier
 
             # Adjust partial percentage based on tier
@@ -4336,6 +4389,12 @@ class SolanaTradingEngine:
             elif reason in ("partial_exit_tier1", "partial_exit_tier2"):
                 # Tiers 1-2: 25% each (was 20%) - cumulative 55% + 25% = 80% by tier 2
                 partial_pct = 0.25
+            elif reason == "jupiter_partial_take":
+                # Wave-16: Jupiter partial-take at TP; read configured pct from DB
+                cfg_pct = 50.0
+                if self.config_manager:
+                    cfg_pct = self.config_manager.jupiter_partial_take_pct
+                partial_pct = max(0.01, min(1.0, cfg_pct / 100.0))
             elif is_partial:
                 # Tiers 3-4: 20% each
                 partial_pct = 0.20
