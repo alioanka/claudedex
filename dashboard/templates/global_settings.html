@@ -1,6 +1,101 @@
 {% extends "base.html" %}
 
 {% block content %}
+
+<!-- Allocation Guard (mig 046) — labeled section above the raw global editor -->
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5 class="mb-0"><i class="fas fa-shield-alt me-2 text-warning"></i>Allocation Guard (Wave-15)</h5>
+                <button class="btn btn-warning btn-sm" onclick="saveAllocationGuard()">
+                    <i class="fas fa-save me-1"></i>Save Allocation Guard
+                </button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3">Controls how much capital each module can commit. The AllocationGuard vetoes new entries that would exceed these budgets. Keys live in <code>allocation_guard_config</code>. (mig 046)</p>
+                <div class="row g-3">
+                    <div class="col-md-4">
+                        <div class="card bg-secondary">
+                            <div class="card-header py-2"><small class="fw-bold">Guard Behavior</small></div>
+                            <div class="card-body py-3">
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" id="ag_enabled" checked>
+                                    <label class="form-check-label small" for="ag_enabled">Guard Enabled</label>
+                                    <div class="form-text" style="font-size:0.75rem;">false = advisory logging only (vetoes logged but not enforced). Default: true.</div>
+                                </div>
+                                <div class="form-check form-switch mb-2">
+                                    <input class="form-check-input" type="checkbox" id="ag_use_orchestrator_budget" checked>
+                                    <label class="form-check-label small" for="ag_use_orchestrator_budget">Use Orchestrator Budget</label>
+                                    <div class="form-text" style="font-size:0.75rem;">When on, reads orchestrator's latest budget_usd recommendation as module budget override. Default: true.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-secondary">
+                            <div class="card-header py-2"><small class="fw-bold">Wallet Caps (USD)</small></div>
+                            <div class="card-body py-3">
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Total Cap (all wallets)</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_global_total_cap_usd" min="0" step="50" value="1000">
+                                    <div class="form-text" style="font-size:0.75rem;">Hard cap across ALL modules + wallets. 0 = disabled. Default: $1000.</div>
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">EVM Wallet Cap (USD)</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_global_evm_wallet_cap_usd" min="0" step="50" value="700">
+                                    <div class="form-text" style="font-size:0.75rem;">Max committed across dex+arb+ai+futures. Default: $700.</div>
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Solana Wallet Cap (USD)</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_global_solana_wallet_cap_usd" min="0" step="50" value="700">
+                                    <div class="form-text" style="font-size:0.75rem;">Max committed across solana+sniper+copy_trading. Default: $700.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="card bg-secondary">
+                            <div class="card-header py-2"><small class="fw-bold">Per-Module Budgets (USD)</small></div>
+                            <div class="card-body py-3">
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Sniper</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_budget_usd_sniper" min="0" step="10" value="150">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Arbitrage</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_budget_usd_arbitrage" min="0" step="10" value="200">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Copy Trading</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_budget_usd_copy_trading" min="0" step="10" value="150">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Futures</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_budget_usd_futures" min="0" step="10" value="200">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">Solana</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_budget_usd_solana" min="0" step="10" value="150">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">DEX</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_budget_usd_dex" min="0" step="10" value="100">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small mb-1">AI</label>
+                                    <input type="number" class="form-control form-control-sm" id="ag_budget_usd_ai" min="0" step="10" value="100">
+                                </div>
+                                <div class="form-text" style="font-size:0.75rem;">0 = unlimited per module. Overridden by orchestrator budget when enabled.</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div class="row mb-4">
     <div class="col-md-12">
         <div class="card bg-dark text-white">
@@ -212,5 +307,69 @@ async function saveSettings(event, category) {
 }
 
 loadSettings();
+
+// ── Allocation Guard panel (mig 046) ──────────────────────────────────────
+// Load current allocation_guard_config values from /api/settings/all and
+// populate the labeled inputs above. Falls back to seeded migration defaults
+// if the key is absent (instance hasn't run mig 046 yet).
+async function loadAllocationGuard() {
+    try {
+        const r = await fetch('/api/settings/all');
+        const d = await r.json();
+        if (!d.success && !d.data) return;
+        const ag = (d.data || {})['allocation_guard_config'] || {};
+        const get = (k, def) => ag[k] ? ag[k].value : def;
+
+        document.getElementById('ag_enabled').checked = get('enabled', true);
+        document.getElementById('ag_use_orchestrator_budget').checked = get('use_orchestrator_budget', true);
+        document.getElementById('ag_global_total_cap_usd').value = get('global_total_cap_usd', 1000);
+        document.getElementById('ag_global_evm_wallet_cap_usd').value = get('global_evm_wallet_cap_usd', 700);
+        document.getElementById('ag_global_solana_wallet_cap_usd').value = get('global_solana_wallet_cap_usd', 700);
+        document.getElementById('ag_budget_usd_sniper').value = get('budget_usd_sniper', 150);
+        document.getElementById('ag_budget_usd_arbitrage').value = get('budget_usd_arbitrage', 200);
+        document.getElementById('ag_budget_usd_copy_trading').value = get('budget_usd_copy_trading', 150);
+        document.getElementById('ag_budget_usd_futures').value = get('budget_usd_futures', 200);
+        document.getElementById('ag_budget_usd_solana').value = get('budget_usd_solana', 150);
+        document.getElementById('ag_budget_usd_dex').value = get('budget_usd_dex', 100);
+        document.getElementById('ag_budget_usd_ai').value = get('budget_usd_ai', 100);
+    } catch (e) {
+        console.warn('Failed to load allocation guard settings:', e);
+    }
+}
+
+async function saveAllocationGuard() {
+    const csrf = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+    const updates = {
+        enabled: document.getElementById('ag_enabled').checked,
+        use_orchestrator_budget: document.getElementById('ag_use_orchestrator_budget').checked,
+        global_total_cap_usd: parseFloat(document.getElementById('ag_global_total_cap_usd').value),
+        global_evm_wallet_cap_usd: parseFloat(document.getElementById('ag_global_evm_wallet_cap_usd').value),
+        global_solana_wallet_cap_usd: parseFloat(document.getElementById('ag_global_solana_wallet_cap_usd').value),
+        budget_usd_sniper: parseFloat(document.getElementById('ag_budget_usd_sniper').value),
+        budget_usd_arbitrage: parseFloat(document.getElementById('ag_budget_usd_arbitrage').value),
+        budget_usd_copy_trading: parseFloat(document.getElementById('ag_budget_usd_copy_trading').value),
+        budget_usd_futures: parseFloat(document.getElementById('ag_budget_usd_futures').value),
+        budget_usd_solana: parseFloat(document.getElementById('ag_budget_usd_solana').value),
+        budget_usd_dex: parseFloat(document.getElementById('ag_budget_usd_dex').value),
+        budget_usd_ai: parseFloat(document.getElementById('ag_budget_usd_ai').value),
+    };
+    try {
+        const r = await fetch('/api/settings/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(csrf) },
+            body: JSON.stringify({ config_type: 'allocation_guard_config', updates })
+        });
+        const b = await r.json().catch(() => ({}));
+        if (r.ok && b.success !== false) {
+            alert('Allocation Guard settings saved.');
+        } else {
+            alert('Save failed: ' + (b.error || r.statusText));
+        }
+    } catch (e) {
+        alert('Save failed (network): ' + e.message);
+    }
+}
+
+loadAllocationGuard();
 </script>
 {% endblock %}
