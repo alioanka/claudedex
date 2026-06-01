@@ -1076,7 +1076,14 @@ class CopyTradingEngine(BaseModule):
         # leader trades are never actionable and must not be replayed.
         # On subsequent runs only sigs older than (i.e. returned before)
         # the cursor are skipped, so no re-evaluation noise.
+        # Wave-16: copy_cursor_lookback_minutes (default 15) widens the
+        # first-run window: sigs within the lookback are processed (not
+        # skipped) on startup so the bot catches genuinely-recent leader
+        # trades that happened before the process started. The lookback
+        # is the staleness gate for startup; copy_max_signal_age_s still
+        # applies on every subsequent cycle.
         self._wallet_sig_cursors: Dict[str, str] = {}
+        self.copy_cursor_lookback_minutes: float = 15.0
 
         # Trade executor
         self.executor: Optional[CopyTradeExecutor] = None
@@ -1371,6 +1378,19 @@ class CopyTradingEngine(BaseModule):
                             self.copy_max_signal_age_s = max(1.0, min(3600.0, v))
                         except (TypeError, ValueError):
                             pass
+                    elif key == 'copy_cursor_lookback_minutes':
+                        # Wave-16 startup catch-up window. On first run the
+                        # cursor is absent; any sig within this window is
+                        # processed (not skipped) so the bot catches leader
+                        # trades that happened before it started. Does NOT
+                        # affect copy_max_signal_age_s (the run-time
+                        # execution staleness guard). Clamp: 0 disables
+                        # (behaves like W15 — skip all history); max 120 min.
+                        try:
+                            v = float(val) if val else 15.0
+                            self.copy_cursor_lookback_minutes = max(0.0, min(120.0, v))
+                        except (TypeError, ValueError):
+                            pass
 
                 if targets_loaded != self.targets:
                     self.targets = targets_loaded
@@ -1639,18 +1659,49 @@ class CopyTradingEngine(BaseModule):
         signal_age_s = float(getattr(self, 'copy_max_signal_age_s', 5.0))
         trades_copied = 0
 
-        # Wave-15 cursor: the first sig in the response is the newest.
-        # On first run (no cursor) record it and skip ALL history so we
-        # never replay old leader trades.  On subsequent runs only sigs
-        # not yet in _known_solana_sigs are evaluated; stale ones are
-        # remembered so they are silently ignored on the next cycle.
+        # Wave-15/16 cursor logic.
+        # On first run (cursor absent) apply the lookback window instead of
+        # skipping ALL history (W15 behaviour). Any sig whose blockTime is
+        # within copy_cursor_lookback_minutes seconds of now is processed;
+        # older sigs are recorded as seen (so they are never revisited) but
+        # not executed. The lookback IS the staleness gate for startup — we
+        # do NOT apply copy_max_signal_age_s during this first-run pass so
+        # a 15-min lookback doesn't get eaten by the 5 s execution guard.
+        # On subsequent runs only the copy_max_signal_age_s guard applies.
         cursor = self._wallet_sig_cursors.get(wallet)
-        if not cursor and signatures:
+        is_first_run = not cursor
+        if is_first_run and signatures:
+            lookback_s = float(getattr(self, 'copy_cursor_lookback_minutes', 15.0)) * 60.0
             newest_sig = signatures[0].get('signature')
             if newest_sig:
                 self._wallet_sig_cursors[wallet] = newest_sig
-                self._remember_sol_sig(newest_sig)
-            return 0  # Skip history on first run
+            for sig_info in signatures:
+                sig = sig_info.get('signature')
+                if not sig:
+                    continue
+                self._remember_sol_sig(sig)
+                if sig_info.get('err') is not None:
+                    continue
+                block_time = sig_info.get('blockTime', 0)
+                if not block_time:
+                    continue
+                age_s = now_ts - block_time
+                if age_s > lookback_s:
+                    logger.debug(
+                        f"[replay] solana wallet={wallet[:10]} tx={sig[:14]} "
+                        f"decision=skipped reason=pre_lookback_history "
+                        f"extra={{'age_s': {round(age_s, 1)}, 'lookback_s': {lookback_s}}}"
+                    )
+                    continue
+                # Within lookback — process without the run-time staleness guard.
+                logger.debug(
+                    f"[replay] solana wallet={wallet[:10]} tx={sig[:14]} "
+                    f"decision=evaluating reason=startup_lookback "
+                    f"extra={{'age_s': {round(age_s, 1)}, 'lookback_s': {lookback_s}}}"
+                )
+                if await self._analyze_and_copy_solana(wallet, sig):
+                    trades_copied += 1
+            return trades_copied
 
         for sig_info in signatures:
             sig = sig_info.get('signature')
@@ -1689,6 +1740,8 @@ class CopyTradingEngine(BaseModule):
 
         Wave-15: stale sigs are remembered (so they are silently ignored on
         the next cycle) and logged at DEBUG only (not INFO).
+        Wave-16: on first run (no cursor for this wallet) apply the lookback
+        window instead of copy_max_signal_age_s so startup catch-up works.
         """
         import time as _time
         sig = tx.get('signature')
@@ -1697,16 +1750,29 @@ class CopyTradingEngine(BaseModule):
         block_time = tx.get('timestamp') or tx.get('blockTime') or 0
         if block_time:
             age_s = _time.time() - block_time
-            signal_age_s = float(getattr(self, 'copy_max_signal_age_s', 5.0))
-            if age_s > signal_age_s:
-                # Remember stale sig so it is silently skipped next cycle.
-                self._remember_sol_sig(sig)
-                logger.debug(
-                    f"[replay] solana wallet={wallet[:10]} tx={sig[:14]} "
-                    f"decision=skipped reason=signal_stale "
-                    f"extra={{'age_s': {round(age_s, 1)}, 'max_age_s': {signal_age_s}}}"
-                )
-                return False
+            is_first_run = not self._wallet_sig_cursors.get(wallet)
+            if is_first_run:
+                # First run: use the lookback window as the staleness gate.
+                lookback_s = float(getattr(self, 'copy_cursor_lookback_minutes', 15.0)) * 60.0
+                if age_s > lookback_s:
+                    self._remember_sol_sig(sig)
+                    logger.debug(
+                        f"[replay] solana wallet={wallet[:10]} tx={sig[:14]} "
+                        f"decision=skipped reason=pre_lookback_history "
+                        f"extra={{'age_s': {round(age_s, 1)}, 'lookback_s': {lookback_s}}}"
+                    )
+                    return False
+            else:
+                signal_age_s = float(getattr(self, 'copy_max_signal_age_s', 5.0))
+                if age_s > signal_age_s:
+                    # Remember stale sig so it is silently skipped next cycle.
+                    self._remember_sol_sig(sig)
+                    logger.debug(
+                        f"[replay] solana wallet={wallet[:10]} tx={sig[:14]} "
+                        f"decision=skipped reason=signal_stale "
+                        f"extra={{'age_s': {round(age_s, 1)}, 'max_age_s': {signal_age_s}}}"
+                    )
+                    return False
         self._remember_sol_sig(sig)
         self._wallet_sig_cursors[wallet] = sig  # advance cursor on fresh sig
         return await self._analyze_and_copy_solana(wallet, sig)
