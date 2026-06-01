@@ -30,6 +30,19 @@
                                     DRY/LIVE is controlled by the banner at the top of this page.
                                 </div>
 
+                                <!-- Wave-16 multi-symbol config (mig 049) -->
+                                <div class="mb-3">
+                                    <label class="form-label"><i class="fas fa-coins me-1"></i>AI Symbols (comma-separated)</label>
+                                    <input type="text" class="form-control font-monospace" id="ai_symbols" placeholder="BTC,ETH,SOL">
+                                    <div class="form-text">Symbols the AI advisor considers each cycle. Engine opens one position per symbol (up to ai_max_positions). Default: BTC,ETH,SOL. (mig 049)</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label"><i class="fas fa-layer-group me-1"></i>AI Max Positions (multi-symbol)</label>
+                                    <input type="number" class="form-control" id="ai_max_positions" min="1" max="10" step="1" value="3">
+                                    <div class="form-text">Maximum concurrent open AI positions across all symbols. Default: 3 (one per default symbol). (mig 049)</div>
+                                </div>
+
                                 <div class="mb-3">
                                     <label class="form-label">Confidence Threshold (decimal 0.0 – 1.0)</label>
                                     <input type="number" class="form-control" id="confidence_threshold" min="0" max="1" step="0.01">
@@ -755,6 +768,9 @@
                 const settings = data.settings;
                 // Basic settings
                 document.getElementById('direct_trading').checked = settings.direct_trading === true;
+                // Wave-16 multi-symbol config (mig 049)
+                document.getElementById('ai_symbols').value = settings.ai_symbols || 'BTC,ETH,SOL';
+                document.getElementById('ai_max_positions').value = settings.ai_max_positions !== undefined ? settings.ai_max_positions : 3;
                 // dry_run owned by DryRunWidget banner.
                 // confidence_threshold is stored as a decimal (0.0-1.0).
                 // Guard against legacy percentage values (>1) stored in old DBs.
@@ -852,6 +868,9 @@
         const settings = {
             // Basic settings
             direct_trading: document.getElementById('direct_trading').checked,
+            // Wave-16 multi-symbol config (mig 049)
+            ai_symbols: document.getElementById('ai_symbols').value.trim() || 'BTC,ETH,SOL',
+            ai_max_positions: parseInt(document.getElementById('ai_max_positions').value),
             // dry_run omitted — banner-only.
             confidence_threshold: parseFloat(document.getElementById('confidence_threshold').value),
             trade_amount_usd: parseFloat(document.getElementById('trade_amount_usd').value),

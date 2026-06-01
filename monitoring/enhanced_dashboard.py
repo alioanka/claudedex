@@ -13927,6 +13927,9 @@ class DashboardEndpoints:
                 # Basic settings
                 'direct_trading': False,
                 'dry_run': True,
+                # Wave-16 multi-symbol config (mig 049)
+                'ai_symbols': 'BTC,ETH,SOL',
+                'ai_max_positions': 3,
                 # confidence_threshold is a decimal (0.0-1.0).
                 # Default 0.35 — wave-13 agent-8 fix: old default 0.50
                 # blocked all trades (live LLM scores cluster 0.30-0.40).
