@@ -71,6 +71,131 @@
 
                         <hr class="my-4">
 
+                        <!-- Entry Quality Gates (mig 045, 052) -->
+                        <div class="row">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-filter me-2"></i>Entry Quality Gates (Wave-15)</h6>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="sniper_quality_gates_enabled" checked>
+                                    <label class="form-check-label" for="sniper_quality_gates_enabled">Enable Quality Gates</label>
+                                    <div class="form-text">Run W15 entry-quality heuristics (holder count, token age, dev holding, buy/sell ratio, safety score floor). Default: on. (mig 052)</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Min Holder Count</label>
+                                    <input type="number" class="form-control" id="sniper_min_holder_count" min="0" step="1" value="10">
+                                    <div class="form-text">Reject tokens with fewer than N holders at safety-check time. 0 = disabled. Default: 10.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Min Token Age (seconds)</label>
+                                    <input type="number" class="form-control" id="sniper_min_token_age_seconds" min="0" step="1" value="30">
+                                    <div class="form-text">Ignore pool events younger than N seconds (vs pool block_time). First 5-30s dominated by MEV bots. 0 = disabled. Default: 30.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Max Dev Holding (%)</label>
+                                    <input type="number" class="form-control" id="sniper_max_dev_holding_pct" min="0" max="100" step="1" value="30">
+                                    <div class="form-text">Reject if top-holder % of supply exceeds this (proxy for dev wallet). 100 = disabled. Default: 30.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Min Buy/Sell Ratio</label>
+                                    <input type="number" class="form-control" id="sniper_min_buy_sell_ratio" min="0" step="0.1" value="1.5">
+                                    <div class="form-text">Reject if buy-volume / sell-volume &lt; N over detection window. 0.0 = disabled. Default: 1.5.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Min Safety Score (0-100)</label>
+                                    <input type="number" class="form-control" id="sniper_min_safety_score" min="0" max="100" step="1" value="40">
+                                    <div class="form-text">Hard safety score floor (subtractive-penalty scale). Also rejects low-CAUTION tokens. 0 = gate disabled. Default: 40.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <!-- Partial Take / Trail Exit (mig 045) -->
+                        <div class="row">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-percentage me-2"></i>Partial-Take Exit Strategy (Wave-15)</h6>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">Partial Take at Profit (%)</label>
+                                    <input type="number" class="form-control" id="sniper_partial_take_pct" min="0" step="1" value="20">
+                                    <div class="form-text">% gain at which partial-take fires. 0.0 = disabled (single full TP). Default: 20.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Partial Take Size (%)</label>
+                                    <input type="number" class="form-control" id="sniper_partial_take_size_pct" min="0" max="100" step="5" value="50">
+                                    <div class="form-text">Fraction of position (%) sold at partial-take level. 50 = sell half, let rest ride. 100 = full exit. Default: 50.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="sniper_trail_after_partial" checked>
+                                    <label class="form-check-label" for="sniper_trail_after_partial">Trail Stop After Partial Take</label>
+                                    <div class="form-text">After partial-take, use trailing stop on the remainder (trail distance = stop_loss_pct from high-watermark). false = keep fixed SL. Default: on.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <!-- EVM Chain Gates (mig 043) -->
+                        <div class="row">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-link me-2"></i>EVM Chain Gates (Wave-14)</h6>
+                                <div class="alert alert-warning py-2 mb-3" style="font-size:0.85em">
+                                    <i class="fas fa-exclamation-triangle me-1"></i>
+                                    21h DRY_RUN: EVM 12.7% WR / -0.09% avg vs Solana 50.8% / +2.81%. EVM disabled by default.
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="sniper_evm_enabled">
+                                    <label class="form-check-label" for="sniper_evm_enabled">Enable EVM Sniping</label>
+                                    <div class="form-text">Master toggle for the EVM listener. When off, EVMListener is not started. Solana path unaffected. Default: off. (mig 043)</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">EVM Min Liquidity (USD)</label>
+                                    <input type="number" class="form-control" id="evm_min_liquidity" min="0" step="1000" value="50000">
+                                    <div class="form-text">EVM-only liquidity floor on top of global min_liquidity. 0 = inherit global. Default: $50,000.</div>
+                                </div>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3">
+                                    <label class="form-label">EVM Min Safety Score (0-100)</label>
+                                    <input type="number" class="form-control" id="evm_min_safety_score" min="0" max="100" step="1" value="70">
+                                    <div class="form-text">EVM-only safety score floor. Rejects CAUTION-band (40-69) tokens driving most EVM losses. 0 = disabled. Default: 70.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
+                        <!-- Risk Manager Toggle (mig 047) -->
+                        <div class="row">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-shield-virus me-2"></i>DEX Risk Manager Integration (Wave-15)</h6>
+                            </div>
+                            <div class="col-md-6">
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="sniper_use_dex_risk_manager">
+                                    <label class="form-check-label" for="sniper_use_dex_risk_manager">Use DEX RiskManager</label>
+                                    <div class="form-text">When ON: full validate_trade (DEX liquidity/honeypot — rejects 100% of new-launch targets with &lt;$10k liquidity). When OFF (default): only run capital-protection checks. Sniper's own _check_filters remain active regardless. (mig 047)</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-4">
+
                         <div class="row">
                             <div class="col-md-6">
                                 <h6 class="text-uppercase text-muted mb-3"><i class="fas fa-shield-alt me-2"></i>Token Safety Checks</h6>
@@ -351,6 +476,27 @@
                 document.getElementById('chain').value = settings.chain || 'solana';
                 document.getElementById('priority_fee').value = settings.priority_fee || 5000;
 
+                // Entry quality gates (mig 045, 052)
+                document.getElementById('sniper_quality_gates_enabled').checked = settings.sniper_quality_gates_enabled !== false;
+                document.getElementById('sniper_min_holder_count').value = settings.sniper_min_holder_count !== undefined ? settings.sniper_min_holder_count : 10;
+                document.getElementById('sniper_min_token_age_seconds').value = settings.sniper_min_token_age_seconds !== undefined ? settings.sniper_min_token_age_seconds : 30;
+                document.getElementById('sniper_max_dev_holding_pct').value = settings.sniper_max_dev_holding_pct !== undefined ? settings.sniper_max_dev_holding_pct : 30;
+                document.getElementById('sniper_min_buy_sell_ratio').value = settings.sniper_min_buy_sell_ratio !== undefined ? settings.sniper_min_buy_sell_ratio : 1.5;
+                document.getElementById('sniper_min_safety_score').value = settings.sniper_min_safety_score !== undefined ? settings.sniper_min_safety_score : 40;
+
+                // Partial-take exit (mig 045)
+                document.getElementById('sniper_partial_take_pct').value = settings.sniper_partial_take_pct !== undefined ? settings.sniper_partial_take_pct : 20;
+                document.getElementById('sniper_partial_take_size_pct').value = settings.sniper_partial_take_size_pct !== undefined ? settings.sniper_partial_take_size_pct : 50;
+                document.getElementById('sniper_trail_after_partial').checked = settings.sniper_trail_after_partial !== false;
+
+                // EVM chain gates (mig 043)
+                document.getElementById('sniper_evm_enabled').checked = settings.sniper_evm_enabled === true;
+                document.getElementById('evm_min_liquidity').value = settings.evm_min_liquidity !== undefined ? settings.evm_min_liquidity : 50000;
+                document.getElementById('evm_min_safety_score').value = settings.evm_min_safety_score !== undefined ? settings.evm_min_safety_score : 70;
+
+                // DEX risk manager toggle (mig 047)
+                document.getElementById('sniper_use_dex_risk_manager').checked = settings.sniper_use_dex_risk_manager === true;
+
                 // Safety check settings
                 document.getElementById('safety_check_enabled').checked = settings.safety_check_enabled !== false; // Default true
                 document.getElementById('test_mode').checked = settings.test_mode === true; // Default false
@@ -377,6 +523,27 @@
             slippage: parseFloat(document.getElementById('slippage').value),
             chain: document.getElementById('chain').value,
             priority_fee: parseInt(document.getElementById('priority_fee').value),
+
+            // Entry quality gates (mig 045, 052)
+            sniper_quality_gates_enabled: document.getElementById('sniper_quality_gates_enabled').checked,
+            sniper_min_holder_count: parseInt(document.getElementById('sniper_min_holder_count').value),
+            sniper_min_token_age_seconds: parseInt(document.getElementById('sniper_min_token_age_seconds').value),
+            sniper_max_dev_holding_pct: parseFloat(document.getElementById('sniper_max_dev_holding_pct').value),
+            sniper_min_buy_sell_ratio: parseFloat(document.getElementById('sniper_min_buy_sell_ratio').value),
+            sniper_min_safety_score: parseInt(document.getElementById('sniper_min_safety_score').value),
+
+            // Partial-take exit (mig 045)
+            sniper_partial_take_pct: parseFloat(document.getElementById('sniper_partial_take_pct').value),
+            sniper_partial_take_size_pct: parseFloat(document.getElementById('sniper_partial_take_size_pct').value),
+            sniper_trail_after_partial: document.getElementById('sniper_trail_after_partial').checked,
+
+            // EVM chain gates (mig 043)
+            sniper_evm_enabled: document.getElementById('sniper_evm_enabled').checked,
+            evm_min_liquidity: parseFloat(document.getElementById('evm_min_liquidity').value),
+            evm_min_safety_score: parseInt(document.getElementById('evm_min_safety_score').value),
+
+            // DEX risk manager toggle (mig 047)
+            sniper_use_dex_risk_manager: document.getElementById('sniper_use_dex_risk_manager').checked,
 
             // Safety check settings
             safety_check_enabled: document.getElementById('safety_check_enabled').checked,
