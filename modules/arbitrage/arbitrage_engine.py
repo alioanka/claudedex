@@ -393,6 +393,10 @@ CHAIN_CONFIGS = {
         'fallback_gas_gwei': 30,           # Reasonable Ethereum baseline
         'default_slippage_pct': 0.004,     # ~0.4% (0.2% per swap leg x 2)
         'flash_loan_fee_pct': 0.0005,      # Aave V3 fee
+        # WAVE-16: minimum cross-DEX price divergence gate (bps). Skips the
+        # sell-leg RPC calls and avoids logging confusing -70xx bps near-misses
+        # that are actually price-impact artefacts, not spread calculation errors.
+        'min_price_spread_bps': 10.0,
     },
     42161: {  # Arbitrum One
         'name': 'arbitrum',
@@ -410,6 +414,7 @@ CHAIN_CONFIGS = {
         'fallback_gas_gwei': 0.1,
         'default_slippage_pct': 0.005,      # L2 V2 pools shallower -> ~0.5%
         'flash_loan_fee_pct': 0.0005,
+        'min_price_spread_bps': 10.0,
     },
     8453: {  # Base
         'name': 'base',
@@ -427,6 +432,7 @@ CHAIN_CONFIGS = {
         'fallback_gas_gwei': 0.05,
         'default_slippage_pct': 0.005,
         'flash_loan_fee_pct': 0.0005,
+        'min_price_spread_bps': 10.0,
     },
 }
 
@@ -1173,7 +1179,7 @@ class EVMArbitrageEngine:
             parts = [f"{k}={v}" for k, v in fields.items()
                      if v is not None and k in (
                          'pair', 'buy_dex', 'sell_dex', 'profit_bps',
-                         'threshold_bps', 'gas_usd', 'detail'
+                         'price_spread_bps', 'threshold_bps', 'gas_usd', 'detail'
                      )]
             self.logger.info(f"[arb-skip] reason={reason} " + " ".join(parts))
         except Exception:
@@ -1940,6 +1946,53 @@ class EVMArbitrageEngine:
             tokens_bought = buy_prices[best_buy_dex]
 
             if tokens_bought == 0:
+                return False
+
+            # ============================================================
+            # WAVE-16 PRICE-SPREAD GATE: compute the true cross-DEX price divergence
+            # before running the sell-leg queries.
+            #
+            # All buy_prices entries are getAmountsOut(borrow_amount, [WETH, token])
+            # results in the same units (raw intermediate-token per borrow_amount WETH).
+            # The ratio max/min is therefore dimensionless and decimal-agnostic
+            # (WBTC 8-dec, USDC 6-dec, DAI 18-dec -- units cancel out).
+            #
+            # price_spread = (max_buy - min_buy) / min_buy
+            # = pure cross-DEX price divergence, independent of trade size/pool depth.
+            #
+            # Without this gate, the round-trip P&L (profit_bps) includes 100% price
+            # impact from near-empty SELL pools (-7000 to -9900 bps), which is
+            # physically real but not "cross-DEX price spread".  The operator sees
+            # -7177 bps on WBTC/WETH and (correctly) diagnoses a bug -- but the
+            # number is the price-impact artefact, not a formula error.
+            #
+            # Empirical DEX price divergence on liquid pairs: 1-30 bps.
+            # If max/min spread < min_price_spread_bps (default 10 bps), no arb possible
+            # regardless of pool depth -- skip the sell-leg RPC calls entirely.
+            # ============================================================
+            min_buy_val = min(buy_prices.values())
+            max_buy_val = max(buy_prices.values())
+            # Guard against zero (empty pool edge case)
+            if min_buy_val > 0:
+                price_spread_bps = (max_buy_val - min_buy_val) / min_buy_val * 10_000
+            else:
+                price_spread_bps = 0.0
+
+            pair_label_early = f"{token_symbol}/{token_out_symbol}"
+            min_dex_name = min(buy_prices, key=buy_prices.get)
+            # Use a conservative 10 bps floor: pairs with <10 bps DEX price divergence
+            # cannot produce net profit after Aave fee (5 bps) + slippage (~50 bps).
+            # The threshold is deliberately loose so we don't filter marginal real opps.
+            _min_price_spread_bps = float(self.chain_config.get('min_price_spread_bps', 10.0))
+            if price_spread_bps < _min_price_spread_bps:
+                if self._total_pairs_scanned % 120 == 1:
+                    self._record_near_miss(
+                        'price_spread_too_low',
+                        pair=pair_label_early,
+                        buy_dex=best_buy_dex, sell_dex=min_dex_name,
+                        price_spread_bps=round(price_spread_bps, 2),
+                        threshold_bps=round(_min_price_spread_bps, 2),
+                    )
                 return False
 
             # ============================================================
