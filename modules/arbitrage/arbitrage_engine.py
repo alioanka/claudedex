@@ -199,6 +199,61 @@ UNIV2_FACTORIES: dict = {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# WAVE-17: UNISWAP V3 QUOTER (Ethereum mainnet proof-of-concept)
+#
+# QuoterV2 exposes quoteExactInputSingle as a non-reverting static call.
+# Unlike the V3 SwapRouter it is safe to call view-only (no state change).
+#
+# Deployment addresses:
+#   Ethereum:  0x61fFE014bA17989E743c5F6cB21bF9697530B21e  (QuoterV2)
+#   Arbitrum:  0x61fFE014bA17989E743c5F6cB21bF9697530B21e  (same bytecode)
+#   Base:      0x3d4e44Eb1374240CE5F1B136041212501e4a7901  (QuoterV2)
+#
+# Fee tiers probed: 500 (0.05%), 3000 (0.3%), 10000 (1%).
+# The best tier is selected per quote.  Key in buy_prices: 'uniswap_v3'.
+#
+# Gated by v3_quoter_enabled (CHAIN_CONFIGS + DB override, default False for
+# Arbitrum/Base until continuity plan executes; True for Ethereum).
+# ═══════════════════════════════════════════════════════════════════════════════
+UNIV3_QUOTER_ABI = [
+    {
+        "inputs": [
+            {
+                "components": [
+                    {"internalType": "address", "name": "tokenIn", "type": "address"},
+                    {"internalType": "address", "name": "tokenOut", "type": "address"},
+                    {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                    {"internalType": "uint24", "name": "fee", "type": "uint24"},
+                    {"internalType": "uint160", "name": "sqrtPriceLimitX96", "type": "uint160"}
+                ],
+                "internalType": "struct IQuoterV2.QuoteExactInputSingleParams",
+                "name": "params",
+                "type": "tuple"
+            }
+        ],
+        "name": "quoteExactInputSingle",
+        "outputs": [
+            {"internalType": "uint256", "name": "amountOut", "type": "uint256"},
+            {"internalType": "uint160", "name": "sqrtPriceX96After", "type": "uint160"},
+            {"internalType": "uint32", "name": "initializedTicksCrossed", "type": "uint32"},
+            {"internalType": "uint256", "name": "gasEstimate", "type": "uint256"}
+        ],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
+
+# QuoterV2 deployed addresses per chain_id.
+UNIV3_QUOTER_ADDRESSES: dict = {
+    1:     '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',  # Ethereum
+    42161: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e',  # Arbitrum
+    8453:  '0x3d4e44Eb1374240CE5F1B136041212501e4a7901',  # Base
+}
+
+# Fee tiers to probe per V3 quote.  The best amountOut across tiers is used.
+UNIV3_FEE_TIERS = [500, 3000, 10000]  # 0.05%, 0.3%, 1%
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MULTI-CHAIN ADDRESS CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -463,6 +518,11 @@ CHAIN_CONFIGS = {
         # WETH leg TVL (2 * weth_reserve * eth_price) < this threshold.
         # Prevents garbage getAmountsOut results from near-empty pools.
         'min_pool_tvl_usd': 50_000.0,
+        # WAVE-17: Uniswap V3 Quoter enabled (QuoterV2 proof-of-concept).
+        # Ethereum mainnet: enabled by default — V3 is the dominant ETH liquidity
+        # venue ($10B+ TVL across WETH/USDC, WETH/USDT, WETH/WBTC tiers).
+        # DB-configurable via arb_v3_quoter_enabled_ethereum.
+        'v3_quoter_enabled': True,
     },
     42161: {  # Arbitrum One
         'name': 'arbitrum',
@@ -483,6 +543,10 @@ CHAIN_CONFIGS = {
         'min_price_spread_bps': 10.0,
         'upper_spread_cap_bps': 500.0,
         'min_pool_tvl_usd': 50_000.0,
+        # V3 Quoter: disabled on Arbitrum until V3->V2 execution path is
+        # implemented (V3 price discovery with V2 flash-loan execution is a
+        # mismatch; continuity plan: wave-18 adds V3 SwapRouter execution leg).
+        'v3_quoter_enabled': False,
     },
     8453: {  # Base
         'name': 'base',
@@ -503,6 +567,8 @@ CHAIN_CONFIGS = {
         'min_price_spread_bps': 10.0,
         'upper_spread_cap_bps': 500.0,
         'min_pool_tvl_usd': 50_000.0,
+        # V3 Quoter: disabled on Base — same wave-18 continuity plan applies.
+        'v3_quoter_enabled': False,
     },
 }
 
@@ -964,6 +1030,9 @@ class EVMArbitrageEngine:
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         self.router_contracts = {}
+        # WAVE-17: V3 QuoterV2 contract instance (None until initialize(); only set when
+        # v3_quoter_enabled is True for the chain). Used in _quote_v3().
+        self.v3_quoter_contract = None
 
         # Flash loan and Flashbots executors
         self.flash_loan_executor: Optional[FlashLoanExecutor] = None
@@ -1605,6 +1674,23 @@ class EVMArbitrageEngine:
                     except Exception as e:
                         self.logger.debug(f"Could not init {name} router: {e}")
 
+                # WAVE-17: Initialize Uniswap V3 QuoterV2 when enabled for this chain.
+                self.v3_quoter_contract = None
+                if self.chain_config and self.chain_config.get('v3_quoter_enabled', False):
+                    quoter_addr = UNIV3_QUOTER_ADDRESSES.get(self.chain_id)
+                    if quoter_addr:
+                        try:
+                            self.v3_quoter_contract = self.w3.eth.contract(
+                                address=Web3.to_checksum_address(quoter_addr),
+                                abi=UNIV3_QUOTER_ABI,
+                            )
+                            self.logger.info(
+                                f"   V3 Quoter initialized ({self.chain_name}): "
+                                f"{quoter_addr[:10]}... fee-tiers={UNIV3_FEE_TIERS}"
+                            )
+                        except Exception as e:
+                            self.logger.warning(f"Could not init V3 Quoter: {e}")
+
                 # Initialize Flash Loan executor
                 # IMPORTANT: Flash loans require a deployed smart contract with IFlashLoanReceiver
                 # The contract must implement executeOperation() callback
@@ -2010,6 +2096,54 @@ class EVMArbitrageEngine:
         except Exception:
             return None
 
+    def _quote_v3(self, token_in: str, token_out: str, amount_in: int) -> Optional[int]:
+        """
+        WAVE-17: Uniswap V3 QuoterV2 price discovery (Ethereum mainnet proof-of-concept).
+
+        Calls quoteExactInputSingle across all UNIV3_FEE_TIERS and returns the
+        best (highest) amountOut.  Returns None when the quoter is not initialized
+        or all fee tiers revert (no pool for that pair/tier).
+
+        NOTE: QuoterV2.quoteExactInputSingle is marked `nonpayable` in the ABI but
+        behaves as a view call (it simulates the swap, reverts, and returns the
+        output via the revert data — web3.py's `.call()` handles this correctly).
+        It does NOT broadcast a transaction.
+
+        The V3 price is added to buy_prices under key 'uniswap_v3' so the
+        existing best-buy-dex selection logic picks it up automatically.
+        The sell leg still uses V2 routers (the engine's flash-loan contract
+        only supports V2 swapExactTokensForTokens).  This means:
+        - V3 price discovery can identify a genuine cross-DEX spread
+          (e.g. V3 pool is cheaper buy-side than V2 Sushi)
+        - BUT execution is limited to V2 venues for both legs
+        - If best_buy_dex == 'uniswap_v3', the execute path MUST fall back
+          to the best V2 buy price for actual execution
+        This constraint is documented as a wave-18 TODO: add V3 SwapRouter
+        execution leg to the flash-loan contract so V3-discovered spreads
+        can actually be executed.
+        """
+        if not self.v3_quoter_contract:
+            return None
+        best_out: Optional[int] = None
+        for fee in UNIV3_FEE_TIERS:
+            try:
+                result = self.v3_quoter_contract.functions.quoteExactInputSingle(
+                    (
+                        Web3.to_checksum_address(token_in),
+                        Web3.to_checksum_address(token_out),
+                        amount_in,
+                        fee,
+                        0,  # sqrtPriceLimitX96 = 0 means no price limit
+                    )
+                ).call()
+                amount_out = result[0]  # amountOut is first return value
+                if amount_out > 0:
+                    if best_out is None or amount_out > best_out:
+                        best_out = amount_out
+            except Exception:
+                pass
+        return best_out
+
     async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN", token_out_symbol: str = "UNKNOWN") -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
@@ -2079,10 +2213,22 @@ class EVMArbitrageEngine:
                 except Exception as e:
                     buy_errors[name] = str(e)[:50]
 
+            # WAVE-17: V3 Quoter price discovery (Ethereum mainnet proof-of-concept).
+            # quoteExactInputSingle probes all fee tiers; best amountOut is added to
+            # buy_prices under key 'uniswap_v3'.  See _quote_v3 docstring for the
+            # important caveat: V3 discovery + V2 execution mismatch means the
+            # 'uniswap_v3' key signals a price-discovery signal only, not an
+            # executable buy-side.  Wave-18 adds the V3 execution leg.
+            if self.v3_quoter_contract:
+                v3_out = self._quote_v3(token_out, token_in, borrow_amount)  # WETH→token
+                if v3_out and v3_out > 0:
+                    buy_prices['uniswap_v3'] = v3_out
+
             # Log diagnostic info periodically (every 60 scans = ~2 minutes)
             if self._total_pairs_scanned % 60 == 1:
                 if buy_prices:
-                    self.logger.debug(f"📊 [{token_symbol}] Buy prices (WETH→token): {len(buy_prices)} DEXs responded")
+                    v3_note = " (incl V3)" if 'uniswap_v3' in buy_prices else ""
+                    self.logger.debug(f"📊 [{token_symbol}] Buy prices (WETH→token): {len(buy_prices)} DEXs{v3_note}")
                 else:
                     self.logger.warning(f"⚠️ [{token_symbol}] No buy prices from any DEX. Errors: {buy_errors}")
 
@@ -2098,6 +2244,27 @@ class EVMArbitrageEngine:
             # Find best BUY DEX (gives most tokens for our WETH = lowest token price)
             best_buy_dex = max(buy_prices, key=buy_prices.get)
             tokens_bought = buy_prices[best_buy_dex]
+
+            # WAVE-17 V3 execution caveat: if the best buy is from the V3 quoter,
+            # V3 price discovery is valid for spread detection BUT the flash-loan
+            # contract only supports V2 swapExactTokensForTokens.  Use the best V2
+            # buy price for the sell-leg quote (tokens_bought) so the round-trip
+            # P&L reflects what the V2 buy leg would actually deliver.
+            # The execute path already guards: router_contracts.get('uniswap_v3')
+            # returns None -> execute returns None -> no trade fires. This guard
+            # ensures the sell-leg amount is realistic, not overstated.
+            _v3_best_noted = False
+            if best_buy_dex == 'uniswap_v3':
+                v2_prices = {k: v for k, v in buy_prices.items() if k != 'uniswap_v3'}
+                if v2_prices:
+                    _v3_best_noted = True
+                    # Use V2 tokens_bought for sell-leg (executable amount)
+                    best_v2_buy_dex = max(v2_prices, key=v2_prices.get)
+                    tokens_bought = v2_prices[best_v2_buy_dex]
+                    # best_buy_dex stays 'uniswap_v3' for spread logging purposes
+                else:
+                    # No V2 prices at all — V3-only, not executable yet
+                    return False
 
             if tokens_bought == 0:
                 return False
