@@ -1,38 +1,31 @@
--- Migration 053: wave-17 arbitrage venue config
--- Seeds three new per-chain DB-configurable keys introduced in wave-17:
---   upper_spread_cap_bps  — BUY-side spread sanity ceiling (default 500 bps)
---   min_pool_tvl_usd      — per-DEX pool reserve floor before quoting (default $50k)
---   arb_v3_quoter_enabled — Uniswap V3 QuoterV2 flag (True for ETH, False for L2s)
+-- Migration 053: wave-17 arbitrage venue config (CORRECTED)
 --
--- These complement the existing min_price_spread_bps (wave-16) and are read via
--- chain_config.get(key, default) in arbitrage_engine.py so the code-level default
--- is always the safe fallback even if this migration is not yet applied.
+-- NOTE (Wave-17 fix): the original 053 inserted into a non-existent table
+-- `bot_config`, which does not exist in this schema. The canonical config
+-- table is `config_settings` (config_type, key, value, ...). The original
+-- crashed the migrator with "relation bot_config does not exist", which the
+-- entrypoint treats as a critical error -> the bot failed to start and
+-- migration 054 never ran. This version uses config_settings.
+--
+-- IMPORTANT: arbitrage_engine.py reads these knobs from the hardcoded
+-- CHAIN_CONFIGS dict via `self.chain_config.get(key, default)` -- the
+-- code-level defaults (upper_spread_cap_bps=500, min_pool_tvl_usd=50000,
+-- v3_quoter_enabled per-chain) are ALWAYS the effective values today. These
+-- rows are seeded for visibility/consistency with config_settings + the
+-- dashboard, and as the anchor for a future DB-override wiring. Seeding them
+-- changes NO behavior on its own.
+--
+-- Idempotent: ON CONFLICT (config_type, key) DO NOTHING.
 
--- Upper-spread sanity cap: any cross-DEX BUY divergence above 500 bps is a
--- thin-pool / wrong-ABI artifact.  Operators can raise this per chain if needed.
-INSERT INTO bot_config (module, key, value, description)
+INSERT INTO config_settings (config_type, key, value, description)
 VALUES
-    ('arbitrage', 'upper_spread_cap_bps_ethereum', '500', 'Max believable BUY-side cross-DEX spread (bps) on Ethereum before classifying as thin_pool_artifact'),
-    ('arbitrage', 'upper_spread_cap_bps_arbitrum', '500', 'Max believable BUY-side cross-DEX spread (bps) on Arbitrum before classifying as thin_pool_artifact'),
-    ('arbitrage', 'upper_spread_cap_bps_base',     '500', 'Max believable BUY-side cross-DEX spread (bps) on Base before classifying as thin_pool_artifact')
-ON CONFLICT (module, key) DO NOTHING;
-
--- Pool-reserve floor: skip a DEX/pair combination when the on-chain WETH-leg TVL
--- is below this USD threshold.  Lower values allow more small pools (more noise);
--- higher values miss real opportunities on thin-but-real pools.  $50k is
--- conservative for mainnet; may need lowering on Base if BaseSwap TVL drops.
-INSERT INTO bot_config (module, key, value, description)
-VALUES
-    ('arbitrage', 'min_pool_tvl_usd_ethereum', '50000', 'Minimum WETH-leg pool TVL (USD) to quote a DEX on Ethereum'),
-    ('arbitrage', 'min_pool_tvl_usd_arbitrum', '50000', 'Minimum WETH-leg pool TVL (USD) to quote a DEX on Arbitrum'),
-    ('arbitrage', 'min_pool_tvl_usd_base',     '50000', 'Minimum WETH-leg pool TVL (USD) to quote a DEX on Base')
-ON CONFLICT (module, key) DO NOTHING;
-
--- V3 Quoter flag: enabled for Ethereum (dominant liquidity venue); disabled for
--- Arbitrum/Base until the V3 execution leg is added in wave-18.
-INSERT INTO bot_config (module, key, value, description)
-VALUES
-    ('arbitrage', 'arb_v3_quoter_enabled_ethereum', 'true',  'Enable Uniswap V3 QuoterV2 price discovery on Ethereum (proof-of-concept)'),
-    ('arbitrage', 'arb_v3_quoter_enabled_arbitrum', 'false', 'Enable Uniswap V3 QuoterV2 on Arbitrum (pending wave-18 execution leg)'),
-    ('arbitrage', 'arb_v3_quoter_enabled_base',     'false', 'Enable Uniswap V3 QuoterV2 on Base (pending wave-18 execution leg)')
-ON CONFLICT (module, key) DO NOTHING;
+    ('arbitrage_config', 'upper_spread_cap_bps_ethereum', '500', 'Max believable BUY-side cross-DEX spread (bps) on Ethereum before classifying as thin_pool_artifact'),
+    ('arbitrage_config', 'upper_spread_cap_bps_arbitrum', '500', 'Max believable BUY-side cross-DEX spread (bps) on Arbitrum before classifying as thin_pool_artifact'),
+    ('arbitrage_config', 'upper_spread_cap_bps_base',     '500', 'Max believable BUY-side cross-DEX spread (bps) on Base before classifying as thin_pool_artifact'),
+    ('arbitrage_config', 'min_pool_tvl_usd_ethereum', '50000', 'Minimum WETH-leg pool TVL (USD) to quote a DEX on Ethereum'),
+    ('arbitrage_config', 'min_pool_tvl_usd_arbitrum', '50000', 'Minimum WETH-leg pool TVL (USD) to quote a DEX on Arbitrum'),
+    ('arbitrage_config', 'min_pool_tvl_usd_base',     '50000', 'Minimum WETH-leg pool TVL (USD) to quote a DEX on Base'),
+    ('arbitrage_config', 'arb_v3_quoter_enabled_ethereum', 'true',  'Enable Uniswap V3 QuoterV2 price discovery on Ethereum (proof-of-concept)'),
+    ('arbitrage_config', 'arb_v3_quoter_enabled_arbitrum', 'false', 'Enable Uniswap V3 QuoterV2 on Arbitrum (pending wave-18 execution leg)'),
+    ('arbitrage_config', 'arb_v3_quoter_enabled_base',     'false', 'Enable Uniswap V3 QuoterV2 on Base (pending wave-18 execution leg)')
+ON CONFLICT (config_type, key) DO NOTHING;
