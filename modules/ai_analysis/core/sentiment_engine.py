@@ -314,6 +314,14 @@ class SentimentEngine:
         self.stop_loss_pct = -3.0    # -3% stop loss
         self.max_hold_hours = 24     # Maximum position hold time
 
+        # Wave-16 multi-symbol config. The LLM produces a market-wide sentiment
+        # score; every configured symbol that doesn't already have an open
+        # position (and is below ai_max_positions cap) gets a new position opened
+        # when the score meets the confidence_threshold. DB keys ai_symbols /
+        # ai_max_positions allow operators to tune the set without a code deploy.
+        self.ai_symbols: List[str] = ['BTC', 'ETH', 'SOL']
+        self.ai_max_positions: int = 3
+
         # Multi-provider quorum (A6 E1). When both openai+anthropic keys are
         # configured AND quorum_required=true, _quorum_sentiment() requires
         # both providers to agree (sign + magnitude). Saves the bot from a
@@ -515,6 +523,36 @@ class SentimentEngine:
                         self._claude_model = val
                     elif key == 'openai_model' and val:
                         self._openai_model = val
+                    elif key == 'take_profit_pct':
+                        try:
+                            self.take_profit_pct = float(val)
+                        except (ValueError, TypeError):
+                            pass
+                    elif key == 'stop_loss_pct':
+                        try:
+                            # Accept both negative (-3.0) and positive (3.0);
+                            # internally SL is always negative (< 0).
+                            raw = float(val)
+                            self.stop_loss_pct = -abs(raw)
+                        except (ValueError, TypeError):
+                            pass
+                    elif key == 'max_hold_hours':
+                        try:
+                            self.max_hold_hours = float(val)
+                        except (ValueError, TypeError):
+                            pass
+                    elif key == 'ai_symbols':
+                        # Comma-separated list, e.g. 'BTC,ETH,SOL'
+                        syms = [s.strip().upper() for s in val.split(',') if s.strip()]
+                        if syms:
+                            self.ai_symbols = syms
+                    elif key == 'ai_max_positions':
+                        try:
+                            cap = int(val)
+                            if cap >= 1:
+                                self.ai_max_positions = cap
+                        except (ValueError, TypeError):
+                            pass
 
             logger.info(f"📋 AI Settings loaded:")
             logger.info(f"   Provider: {self.ai_provider.upper()}")
@@ -523,6 +561,8 @@ class SentimentEngine:
             logger.info(f"   Trade Amount: ${self.trade_amount_usd:.2f}")
             logger.info(f"   Claude model: {self._claude_model}")
             logger.info(f"   OpenAI model: {self._openai_model}")
+            logger.info(f"   Exit: TP={self.take_profit_pct}% SL={self.stop_loss_pct}% max_hold={self.max_hold_hours}h")
+            logger.info(f"   Symbols: {self.ai_symbols} (max_positions={self.ai_max_positions})")
         except Exception as e:
             logger.warning(f"Failed to load AI settings: {e}")
 
@@ -847,6 +887,8 @@ class SentimentEngine:
                 'openai_key_loaded': bool(self.openai_api_key),
                 'claude_key_loaded': bool(self.anthropic_api_key),
                 'active_positions': len(self.active_positions),
+                'ai_symbols': list(self.ai_symbols),
+                'ai_max_positions': int(self.ai_max_positions),
                 'cooldown_symbols': list(self._symbol_cooldowns.keys()),
             },
         }
@@ -1545,135 +1587,153 @@ class SentimentEngine:
                 logger.error(f"Failed to store sentiment: {e}")
 
     async def _execute_trade(self, score: float):
-        """Execute or simulate a trade based on sentiment"""
+        """Execute or simulate trades based on sentiment score.
+
+        Wave-16 multi-symbol: the LLM produces a market-wide score applied to
+        every symbol in ai_symbols that has no open position, is not in cooldown,
+        and does not breach the ai_max_positions cap.  One DB row per new
+        position; per-symbol de-dup, calibration, and bandit binding are all
+        preserved from the single-symbol path.
+        """
         side = "buy" if score > 0 else "sell"
-        # For AI module, we focus on major assets like ETH/BTC for sentiment trading
-        symbol = "ETH"
         action_type = "LONG" if side == "buy" else "SHORT"
 
-        logger.info(f"🤖 AI Signal Triggered: {action_type} {symbol} (Score: {score:.2f})")
+        logger.info(
+            f"🤖 AI Signal {action_type} (score={score:.2f}): evaluating symbols "
+            f"{self.ai_symbols} (cap={self.ai_max_positions}, "
+            f"open={len(self.active_positions)})"
+        )
 
-        # Check if we already have a position in this symbol
-        if symbol in self.active_positions:
-            self._record_skip(
-                'position_exists', score=score, sentiment=score, symbol=symbol,
-            )
-            return
-
-        # Check cooldown (prevent rapid re-entry after closing a position)
-        if symbol in self._symbol_cooldowns:
-            cooldown_expires = self._symbol_cooldowns[symbol]
-            if datetime.now() < cooldown_expires:
-                remaining = (cooldown_expires - datetime.now()).total_seconds() / 60
+        opened = 0
+        for symbol in self.ai_symbols:
+            # Respect global position cap before attempting each symbol.
+            if len(self.active_positions) >= self.ai_max_positions:
                 self._record_skip(
-                    'cooldown_active', score=score, sentiment=score, symbol=symbol,
-                    extra={'remaining_min': f"{remaining:.0f}"},
+                    'position_cap', score=score, sentiment=score, symbol=symbol,
+                    extra={'cap': str(self.ai_max_positions)},
                 )
-                return
-            else:
-                # Cooldown expired, remove from tracking
-                del self._symbol_cooldowns[symbol]
+                break
 
-        trade_id = f"ai_{int(datetime.now().timestamp())}"
+            # Per-symbol de-dup.
+            if symbol in self.active_positions:
+                self._record_skip(
+                    'position_exists', score=score, sentiment=score, symbol=symbol,
+                )
+                continue
 
-        try:
-            # Execute trade using executor
-            result = await self.executor.execute_trade(
-                symbol=symbol,
-                side=side,
-                amount_usd=self.trade_amount_usd
-            )
-
-            if not result.get('success'):
-                err = str(result.get('error', 'unknown'))
-                # Wave-5: surface executor-side rejection (risk-manager,
-                # missing creds, exchange error) in the diagnostic ledger so
-                # the operator doesn't have to cross-reference engine logs.
-                if 'risk_manager' in err.lower() or 'risk' in err.lower():
-                    reason = 'risk_rejected'
-                elif 'credential' in err.lower() or 'exchange' in err.lower():
-                    reason = 'exchange_unavailable'
+            # Cooldown guard.
+            if symbol in self._symbol_cooldowns:
+                cooldown_expires = self._symbol_cooldowns[symbol]
+                if datetime.now() < cooldown_expires:
+                    remaining = (cooldown_expires - datetime.now()).total_seconds() / 60
+                    self._record_skip(
+                        'cooldown_active', score=score, sentiment=score, symbol=symbol,
+                        extra={'remaining_min': f"{remaining:.0f}"},
+                    )
+                    continue
                 else:
-                    reason = 'execution_failed'
-                self._record_skip(
-                    reason, score=score, sentiment=score, symbol=symbol,
-                    extra={'err': err[:120]},
+                    del self._symbol_cooldowns[symbol]
+
+            trade_id = f"ai_{symbol.lower()}_{int(datetime.now().timestamp())}"
+
+            try:
+                result = await self.executor.execute_trade(
+                    symbol=symbol,
+                    side=side,
+                    amount_usd=self.trade_amount_usd
                 )
-                logger.error(f"Trade execution failed: {err}")
-                return
 
-            entry_price = result.get('price', 0)
-            amount = result.get('amount', 0)
-
-            # Track position
-            self.active_positions[symbol] = {
-                'trade_id': trade_id,
-                'symbol': symbol,
-                'side': side,
-                'entry_price': entry_price,
-                'amount': amount,
-                'amount_usd': self.trade_amount_usd,
-                'entry_time': datetime.now(),
-                'sentiment_score': score,
-                'order_id': result.get('order_id')
-            }
-
-            # Log trade to dedicated ai_trades table
-            if self.db_pool:
-                async with self.db_pool.acquire() as conn:
-                    await conn.execute("""
-                        INSERT INTO ai_trades (
-                            trade_id, token_symbol, token_address, chain,
-                            side, entry_price, amount, entry_usd,
-                            sentiment_score, confidence_score, ai_provider,
-                            status, is_simulated, entry_timestamp, entry_order_id,
-                            metadata
-                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-                    """,
-                        trade_id,
-                        symbol,
-                        "0x0000000000000000000000000000000000000000",
-                        "ethereum",
-                        side,
-                        entry_price,
-                        amount,
-                        self.trade_amount_usd,
-                        score,
-                        score,  # confidence_score same as sentiment_score
-                        "openai",  # ai_provider
-                        "open",
-                        self.dry_run,
-                        datetime.now(),
-                        result.get('order_id'),
-                        json.dumps({
-                            'reason': f"Sentiment score {score:.2f} >= {self.confidence_threshold}"
-                        })
+                if not result.get('success'):
+                    err = str(result.get('error', 'unknown'))
+                    if 'risk_manager' in err.lower() or 'risk' in err.lower():
+                        reason = 'risk_rejected'
+                    elif 'credential' in err.lower() or 'exchange' in err.lower():
+                        reason = 'exchange_unavailable'
+                    else:
+                        reason = 'execution_failed'
+                    self._record_skip(
+                        reason, score=score, sentiment=score, symbol=symbol,
+                        extra={'err': err[:120]},
                     )
+                    logger.error(f"[ai] Trade execution failed for {symbol}: {err}")
+                    continue
 
-                # A6 E2: open-row in ai_confidence_calibration. realised_*
-                # columns are filled at close. Best-effort; never blocks the
-                # trade open path.
-                await self._write_calibration_open(trade_id, score)
+                entry_price = result.get('price', 0)
+                amount = result.get('amount', 0)
 
-                # A6 E3: bind the bandit-selected template to this trade so
-                # _close_position can credit the reward to the right arm.
-                if (
-                    self.bandit_enabled
-                    and self._prompt_bandit is not None
-                    and self._current_template_id
-                ):
-                    self._prompt_bandit.bind_trade(trade_id, self._current_template_id)
-                    # Persist the selection + arm snapshot for offline audit.
-                    await self._prompt_bandit.persist_selection(
-                        self.db_pool,
-                        template_id=self._current_template_id,
-                        trade_id=trade_id,
-                    )
+                # Track position in-memory.
+                self.active_positions[symbol] = {
+                    'trade_id': trade_id,
+                    'symbol': symbol,
+                    'side': side,
+                    'entry_price': entry_price,
+                    'amount': amount,
+                    'amount_usd': self.trade_amount_usd,
+                    'entry_time': datetime.now(),
+                    'sentiment_score': score,
+                    'order_id': result.get('order_id')
+                }
 
-            logger.info(f"✅ AI Trade {'Simulated' if self.dry_run else 'Executed'}: {action_type} {symbol} @ ${entry_price:,.2f}")
+                # Persist to ai_trades.
+                if self.db_pool:
+                    async with self.db_pool.acquire() as conn:
+                        await conn.execute("""
+                            INSERT INTO ai_trades (
+                                trade_id, token_symbol, token_address, chain,
+                                side, entry_price, amount, entry_usd,
+                                sentiment_score, confidence_score, ai_provider,
+                                status, is_simulated, entry_timestamp, entry_order_id,
+                                metadata
+                            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                        """,
+                            trade_id,
+                            symbol,
+                            "0x0000000000000000000000000000000000000000",
+                            "ethereum",
+                            side,
+                            entry_price,
+                            amount,
+                            self.trade_amount_usd,
+                            score,
+                            score,
+                            self.ai_provider,
+                            "open",
+                            self.dry_run,
+                            datetime.now(),
+                            result.get('order_id'),
+                            json.dumps({
+                                'reason': f"Sentiment score {score:.2f} >= {self.confidence_threshold}",
+                                'ai_symbols': self.ai_symbols,
+                            })
+                        )
 
-        except Exception as e:
-            logger.error(f"Failed to execute AI trade: {e}")
+                    # A6 E2: open-row in ai_confidence_calibration.
+                    await self._write_calibration_open(trade_id, score)
+
+                    # A6 E3: bind the bandit-selected template.
+                    if (
+                        self.bandit_enabled
+                        and self._prompt_bandit is not None
+                        and self._current_template_id
+                    ):
+                        self._prompt_bandit.bind_trade(trade_id, self._current_template_id)
+                        await self._prompt_bandit.persist_selection(
+                            self.db_pool,
+                            template_id=self._current_template_id,
+                            trade_id=trade_id,
+                        )
+
+                logger.info(
+                    f"✅ AI Trade {'Simulated' if self.dry_run else 'Executed'}: "
+                    f"{action_type} {symbol} @ ${entry_price:,.2f} (trade_id={trade_id})"
+                )
+                opened += 1
+
+            except Exception as e:
+                logger.error(f"[ai] Failed to execute AI trade for {symbol}: {e}")
+
+        if opened == 0 and len(self.ai_symbols) > 0:
+            logger.info("[ai] No new positions opened this cycle (all skipped or failed)")
 
     async def _write_calibration_open(self, trade_id: str, score: float) -> None:
         """A6 E2: persist predicted (score, confidence, quorum-flag) at trade
@@ -1784,22 +1844,67 @@ class SentimentEngine:
                 await asyncio.sleep(60)
 
     async def _check_exit_conditions(self, symbol: str, position: Dict):
-        """Check if position should be closed"""
+        """Check if position should be closed.
+
+        Wave-16 lifecycle fix: writes live unrealized PnL back to
+        ai_trades.profit_loss / profit_loss_pct every monitor cycle so the
+        dashboard shows a current value instead of $0.00.  The tz-normalise
+        guard from Wave-14 is retained.
+        """
         try:
             entry_price = position['entry_price']
             entry_time = position['entry_time']
             side = position['side']
+            trade_id = position['trade_id']
 
             # Get current price
             current_price = await self.executor._get_current_price(symbol)
             if current_price <= 0:
+                logger.debug(f"[ai-monitor] {symbol}: price fetch returned 0, skipping cycle")
                 return
 
-            # Calculate P&L
+            # Calculate unrealized P&L
             if side == 'buy':
                 pnl_pct = ((current_price - entry_price) / entry_price) * 100
             else:
                 pnl_pct = ((entry_price - current_price) / entry_price) * 100
+
+            amount = position['amount']
+            entry_usd = position['amount_usd']
+            unrealized_usd = (amount * current_price) - entry_usd
+
+            # Wave-16: write live PnL to ai_trades so the dashboard shows a
+            # non-zero current value for open positions.  profit_loss stores
+            # unrealized USD; profit_loss_pct stores the %-move.  On close,
+            # _close_position overwrites these with the realized values.
+            # Best-effort: a DB hiccup never prevents exit evaluation.
+            if self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        await conn.execute("""
+                            UPDATE ai_trades
+                               SET profit_loss     = $1,
+                                   profit_loss_pct = $2,
+                                   metadata        = COALESCE(metadata, '{}'::jsonb) ||
+                                                     jsonb_build_object(
+                                                         'current_price', $3::text,
+                                                         'unrealized_pnl_usd', $4::text,
+                                                         'hours_held', $5::text,
+                                                         'monitor_updated_at', $6::text
+                                                     )
+                             WHERE trade_id = $7
+                               AND status   = 'open'
+                        """,
+                            unrealized_usd,
+                            pnl_pct,
+                            str(current_price),
+                            str(round(unrealized_usd, 4)),
+                            str(round(0.0, 2)),  # updated below after hold calc
+                            datetime.utcnow().isoformat(),
+                            trade_id,
+                        )
+                except Exception as db_err:
+                    logger.debug(f"[ai-monitor] {symbol}: live PnL DB write failed (non-fatal): {db_err}")
 
             # Check time-based exit.
             # entry_time loaded from DB is a tz-aware datetime (TIMESTAMPTZ
@@ -1815,6 +1920,13 @@ class SentimentEngine:
                 entry_time_naive = entry_time
             hold_time = now_naive - entry_time_naive
             hours_held = hold_time.total_seconds() / 3600
+
+            logger.debug(
+                "[ai-monitor] %s: price=$%.2f pnl=%+.2f%% (unrealized $%.2f) "
+                "held=%.1fh tp=%.1f%% sl=%.1f%% max=%.1fh",
+                symbol, current_price, pnl_pct, unrealized_usd,
+                hours_held, self.take_profit_pct, self.stop_loss_pct, self.max_hold_hours,
+            )
 
             exit_reason = None
 
