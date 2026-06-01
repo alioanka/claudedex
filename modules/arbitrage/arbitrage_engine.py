@@ -149,6 +149,56 @@ FLASH_LOAN_CONTRACT_ABI = [
 ]
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# WAVE-17: POOL-RESERVE FLOOR — UniV2 Factory + Pair ABIs
+# getReserves() on the pair contract returns (reserve0, reserve1, blockTimestamp).
+# reserve0/reserve1 are used to compute TVL in USD and skip pools below the
+# configurable min_pool_tvl_usd floor (default $50k, DB-configurable via
+# migration 053). A near-empty pool must never enter the spread calc.
+# ═══════════════════════════════════════════════════════════════════════════════
+UNIV2_FACTORY_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "tokenA", "type": "address"},
+            {"internalType": "address", "name": "tokenB", "type": "address"}
+        ],
+        "name": "getPair",
+        "outputs": [{"internalType": "address", "name": "pair", "type": "address"}],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+UNIV2_PAIR_ABI = [
+    {
+        "inputs": [],
+        "name": "getReserves",
+        "outputs": [
+            {"internalType": "uint112", "name": "reserve0", "type": "uint112"},
+            {"internalType": "uint112", "name": "reserve1", "type": "uint112"},
+            {"internalType": "uint32", "name": "blockTimestampLast", "type": "uint32"}
+        ],
+        "stateMutability": "view",
+        "type": "function"
+    }
+]
+
+# UniV2-compatible factory addresses per (dex_name, chain_id).
+# Key: dex_name matches ROUTERS_* keys; value: factory address (per chain_id).
+UNIV2_FACTORIES: dict = {
+    'uniswap_v2': {
+        1: '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f',
+    },
+    'sushiswap': {
+        1:     '0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac',
+        42161: '0xc35DADB65012eC5796536bD9864eD8773aBc74C4',
+        8453:  '0x71524B4f93c58fcbF659783284E38825f0622859',
+    },
+    'baseswap': {
+        8453:  '0xFDa619b6d20975be80A10332cD39b9a4b0FAa8BB',
+    },
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MULTI-CHAIN ADDRESS CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -409,6 +459,10 @@ CHAIN_CONFIGS = {
         # WAVE-17: upper sanity cap (bps). BUY-side divergence above this is a
         # thin-pool or wrong-ABI artifact, not a real spread. DB-configurable.
         'upper_spread_cap_bps': 500.0,
+        # WAVE-17: pool-reserve floor. Skip a DEX for a pair when its on-chain
+        # WETH leg TVL (2 * weth_reserve * eth_price) < this threshold.
+        # Prevents garbage getAmountsOut results from near-empty pools.
+        'min_pool_tvl_usd': 50_000.0,
     },
     42161: {  # Arbitrum One
         'name': 'arbitrum',
@@ -428,6 +482,7 @@ CHAIN_CONFIGS = {
         'flash_loan_fee_pct': 0.0005,
         'min_price_spread_bps': 10.0,
         'upper_spread_cap_bps': 500.0,
+        'min_pool_tvl_usd': 50_000.0,
     },
     8453: {  # Base
         'name': 'base',
@@ -447,6 +502,7 @@ CHAIN_CONFIGS = {
         'flash_loan_fee_pct': 0.0005,
         'min_price_spread_bps': 10.0,
         'upper_spread_cap_bps': 500.0,
+        'min_pool_tvl_usd': 50_000.0,
     },
 }
 
@@ -1889,6 +1945,71 @@ class EVMArbitrageEngine:
             if fail_count == self._blacklist_threshold:
                 self.logger.warning(f"⛔ [{pair_key}] Blacklisted for {self._blacklist_duration/60:.0f}min (no liquidity)")
 
+    def _pool_tvl_usd(
+        self,
+        dex_name: str,
+        token_a: str,
+        token_b: str,
+        eth_price_usd: float,
+    ) -> Optional[float]:
+        """
+        WAVE-17 pool-reserve floor helper.
+
+        Fetches on-chain reserves for the (dex_name, token_a/token_b) UniV2
+        pair and returns an approximate TVL in USD.  Returns None when the
+        factory/pair address is unknown or the RPC call fails (caller treats
+        None as "skip check, proceed").
+
+        TVL approximation: we only know the WETH leg price reliably.
+        If neither token is WETH we fall back to None (pass-through).
+        If one leg is WETH: TVL = 2 * weth_reserve * eth_price_usd
+        (both legs assumed ~equal value in a balanced pool).
+
+        This is intentionally conservative — it is better to false-negative
+        (skip a thin pool we could have quoted) than false-positive (allow
+        a garbage quote from a $500 pool into the spread calculation).
+
+        Result is NOT cached per-call (reserves can change each block).
+        The liquidity blacklist handles repeated failures at the pair level.
+        """
+        if not self.w3 or not self.chain_id:
+            return None
+        factory_map = UNIV2_FACTORIES.get(dex_name, {})
+        factory_addr = factory_map.get(self.chain_id) if isinstance(factory_map, dict) else None
+        if not factory_addr:
+            return None
+        weth_addr = (self.tokens.get('WETH') or '').lower()
+        try:
+            factory = self.w3.eth.contract(
+                address=Web3.to_checksum_address(factory_addr),
+                abi=UNIV2_FACTORY_ABI,
+            )
+            pair_addr = factory.functions.getPair(
+                Web3.to_checksum_address(token_a),
+                Web3.to_checksum_address(token_b),
+            ).call()
+            zero = '0x0000000000000000000000000000000000000000'
+            if pair_addr.lower() == zero:
+                return 0.0  # No pool exists
+            pair = self.w3.eth.contract(
+                address=Web3.to_checksum_address(pair_addr),
+                abi=UNIV2_PAIR_ABI,
+            )
+            r0, r1, _ = pair.functions.getReserves().call()
+            # Identify which reserve is WETH so we can price it
+            if token_a.lower() == weth_addr:
+                weth_reserve_wei = r0
+            elif token_b.lower() == weth_addr:
+                weth_reserve_wei = r1
+            else:
+                # Neither side is WETH — can't price reliably; return None (pass-through)
+                return None
+            weth_reserve_eth = weth_reserve_wei / 1e18
+            # Multiply by 2: both sides of the pool have equal USD value at equilibrium
+            return 2.0 * weth_reserve_eth * eth_price_usd
+        except Exception:
+            return None
+
     async def _check_arb_opportunity(self, token_in: str, token_out: str, token_symbol: str = "UNKNOWN", token_out_symbol: str = "UNKNOWN") -> bool:
         """Check price difference between two DEXs. Returns True if opportunity found."""
         try:
@@ -1929,10 +2050,29 @@ class EVMArbitrageEngine:
             # ============================================================
             # STEP 1: Query BUY direction - WETH → token (how much token can we buy?)
             # This matches the contract's buyRouter (asset → intermediateToken)
+            # WAVE-17: pool-reserve floor — skip any DEX whose WETH/token pool
+            # TVL is below min_pool_tvl_usd (default $50k).  A near-empty pool
+            # returns a mathematically valid but economically garbage quote that
+            # creates impossible-looking spreads when combined with the real price
+            # from a liquid pool.  We need the ETH price for the TVL calculation;
+            # fetch it once here and reuse below for gas cost estimation.
             # ============================================================
+            _min_pool_tvl_usd = float(self.chain_config.get('min_pool_tvl_usd', 50_000.0))
+            _reserve_eth_price: Optional[float] = None
+            try:
+                _reserve_eth_price = await self.price_fetcher.get_price('eth')
+            except Exception:
+                pass
+
             buy_prices = {}
             buy_errors = {}
             for name, contract in self.router_contracts.items():
+                # Pool-reserve floor: skip DEXes with insufficient liquidity
+                if _reserve_eth_price and _reserve_eth_price > 0:
+                    tvl = self._pool_tvl_usd(name, token_in, token_out, _reserve_eth_price)
+                    if tvl is not None and tvl < _min_pool_tvl_usd:
+                        buy_errors[name] = f"thin_pool tvl=${tvl:.0f}<${_min_pool_tvl_usd:.0f}"
+                        continue
                 try:
                     amounts = contract.functions.getAmountsOut(borrow_amount, [weth_checksum, token_checksum]).call()
                     buy_prices[name] = amounts[1]  # How many tokens we get for our WETH
