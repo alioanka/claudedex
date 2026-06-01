@@ -361,8 +361,10 @@ class TradeExecutor:
         Returns:
             TradeResult with execution details
         """
-        logger.info(f"🛒 Executing BUY: {token_address} on {chain}")
-        logger.info(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
+        # Demoted to DEBUG: fires for every candidate (~60k/day in DRY_RUN).
+        # Real fills (LIVE) stay at INFO via _execute_solana_buy/_execute_evm_buy.
+        logger.debug(f"🛒 Executing BUY: {token_address} on {chain}")
+        logger.debug(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
 
         _account = getattr(self, 'solana_wallet', None) if chain == 'solana' else getattr(self, 'evm_wallet', None)
         if should_skip_live(self.dry_run, module='sniper', account=_account):
@@ -394,8 +396,9 @@ class TradeExecutor:
         Returns:
             TradeResult with execution details
         """
-        logger.info(f"💰 Executing SELL: {token_address} on {chain}")
-        logger.info(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
+        # Demoted to DEBUG: fires for every exit (~60k/day in DRY_RUN).
+        logger.debug(f"💰 Executing SELL: {token_address} on {chain}")
+        logger.debug(f"   Amount: {amount_in} | Slippage: {slippage}% | Priority: {priority_fee}")
 
         _account = getattr(self, 'solana_wallet', None) if chain == 'solana' else getattr(self, 'evm_wallet', None)
         if should_skip_live(self.dry_run, module='sniper', account=_account):
@@ -951,7 +954,9 @@ class TradeExecutor:
         amount_in: float
     ) -> TradeResult:
         """Simulate a buy order (DRY RUN)"""
-        logger.info(f"🧪 [DRY RUN] Simulating BUY: {amount_in} {chain.upper()} -> {token_address}")
+        # Demoted to DEBUG: fires for every simulated buy (~60k/day in DRY_RUN).
+        # SNIPER STATS summary at INFO is the correct throughput signal.
+        logger.debug(f"🧪 [DRY RUN] Simulating BUY: {amount_in} {chain.upper()} -> {token_address}")
 
         # Simulate network delay
         await asyncio.sleep(0.5)
@@ -962,7 +967,7 @@ class TradeExecutor:
         # Simulate some output amount
         simulated_output = amount_in * 1000000  # Fake multiplier
 
-        logger.info(f"🧪 [DRY RUN] Simulated BUY complete: {simulated_output} tokens")
+        logger.debug(f"🧪 [DRY RUN] Simulated BUY complete: {simulated_output} tokens")
 
         return TradeResult(
             success=True,
@@ -1022,7 +1027,8 @@ class TradeExecutor:
         honest even if the LOG line is briefly noisy. See
         `modules/sniper/CLAUDE.md` for the full Wave-12 note.
         """
-        logger.info(f"🧪 [DRY RUN] Simulating SELL: {amount_in} tokens -> {chain.upper()}")
+        # Demoted to DEBUG: fires for every simulated sell (~60k/day in DRY_RUN).
+        logger.debug(f"🧪 [DRY RUN] Simulating SELL: {amount_in} tokens -> {chain.upper()}")
 
         await asyncio.sleep(0.5)
 
@@ -1067,7 +1073,7 @@ class TradeExecutor:
             move = 0.01
         simulated_output = amount_in / 1000000 * move
 
-        logger.info(f"🧪 [DRY RUN] Simulated SELL complete: {simulated_output} {chain.upper()}")
+        logger.debug(f"🧪 [DRY RUN] Simulated SELL complete: {simulated_output} {chain.upper()}")
 
         return TradeResult(
             success=True,

@@ -169,6 +169,15 @@ class SniperEngine:
         self.sniper_min_buy_sell_ratio: float = 1.5   # 0.0 = disabled (fail-open)
         self.sniper_min_safety_score: int = 40        # 0 = disabled
 
+        # Wave-16: decouple W15 quality gates from the honeypot-safety-API toggle.
+        # When true (default), the W15 entry-quality heuristics run regardless of
+        # safety_check_enabled.  Gates that require a SafetyReport (holder count,
+        # dev holding, safety score) run only when the safety API call is made;
+        # gates that don't need a report (token age, buy-sell ratio) run even when
+        # safety_check_enabled=false.  Set false only to disable quality filtering
+        # entirely (not recommended for LIVE).  Seeded by migration 052.
+        self.sniper_quality_gates_enabled: bool = True
+
         # Wave-15: partial-take exit (all DB-configurable via migration 044)
         # partial_take_pct  - fire partial exit at this P&L% (0 = disabled)
         # partial_take_size - fraction of position (%) to sell at partial take
@@ -376,6 +385,12 @@ class SniperEngine:
                             self.sniper_use_dex_risk_manager = (
                                 val.lower() in ('true', '1', 'yes') if val else False
                             )
+                        # Wave-16: quality gates independent of safety_check_enabled
+                        # (migration 052)
+                        elif key == 'sniper_quality_gates_enabled':
+                            self.sniper_quality_gates_enabled = (
+                                val.lower() in ('true', '1', 'yes') if val else True
+                            )
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -416,12 +431,18 @@ class SniperEngine:
                 f"   W15 exit: PartialTake={self.sniper_partial_take_pct}%"
                 f"@{self.sniper_partial_take_size_pct}% trail={self.sniper_trail_after_partial}"
             )
+            quality_gate_mode = (
+                "ACTIVE (always-on)" if self.sniper_quality_gates_enabled
+                else "DISABLED (sniper_quality_gates_enabled=false)"
+            )
             logger.info(
-                f"   W15 entry gates: min_holders={self.sniper_min_holder_count} "
+                f"   W15/W16 entry gates [{quality_gate_mode}]: "
+                f"min_holders={self.sniper_min_holder_count} "
                 f"min_age={self.sniper_min_token_age_seconds}s "
                 f"max_dev_holding={self.sniper_max_dev_holding_pct}% "
                 f"min_buy_sell={self.sniper_min_buy_sell_ratio} "
-                f"min_score={self.sniper_min_safety_score}"
+                f"min_score={self.sniper_min_safety_score} "
+                f"| safety_api={'ON' if self.safety_check_enabled else 'OFF'}"
             )
             logger.info(
                 f"   W15 risk gate: sniper_use_dex_risk_manager="
@@ -616,8 +637,8 @@ class SniperEngine:
                     pass
                 return
 
-            # 2. Add to pending targets
-            logger.info(f"🎯 SNIPER TARGET ACQUIRED: {token_address} ({chain_type})")
+            # 2. Add to pending targets (demoted to DEBUG — thousands/day in DRY_RUN)
+            logger.debug(f"🎯 SNIPER TARGET ACQUIRED: {token_address} ({chain_type})")
             self.pending_targets[token_address] = {
                 'target': target,
                 'chain_type': chain_type,
@@ -651,12 +672,78 @@ class SniperEngine:
         # Update stats
         self._stats['tokens_analyzed'] += 1
 
-        # Log stats periodically (every 5 minutes)
+        # Log stats periodically (every 1 minute)
         await self._log_stats_if_needed()
 
-        # Skip safety check if disabled
+        timing = target.get('_timing')
+
+        # Wave-16: quality gates that don't require a SafetyReport run here,
+        # BEFORE the safety_check_enabled guard.  This means they fire even
+        # when the honeypot-API check is disabled (TEST_MODE / DRY_RUN with
+        # safety_check_enabled=false).  Gate 2 (token age) and Gate 5 (buy-
+        # sell ratio) are cheap heuristics — no external API call needed.
+        if self.sniper_quality_gates_enabled and not self.test_mode:
+            # Gate 2 (early): token age window.
+            # pool block_time stamped by listener into target['block_time']
+            # or target['metadata']['pool_block_time']. Fail-open when absent.
+            min_age = self.sniper_min_token_age_seconds
+            if min_age > 0:
+                pool_block_time = (
+                    target.get('block_time')
+                    or target.get('metadata', {}).get('pool_block_time')
+                )
+                if pool_block_time is not None:
+                    try:
+                        from datetime import timezone as _tz
+                        if isinstance(pool_block_time, (int, float)):
+                            bt = datetime.fromtimestamp(pool_block_time, tz=_tz.utc)
+                        else:
+                            bt = pool_block_time
+                        now_utc = datetime.now(tz=_tz.utc)
+                        age_secs = (now_utc - bt).total_seconds()
+                        if age_secs < min_age:
+                            self._stats['too_young_rejected'] = (
+                                self._stats.get('too_young_rejected', 0) + 1
+                            )
+                            self._rejected_cache[token_address] = datetime.now()
+                            logger.debug(
+                                f"Token too young: {token_address[:16]}... "
+                                f"({age_secs:.1f}s < {min_age}s)"
+                            )
+                            if timing:
+                                timing.outcome = 'rejected_quality'
+                            return False
+                    except Exception as _age_err:
+                        logger.debug(
+                            f"token age gate parse error (fail-open): {_age_err}"
+                        )
+
+            # Gate 5 (early): buy/sell pressure ratio (fail-open if unavailable).
+            # Solana only — calls Birdeye trade-stats asynchronously; any
+            # error allows candidate through (Birdeye outage != reject all).
+            min_bsr = self.sniper_min_buy_sell_ratio
+            if min_bsr > 0 and chain_type == 'solana':
+                bsr = await self._get_buy_sell_ratio(token_address)
+                if bsr is not None and bsr < min_bsr:
+                    self._stats['low_buy_sell_ratio_rejected'] = (
+                        self._stats.get('low_buy_sell_ratio_rejected', 0) + 1
+                    )
+                    self._rejected_cache[token_address] = datetime.now()
+                    logger.debug(
+                        f"Buy/sell ratio too low: {token_address[:16]}... "
+                        f"({bsr:.2f} < {min_bsr})"
+                    )
+                    if timing:
+                        timing.outcome = 'rejected_quality'
+                    return False
+
+        # Skip safety API check if disabled. Quality gates that require a
+        # SafetyReport (holder count, dev holding, safety score) are gated
+        # inside the safety block below and won't run when the safety API
+        # is disabled — they fail-open in that case, which is intentional.
         if not self.safety_check_enabled:
-            logger.debug(f"Safety check disabled, allowing {token_address}")
+            logger.debug(f"Safety API disabled, skipping honeypot/tax/liq check for {token_address}")
+            self._stats['passed_safety'] += 1
             return True
 
         # Test mode uses relaxed thresholds
@@ -682,8 +769,7 @@ class SniperEngine:
         else:
             evm_score_floor = 0
 
-        # Perform comprehensive safety check
-        timing = target.get('_timing')
+        # Perform comprehensive safety check (timing already captured above)
         try:
             if self.token_safety:
                 from modules.sniper.core.token_safety import SafetyRating
@@ -761,8 +847,12 @@ class SniperEngine:
                         timing.outcome = 'rejected_safety'
                     return False
 
-                # Wave-15 entry quality gates (skip in test_mode for measurement)
-                if not self.test_mode:
+                # Wave-15/W16 entry quality gates requiring a SafetyReport.
+                # Gates 2 (age) and 5 (buy-sell ratio) already ran above because
+                # they don't need a report and must fire even when safety_check_enabled=false.
+                # Gates 1, 3, 4 need report data; they run here when quality gates
+                # are enabled and we're not in test_mode.
+                if self.sniper_quality_gates_enabled and not self.test_mode:
                     # Gate 1: minimum holder count.
                     # report.holder_count populated by GoPlus for EVM; Solana
                     # defaults to 0 when unavailable -> fail-open (don't mass-reject
@@ -780,41 +870,6 @@ class SniperEngine:
                         if timing:
                             timing.outcome = 'rejected_quality'
                         return False
-
-                    # Gate 2: token age window.
-                    # pool block_time stamped by listener into target['block_time']
-                    # or target['metadata']['pool_block_time']. Fail-open when absent.
-                    min_age = self.sniper_min_token_age_seconds
-                    if min_age > 0:
-                        pool_block_time = (
-                            target.get('block_time')
-                            or target.get('metadata', {}).get('pool_block_time')
-                        )
-                        if pool_block_time is not None:
-                            try:
-                                from datetime import timezone as _tz
-                                if isinstance(pool_block_time, (int, float)):
-                                    bt = datetime.fromtimestamp(pool_block_time, tz=_tz.utc)
-                                else:
-                                    bt = pool_block_time
-                                now_utc = datetime.now(tz=_tz.utc)
-                                age_secs = (now_utc - bt).total_seconds()
-                                if age_secs < min_age:
-                                    self._stats['too_young_rejected'] = (
-                                        self._stats.get('too_young_rejected', 0) + 1
-                                    )
-                                    self._rejected_cache[token_address] = datetime.now()
-                                    logger.debug(
-                                        f"Token too young: {token_address[:16]}... "
-                                        f"({age_secs:.1f}s < {min_age}s)"
-                                    )
-                                    if timing:
-                                        timing.outcome = 'rejected_quality'
-                                    return False
-                            except Exception as _age_err:
-                                logger.debug(
-                                    f"token age gate parse error (fail-open): {_age_err}"
-                                )
 
                     # Gate 3: dev / top-holder concentration.
                     # report.top_holder_percentage from GoPlus (EVM) + RugCheck (Solana).
@@ -850,25 +905,6 @@ class SniperEngine:
                         if timing:
                             timing.outcome = 'rejected_quality'
                         return False
-
-                    # Gate 5: buy/sell pressure ratio (fail-open if unavailable).
-                    # Solana only — calls Birdeye trade-stats asynchronously; any
-                    # error allows candidate through (Birdeye outage != reject all).
-                    min_bsr = self.sniper_min_buy_sell_ratio
-                    if min_bsr > 0 and chain_type == 'solana':
-                        bsr = await self._get_buy_sell_ratio(token_address)
-                        if bsr is not None and bsr < min_bsr:
-                            self._stats['low_buy_sell_ratio_rejected'] = (
-                                self._stats.get('low_buy_sell_ratio_rejected', 0) + 1
-                            )
-                            self._rejected_cache[token_address] = datetime.now()
-                            logger.debug(
-                                f"Buy/sell ratio too low: {token_address[:16]}... "
-                                f"({bsr:.2f} < {min_bsr})"
-                            )
-                            if timing:
-                                timing.outcome = 'rejected_quality'
-                            return False
 
                 # Token passed all checks - log this at INFO level
                 self._stats['passed_safety'] += 1
@@ -1031,7 +1067,12 @@ class SniperEngine:
                             pass
                 except Exception:
                     pass
-            # Derive the 4 dashboard counters from merged snapshot
+            # Derive the 4 dashboard counters from merged snapshot.
+            # pools_passed uses passed_safety directly (incremented only
+            # when a candidate clears ALL gates) instead of the old
+            # evaluated-minus-rejected formula, which under-counted
+            # quality-gate rejections and showed Passed>0 even when
+            # safety_check_enabled=false short-circuited all checks.
             snapshot['pools_detected'] = (
                 (snapshot.get('solana_listener', {}).get('pools_detected') or 0)
                 + (snapshot.get('evm_listener', {}).get('known_pairs_total') or 0)
@@ -1040,12 +1081,15 @@ class SniperEngine:
             snapshot['pools_rejected'] = (
                 snapshot.get('honeypots_detected', 0)
                 + snapshot.get('danger_ratings', 0)
+                + snapshot.get('high_tax_rejected', 0)
+                + snapshot.get('low_liquidity_rejected', 0)
+                + snapshot.get('low_holder_rejected', 0)
+                + snapshot.get('too_young_rejected', 0)
+                + snapshot.get('high_dev_holding_rejected', 0)
+                + snapshot.get('low_buy_sell_ratio_rejected', 0)
+                + snapshot.get('low_score_rejected', 0)
             )
-            # Passed safety = total evaluated - rejected
-            snapshot['pools_passed'] = max(
-                0,
-                snapshot['pools_evaluated'] - snapshot['pools_rejected']
-            )
+            snapshot['pools_passed'] = snapshot.get('passed_safety', 0)
             # Active-positions cap visibility for the dashboard. Surface
             # BOTH in-memory (what THIS process tracks) and the effective
             # count (max of in-mem vs DB open rows) so operators can spot
