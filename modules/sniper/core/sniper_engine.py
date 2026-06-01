@@ -197,6 +197,35 @@ class SniperEngine:
         #   or EVM sniping where DEX liquidity analysis is meaningful).
         self.sniper_use_dex_risk_manager: bool = False
 
+        # Wave-17: delayed-entry watchlist (migration 054).
+        #
+        # Core strategy change: do NOT buy at t=0.  At t=0 Birdeye/holder/
+        # liquidity data do not exist, so every quality gate fails-open,
+        # giving 100% pass-rate and immediate-rug exposure.  Instead:
+        #   1. On detection, record the mint in _watchlist (dict: mint ->
+        #      {target, chain_type, detected_at}).
+        #   2. _process_watchlist() polls every sniper_watchlist_recheck_secs.
+        #      Once a mint's age >= sniper_min_entry_age_seconds it is promoted
+        #      from watchlist -> _check_filters -> pending_targets (entry path).
+        #   3. At that age (default 180 s) Birdeye has trade history, GoPlus
+        #      has holder data, and the gates have real signal.
+        #      Missing BSR at entry age is itself a red flag ->
+        #      sniper_fail_closed_missing_bsr=true flips the BSR gate to reject.
+        #
+        # sniper_min_entry_age_seconds = 0 disables delayed-entry (reverts to
+        # t=0 behavior for backwards-compat if an operator sets it).
+        self.sniper_min_entry_age_seconds: int = 180     # seconds; 0 = disabled
+        self.sniper_watchlist_max_size: int = 500        # slots; drop when full
+        self.sniper_watchlist_recheck_secs: int = 15     # poll interval
+        self.sniper_fail_closed_missing_bsr: bool = True # reject if no BSR data
+        # Replaces the hardcoded 200.0 from wave-16. Configurable via DB.
+        self.sniper_phantom_price_threshold: float = 300.0  # |pnl%| skip ceiling
+
+        # In-memory watchlist: mint -> {target, chain_type, detected_at}
+        # Populated by _evaluate_target when token is too young.
+        # Consumed by _process_watchlist once the age floor is crossed.
+        self._watchlist: Dict[str, Dict] = {}
+
         # Statistics tracking for rate-limited logging
         self._stats = {
             'tokens_analyzed': 0,
@@ -213,6 +242,9 @@ class SniperEngine:
             'partial_takes_fired': 0,
             'positions_synthetic_closed': 0,
             'capped_rejections': 0,
+            # Wave-17 watchlist counters
+            'too_young_watchlisted': 0,
+            'watchlist_promoted': 0,
             'last_capped_log': datetime.now(),
             'last_stats_log': datetime.now()
         }
@@ -391,6 +423,19 @@ class SniperEngine:
                             self.sniper_quality_gates_enabled = (
                                 val.lower() in ('true', '1', 'yes') if val else True
                             )
+                        # Wave-17: delayed-entry + phantom-price config (migration 054)
+                        elif key == 'sniper_min_entry_age_seconds':
+                            self.sniper_min_entry_age_seconds = int(val) if val else 180
+                        elif key == 'sniper_watchlist_max_size':
+                            self.sniper_watchlist_max_size = int(val) if val else 500
+                        elif key == 'sniper_watchlist_recheck_secs':
+                            self.sniper_watchlist_recheck_secs = int(val) if val else 15
+                        elif key == 'sniper_fail_closed_missing_bsr':
+                            self.sniper_fail_closed_missing_bsr = (
+                                val.lower() in ('true', '1', 'yes') if val else True
+                            )
+                        elif key == 'sniper_phantom_price_threshold':
+                            self.sniper_phantom_price_threshold = float(val) if val else 300.0
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -449,6 +494,13 @@ class SniperEngine:
                 f"{self.sniper_use_dex_risk_manager} "
                 f"({'full DEX validate_trade' if self.sniper_use_dex_risk_manager else 'sniper-own gates only (capital checks preserved)'})"
             )
+            logger.info(
+                f"   W17 delayed-entry: min_age={self.sniper_min_entry_age_seconds}s "
+                f"watchlist_max={self.sniper_watchlist_max_size} "
+                f"recheck={self.sniper_watchlist_recheck_secs}s "
+                f"fail_closed_bsr={self.sniper_fail_closed_missing_bsr} "
+                f"phantom_threshold={self.sniper_phantom_price_threshold}%"
+            )
 
         except Exception as e:
             logger.error(f"Error loading sniper settings: {e}")
@@ -502,7 +554,10 @@ class SniperEngine:
         self.tasks = [
             asyncio.create_task(self._monitor_new_pairs()),
             asyncio.create_task(self._process_targets()),
-            asyncio.create_task(self._monitor_active_snipes())
+            asyncio.create_task(self._monitor_active_snipes()),
+            # Wave-17: watchlist poller — promotes too-young tokens to entry
+            # once age >= sniper_min_entry_age_seconds.  No-op when disabled.
+            asyncio.create_task(self._process_watchlist()),
         ]
 
         await asyncio.gather(*self.tasks)
@@ -570,23 +625,25 @@ class SniperEngine:
             return in_mem
 
     async def _evaluate_target(self, target: Dict, chain_type: str):
-        """Evaluate if a new token meets sniping criteria"""
+        """Evaluate if a new token meets sniping criteria.
+
+        Wave-17 delayed-entry:
+          If sniper_min_entry_age_seconds > 0 AND the token is younger than
+          that floor, park it in self._watchlist instead of evaluating now.
+          _process_watchlist() promotes it once age >= floor.
+
+          At t=0 Birdeye/holder data don't exist -> quality gates fail-open.
+          At age >= 180s data exists and gates have real signal.
+        """
         token_address = target.get('token_address', '')
-        # SNIPE-RM-18: dedupe before doing any work. The same address
-        # can arrive on multiple listener paths (polling + WSS race,
-        # or repeat block scans), and without this gate we'd burn
-        # safety-check API calls + log duplicate "TARGET ACQUIRED"
-        # lines for each. Cheap O(1) check against the live pending +
-        # active sets.
+        # SNIPE-RM-18: dedupe — same address can arrive on multiple paths.
         if token_address and (
             token_address in self.pending_targets
             or token_address in self.active_snipes
+            or token_address in self._watchlist   # Wave-17: also skip watchlisted
         ):
             return
-        # t_rpc_receipt is stamped by the listener BEFORE getTransaction
-        # commitment-wait. Read from either top-level (EVM listener) or
-        # nested metadata (Solana listener) so both detection paths
-        # surface the WSS-vs-polling staleness delta.
+        # t_rpc_receipt stamped by listener BEFORE getTransaction commitment-wait.
         rpc_receipt_perf = (
             target.get('rpc_receipt_perf')
             or target.get('metadata', {}).get('rpc_receipt_perf')
@@ -599,20 +656,43 @@ class SniperEngine:
         )
         target['_timing'] = timing
         try:
+            # Wave-17: age floor BEFORE any API calls.
+            min_age = self.sniper_min_entry_age_seconds
+            if min_age > 0:
+                age_secs = self._get_token_age_seconds(target)
+                if age_secs is None or age_secs < min_age:
+                    # Too young — park in watchlist, don't evaluate yet.
+                    if len(self._watchlist) < self.sniper_watchlist_max_size:
+                        self._watchlist[token_address] = {
+                            'target': target,
+                            'chain_type': chain_type,
+                            'detected_at': datetime.now(),
+                        }
+                        self._stats['too_young_watchlisted'] = (
+                            self._stats.get('too_young_watchlisted', 0) + 1
+                        )
+                        logger.debug(
+                            f"watchlist: {token_address[:16]}... "
+                            f"age={age_secs:.0f}s < {min_age}s floor "
+                            f"(watchlist={len(self._watchlist)})"
+                        )
+                    else:
+                        logger.debug(
+                            f"watchlist full ({self.sniper_watchlist_max_size}), "
+                            f"dropping {token_address[:16]}..."
+                        )
+                    return
+
+            # Age floor passed (or disabled): run active-positions cap + filters.
             # 0. Active-positions cap (emergency brake against runaway accumulation).
-            # Gate here so we don't pay safety-check cost when already at cap.
-            # Uses _effective_active_count() which prefers DB count over the
-            # in-memory dict — len(self.active_snipes) resets to 0 on restart
-            # while DB orphans accumulate, leaving the cap unenforced.
             effective = await self._effective_active_count()
             if effective >= self.max_active_positions:
                 self._stats['capped_rejections'] = self._stats.get('capped_rejections', 0) + 1
                 now = datetime.now()
                 if now - self._stats.get('last_capped_log', now) >= timedelta(minutes=1):
                     logger.warning(
-                        f"🛑 SNIPER CAP: {effective}/{self.max_active_positions} "
-                        f"active positions (in-mem={len(self.active_snipes)}, "
-                        f"db-open={effective}) — rejected {self._stats['capped_rejections']} "
+                        f"SNIPER CAP: {effective}/{self.max_active_positions} "
+                        f"active positions — rejected {self._stats['capped_rejections']} "
                         f"candidates in last minute"
                     )
                     self._stats['last_capped_log'] = now
@@ -624,11 +704,8 @@ class SniperEngine:
                     pass
                 return
 
-            # 1. Check Filters (Liquidity, Tax, Honeypot, Safety)
+            # 1. Check Filters (Liquidity, Tax, Honeypot, Safety, BSR)
             if not await self._check_filters(target, chain_type):
-                # _check_filters sets timing.outcome (rejected_filter
-                # or rejected_safety) before returning False. Emit
-                # here so the rejection's safety-stage cost is logged.
                 if timing.outcome == 'pending':
                     timing.outcome = 'rejected_filter'
                 try:
@@ -637,8 +714,8 @@ class SniperEngine:
                     pass
                 return
 
-            # 2. Add to pending targets (demoted to DEBUG — thousands/day in DRY_RUN)
-            logger.debug(f"🎯 SNIPER TARGET ACQUIRED: {token_address} ({chain_type})")
+            # 2. Add to pending targets
+            logger.debug(f"TARGET ACQUIRED: {token_address} ({chain_type})")
             self.pending_targets[token_address] = {
                 'target': target,
                 'chain_type': chain_type,
@@ -648,6 +725,116 @@ class SniperEngine:
 
         except Exception as e:
             logger.error(f"Error evaluating target: {e}")
+
+    def _get_token_age_seconds(self, target: Dict) -> Optional[float]:
+        """Return token age in seconds from pool block_time, or None if unavailable.
+
+        Checks target['block_time'] (listener stamp) and
+        target['metadata']['pool_block_time'] (Solana WSS path).
+        Returns None when the field is absent or unparseable — caller
+        treats None as "unknown age" and may choose fail-open or fail-closed.
+        """
+        from datetime import timezone as _tz
+        pool_block_time = (
+            target.get('block_time')
+            or target.get('metadata', {}).get('pool_block_time')
+        )
+        if pool_block_time is None:
+            return None
+        try:
+            if isinstance(pool_block_time, (int, float)):
+                bt = datetime.fromtimestamp(pool_block_time, tz=_tz.utc)
+            elif isinstance(pool_block_time, datetime):
+                bt = (
+                    pool_block_time
+                    if pool_block_time.tzinfo
+                    else pool_block_time.replace(tzinfo=_tz.utc)
+                )
+            else:
+                # Try ISO string parse
+                bt = datetime.fromisoformat(str(pool_block_time))
+                if bt.tzinfo is None:
+                    bt = bt.replace(tzinfo=_tz.utc)
+            return (datetime.now(_tz.utc) - bt).total_seconds()
+        except Exception as _err:
+            logger.debug(f"_get_token_age_seconds parse error: {_err}")
+            return None
+
+    async def _process_watchlist(self):
+        """Wave-17: poll too-young tokens and promote them when old enough.
+
+        Runs as an independent asyncio task.  Every sniper_watchlist_recheck_secs
+        it iterates _watchlist, computes token age, and promotes tokens that have
+        crossed sniper_min_entry_age_seconds into _evaluate_target's filter path.
+
+        Age source priority:
+          1. block_time in target (on-chain, most accurate)
+          2. detected_at (time we first saw the pool; slightly later than block_time)
+
+        At the age floor Birdeye/GoPlus have had time to index the token.
+        Missing BSR at this point is itself a signal -> fail-closed.
+        """
+        while self.is_running:
+            try:
+                recheck = max(1, self.sniper_watchlist_recheck_secs)
+                await asyncio.sleep(recheck)
+
+                min_age = self.sniper_min_entry_age_seconds
+                if min_age <= 0:
+                    self._watchlist.clear()
+                    continue
+
+                promote = []
+                for mint, info in list(self._watchlist.items()):
+                    target = info['target']
+                    age_secs = self._get_token_age_seconds(target)
+                    if age_secs is None:
+                        # Use detected_at as a proxy when block_time absent
+                        detected = info.get('detected_at', datetime.now())
+                        age_secs = (datetime.now() - detected).total_seconds()
+
+                    if age_secs >= min_age:
+                        promote.append(mint)
+
+                for mint in promote:
+                    info = self._watchlist.pop(mint, None)
+                    if info is None:
+                        continue
+                    # Skip if already in pipeline (race with direct detection)
+                    if mint in self.pending_targets or mint in self.active_snipes:
+                        continue
+                    target = info['target']
+                    chain_type = info['chain_type']
+
+                    logger.info(
+                        f"WATCHLIST PROMOTE: {mint[:16]}... "
+                        f"(age >= {min_age}s, running gates)"
+                    )
+                    self._stats['watchlist_promoted'] = (
+                        self._stats.get('watchlist_promoted', 0) + 1
+                    )
+                    try:
+                        # Re-enter through the full evaluation path.
+                        # The token is no longer in _watchlist so dedupe
+                        # won't block it; age floor won't re-park it because
+                        # age is now >= min_age.
+                        await self._evaluate_target(target, chain_type)
+                    except Exception as _pr_err:
+                        logger.error(
+                            f"watchlist promote error for {mint[:16]}...: {_pr_err}"
+                        )
+
+                if promote:
+                    logger.debug(
+                        f"watchlist: promoted {len(promote)}, "
+                        f"remaining {len(self._watchlist)}"
+                    )
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"Error in _process_watchlist: {e}")
+                await asyncio.sleep(5)
 
     async def _check_filters(self, target: Dict, chain_type: str) -> bool:
         """Apply strict filters for sniping including token safety checks"""
@@ -718,13 +905,37 @@ class SniperEngine:
                             f"token age gate parse error (fail-open): {_age_err}"
                         )
 
-            # Gate 5 (early): buy/sell pressure ratio (fail-open if unavailable).
-            # Solana only — calls Birdeye trade-stats asynchronously; any
-            # error allows candidate through (Birdeye outage != reject all).
+            # Gate 5 (early): buy/sell pressure ratio.
+            # Solana only — calls Birdeye trade-stats asynchronously.
+            #
+            # Wave-17 fail-open -> fail-closed flip:
+            #   OLD: bsr is None -> pass through (fail-open). This meant
+            #        every t=0 token passed because Birdeye had no data.
+            #   NEW: when the age floor is active (min_entry_age_seconds>0)
+            #        AND sniper_fail_closed_missing_bsr=true, a None BSR
+            #        at entry age means the pool is illiquid/dead -> REJECT.
+            #        When age floor is disabled (0), keep legacy fail-open
+            #        behavior so t=0 sniping is unaffected.
             min_bsr = self.sniper_min_buy_sell_ratio
             if min_bsr > 0 and chain_type == 'solana':
                 bsr = await self._get_buy_sell_ratio(token_address)
-                if bsr is not None and bsr < min_bsr:
+                if bsr is None:
+                    # No Birdeye data. Reject if age floor active + fail-closed.
+                    age_floor_active = self.sniper_min_entry_age_seconds > 0
+                    if age_floor_active and self.sniper_fail_closed_missing_bsr:
+                        self._stats['low_buy_sell_ratio_rejected'] = (
+                            self._stats.get('low_buy_sell_ratio_rejected', 0) + 1
+                        )
+                        self._rejected_cache[token_address] = datetime.now()
+                        logger.debug(
+                            f"BSR missing at entry age (fail-closed): "
+                            f"{token_address[:16]}..."
+                        )
+                        if timing:
+                            timing.outcome = 'rejected_quality'
+                        return False
+                    # else: age floor disabled or fail-open mode -> pass through
+                elif bsr < min_bsr:
                     self._stats['low_buy_sell_ratio_rejected'] = (
                         self._stats.get('low_buy_sell_ratio_rejected', 0) + 1
                     )
@@ -995,6 +1206,9 @@ class SniperEngine:
             logger.info(
                 f"SNIPER STATS (Last 1 min): "
                 f"Analyzed: {total} | Passed: {passed} ({pass_rate:.1f}%) | "
+                f"Watchlisted: {self._stats.get('too_young_watchlisted', 0)} "
+                f"(current={len(self._watchlist)}) | "
+                f"Promoted: {self._stats.get('watchlist_promoted', 0)} | "
                 f"Honeypots: {self._stats['honeypots_detected']} | "
                 f"Danger: {self._stats['danger_ratings']} | "
                 f"HighTax: {self._stats['high_tax_rejected']} | "
@@ -1030,6 +1244,9 @@ class SniperEngine:
                 'partial_takes_fired': 0,
                 'positions_synthetic_closed': 0,
                 'capped_rejections': 0,
+                # Wave-17: watchlist counters — reset per window
+                'too_young_watchlisted': 0,
+                'watchlist_promoted': 0,
                 'safety_check_errors': self._stats.get('safety_check_errors', 0),
                 'jupiter_quote_fallback_hits': self._stats.get('jupiter_quote_fallback_hits', 0),
                 'birdeye_fallback_hits': self._stats.get('birdeye_fallback_hits', 0),
@@ -1526,12 +1743,14 @@ class SniperEngine:
                     else:
                         pnl_pct = ((current_price - entry_price) / entry_price) * 100
 
-                    # Phantom-price guard: |pnl_pct| > 200 means the price
+                    # Phantom-price guard: |pnl_pct| > threshold means the price
                     # source returned a stale or wrong-unit value. In DRY_RUN,
                     # route through the modeled synthetic close instead of
                     # triggering a false TP/SL. In LIVE, log and skip — do NOT
                     # act on bad data.
-                    _PHANTOM_THRESHOLD = 200.0
+                    # Wave-17: threshold is now DB-configurable via
+                    # sniper_phantom_price_threshold (default 300; was hardcoded 200).
+                    _PHANTOM_THRESHOLD = getattr(self, 'sniper_phantom_price_threshold', 300.0)
                     if abs(pnl_pct) > _PHANTOM_THRESHOLD:
                         dry = self.dry_run or os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
                         if dry:
@@ -1552,9 +1771,10 @@ class SniperEngine:
                             )
                         continue
 
-                    # Log status periodically
+                    # Demoted to DEBUG: fires every second per active position.
+                    # SNIPER STATS summary at INFO is the aggregate signal.
                     if check_count % 60 == 0:  # Every minute
-                        logger.info(
+                        logger.debug(
                             f"Position: {address[:8]}... | "
                             f"Entry: ${entry_price_usd:.8f} | "
                             f"Current: ${current_price:.8f} | P&L: {pnl_pct:+.2f}%"
@@ -1599,18 +1819,22 @@ class SniperEngine:
                         logger.info(f"TAKE PROFIT triggered for {address[:8]}... ({pnl_pct:+.2f}%)")
                         await self._exit_position(data, 'TAKE_PROFIT')
 
-                    # Stop loss: trailing after partial take, or fixed otherwise
+                    # Stop loss: trailing after partial take, or fixed otherwise.
+                    # Demoted to DEBUG: fires thousands of times/hour when
+                    # pump.fun launches rug immediately.  SNIPER STATS summary
+                    # (1-min INFO) is the aggregate signal; individual lines
+                    # add no operator value and fill the log fast.
                     elif already_partial and self.sniper_trail_after_partial:
                         stop_loss_pct_raw = abs(self.stop_loss_pct)
                         trail_stop_price = hw * (1 - stop_loss_pct_raw / 100.0)
                         if current_price <= trail_stop_price:
-                            logger.warning(
+                            logger.debug(
                                 f"TRAIL STOP for {address[:8]}... "
                                 f"(price {current_price:.8f} <= trail {trail_stop_price:.8f})"
                             )
                             await self._exit_position(data, 'TRAIL_STOP')
                     elif pnl_pct <= stop_loss_pct:
-                        logger.warning(f"STOP LOSS triggered for {address[:8]}... ({pnl_pct:.2f}%)")
+                        logger.debug(f"STOP LOSS triggered for {address[:8]}... ({pnl_pct:.2f}%)")
                         await self._exit_position(data, 'STOP_LOSS')
 
                     # SNIPE-RM-12: time-stop. Some snipes neither hit
