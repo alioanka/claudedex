@@ -1062,13 +1062,17 @@ class CopyTradingEngine(BaseModule):
         # Wave-16: throttle for fallback-poll rate-limit WARNING log.
         # With 33 wallets the "Solana RPC rate limited in fallback poll"
         # line fired once per wallet per 15 s cycle (33 WARNINGs / 15 s).
-        # Throttled to at most one WARNING per 60 s; all others demoted
-        # to DEBUG. Also tracks whether the last Helius call for a wallet
-        # was a true failure (vs empty == no new SWAPs) so the fallback
-        # poll is only invoked on genuine Helius transport failures, not
-        # on every empty response.
+        # Wave-18: increased throttle from 60 s to 300 s (5 min) because
+        # copy shares the Solana RPC pool with Solana+Sniper modules which
+        # saturate it; the public-RPC fallback will always 429 under that
+        # load. One WARNING per 5 min is sufficient signal for the operator;
+        # all subsequent occurrences within the window are DEBUG.
+        # Operator action to stop the spam permanently: provision a dedicated
+        # Helius/paid Solana endpoint and store it as HELIUS_API_KEY in
+        # secure_credentials — the enhanced-tx path then skips the public
+        # fallback entirely (fallback only triggers on genuine Helius failure).
         self._fallback_rl_last_warn: float = 0.0
-        self._fallback_rl_throttle_s: float = 60.0
+        self._fallback_rl_throttle_s: float = 300.0
 
         # Wave-15: per-wallet cursor (most-recent processed signature).
         # On first run the cursor is absent; we record the newest sig
