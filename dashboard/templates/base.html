@@ -990,6 +990,47 @@
                 </ul>
             </li>
 
+            <!-- Financial Advisor Module -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="advisor-menu">
+                    <i class="fas fa-chart-pie"></i>
+                    <span>Financial Advisor</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="advisor-menu">
+                    <li class="nav-item {% if page == 'advisor_dashboard' %}active{% endif %}">
+                        <a href="/advisor/dashboard">
+                            <i class="fas fa-tachometer-alt"></i>
+                            <span>Overview</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'advisor_advice' %}active{% endif %}">
+                        <a href="/advisor/advice">
+                            <i class="fas fa-lightbulb"></i>
+                            <span>Advice History</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'advisor_simulations' %}active{% endif %}">
+                        <a href="/advisor/simulations">
+                            <i class="fas fa-flask"></i>
+                            <span>Simulations</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'advisor_portfolio' %}active{% endif %}">
+                        <a href="/advisor/portfolio">
+                            <i class="fas fa-briefcase"></i>
+                            <span>My Portfolio</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'advisor_settings' %}active{% endif %}">
+                        <a href="/advisor/settings">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
             <!-- AI Analysis Module -->
             <li class="nav-item nav-group">
                 <a href="#" class="nav-group-toggle" data-target="ai-menu">

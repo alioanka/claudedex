@@ -1462,6 +1462,22 @@ class DashboardEndpoints:
         self.app.router.add_get('/ai/settings', self._ai_settings)
         self.app.router.add_get('/ai/logs', self._ai_logs)
 
+        # Financial Advisor Module Pages
+        self.app.router.add_get('/advisor/dashboard', self._advisor_dashboard)
+        self.app.router.add_get('/advisor/advice', self._advisor_advice)
+        self.app.router.add_get('/advisor/simulations', self._advisor_simulations)
+        self.app.router.add_get('/advisor/portfolio', self._advisor_portfolio)
+        self.app.router.add_get('/advisor/settings', self._advisor_settings)
+        # Advisor API endpoints
+        self.app.router.add_get('/api/advisor/advice', self.api_get_advisor_advice)
+        self.app.router.add_get('/api/advisor/simulations', self.api_get_advisor_simulations)
+        self.app.router.add_post('/api/advisor/simulations/{sim_id}/close', self.api_close_advisor_sim)
+        self.app.router.add_get('/api/advisor/portfolio', self.api_get_advisor_portfolio)
+        self.app.router.add_post('/api/advisor/portfolio', self.api_save_advisor_portfolio)
+        self.app.router.add_post('/api/advisor/portfolio/{holding_id}/delete', self.api_delete_advisor_holding)
+        self.app.router.add_get('/api/advisor/settings', self.api_get_advisor_settings)
+        self.app.router.add_post('/api/advisor/settings', self.api_save_advisor_settings)
+
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
 
@@ -15886,3 +15902,382 @@ class DashboardEndpoints:
             logger.info("Dashboard server stopped")
         except Exception as e:
             logger.warning(f"Error stopping dashboard: {e}")
+
+    # =========================================================================
+    # Financial Advisor Module — page handlers
+    # =========================================================================
+
+    async def _advisor_dashboard(self, request):
+        template = self.jinja_env.get_template('advisor_dashboard.html')
+        return web.Response(
+            text=template.render(page='advisor_dashboard'),
+            content_type='text/html',
+        )
+
+    async def _advisor_advice(self, request):
+        template = self.jinja_env.get_template('advisor_advice.html')
+        return web.Response(
+            text=template.render(page='advisor_advice'),
+            content_type='text/html',
+        )
+
+    async def _advisor_simulations(self, request):
+        template = self.jinja_env.get_template('advisor_simulations.html')
+        return web.Response(
+            text=template.render(page='advisor_simulations'),
+            content_type='text/html',
+        )
+
+    async def _advisor_portfolio(self, request):
+        template = self.jinja_env.get_template('advisor_portfolio.html')
+        return web.Response(
+            text=template.render(page='advisor_portfolio'),
+            content_type='text/html',
+        )
+
+    async def _advisor_settings(self, request):
+        template = self.jinja_env.get_template('advisor_settings.html')
+        return web.Response(
+            text=template.render(page='advisor_settings'),
+            content_type='text/html',
+        )
+
+    # =========================================================================
+    # Financial Advisor Module — API handlers
+    # =========================================================================
+
+    async def api_get_advisor_advice(self, request):
+        """Paginated advice history with optional filters."""
+        try:
+            params = request.rel_url.query
+            market = params.get('market', '')
+            horizon = params.get('horizon', '')
+            direction = params.get('direction', '')
+            symbol = params.get('symbol', '')
+            limit = min(int(params.get('limit', 50)), 200)
+            offset = int(params.get('offset', 0))
+
+            rows = []
+            total = 0
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    conditions = []
+                    args = []
+                    idx = 1
+                    if market:
+                        conditions.append(f"market = ${idx}")
+                        args.append(market)
+                        idx += 1
+                    if horizon:
+                        conditions.append(f"horizon = ${idx}")
+                        args.append(horizon)
+                        idx += 1
+                    if direction:
+                        conditions.append(f"direction = ${idx}")
+                        args.append(direction)
+                        idx += 1
+                    if symbol:
+                        conditions.append(f"symbol ILIKE ${idx}")
+                        args.append(f'%{symbol}%')
+                        idx += 1
+                    where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
+                    count_args = args[:]
+                    total = await conn.fetchval(
+                        f'SELECT COUNT(*) FROM advisor_advice {where}',
+                        *count_args,
+                    ) or 0
+                    args.extend([limit, offset])
+                    db_rows = await conn.fetch(
+                        f'''SELECT id, market, symbol, horizon, direction,
+                                   entry_low, entry_high, target_price, stop_price,
+                                   confidence, rationale, model_id, kronos_signal,
+                                   data_source_status, sim_enabled, sim_amount_usd,
+                                   operator_notes, created_at
+                            FROM advisor_advice {where}
+                            ORDER BY created_at DESC
+                            LIMIT ${idx} OFFSET ${idx+1}''',
+                        *args,
+                    )
+                    for r in db_rows:
+                        rows.append({
+                            'id': r['id'],
+                            'market': r['market'],
+                            'symbol': r['symbol'],
+                            'horizon': r['horizon'],
+                            'direction': r['direction'],
+                            'entry_low': float(r['entry_low']) if r['entry_low'] else None,
+                            'entry_high': float(r['entry_high']) if r['entry_high'] else None,
+                            'target_price': float(r['target_price']) if r['target_price'] else None,
+                            'stop_price': float(r['stop_price']) if r['stop_price'] else None,
+                            'confidence': float(r['confidence']),
+                            'rationale': r['rationale'],
+                            'model_id': r['model_id'],
+                            'kronos_signal': float(r['kronos_signal']) if r['kronos_signal'] is not None else None,
+                            'data_source_status': r['data_source_status'],
+                            'sim_enabled': r['sim_enabled'],
+                            'sim_amount_usd': float(r['sim_amount_usd']),
+                            'operator_notes': r['operator_notes'],
+                            'created_at': r['created_at'].isoformat() if r['created_at'] else None,
+                        })
+            return web.json_response({
+                'success': True,
+                'rows': rows,
+                'total': total,
+                'limit': limit,
+                'offset': offset,
+            })
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_advice error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_get_advisor_simulations(self, request):
+        """Return open and recent closed sim positions."""
+        try:
+            params = request.rel_url.query
+            status_filter = params.get('status', '')  # open | closed | all
+            limit = min(int(params.get('limit', 100)), 500)
+
+            rows = []
+            summary = {'total_open': 0, 'total_pnl_usd': 0.0, 'win_rate': 0.0}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    where = ''
+                    args = []
+                    if status_filter and status_filter != 'all':
+                        where = 'WHERE status = $1'
+                        args.append(status_filter)
+                    else:
+                        where = "WHERE status IN ('open','closed','expired')"
+                    db_rows = await conn.fetch(
+                        f'''SELECT id, advice_id, symbol, market, direction, horizon,
+                                   entry_price, current_price, target_price, stop_price,
+                                   notional_usd, exit_price, pnl_pct, pnl_usd, status,
+                                   close_reason, opened_at, closed_at
+                            FROM advisor_sim_positions {where}
+                            ORDER BY opened_at DESC
+                            LIMIT {limit}''',
+                        *args,
+                    )
+                    for r in db_rows:
+                        rows.append({
+                            'id': r['id'],
+                            'advice_id': r['advice_id'],
+                            'symbol': r['symbol'],
+                            'market': r['market'],
+                            'direction': r['direction'],
+                            'horizon': r['horizon'],
+                            'entry_price': float(r['entry_price']),
+                            'current_price': float(r['current_price']) if r['current_price'] else None,
+                            'target_price': float(r['target_price']) if r['target_price'] else None,
+                            'stop_price': float(r['stop_price']) if r['stop_price'] else None,
+                            'notional_usd': float(r['notional_usd']),
+                            'exit_price': float(r['exit_price']) if r['exit_price'] else None,
+                            'pnl_pct': float(r['pnl_pct']) if r['pnl_pct'] is not None else None,
+                            'pnl_usd': float(r['pnl_usd']) if r['pnl_usd'] is not None else None,
+                            'status': r['status'],
+                            'close_reason': r['close_reason'],
+                            'opened_at': r['opened_at'].isoformat() if r['opened_at'] else None,
+                            'closed_at': r['closed_at'].isoformat() if r['closed_at'] else None,
+                        })
+                    # Summary stats
+                    stats = await conn.fetchrow(
+                        """SELECT
+                               COUNT(*) FILTER (WHERE status='open') AS open_count,
+                               COALESCE(SUM(pnl_usd) FILTER (WHERE status='closed'), 0) AS total_pnl,
+                               COUNT(*) FILTER (WHERE status='closed' AND pnl_usd > 0) AS wins,
+                               COUNT(*) FILTER (WHERE status='closed') AS total_closed
+                           FROM advisor_sim_positions"""
+                    )
+                    if stats:
+                        summary['total_open'] = int(stats['open_count'] or 0)
+                        summary['total_pnl_usd'] = float(stats['total_pnl'] or 0)
+                        total_closed = int(stats['total_closed'] or 0)
+                        wins = int(stats['wins'] or 0)
+                        summary['win_rate'] = round(wins / total_closed * 100, 1) if total_closed else 0.0
+            return web.json_response({'success': True, 'rows': rows, 'summary': summary})
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_simulations error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_close_advisor_sim(self, request):
+        """Operator-triggered close of a sim position (sets status=closed, close_reason=operator)."""
+        try:
+            sim_id = int(request.match_info['sim_id'])
+            data = await request.json()
+            exit_price = float(data.get('exit_price', 0)) if data.get('exit_price') else None
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    row = await conn.fetchrow(
+                        "SELECT entry_price, notional_usd FROM advisor_sim_positions WHERE id=$1 AND status='open'",
+                        sim_id,
+                    )
+                    if not row:
+                        return web.json_response({'success': False, 'error': 'Sim not found or already closed'}, status=404)
+                    entry = float(row['entry_price'])
+                    notional = float(row['notional_usd'])
+                    pnl_pct = round((exit_price - entry) / entry * 100, 4) if exit_price and entry else None
+                    pnl_usd = round(notional * pnl_pct / 100, 2) if pnl_pct is not None else None
+                    await conn.execute(
+                        """UPDATE advisor_sim_positions
+                           SET status='closed', close_reason='operator', exit_price=$1,
+                               pnl_pct=$2, pnl_usd=$3, closed_at=NOW(), updated_at=NOW()
+                           WHERE id=$4""",
+                        exit_price, pnl_pct, pnl_usd, sim_id,
+                    )
+            return web.json_response({'success': True, 'message': f'Sim {sim_id} closed'})
+        except Exception as exc:
+            logger.error(f'[advisor] api_close_advisor_sim error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_get_advisor_portfolio(self, request):
+        """Return operator-reported holdings."""
+        try:
+            rows = []
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    db_rows = await conn.fetch(
+                        """SELECT id, symbol, market, quantity, avg_cost, current_price, notes, updated_at
+                           FROM advisor_portfolio ORDER BY updated_at DESC"""
+                    )
+                    for r in db_rows:
+                        qty = float(r['quantity'])
+                        cost = float(r['avg_cost'])
+                        current = float(r['current_price']) if r['current_price'] else None
+                        market_value = qty * current if current else None
+                        unrealized_pnl = market_value - (qty * cost) if market_value is not None else None
+                        rows.append({
+                            'id': r['id'],
+                            'symbol': r['symbol'],
+                            'market': r['market'],
+                            'quantity': qty,
+                            'avg_cost': cost,
+                            'current_price': current,
+                            'market_value': round(market_value, 2) if market_value else None,
+                            'unrealized_pnl': round(unrealized_pnl, 2) if unrealized_pnl is not None else None,
+                            'unrealized_pnl_pct': round(unrealized_pnl / (qty * cost) * 100, 2)
+                                if unrealized_pnl is not None and cost > 0 else None,
+                            'notes': r['notes'],
+                            'updated_at': r['updated_at'].isoformat() if r['updated_at'] else None,
+                        })
+            total_value = sum(r['market_value'] for r in rows if r['market_value'])
+            total_pnl = sum(r['unrealized_pnl'] for r in rows if r['unrealized_pnl'] is not None)
+            return web.json_response({
+                'success': True,
+                'rows': rows,
+                'total_value': round(total_value, 2),
+                'total_pnl': round(total_pnl, 2),
+            })
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_portfolio error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_save_advisor_portfolio(self, request):
+        """Upsert a portfolio holding (operator-reported)."""
+        try:
+            data = await request.json()
+            symbol = data.get('symbol', '').strip().upper()
+            market = data.get('market', '').strip()
+            quantity = float(data.get('quantity', 0))
+            avg_cost = float(data.get('avg_cost', 0))
+            current_price = float(data['current_price']) if data.get('current_price') not in (None, '') else None
+            notes = data.get('notes', '')
+            if not symbol or not market:
+                return web.json_response({'success': False, 'error': 'symbol and market required'}, status=400)
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    await conn.execute(
+                        """INSERT INTO advisor_portfolio (symbol, market, quantity, avg_cost, current_price, notes, updated_at)
+                           VALUES ($1, $2, $3, $4, $5, $6, NOW())
+                           ON CONFLICT (symbol, market) DO UPDATE
+                           SET quantity=$3, avg_cost=$4, current_price=$5, notes=$6, updated_at=NOW()""",
+                        symbol, market, quantity, avg_cost, current_price, notes,
+                    )
+            return web.json_response({'success': True, 'message': f'{symbol} saved'})
+        except Exception as exc:
+            logger.error(f'[advisor] api_save_advisor_portfolio error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_delete_advisor_holding(self, request):
+        """Delete a portfolio holding by id."""
+        try:
+            holding_id = int(request.match_info['holding_id'])
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    await conn.execute('DELETE FROM advisor_portfolio WHERE id=$1', holding_id)
+            return web.json_response({'success': True, 'message': f'Holding {holding_id} deleted'})
+        except Exception as exc:
+            logger.error(f'[advisor] api_delete_advisor_holding error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_get_advisor_settings(self, request):
+        """Return all advisor_config keys from DB."""
+        try:
+            defaults = {
+                'advisor_anthropic_model': 'claude-opus-4-5',
+                'enabled_markets': 'crypto,us_equities',
+                'enabled_horizons': 'short,mid,long',
+                'run_interval_minutes': 60,
+                'min_confidence': 0.35,
+                'max_sim_positions': 20,
+                'blocked_symbols': '',
+                'sim_default_enabled': False,
+                'sim_default_amount_usd': 1000.0,
+                'watchlist_crypto': 'BTC/USDT,ETH/USDT,SOL/USDT',
+                'watchlist_us_equities': 'AAPL,MSFT,NVDA,TSLA,AMZN',
+                'watchlist_bist': '',
+                'watchlist_fx': 'EURUSD=X,GBPUSD=X,XAUUSD=X,XAGUSD=X',
+                'watchlist_midas_funds': '',
+                'advisor_crypto_exchange': 'binance',
+                'advisor_bist_data_source': '',
+                'advisor_fx_data_source': 'yfinance',
+                'advisor_midas_data_source': '',
+                'advisor_telegram_enabled': True,
+                'advisor_telegram_bot_token': '',
+                'advisor_telegram_chat_id': '',
+                'advisor_telegram_digest_hour': 8,
+                'advisor_telegram_digest_tz': 'Europe/Istanbul',
+                'advisor_kronos_enabled': False,
+                'advisor_kronos_variant': 'Kronos-mini',
+                'advisor_kronos_device': 'cpu',
+                'advisor_ml_enabled': False,
+                'advisor_ml_daily_learning': False,
+            }
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings WHERE config_type='advisor_config'"
+                    )
+                    for row in rows:
+                        val = row['value']
+                        if val.lower() in ('true', 'false'):
+                            val = val.lower() == 'true'
+                        elif val.replace('.', '', 1).lstrip('-').isdigit():
+                            val = float(val) if '.' in val else int(val)
+                        defaults[row['key']] = val
+            return web.json_response({'success': True, 'settings': defaults})
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_settings error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_save_advisor_settings(self, request):
+        """Persist advisor_config keys to DB."""
+        try:
+            data = await request.json()
+            # Sensitive token fields must not be empty-string-overwritten
+            # — operator sets them via Secure Credentials, not this form.
+            sensitive = {'advisor_telegram_bot_token', 'advisor_telegram_chat_id'}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for k, v in data.items():
+                        if k in sensitive and not str(v).strip():
+                            continue  # do not overwrite token with blank
+                        await conn.execute(
+                            """INSERT INTO config_settings (config_type, key, value, value_type)
+                               VALUES ('advisor_config', $1, $2, 'string')
+                               ON CONFLICT (config_type, key) DO UPDATE SET value=$2""",
+                            k, str(v),
+                        )
+            return web.json_response({'success': True, 'message': 'Advisor settings saved'})
+        except Exception as exc:
+            logger.error(f'[advisor] api_save_advisor_settings error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
