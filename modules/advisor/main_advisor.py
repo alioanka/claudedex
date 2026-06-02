@@ -261,6 +261,30 @@ class AdvisorApplication:
             f"Enabled markets: {config.get('enabled_markets')}."
         )
 
+        # KAP ingestion (listener + return accumulator) -- Wave-23
+        # Fail-soft: import error or disabled config -> log + continue
+        _kap_tasks = []
+        _kap_enabled = config.get("advisor_kap_enabled", "false").lower() == "true"
+        if _kap_enabled:
+            try:
+                from modules.advisor.core.kap.kap_listener import KapListener
+                from modules.advisor.core.kap.forward_return_accumulator import ReturnAccumulator
+                _kap_listener = KapListener(config=config, db_pool=self.db_pool)
+                _kap_accumulator = ReturnAccumulator(config=config, db_pool=self.db_pool)
+                _kap_tasks.append(asyncio.create_task(_kap_listener.run(), name="kap_listener"))
+                _kap_tasks.append(asyncio.create_task(_kap_accumulator.run_daily(), name="kap_accumulator"))
+                logger.info("[advisor] KAP listener + return accumulator started.")
+            except Exception as exc:
+                logger.warning(
+                    "[advisor] KAP ingestion failed to start (non-fatal): %s. "
+                    "Set advisor_kap_enabled=false to silence or fix the error.", exc
+                )
+        else:
+            logger.info(
+                "[advisor] KAP ingestion disabled (advisor_kap_enabled=false). "
+                "Set advisor_kap_enabled=true in advisor_config to enable."
+            )
+
         # Main advice loop
         while not self._shutdown.is_set():
             try:
@@ -280,6 +304,12 @@ class AdvisorApplication:
                 pass  # normal — next cycle
 
         logger.info("[advisor] Shutting down...")
+        # Cancel KAP background tasks cleanly
+        for _t in _kap_tasks:
+            if not _t.done():
+                _t.cancel()
+        if _kap_tasks:
+            await asyncio.gather(*_kap_tasks, return_exceptions=True)
         await self.health_server.stop()
         if self.db_pool:
             await self.db_pool.close()
