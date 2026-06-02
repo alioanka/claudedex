@@ -1,0 +1,468 @@
+{% extends "base.html" %}
+
+{% block title %}Telegram Notifications - ClaudeDex{% endblock %}
+
+{% block content %}
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <h5 class="mb-0"><i class="fab fa-telegram me-2"></i>Telegram Notifications Configuration</h5>
+                    <button class="btn btn-primary" onclick="saveSettings()">
+                        <i class="fas fa-save me-2"></i>Save Changes
+                    </button>
+                </div>
+                <div class="card-body">
+                    <div class="alert alert-info mb-4">
+                        <i class="fas fa-info-circle me-2"></i>
+                        <strong>Topic-Routed Notifications:</strong> Each trading module posts to its own Telegram topic thread inside a single supergroup. Set up your bot and group first — see
+                        <a href="/docs/TELEGRAM_SETUP.md" class="alert-link" target="_blank">docs/TELEGRAM_SETUP.md</a>
+                        for the step-by-step guide. Leave topic IDs blank to fall back to legacy single-DM mode.
+                    </div>
+
+                    <form id="telegramSettingsForm">
+
+                        <!-- Master switch -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3">Master Control</h6>
+                                <div class="mb-3 form-check form-switch">
+                                    <input class="form-check-input" type="checkbox" id="notifications_enabled">
+                                    <label class="form-check-label fw-bold" for="notifications_enabled">Enable Telegram Notifications</label>
+                                    <div class="form-text">Master on/off switch. Disabling this suppresses all Telegram messages regardless of other settings.</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-3">
+
+                        <!-- Group + interval settings -->
+                        <div class="row mb-4">
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3">Supergroup Identity</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Telegram Group ID</label>
+                                    <input type="text" class="form-control font-monospace" id="telegram_group_id"
+                                           placeholder="-1001234567890">
+                                    <div class="form-text">The supergroup chat ID (begins with <code>-100</code>). Obtain via
+                                        <code>curl https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> — look for
+                                        <code>message.chat.id</code> after sending a message to the group.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-6">
+                                <h6 class="text-uppercase text-muted mb-3">Timing &amp; Deduplication</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Dashboard Summary Interval (hours)</label>
+                                    <input type="number" class="form-control" id="dashboard_interval_hours"
+                                           min="1" max="72" step="1" value="3">
+                                    <div class="form-text">How often to post the full-dashboard summary to the Dashboard topic. Default: 3 hours.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Cross-Module Summary Interval (hours)</label>
+                                    <input type="number" class="form-control" id="summary_interval_hours"
+                                           min="1" max="72" step="1" value="6">
+                                    <div class="form-text">How often to post the cross-module P&amp;L summary to the Summary topic. Default: 6 hours.</div>
+                                </div>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Error De-duplication Window (seconds)</label>
+                                    <input type="number" class="form-control" id="error_dedup_window_s"
+                                           min="60" max="7200" step="60" value="900">
+                                    <div class="form-text">Identical error messages within this window are suppressed. Default: 900 s (15 min).</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-3">
+
+                        <!-- Topic thread IDs -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3">Topic Thread IDs</h6>
+                                <p class="text-muted small mb-3">
+                                    Each field maps to one forum topic inside your supergroup. Right-click a topic message in Telegram desktop
+                                    and choose "Copy Link" — the trailing number is the thread ID. Or use <code>getUpdates</code> and read
+                                    <code>message.message_thread_id</code>. Leave blank to skip that topic.
+                                </p>
+                            </div>
+
+                            <!-- Module topics -->
+                            <div class="col-md-6">
+                                <h6 class="text-muted mb-2 small text-uppercase">Module Topics</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">DEX Module topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_dex"
+                                           placeholder="e.g. 2">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Futures Module topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_futures"
+                                           placeholder="e.g. 3">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Solana Module topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_solana"
+                                           placeholder="e.g. 4">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">AI Analysis Module topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_ai"
+                                           placeholder="e.g. 5">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Sniper Module topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_sniper"
+                                           placeholder="e.g. 6">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Arbitrage Module topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_arbitrage"
+                                           placeholder="e.g. 7">
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Copy Trading Module topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_copy"
+                                           placeholder="e.g. 8">
+                                </div>
+                            </div>
+
+                            <!-- System topics -->
+                            <div class="col-md-6">
+                                <h6 class="text-muted mb-2 small text-uppercase">System Topics</h6>
+
+                                <div class="mb-3">
+                                    <label class="form-label">Full Dashboard topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_dashboard"
+                                           placeholder="e.g. 9">
+                                    <div class="form-text">Periodic dashboard snapshots (every <span id="dashboard_interval_preview">3</span> h).</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Summary topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_summary"
+                                           placeholder="e.g. 10">
+                                    <div class="form-text">Cross-module P&amp;L summary (every <span id="summary_interval_preview">6</span> h).</div>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Error topic ID</label>
+                                    <input type="number" class="form-control font-monospace" id="topic_thread_id_error"
+                                           placeholder="e.g. 11">
+                                    <div class="form-text">All ERROR-level events from every module. De-duplicated per the window above.</div>
+                                </div>
+
+                                <!-- Configured topics summary (read-only) -->
+                                <div class="card mt-3" style="border: 1px solid #334155;">
+                                    <div class="card-header py-2">
+                                        <small class="text-muted text-uppercase">Configured Topics Summary</small>
+                                    </div>
+                                    <div class="card-body py-2" id="configured-topics-summary">
+                                        <small class="text-muted">Save settings to refresh this view.</small>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-3">
+
+                        <!-- Per-module verbosity -->
+                        <div class="row mb-4">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3">Per-Module Verbosity</h6>
+                                <p class="text-muted small mb-3">
+                                    <strong>all</strong> — every trade signal, entry, and exit is posted.
+                                    <strong>summary</strong> — only hourly/periodic summaries (recommended for high-frequency modules like Solana which can generate ~1 000 messages over 2-3 days).
+                                    <strong>off</strong> — no messages for this module regardless of topic ID.
+                                </p>
+                            </div>
+
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">DEX verbosity</label>
+                                    <select class="form-select" id="notify_dex_mode">
+                                        <option value="all">all — every trade event</option>
+                                        <option value="summary">summary — periodic only</option>
+                                        <option value="off">off — no messages</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Futures verbosity</label>
+                                    <select class="form-select" id="notify_futures_mode">
+                                        <option value="all">all — every trade event</option>
+                                        <option value="summary">summary — periodic only</option>
+                                        <option value="off">off — no messages</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Solana verbosity</label>
+                                    <select class="form-select" id="notify_solana_mode">
+                                        <option value="all">all — every trade event</option>
+                                        <option value="summary">summary — periodic only</option>
+                                        <option value="off">off — no messages</option>
+                                    </select>
+                                    <div class="form-text text-warning">
+                                        <i class="fas fa-exclamation-triangle me-1"></i>
+                                        Solana defaults to <strong>summary</strong> — "all" can generate ~1 000 messages in 2-3 days on an active bot.
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">AI Analysis verbosity</label>
+                                    <select class="form-select" id="notify_ai_mode">
+                                        <option value="all">all — every trade event</option>
+                                        <option value="summary">summary — periodic only</option>
+                                        <option value="off">off — no messages</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Sniper verbosity</label>
+                                    <select class="form-select" id="notify_sniper_mode">
+                                        <option value="all">all — every trade event</option>
+                                        <option value="summary">summary — periodic only</option>
+                                        <option value="off">off — no messages</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div class="col-md-4">
+                                <div class="mb-3">
+                                    <label class="form-label">Arbitrage verbosity</label>
+                                    <select class="form-select" id="notify_arbitrage_mode">
+                                        <option value="all">all — every trade event</option>
+                                        <option value="summary">summary — periodic only</option>
+                                        <option value="off">off — no messages</option>
+                                    </select>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label">Copy Trading verbosity</label>
+                                    <select class="form-select" id="notify_copy_mode">
+                                        <option value="all">all — every trade event</option>
+                                        <option value="summary">summary — periodic only</option>
+                                        <option value="off">off — no messages</option>
+                                    </select>
+                                </div>
+                            </div>
+                        </div>
+
+                        <hr class="my-3">
+
+                        <!-- Test section -->
+                        <div class="row mb-2">
+                            <div class="col-12">
+                                <h6 class="text-uppercase text-muted mb-3">Verification</h6>
+                                <div class="alert alert-secondary">
+                                    <i class="fas fa-info-circle me-2"></i>
+                                    <strong>Send Test Message:</strong> Save your settings first, then use the Telegram Bot API directly to verify each topic receives a message:
+                                    <pre class="mt-2 mb-0 small bg-dark text-light p-2 rounded">curl "https://api.telegram.org/bot&lt;TOKEN&gt;/sendMessage" \
+  -d chat_id=&lt;GROUP_ID&gt; \
+  -d message_thread_id=&lt;TOPIC_ID&gt; \
+  -d text="ClaudeDex test message"</pre>
+                                    A "Send Test Message" button that calls the notification engine directly is tracked as a follow-up in
+                                    <a href="/docs/agents/MASTER_BACKLOG.md" class="alert-link">MASTER_BACKLOG.md</a>
+                                    (requires engine agent coordination to avoid coupling).
+                                </div>
+                            </div>
+                        </div>
+
+                    </form>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Legacy mode note -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card">
+                <div class="card-header">
+                    <h6 class="mb-0"><i class="fas fa-history me-2"></i>Legacy Single-DM Mode</h6>
+                </div>
+                <div class="card-body">
+                    <p class="mb-2">
+                        If <code>telegram_group_id</code> is blank <strong>or</strong> all topic thread IDs are blank, the notification engine
+                        falls back to the original behaviour: messages are sent to the single chat ID configured in
+                        <strong>Secure Credentials</strong> (<code>TELEGRAM_CHAT_ID</code>). No group or topic setup is needed for legacy mode.
+                    </p>
+                    <p class="mb-0 text-muted small">
+                        The bot token is always read from <code>TELEGRAM_BOT_TOKEN</code> in the Secure Credentials vault
+                        (<a href="/credentials">Settings &rarr; Secure Credentials</a>). Never paste it here.
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    document.addEventListener('DOMContentLoaded', () => {
+        loadSettings();
+
+        // Live-update the preview spans when interval inputs change
+        document.getElementById('dashboard_interval_hours').addEventListener('input', function() {
+            document.getElementById('dashboard_interval_preview').textContent = this.value || '3';
+        });
+        document.getElementById('summary_interval_hours').addEventListener('input', function() {
+            document.getElementById('summary_interval_preview').textContent = this.value || '6';
+        });
+    });
+
+    async function loadSettings() {
+        try {
+            const response = await fetch('/api/telegram/settings');
+            const data = await response.json();
+
+            if (data.success) {
+                const s = data.settings;
+
+                // Master switch
+                document.getElementById('notifications_enabled').checked = s.notifications_enabled === true;
+
+                // Group + intervals
+                document.getElementById('telegram_group_id').value = s.telegram_group_id || '';
+                document.getElementById('dashboard_interval_hours').value = s.dashboard_interval_hours != null ? s.dashboard_interval_hours : 3;
+                document.getElementById('summary_interval_hours').value   = s.summary_interval_hours   != null ? s.summary_interval_hours   : 6;
+                document.getElementById('error_dedup_window_s').value     = s.error_dedup_window_s     != null ? s.error_dedup_window_s     : 900;
+
+                // Update preview spans
+                document.getElementById('dashboard_interval_preview').textContent = document.getElementById('dashboard_interval_hours').value;
+                document.getElementById('summary_interval_preview').textContent   = document.getElementById('summary_interval_hours').value;
+
+                // Topic thread IDs (stored as int; may be null/missing — clear the field)
+                const topicFields = [
+                    'topic_thread_id_dex', 'topic_thread_id_futures', 'topic_thread_id_solana',
+                    'topic_thread_id_ai',  'topic_thread_id_sniper',  'topic_thread_id_arbitrage',
+                    'topic_thread_id_copy', 'topic_thread_id_dashboard', 'topic_thread_id_summary',
+                    'topic_thread_id_error'
+                ];
+                topicFields.forEach(field => {
+                    const el = document.getElementById(field);
+                    if (el) {
+                        el.value = (s[field] != null && s[field] !== '') ? s[field] : '';
+                    }
+                });
+
+                // Verbosity dropdowns (default: all except solana=summary)
+                document.getElementById('notify_dex_mode').value       = s.notify_dex_mode       || 'all';
+                document.getElementById('notify_futures_mode').value   = s.notify_futures_mode   || 'all';
+                document.getElementById('notify_solana_mode').value    = s.notify_solana_mode    || 'summary';
+                document.getElementById('notify_ai_mode').value        = s.notify_ai_mode        || 'all';
+                document.getElementById('notify_sniper_mode').value    = s.notify_sniper_mode    || 'all';
+                document.getElementById('notify_arbitrage_mode').value = s.notify_arbitrage_mode || 'all';
+                document.getElementById('notify_copy_mode').value      = s.notify_copy_mode      || 'all';
+
+                renderTopicSummary(s);
+            } else {
+                showError('Error loading settings: ' + (data.error || 'unknown'));
+            }
+        } catch (err) {
+            console.error('Error loading telegram settings:', err);
+            showError('Error loading settings');
+        }
+    }
+
+    function renderTopicSummary(s) {
+        const topicMap = {
+            'DEX':          s.topic_thread_id_dex,
+            'Futures':      s.topic_thread_id_futures,
+            'Solana':       s.topic_thread_id_solana,
+            'AI':           s.topic_thread_id_ai,
+            'Sniper':       s.topic_thread_id_sniper,
+            'Arbitrage':    s.topic_thread_id_arbitrage,
+            'Copy Trading': s.topic_thread_id_copy,
+            'Dashboard':    s.topic_thread_id_dashboard,
+            'Summary':      s.topic_thread_id_summary,
+            'Error':        s.topic_thread_id_error
+        };
+        const container = document.getElementById('configured-topics-summary');
+        const configured = Object.entries(topicMap).filter(([, v]) => v != null && v !== '');
+        if (configured.length === 0) {
+            container.innerHTML = '<small class="text-muted">No topics configured — legacy DM mode active.</small>';
+        } else {
+            container.innerHTML = configured.map(([name, id]) =>
+                `<div class="d-flex justify-content-between"><small>${name}</small><code class="small">${id}</code></div>`
+            ).join('');
+        }
+    }
+
+    async function saveSettings() {
+        const intOrNull = id => {
+            const v = document.getElementById(id).value.trim();
+            if (v === '') return null;
+            const n = parseInt(v, 10);
+            return isNaN(n) ? null : n;
+        };
+
+        const settings = {
+            notifications_enabled:      document.getElementById('notifications_enabled').checked,
+            telegram_group_id:          document.getElementById('telegram_group_id').value.trim(),
+            dashboard_interval_hours:   parseInt(document.getElementById('dashboard_interval_hours').value) || 3,
+            summary_interval_hours:     parseInt(document.getElementById('summary_interval_hours').value)   || 6,
+            error_dedup_window_s:       parseInt(document.getElementById('error_dedup_window_s').value)     || 900,
+
+            topic_thread_id_dex:        intOrNull('topic_thread_id_dex'),
+            topic_thread_id_futures:    intOrNull('topic_thread_id_futures'),
+            topic_thread_id_solana:     intOrNull('topic_thread_id_solana'),
+            topic_thread_id_ai:         intOrNull('topic_thread_id_ai'),
+            topic_thread_id_sniper:     intOrNull('topic_thread_id_sniper'),
+            topic_thread_id_arbitrage:  intOrNull('topic_thread_id_arbitrage'),
+            topic_thread_id_copy:       intOrNull('topic_thread_id_copy'),
+            topic_thread_id_dashboard:  intOrNull('topic_thread_id_dashboard'),
+            topic_thread_id_summary:    intOrNull('topic_thread_id_summary'),
+            topic_thread_id_error:      intOrNull('topic_thread_id_error'),
+
+            notify_dex_mode:            document.getElementById('notify_dex_mode').value,
+            notify_futures_mode:        document.getElementById('notify_futures_mode').value,
+            notify_solana_mode:         document.getElementById('notify_solana_mode').value,
+            notify_ai_mode:             document.getElementById('notify_ai_mode').value,
+            notify_sniper_mode:         document.getElementById('notify_sniper_mode').value,
+            notify_arbitrage_mode:      document.getElementById('notify_arbitrage_mode').value,
+            notify_copy_mode:           document.getElementById('notify_copy_mode').value,
+        };
+
+        // Strip null topic IDs so we don't write empty rows to DB
+        Object.keys(settings).forEach(k => {
+            if (k.startsWith('topic_thread_id_') && settings[k] === null) {
+                delete settings[k];
+            }
+        });
+
+        try {
+            const response = await fetch('/api/telegram/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(settings)
+            });
+            const data = await response.json();
+
+            if (data.success) {
+                if (typeof showNotification === 'function') {
+                    showNotification('Telegram settings saved', 'success');
+                } else {
+                    alert('Settings saved successfully!');
+                }
+                renderTopicSummary(settings);
+            } else {
+                showError('Error saving settings: ' + (data.error || 'unknown'));
+            }
+        } catch (err) {
+            console.error('Error saving telegram settings:', err);
+            showError('Error saving settings');
+        }
+    }
+
+    function showError(msg) {
+        if (typeof showNotification === 'function') {
+            showNotification(msg, 'error');
+        } else {
+            alert(msg);
+        }
+    }
+</script>
+{% endblock %}

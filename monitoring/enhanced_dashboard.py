@@ -1059,6 +1059,11 @@ class DashboardEndpoints:
         # gate ate each signal. Read-only.
         self.app.router.add_get('/api/ai/diagnostics', self.api_get_ai_diagnostics)
 
+        # API - Telegram Notifications Settings (wave-19)
+        self.app.router.add_get('/telegram/settings', self._telegram_settings)
+        self.app.router.add_get('/api/telegram/settings', self.api_get_telegram_settings)
+        self.app.router.add_post('/api/telegram/settings', self.api_save_telegram_settings)
+
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
 
@@ -14684,6 +14689,106 @@ class DashboardEndpoints:
         except Exception as e:
             logger.debug(f"_ai_key_configured({key_name}) secrets lookup failed: {e}")
         return bool(os.getenv(key_name))
+
+    # ==================== TELEGRAM SETTINGS HANDLERS (wave-19) ====================
+
+    async def _telegram_settings(self, request):
+        """Render the Telegram notifications settings page."""
+        template = self.jinja_env.get_template('settings_telegram.html')
+        return web.Response(text=template.render(page='telegram_settings'), content_type='text/html')
+
+    async def api_get_telegram_settings(self, request):
+        """Return telegram_config settings from config_settings table.
+
+        Defaults are applied when a key is absent so the UI always has a
+        meaningful starting state even before migration 057 has run.
+        """
+        try:
+            settings = {
+                # Master switch
+                'notifications_enabled': False,
+                # Group identity
+                'telegram_group_id': '',
+                # Topic thread IDs (None means not configured)
+                'topic_thread_id_dex':       None,
+                'topic_thread_id_futures':   None,
+                'topic_thread_id_solana':    None,
+                'topic_thread_id_ai':        None,
+                'topic_thread_id_sniper':    None,
+                'topic_thread_id_arbitrage': None,
+                'topic_thread_id_copy':      None,
+                'topic_thread_id_dashboard': None,
+                'topic_thread_id_summary':   None,
+                'topic_thread_id_error':     None,
+                # Intervals
+                'dashboard_interval_hours': 3,
+                'summary_interval_hours':   6,
+                'error_dedup_window_s':     900,
+                # Per-module verbosity (solana defaults to summary, all others to all)
+                'notify_dex_mode':       'all',
+                'notify_futures_mode':   'all',
+                'notify_solana_mode':    'summary',
+                'notify_ai_mode':        'all',
+                'notify_sniper_mode':    'all',
+                'notify_arbitrage_mode': 'all',
+                'notify_copy_mode':      'all',
+            }
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings WHERE config_type = 'telegram_config'"
+                    )
+                    for row in rows:
+                        val = row['value']
+                        # Robust type coercion: bool > int > float > string
+                        if val is None or val == '':
+                            val = None
+                        elif val.lower() in ('true', 'false'):
+                            val = val.lower() == 'true'
+                        elif val.lstrip('-').replace('.', '', 1).isdigit():
+                            val = int(val) if '.' not in val else float(val)
+                        settings[row['key']] = val
+            return web.json_response({'success': True, 'settings': settings})
+        except Exception as e:
+            logger.error(f"api_get_telegram_settings error: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
+
+    async def api_save_telegram_settings(self, request):
+        """Persist telegram_config settings to config_settings table.
+
+        Null topic IDs are skipped (not written) so they do not pollute the
+        DB with empty rows that would override migration 057 seeds later.
+        """
+        try:
+            data = await request.json()
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for k, v in data.items():
+                        # Skip null topic IDs rather than writing empty string
+                        if k.startswith('topic_thread_id_') and v is None:
+                            continue
+                        # Determine value_type hint stored alongside value
+                        if isinstance(v, bool):
+                            value_type = 'bool'
+                        elif isinstance(v, int):
+                            value_type = 'int'
+                        elif isinstance(v, float):
+                            value_type = 'float'
+                        else:
+                            value_type = 'string'
+                        await conn.execute(
+                            """
+                            INSERT INTO config_settings (config_type, key, value, value_type)
+                            VALUES ('telegram_config', $1, $2, $3)
+                            ON CONFLICT (config_type, key) DO UPDATE
+                                SET value = $2, value_type = $3
+                            """,
+                            k, str(v) if v is not None else '', value_type
+                        )
+            return web.json_response({'success': True, 'message': 'Telegram settings saved'})
+        except Exception as e:
+            logger.error(f"api_save_telegram_settings error: {e}")
+            return web.json_response({'success': False, 'error': str(e)})
 
     # ==================== FULL DASHBOARD HANDLERS ====================
 
