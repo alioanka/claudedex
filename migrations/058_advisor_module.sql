@@ -102,7 +102,7 @@ CREATE TABLE IF NOT EXISTS advisor_portfolio (
 INSERT INTO config_settings (config_type, key, value, value_type, description)
 VALUES
     ('advisor_config', 'advisor_anthropic_model',
-     'claude-opus-4-5', 'string',
+     'claude-opus-4-8', 'string',
      'Anthropic model ID for LLM rationale generation. Bump here when a newer model ships. '
      'Loud WARNING logged on 404 — never silent fallback.')
 ON CONFLICT (config_type, key) DO NOTHING;

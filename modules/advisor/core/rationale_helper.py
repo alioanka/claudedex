@@ -11,7 +11,7 @@ Key resolution order (mirrors AI module pattern from modules/ai_analysis/CLAUDE.
   If neither exists → rule-based fallback (no exception raised).
 
 Model ID resolution:
-  config["advisor_anthropic_model"] → default "claude-opus-4-5"
+  config["advisor_anthropic_model"] → default "claude-opus-4-8"
   Loud WARNING (not silent) on 404 / not_found — operator must update DB.
 
 ADVICE-ONLY. This helper generates plain-text rationale.
@@ -178,7 +178,7 @@ async def build_rationale(
     if not api_key:
         return fallback
 
-    model_id = config.get("advisor_anthropic_model", "claude-opus-4-5")
+    model_id = config.get("advisor_anthropic_model", "claude-opus-4-8")  # DB-overridable; bump default here when a newer model ships
     signal_summary = _build_signal_summary(symbol, market, horizon, signals, direction)
     mkt_label = _MARKET_LABEL.get(market, market.value)
 
