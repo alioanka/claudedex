@@ -70,13 +70,26 @@ DROP TABLE    IF EXISTS kap_event_taxonomy           CASCADE;
 DROP TYPE     IF EXISTS kap_event_taxonomy           CASCADE;
 
 -- ---------------------------------------------------------------------------
--- 3. Un-record migration 060 so it re-runs after 058 recreates
---    advisor_sim_positions. 058/062/063 are NOT recorded (they failed), so
---    they re-run automatically. 060 IS recorded and carries the only table
---    DDL we just dropped (the horizon_end_date column); it is fully idempotent
---    (ADD COLUMN IF NOT EXISTS + ON CONFLICT seeds), so re-running is safe.
---    061 and 064 carry config-only seeds (ON CONFLICT) and need no replay.
+-- 3. Un-record every advisor/KAP migration that carries DDL we just dropped,
+--    so the migrator RE-RUNS them and recreates the tables in order:
+--      058 -> advisor_advice + advisor_sim_positions (+ advisor_portfolio,
+--             which CREATE TABLE IF NOT EXISTS skips since we preserved it)
+--      060 -> ALTER advisor_sim_positions ADD horizon_end_date
+--      062 -> kap_company_profiles / kap_disclosures / kap_returns
+--      063 -> kap_event_taxonomy / kap_classifications
+--    All four are idempotent (IF NOT EXISTS / ADD COLUMN IF NOT EXISTS /
+--    ON CONFLICT), so replay is safe. 061 and 064 are config-only seeds
+--    (ON CONFLICT) and need no replay.
+--
+--    NOTE: these may or may not currently be recorded depending on how many
+--    times the migrator has run — DELETE is a no-op when absent, so this is
+--    safe to run repeatedly.
 -- ---------------------------------------------------------------------------
-DELETE FROM migrations WHERE version = '060_advisor_ml_sim_config';
+DELETE FROM migrations WHERE version IN (
+    '058_advisor_module',
+    '060_advisor_ml_sim_config',
+    '062_kap_ingestion',
+    '063_kap_classifications'
+);
 
 COMMIT;
