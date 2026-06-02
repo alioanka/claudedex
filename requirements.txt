@@ -87,6 +87,30 @@ yfinance>=0.2.40
 anthropic>=0.40.0
 requests>=2.31.0
 
+# Advisor module -- BIST data (optional, import-guarded)
+# borsapy: TradingView-backed BIST stocks/indices, ~15min delayed.
+# Install to upgrade BIST from DEGRADED (yfinance) to AVAILABLE.
+# Watchlist: watchlist_bist='THYAO,EREGL,GARAN,AKBNK' (bare tickers)
+# Module runs correctly if absent (falls back to yfinance .IS DEGRADED).
+borsapy>=0.1.0
+
+# Advisor module -- TEFAS Turkish fund data (optional, import-guarded)
+# tefas-crawler: 2026 tefas.gov.tr/api/funds/ JSON API, up to 5y history.
+# Installs as 'tefas' package. Use: from tefas import Crawler
+# Install to upgrade MIDAS_FUNDS from DEGRADED (scrape) to AVAILABLE.
+# Module runs correctly if absent (falls back to scrape/manual).
+tefas-crawler>=1.0.0
+# tefasfon: alternative lightweight wrapper (secondary fallback).
+# Module runs correctly if absent.
+tefasfon>=0.1.0
+
+# Advisor module -- vectorbt backtesting (optional, heavy, import-guarded)
+# Enables vbt_backtest.run_strategy() for full equity-curve backtests.
+# Heavy dep (~500 MB with numpy/pandas/scipy transitive deps).
+# Module runs correctly without it; portfolio_engine.backtest() is always available.
+# Uncomment to install (or add to a separate requirements-extras.txt):
+# vectorbt>=0.26.0
+
 aiohttp-sse-client
 
 aiohttp-sse
