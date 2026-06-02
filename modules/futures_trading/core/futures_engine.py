@@ -526,6 +526,13 @@ class FuturesTradingEngine:
         # Configurable in seconds; ccxt funding endpoints are heavy so
         # we re-poll every 5 minutes max (well below the 8h interval).
         self._funding_cache_ttl_seconds: int = 300
+        # Wave-18: per-symbol throttle for "Funding gate refused entry"
+        # WARNING. The scan loop runs every ~35s and the same symbol
+        # re-triggers the gate every iteration while its funding rate
+        # remains out of range. Throttle to at most once per 5 minutes
+        # per symbol; subsequent refusals within the window are DEBUG.
+        self._funding_gate_warned_at: Dict[str, float] = {}
+        self._funding_gate_warn_interval_s: float = 300.0  # 5 minutes
 
         # Stats
         self.total_trades = 0
@@ -2427,10 +2434,25 @@ class FuturesTradingEngine:
                         funding_rate=fund_rate,
                     )
                     if fgate.get('skip'):
-                        logger.warning(
-                            f"⏭️  Funding gate refused entry for {symbol}: "
-                            f"{fgate.get('reason')}"
+                        import time as _ft
+                        _now_fw = _ft.time()
+                        _last_fw = self._funding_gate_warned_at.get(symbol, 0.0)
+                        _interval_fw = getattr(
+                            self, '_funding_gate_warn_interval_s', 300.0
                         )
+                        if _now_fw - _last_fw >= _interval_fw:
+                            logger.warning(
+                                f"⏭️  Funding gate refused entry for {symbol}: "
+                                f"{fgate.get('reason')} "
+                                f"(further refusals demoted to DEBUG for "
+                                f"{int(_interval_fw)}s)"
+                            )
+                            self._funding_gate_warned_at[symbol] = _now_fw
+                        else:
+                            logger.debug(
+                                f"funding gate refused entry for {symbol}: "
+                                f"{fgate.get('reason')} (throttled)"
+                            )
                         return
                 except Exception as e:
                     logger.debug(f"funding gate non-fatal error for {symbol}: {e}")
