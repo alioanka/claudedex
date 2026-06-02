@@ -56,14 +56,23 @@ Standalone financial advisor — **ADVICE-ONLY, no trade execution**. Generates 
 | MIDAS FUNDS | Manual operator entry | N/A | None (operator enters NAV in dashboard) |
 
 ## Secrets the operator must configure (Secure Credentials panel)
+Seeded as cards by migration `065_advisor_secure_credentials.sql`. `main_advisor.py`
+injects the ANTHROPIC/OPENAI/FX/BIST keys from `secrets_manager` (encrypted DB) into
+the advisor config at startup; the advisor Telegram bot resolves its token/chat via
+`secrets_manager` directly. All keep a `.env` (`os.getenv`) fallback.
+
 | Secret name | Used for |
 |---|---|
-| `ADVISOR_ANTHROPIC_API_KEY` | LLM rationale generation |
+| `ADVISOR_ANTHROPIC_API_KEY` | LLM rationale generation (all markets) |
+| `ADVISOR_OPENAI_API_KEY` | OpenAI dual-advice second opinion (enable in Advisor Settings) |
 | `ADVISOR_TELEGRAM_BOT_TOKEN` | Separate advisor Telegram bot (NOT shared bot) |
 | `ADVISOR_TELEGRAM_CHAT_ID` | Advisor alert target chat |
 | `ADVISOR_BIST_API_KEY` | Matriks / paid BIST data (optional, if using paid source) |
 | `ADVISOR_FX_ALPHAVANTAGE_KEY` | Alpha Vantage FX data (optional, free tier) |
-| `ADVISOR_KRONOS_WEIGHTS_PATH` | Path to downloaded Kronos weights directory |
+
+`ADVISOR_KRONOS_WEIGHTS_PATH` is **not** a Secure Credential — it is a filesystem
+path (not a secret) read via `os.getenv` only, so set it in `.env` (see
+`docs/ADVISOR_SETUP_AND_USAGE.md` §5), not the credentials panel.
 
 ## Kronos integration (MB-19 fail-soft pattern)
 Kronos is the NeoQuasar foundation model for K-line forecasting (MIT license). Three variants: Kronos-mini (4.1M, CPU-OK), Kronos-small (24.7M), Kronos-base (102.3M, GPU recommended). If `ADVISOR_KRONOS_WEIGHTS_PATH` is not set or the directory is missing, `predict()` returns `None` and the advice cycle continues without Kronos signal. Operator downloads weights separately:

@@ -205,6 +205,34 @@ class AdvisorApplication:
         self.config_mgr = AdvisorConfigManager(self.db_pool)
         config = await self.config_mgr.load()
 
+        # Resolve advisor API keys from Secure Credentials (encrypted DB) so the
+        # operator can manage them in the dashboard's Secure Credentials panel.
+        # The analyzers + rationale helper read these from the config dict first
+        # (then fall back to os.getenv / .env), so inject any secret that resolves
+        # under the config key they look for. Fail-soft: missing/unavailable keys
+        # leave the config untouched and the feature stays degraded/off.
+        try:
+            from security.secrets_manager import secrets as _secrets
+            _secrets.initialize(self.db_pool)
+            for _secret_key, _config_key in (
+                ("ADVISOR_ANTHROPIC_API_KEY", "advisor_anthropic_api_key"),
+                ("ADVISOR_OPENAI_API_KEY", "advisor_openai_api_key"),
+                ("ADVISOR_FX_ALPHAVANTAGE_KEY", "advisor_fx_alphavantage_key"),
+                ("ADVISOR_BIST_API_KEY", "advisor_bist_api_key"),
+            ):
+                if config.get(_config_key):
+                    continue
+                try:
+                    _val = await _secrets.get_async(_secret_key, log_access=False)
+                except Exception:
+                    _val = None
+                if _val:
+                    config[_config_key] = _val
+        except Exception as exc:
+            logger.warning(
+                f"  Could not resolve advisor API keys from Secure Credentials: {exc}"
+            )
+
         # Build analyzers
         analyzers = {
             Market.CRYPTO: CryptoAnalyzer(config, self.db_pool),

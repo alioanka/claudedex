@@ -149,6 +149,14 @@ class CredentialsRoutes:
         'EMAIL_PASSWORD': {'category': 'notification', 'subcategory': 'email', 'is_sensitive': True},
         'EMAIL_FROM': {'category': 'notification', 'subcategory': 'email', 'is_sensitive': False},
         'EMAIL_TO': {'category': 'notification', 'subcategory': 'email', 'is_sensitive': False},
+
+        # Financial Advisor module (advice-only; separate from trading keys)
+        'ADVISOR_ANTHROPIC_API_KEY': {'category': 'api', 'subcategory': 'anthropic', 'is_sensitive': True},
+        'ADVISOR_OPENAI_API_KEY': {'category': 'api', 'subcategory': 'openai', 'is_sensitive': True},
+        'ADVISOR_FX_ALPHAVANTAGE_KEY': {'category': 'api', 'subcategory': 'alphavantage', 'is_sensitive': True},
+        'ADVISOR_BIST_API_KEY': {'category': 'api', 'subcategory': 'matriks', 'is_sensitive': True},
+        'ADVISOR_TELEGRAM_BOT_TOKEN': {'category': 'notification', 'subcategory': 'telegram', 'is_sensitive': True},
+        'ADVISOR_TELEGRAM_CHAT_ID': {'category': 'notification', 'subcategory': 'telegram', 'is_sensitive': False},
     }
 
     def __init__(self, app: web.Application, db_pool, jinja_env, secrets_manager=None):
