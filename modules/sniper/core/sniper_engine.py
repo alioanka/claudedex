@@ -117,6 +117,10 @@ class SniperEngine:
         # None when not wired -- engine runs without the gate (DRY_RUN, tests).
         # Only the entry leg is gated; exits are always allowed.
         self.risk_manager = None
+        # Wave-18: allocation-guard budget read at startup from
+        # allocation_guard_config.budget_usd_sniper. None = not loaded yet.
+        # When explicitly 0, all new entries are suppressed (module neutralised).
+        self.sniper_budget_usd: Optional[float] = None
 
         # Settings (loaded from DB)
         self.dry_run = True
@@ -502,6 +506,31 @@ class SniperEngine:
                 f"phantom_threshold={self.sniper_phantom_price_threshold}%"
             )
 
+            # Wave-18: read allocation-guard budget for sniper from DB.
+            # Migration 055 forces budget_usd_sniper=0 (operator decision:
+            # module neutralised — structurally unprofitable on current infra).
+            # When budget is 0 we suppress all new entries and log a clear line
+            # at startup so the operator knows entries are blocked.
+            if self.db_pool:
+                try:
+                    async with self.db_pool.acquire() as _bg_conn:
+                        _budget_row = await _bg_conn.fetchrow(
+                            "SELECT value FROM config_settings "
+                            "WHERE config_type='allocation_guard_config' "
+                            "AND key='budget_usd_sniper'"
+                        )
+                    if _budget_row is not None:
+                        self.sniper_budget_usd = float(_budget_row['value'])
+                except Exception as _bg_err:
+                    logger.debug(f"sniper budget read failed (fail-soft): {_bg_err}")
+
+            if self.sniper_budget_usd == 0.0:
+                logger.warning(
+                    "SNIPER budget=0 (allocation_guard_config.budget_usd_sniper=0): "
+                    "all new entries suppressed. "
+                    "Operator action to re-enable: set budget_usd_sniper > 0 in DB."
+                )
+
         except Exception as e:
             logger.error(f"Error loading sniper settings: {e}")
 
@@ -671,9 +700,10 @@ class SniperEngine:
                         self._stats['too_young_watchlisted'] = (
                             self._stats.get('too_young_watchlisted', 0) + 1
                         )
+                        age_display = f"{age_secs:.0f}s" if age_secs is not None else "unknown"
                         logger.debug(
                             f"watchlist: {token_address[:16]}... "
-                            f"age={age_secs:.0f}s < {min_age}s floor "
+                            f"age={age_display} < {min_age}s floor "
                             f"(watchlist={len(self._watchlist)})"
                         )
                     else:
@@ -806,7 +836,7 @@ class SniperEngine:
                     target = info['target']
                     chain_type = info['chain_type']
 
-                    logger.info(
+                    logger.debug(
                         f"WATCHLIST PROMOTE: {mint[:16]}... "
                         f"(age >= {min_age}s, running gates)"
                     )
@@ -1447,6 +1477,21 @@ class SniperEngine:
                     timing.emit()
                 except Exception:
                     pass
+            self.pending_targets.pop(token_address, None)
+            return
+
+        # Wave-18: explicit budget=0 suppression. When
+        # allocation_guard_config.budget_usd_sniper is set to 0 (operator
+        # decision: module neutralised), block all new entries here.
+        # The allocation guard's own check() skips the per-module gate when
+        # budget_usd==0 (treats 0 as "unlimited"), so this explicit check
+        # is needed to make budget=0 mean "blocked".
+        if self.sniper_budget_usd == 0.0:
+            logger.debug(
+                f"sniper budget=0: entry suppressed for {token_address}"
+            )
+            data['status'] = 'failed'
+            data['error'] = 'budget_zero'
             self.pending_targets.pop(token_address, None)
             return
 
