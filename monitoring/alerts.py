@@ -1449,18 +1449,30 @@ class AlertsSystem:
 # (Replace the existing incomplete AlertManager at the end of the file)
 
 class AlertManager:
-    """Alert manager wrapper"""
-    
-    def __init__(self, config: Dict = None):
-        """Initialize with optional config"""
+    """Alert manager wrapper.
+
+    Wave-19: accepts an optional ``module`` name so that trade/error
+    notifications are routed through the central TelegramNotificationEngine
+    with a consistent module caption and topic-thread routing.  Falls back
+    to the existing AlertsSystem path when the engine is not available.
+    """
+
+    def __init__(self, config: Dict = None, module: str = 'system'):
+        """Initialize with optional config and module name."""
         self.config = config or {}
         self.alerts_system = AlertsSystem(config)
-    
+        # Module name used for notification_engine routing (e.g. 'dex')
+        self.module: str = module.lower()
+
+    def set_notification_engine_module(self, module: str):
+        """Override the module name used for topic routing."""
+        self.module = module.lower()
+
     async def initialize(self):
         """Initialize alert manager"""
         # Any initialization needed
         pass
-        
+
     async def send_alert(self, alert_type: str, message: str, priority: str = 'medium'):
         """Send generic alert"""
         priority_map = {
@@ -1469,7 +1481,7 @@ class AlertManager:
             'high': AlertPriority.HIGH,
             'critical': AlertPriority.CRITICAL
         }
-        
+
         await self.alerts_system.send_alert_internal(
             alert_type=AlertType.SYSTEM_ERROR,
             title=message[:50],
@@ -1477,30 +1489,51 @@ class AlertManager:
             priority=priority_map.get(priority, AlertPriority.MEDIUM),
             data={}
         )
-    
+
     async def send_critical(self, message: str):
         """Send critical alert"""
         await self.send_alert('critical', message, 'critical')
-    
+
     async def send_error(self, message: str):
-        """Send error alert"""
+        """Send error alert — also routed to NotificationEngine error topic."""
         await self.send_alert('error', message, 'high')
-    
+        # Route to notification engine (error topic with de-dup)
+        try:
+            from monitoring.notification_engine import get_engine, format_header, escape_mdv2
+            engine = get_engine()
+            header = format_header(self.module, 'Error')
+            body = escape_mdv2(message[:800])
+            text = f"{header}\n{body}"
+            await engine.notify(self.module, 'error', text, level='error')
+        except Exception:
+            pass
+
     async def send_warning(self, message: str):
         """Send warning alert"""
         await self.send_alert('warning', message, 'medium')
-    
+
     async def send_info(self, message: str):
         """Send info alert"""
         await self.send_alert('info', message, 'low')
-    
+
     async def send_trade_alert(self, message: str):
-        """Send trade alert"""
+        """Send trade alert — also routed to NotificationEngine module topic."""
         await self.alerts_system.send_trading_alert(
             event_type="position_opened",
             position={'message': message}
         )
-    
+        # Route to notification engine (trade topic with rate-limit / verbosity)
+        try:
+            from monitoring.notification_engine import get_engine, format_header, escape_mdv2
+            engine = get_engine()
+            header = format_header(self.module, 'Trade')
+            body = escape_mdv2(str(message)[:800])
+            sep = "\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-\\-"
+            text = f"{header}\n{sep}\n{body}"
+            await engine.notify(self.module, 'trade', text, level='info')
+        except Exception:
+            pass
+
     async def send_performance_summary(self, period: str, metrics: Dict):
         """Send performance summary"""
         await self.alerts_system.send_performance_summary(period, metrics)

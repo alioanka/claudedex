@@ -295,26 +295,46 @@ class ArbitrageTelegramAlerts:
 """
         return message.strip()
 
-    async def send_message(self, message: str, parse_mode: str = 'MarkdownV2') -> bool:
+    async def send_message(
+        self,
+        message: str,
+        parse_mode: str = 'MarkdownV2',
+        category: str = 'trade',
+    ) -> bool:
         """
-        Send a message to Telegram
+        Send a message to Telegram.
+
+        Wave-19: tries topic routing via TelegramNotificationEngine first
+        (arbitrage module topic + rate-limiting).  Falls back to direct
+        sendMessage when engine is not configured.
 
         Args:
-            message: Message text
+            message: MarkdownV2 formatted message text
             parse_mode: Telegram parse mode
-
-        Returns:
-            Success status
+            category: notification category ('trade', 'error', 'summary')
         """
         if not self.enabled:
             return False
 
+        # Wave-19: topic routing
+        try:
+            from monitoring.notification_engine import get_engine
+            engine = get_engine()
+            cfg = await engine._load_config()
+            if cfg.notifications_enabled and cfg.telegram_group_id:
+                sent = await engine.notify('arbitrage', category, message, level='info')
+                if sent:
+                    return True
+        except Exception:
+            pass
+
+        # Backward-compatible direct send
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             payload = {
                 'chat_id': self.chat_id,
                 'text': message,
-                'parse_mode': parse_mode
+                'parse_mode': parse_mode,
             }
 
             async with aiohttp.ClientSession() as session:
@@ -334,22 +354,22 @@ class ArbitrageTelegramAlerts:
     async def send_trade_alert(self, alert: ArbitrageTradeAlert) -> bool:
         """Send successful trade alert"""
         message = self._format_trade_alert(alert)
-        return await self.send_message(message)
+        return await self.send_message(message, category='trade')
 
     async def send_opportunity_alert(self, alert: ArbitrageOpportunityAlert) -> bool:
         """Send opportunity detection alert"""
         message = self._format_opportunity_alert(alert)
-        return await self.send_message(message)
+        return await self.send_message(message, category='trade')
 
     async def send_error_alert(self, alert: ArbitrageErrorAlert) -> bool:
-        """Send error alert"""
+        """Send error alert — routed to error topic with de-dup."""
         message = self._format_error_alert(alert)
-        return await self.send_message(message)
+        return await self.send_message(message, category='error')
 
     async def send_stats_summary(self, stats: Dict[str, Any], chain: ArbitrageChain) -> bool:
         """Send daily stats summary for a specific chain"""
         message = self._format_stats_alert(stats, chain)
-        return await self.send_message(message)
+        return await self.send_message(message, category='summary')
 
     async def send_custom_alert(self, chain: ArbitrageChain, title: str, content: str) -> bool:
         """Send a custom alert message with chain branding"""

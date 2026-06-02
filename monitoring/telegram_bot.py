@@ -851,13 +851,17 @@ class TelegramBotController:
         """
         Send notification to Telegram.
 
+        Wave-19: also routes through TelegramNotificationEngine using
+        self.module_name so the startup/shutdown messages from AI, Sniper,
+        Copy etc carry the module caption and land in the right topic.
+        Falls back to _send_message if the engine is not configured.
+
         Args:
             message: Message to send
             priority: 'low', 'normal', 'high', 'critical'
         """
-        if not self.bot_token or not self.chat_id:
-            return
-
+        level_map = {'low': 'info', 'normal': 'info', 'high': 'warning', 'critical': 'critical'}
+        level = level_map.get(priority, 'info')
         emoji = {
             'low': '',
             'normal': '',
@@ -865,21 +869,81 @@ class TelegramBotController:
             'critical': ''
         }.get(priority, '')
 
+        # Wave-19: route through notification engine if module is known
+        mod = self.module_name or 'system'
+        try:
+            from monitoring.notification_engine import get_engine, format_header, escape_mdv2
+            engine = get_engine(db_pool=self.db_pool)
+            cfg = await engine._load_config()
+            if cfg.notifications_enabled and cfg.telegram_group_id:
+                header = format_header(mod, 'Info')
+                body = escape_mdv2(str(message))
+                text = f"{emoji} {header}\n{body}"
+                sent = await engine.notify(mod, 'trade', text, level=level)
+                if sent:
+                    return
+        except Exception:
+            pass
+
+        # Fallback: existing direct send
+        if not self.bot_token or not self.chat_id:
+            return
         await self._send_message(f"{emoji} {message}")
 
-    async def notify_trade(self, action: str, symbol: str, amount: float, price: float, pnl: float = None):
-        """Send trade notification"""
+    async def notify_trade(
+        self,
+        action: str,
+        symbol: str,
+        amount: float,
+        price: float,
+        pnl: float = None,
+        module: str = None,
+    ):
+        """Send trade notification with optional module caption."""
+        mod = module or self.module_name or 'system'
         if pnl is not None:
             emoji = "" if pnl >= 0 else ""
             msg = f"{emoji} *{action}* {symbol}\nAmount: {amount:.4f}\nPrice: ${price:.6f}\nPnL: {pnl:+.2f}%"
         else:
             msg = f" *{action}* {symbol}\nAmount: {amount:.4f}\nPrice: ${price:.6f}"
 
+        # Wave-19: route through notification engine
+        try:
+            from monitoring.notification_engine import get_engine, format_header, escape_mdv2
+            engine = get_engine(db_pool=self.db_pool)
+            cfg = await engine._load_config()
+            if cfg.notifications_enabled and cfg.telegram_group_id:
+                header = format_header(mod, 'Trade')
+                body = escape_mdv2(msg)
+                text = f"{header}\n{body}"
+                sent = await engine.notify(mod, 'trade', text, level='info')
+                if sent:
+                    return
+        except Exception:
+            pass
+
         await self._send_message(msg)
 
     async def notify_error(self, error: str, module: str = None):
-        """Send error notification"""
-        prefix = f"[{module}] " if module else ""
+        """Send error notification — de-duped via NotificationEngine error topic."""
+        mod = module or self.module_name or 'system'
+        # Wave-19: route through notification engine with error de-dup
+        try:
+            from monitoring.notification_engine import get_engine, format_header, escape_mdv2
+            engine = get_engine(db_pool=self.db_pool)
+            cfg = await engine._load_config()
+            if cfg.notifications_enabled and cfg.telegram_group_id:
+                header = format_header(mod, 'Error')
+                body = escape_mdv2(str(error)[:800])
+                text = f"{header}\n{body}"
+                sent = await engine.notify(mod, 'error', text, level='error')
+                if sent:
+                    return
+        except Exception:
+            pass
+
+        # Fallback: existing direct send
+        prefix = f"[{mod}] " if mod else ""
         await self._send_message(f" *Error* {prefix}\n{error}")
 
     async def notify_position_stuck(self, symbol: str, reason: str):

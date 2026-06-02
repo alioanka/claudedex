@@ -268,26 +268,52 @@ class SolanaTelegramAlerts:
 """
         return message.strip()
 
-    async def send_message(self, message: str, parse_mode: str = 'MarkdownV2') -> bool:
+    async def send_message(
+        self,
+        message: str,
+        parse_mode: str = 'MarkdownV2',
+        category: str = 'trade',
+    ) -> bool:
         """
-        Send a message to Telegram
+        Send a message to Telegram.
+
+        Wave-19: tries topic routing via TelegramNotificationEngine first.
+        Solana default notify_solana_mode='summary' suppresses individual
+        'trade' messages; only periodic summaries pass through.  This
+        intentionally prevents the ~1000 msgs / 2-3 days spam.  When the
+        engine is not configured (empty telegram_group_id), direct send
+        to the existing chat_id is used as fallback.
 
         Args:
-            message: Message text
+            message: MarkdownV2 formatted message text
             parse_mode: Telegram parse mode
-
-        Returns:
-            Success status
+            category: notification category ('trade', 'error', 'summary')
         """
         if not self.enabled:
             return False
 
+        # Wave-19: topic routing with Solana-specific rate-limit / verbosity
+        try:
+            from monitoring.notification_engine import get_engine
+            engine = get_engine()
+            cfg = await engine._load_config()
+            if cfg.notifications_enabled and cfg.telegram_group_id:
+                sent = await engine.notify('solana', category, message, level='info')
+                if sent:
+                    return True
+                # In 'summary' mode, individual trades are suppressed intentionally.
+                # Return False without DM fallback to prevent the flood.
+                return False
+        except Exception:
+            pass
+
+        # Backward-compatible direct send
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             payload = {
                 'chat_id': self.chat_id,
                 'text': message,
-                'parse_mode': parse_mode
+                'parse_mode': parse_mode,
             }
 
             async with aiohttp.ClientSession() as session:
@@ -307,17 +333,17 @@ class SolanaTelegramAlerts:
     async def send_entry_alert(self, alert: SolanaTradeAlert) -> bool:
         """Send trade entry alert"""
         message = self._format_entry_alert(alert)
-        return await self.send_message(message)
+        return await self.send_message(message, category='trade')
 
     async def send_exit_alert(self, alert: SolanaTradeAlert) -> bool:
         """Send trade exit alert"""
         message = self._format_exit_alert(alert)
-        return await self.send_message(message)
+        return await self.send_message(message, category='trade')
 
     async def send_stats_summary(self, stats: Dict[str, Any]) -> bool:
         """Send daily stats summary"""
         message = self._format_stats_alert(stats)
-        return await self.send_message(message)
+        return await self.send_message(message, category='summary')
 
     async def send_custom_alert(self, title: str, content: str) -> bool:
         """Send a custom alert message with Solana branding"""
@@ -331,7 +357,7 @@ class SolanaTelegramAlerts:
         return await self.send_message(message.strip())
 
     async def send_error_alert(self, error_type: str, details: str) -> bool:
-        """Send error alert"""
+        """Send error alert — routed to error topic with de-dup."""
         message = f"""
 ⚠️ *SOLANA ERROR* \\| {self._escape_markdown(error_type)}
 
@@ -339,7 +365,7 @@ class SolanaTelegramAlerts:
 
 ⏰ {self._escape_markdown(datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'))}
 """
-        return await self.send_message(message.strip())
+        return await self.send_message(message.strip(), category='error')
 
     async def send_risk_alert(self, risk_type: str, details: str) -> bool:
         """Send risk management alert"""

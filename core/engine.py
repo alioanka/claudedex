@@ -295,7 +295,9 @@ class TradingBotEngine:
             logger.info("ℹ️ Solana trading disabled")
         
         # Monitoring
-        self.alert_manager = AlertManager(config['notifications'])
+        # Wave-19: pass module='dex' so AlertManager routes trade/error
+        # notifications through TelegramNotificationEngine with the DEX caption.
+        self.alert_manager = AlertManager(config['notifications'], module='dex')
         self.performance_tracker = PerformanceTracker()
 
         self.structured_logger = StructuredLogger("TradingBot", config.get('logging', {}))

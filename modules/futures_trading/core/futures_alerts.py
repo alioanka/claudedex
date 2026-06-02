@@ -169,26 +169,49 @@ class FuturesTelegramAlerts:
 """
         return message.strip()
 
-    async def send_message(self, message: str, parse_mode: str = 'MarkdownV2') -> bool:
+    async def send_message(
+        self,
+        message: str,
+        parse_mode: str = 'MarkdownV2',
+        category: str = 'trade',
+    ) -> bool:
         """
-        Send a message to Telegram
+        Send a message to Telegram.
+
+        Wave-19: tries topic routing via TelegramNotificationEngine first
+        (respects group/thread_id config, rate-limits, verbosity mode).
+        Falls back to direct sendMessage when the engine is not configured
+        or unavailable so existing single-DM behaviour is preserved.
 
         Args:
-            message: Message text
-            parse_mode: Telegram parse mode
-
-        Returns:
-            Success status
+            message: MarkdownV2 formatted message text
+            parse_mode: Telegram parse mode (MarkdownV2 or Markdown)
+            category: notification category ('trade', 'error', 'summary')
         """
         if not self.enabled:
             return False
 
+        # Wave-19: try notification engine (topic routing + rate-limit)
+        try:
+            from monitoring.notification_engine import get_engine
+            engine = get_engine()
+            cfg = await engine._load_config()
+            if cfg.notifications_enabled and cfg.telegram_group_id:
+                sent = await engine.notify('futures', category, message, level='info')
+                if sent:
+                    return True
+                # Fall through to direct send if engine suppressed (rate-limit/verbosity)
+                # but still needs to send (engine returns False on suppress, not error)
+        except Exception:
+            pass
+
+        # Backward-compatible direct send
         try:
             url = f"https://api.telegram.org/bot{self.bot_token}/sendMessage"
             payload = {
                 'chat_id': self.chat_id,
                 'text': message,
-                'parse_mode': parse_mode
+                'parse_mode': parse_mode,
             }
 
             async with aiohttp.ClientSession() as session:
@@ -208,17 +231,17 @@ class FuturesTelegramAlerts:
     async def send_entry_alert(self, alert: FuturesTradeAlert) -> bool:
         """Send trade entry alert"""
         message = self._format_entry_alert(alert)
-        return await self.send_message(message)
+        return await self.send_message(message, category='trade')
 
     async def send_exit_alert(self, alert: FuturesTradeAlert) -> bool:
         """Send trade exit alert"""
         message = self._format_exit_alert(alert)
-        return await self.send_message(message)
+        return await self.send_message(message, category='trade')
 
     async def send_stats_summary(self, stats: Dict[str, Any]) -> bool:
         """Send daily stats summary"""
         message = self._format_stats_alert(stats)
-        return await self.send_message(message)
+        return await self.send_message(message, category='summary')
 
     async def send_custom_alert(self, title: str, content: str) -> bool:
         """Send a custom alert message"""

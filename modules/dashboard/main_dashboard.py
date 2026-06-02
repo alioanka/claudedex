@@ -235,11 +235,30 @@ class StandaloneDashboard:
                 logger.error("Failed to initialize, exiting...")
                 return
 
+            # Wave-19: start Telegram periodic dashboard/summary jobs
+            notification_engine = None
+            try:
+                from monitoring.notification_engine import get_engine
+                notification_engine = get_engine(
+                    db_pool=self.db_manager.pool if self.db_manager else None
+                )
+                await notification_engine.start_periodic_jobs()
+                logger.info("Wave-19: Telegram notification periodic jobs started")
+            except Exception as _ne_exc:
+                logger.warning(f"Wave-19: notification engine start skipped: {_ne_exc}")
+
             # Start dashboard
             dashboard_task = asyncio.create_task(self.dashboard.start())
 
             # Wait for shutdown signal
             await self.shutdown_event.wait()
+
+            # Stop periodic notification jobs
+            if notification_engine:
+                try:
+                    await notification_engine.stop_periodic_jobs()
+                except Exception:
+                    pass
 
             # Cancel dashboard task
             dashboard_task.cancel()
