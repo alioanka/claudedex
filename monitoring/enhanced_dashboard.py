@@ -1468,8 +1468,10 @@ class DashboardEndpoints:
         self.app.router.add_get('/advisor/simulations', self._advisor_simulations)
         self.app.router.add_get('/advisor/portfolio', self._advisor_portfolio)
         self.app.router.add_get('/advisor/settings', self._advisor_settings)
+        self.app.router.add_get('/advisor/kap', self._advisor_kap)
         # Advisor API endpoints
         self.app.router.add_get('/api/advisor/advice', self.api_get_advisor_advice)
+        self.app.router.add_get('/api/advisor/kap/disclosures', self.api_get_advisor_kap_disclosures)
         self.app.router.add_get('/api/advisor/simulations', self.api_get_advisor_simulations)
         self.app.router.add_post('/api/advisor/simulations/{sim_id}/close', self.api_close_advisor_sim)
         self.app.router.add_get('/api/advisor/portfolio', self.api_get_advisor_portfolio)
@@ -15942,6 +15944,13 @@ class DashboardEndpoints:
             content_type='text/html',
         )
 
+    async def _advisor_kap(self, request):
+        template = self.jinja_env.get_template('advisor_kap.html')
+        return web.Response(
+            text=template.render(page='advisor_kap'),
+            content_type='text/html',
+        )
+
     # =========================================================================
     # Financial Advisor Module — API handlers
     # =========================================================================
@@ -16028,6 +16037,66 @@ class DashboardEndpoints:
             })
         except Exception as exc:
             logger.error(f'[advisor] api_get_advisor_advice error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_get_advisor_kap_disclosures(self, request):
+        """
+        Recent KAP disclosures with their classification.
+
+        Joins kap_disclosures (062) to kap_classifications (063).
+        Query params: ?limit= (default 50, max 200), ?ticker= (optional).
+        LEFT JOIN so unclassified disclosures still appear (classification
+        fields null). base_polarity is a documented PRIOR, not an impact score.
+        Fail-soft: returns success=False on error (incl. tables absent).
+        """
+        try:
+            params = request.rel_url.query
+            ticker = params.get('ticker', '').strip().upper().replace('.IS', '')
+            limit = min(int(params.get('limit', 50)), 200)
+
+            rows = []
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    conditions = []
+                    args = []
+                    idx = 1
+                    if ticker:
+                        conditions.append(f"UPPER(d.ticker) = ${idx}")
+                        args.append(ticker)
+                        idx += 1
+                    where = 'WHERE ' + ' AND '.join(conditions) if conditions else ''
+                    args.append(limit)
+                    db_rows = await conn.fetch(
+                        f'''SELECT d.id, d.disclosure_id, d.ticker, d.company_name,
+                                   d.subject, d.disclosure_type, d.disclosed_at, d.url,
+                                   c.event_type, c.base_polarity, c.classifier_stage,
+                                   c.confidence, c.classified_at
+                            FROM kap_disclosures d
+                            LEFT JOIN kap_classifications c ON c.disclosure_id = d.id
+                            {where}
+                            ORDER BY d.disclosed_at DESC
+                            LIMIT ${idx}''',
+                        *args,
+                    )
+                    for r in db_rows:
+                        rows.append({
+                            'id': r['id'],
+                            'disclosure_id': r['disclosure_id'],
+                            'ticker': r['ticker'],
+                            'company_name': r['company_name'],
+                            'subject': r['subject'],
+                            'disclosure_type': r['disclosure_type'],
+                            'disclosed_at': r['disclosed_at'].isoformat() if r['disclosed_at'] else None,
+                            'url': r['url'],
+                            'event_type': r['event_type'],
+                            'base_polarity': r['base_polarity'],
+                            'classifier_stage': r['classifier_stage'],
+                            'confidence': float(r['confidence']) if r['confidence'] is not None else None,
+                            'classified_at': r['classified_at'].isoformat() if r['classified_at'] else None,
+                        })
+            return web.json_response({'success': True, 'rows': rows, 'limit': limit})
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_kap_disclosures error: {exc}')
             return web.json_response({'success': False, 'error': str(exc)}, status=500)
 
     async def api_get_advisor_simulations(self, request):
