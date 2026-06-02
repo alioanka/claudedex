@@ -218,6 +218,52 @@ async def get_recent_disclosures(pool, limit: int = 50,
         return []
 
 
+async def get_recent_classified_for_ticker(pool, ticker: str,
+                                            lookback_days: int = 7,
+                                            limit: int = 5) -> List[dict]:
+    """
+    Return the most recent CLASSIFIED disclosures for a single ticker within
+    the lookback window. Joins kap_disclosures to kap_classifications.
+
+    Used by AdviceEngine._overlay_kap_context to surface a recent-disclosure
+    context block on BIST advice. base_polarity is a documented PRIOR — callers
+    must NOT treat it as a quantitative impact estimate.
+
+    Returns [] on DB error or if the classifications table is absent.
+    """
+    if not ticker:
+        return []
+    bare = str(ticker).upper().replace(".IS", "")
+    sql = """
+        SELECT d.disclosure_id, d.ticker, d.company_name, d.subject,
+               d.disclosed_at, d.url,
+               c.event_type, c.base_polarity, c.classifier_stage,
+               c.confidence, c.classified_at
+        FROM kap_disclosures d
+        JOIN kap_classifications c ON c.disclosure_id = d.id
+        WHERE UPPER(d.ticker) = $1
+          AND d.disclosed_at > NOW() - ($2 || ' days')::INTERVAL
+        ORDER BY d.disclosed_at DESC
+        LIMIT $3
+    """
+    try:
+        rows = await pool.fetch(sql, bare, str(int(lookback_days)), int(limit))
+        return [dict(r) for r in rows]
+    except Exception as exc:
+        err_str = str(exc).lower()
+        if "kap_classifications" in err_str or "does not exist" in err_str:
+            logger.debug(
+                "[kap.store] get_recent_classified_for_ticker: classifications "
+                "table absent (migration 063 pending). Returning []."
+            )
+            return []
+        logger.warning(
+            "[kap.store] get_recent_classified_for_ticker failed for %s: %s",
+            ticker, exc,
+        )
+        return []
+
+
 async def get_unclassified(pool, limit: int = 100) -> List[dict]:
     """
     Return disclosures that have no classification in kap_classifications.

@@ -188,6 +188,12 @@ class AdviceEngine:
         # extra['signal'] absent; advice cycle is unaffected.
         await self._overlay_composite_signal(result)
 
+        # KAP disclosure context (BIST only, advice-only). Surfaces recent
+        # classified disclosures as CONTEXT in extra['kap_context']; does NOT
+        # mutate the numeric score. Fail-soft.
+        if result.market == Market.BIST:
+            await self._overlay_kap_context(result)
+
         # Dual-advice: if advisor_dual_advice_mode != 'off' and an OpenAI key
         # is available, fetch the OpenAI rationale and store artefacts.
         # The primary result.rationale (from the analyzer / Anthropic) is
@@ -291,6 +297,75 @@ class AdviceEngine:
         except Exception as exc:
             logger.debug(
                 "[advice] _overlay_composite_signal failed for %s: %s",
+                result.symbol, exc,
+            )
+
+    async def _overlay_kap_context(self, result: AdviceResult) -> None:
+        """
+        Attach recent KAP disclosure context to a BIST AdviceResult.
+
+        ADVICE-ONLY context overlay. Looks up the most recent CLASSIFIED
+        disclosures for this ticker within advisor_kap_lookback_days (default 7)
+        and stores them in result.extra['kap_context'].
+
+        IMPORTANT — this is CONTEXT for the operator. It does NOT flip the
+        action and does NOT mutate the numeric confidence/score. base_polarity
+        is a documented PRIOR, not a quantitative impact estimate (impact stats
+        require months of forward-return accumulation in kap_returns).
+
+        No-op if KAP is disabled, db_pool is None, or no classified disclosures
+        exist for the ticker. Fail-soft: any error is caught and logged at DEBUG.
+        """
+        if self.db_pool is None:
+            return
+        if str(self.config.get("advisor_kap_enabled", "false")).lower() != "true":
+            return
+        try:
+            from modules.advisor.core.kap.kap_store import (
+                get_recent_classified_for_ticker,
+            )
+
+            try:
+                lookback_days = int(self.config.get("advisor_kap_lookback_days", 7))
+            except (ValueError, TypeError):
+                lookback_days = 7
+
+            rows = await get_recent_classified_for_ticker(
+                self.db_pool, result.symbol, lookback_days=lookback_days, limit=5
+            )
+            if not rows:
+                return
+
+            disclosures = []
+            for r in rows:
+                disclosed_at = r.get("disclosed_at")
+                disclosures.append({
+                    "event_type":       r.get("event_type"),
+                    "base_polarity":    r.get("base_polarity"),
+                    "classifier_stage": r.get("classifier_stage"),
+                    "confidence":       float(r["confidence"]) if r.get("confidence") is not None else None,
+                    "subject":          (r.get("subject") or "")[:200],
+                    "disclosed_at":     disclosed_at.isoformat() if disclosed_at else None,
+                    "url":              r.get("url") or "",
+                })
+
+            result.extra["kap_context"] = {
+                "lookback_days": lookback_days,
+                "count": len(disclosures),
+                "disclosures": disclosures,
+                "disclaimer": (
+                    "KAP base_polarity is a documented PRIOR, NOT a price "
+                    "prediction or market-impact score. Context only — the "
+                    "advice action and confidence were NOT modified by KAP."
+                ),
+            }
+            logger.debug(
+                "[advice] KAP context overlay for %s: %d recent disclosure(s)",
+                result.symbol, len(disclosures),
+            )
+        except Exception as exc:
+            logger.debug(
+                "[advice] _overlay_kap_context failed for %s: %s",
                 result.symbol, exc,
             )
 
