@@ -269,11 +269,16 @@ class AdvisorApplication:
             try:
                 from modules.advisor.core.kap.kap_listener import KapListener
                 from modules.advisor.core.kap.forward_return_accumulator import ReturnAccumulator
+                from modules.advisor.core.kap.classifier_worker import KapClassifierWorker
                 _kap_listener = KapListener(config=config, db_pool=self.db_pool)
                 _kap_accumulator = ReturnAccumulator(config=config, db_pool=self.db_pool)
+                _kap_classifier = KapClassifierWorker(
+                    config=config, db_pool=self.db_pool, telegram=telegram
+                )
                 _kap_tasks.append(asyncio.create_task(_kap_listener.run(), name="kap_listener"))
                 _kap_tasks.append(asyncio.create_task(_kap_accumulator.run_daily(), name="kap_accumulator"))
-                logger.info("[advisor] KAP listener + return accumulator started.")
+                _kap_tasks.append(asyncio.create_task(_kap_classifier.run(), name="kap_classifier"))
+                logger.info("[advisor] KAP listener + return accumulator + classifier worker started.")
             except Exception as exc:
                 logger.warning(
                     "[advisor] KAP ingestion failed to start (non-fatal): %s. "

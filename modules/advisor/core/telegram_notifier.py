@@ -297,6 +297,38 @@ class AdvisorTelegramBot:
             return False
         return await self._send_text(text)
 
+    async def send_kap_alert(
+        self,
+        ticker: str,
+        company: str,
+        event_type: str,
+        base_polarity: str,
+        classifier_stage: str,
+        confidence: float,
+        subject: str = "",
+        url: str = "",
+    ) -> bool:
+        """
+        Send a KAP disclosure polarity-prior alert.
+
+        This communicates a documented base_polarity PRIOR only — it is NOT a
+        price prediction and carries no market-impact score. Skips silently
+        (returns False) if the bot is not configured. Fail-soft.
+        """
+        if not self._enabled or not self._token:
+            return False
+        msg = _format_kap_alert(
+            ticker=ticker,
+            company=company,
+            event_type=event_type,
+            base_polarity=base_polarity,
+            classifier_stage=classifier_stage,
+            confidence=confidence,
+            subject=subject,
+            url=url,
+        )
+        return await self._send_text(msg)
+
     # ------------------------------------------------------------------
     # Internal HTTP transport
     # ------------------------------------------------------------------
@@ -383,6 +415,74 @@ class AdvisorTelegramBot:
             "Check network connectivity and token validity."
         )
         return False
+
+
+# ---------------------------------------------------------------------------
+# KAP polarity-prior display helpers
+# ---------------------------------------------------------------------------
+
+# Up/down/neutral glyph + label per BasePolarity value (see kap/taxonomy.py).
+_KAP_POLARITY_DISPLAY: Dict[str, str] = {
+    "STRONG_POSITIVE": "🟢⬆️ STRONG POSITIVE",
+    "POSITIVE":        "🟢 POSITIVE",
+    "NEUTRAL":         "🟡 NEUTRAL",
+    "NEGATIVE":        "🔴 NEGATIVE",
+    "VERY_NEGATIVE":   "🔴⬇️ VERY NEGATIVE",
+}
+
+
+def _format_kap_alert(
+    ticker: str,
+    company: str,
+    event_type: str,
+    base_polarity: str,
+    classifier_stage: str,
+    confidence: float,
+    subject: str = "",
+    url: str = "",
+) -> str:
+    """
+    Build a Telegram HTML KAP disclosure alert.
+
+    Carries event_type + base_polarity PRIOR only — explicitly NOT a price
+    prediction. No market-impact score is shown (impact stats require months
+    of forward-return accumulation which is not available here).
+    """
+    pol_label = _KAP_POLARITY_DISPLAY.get(
+        (base_polarity or "").upper(), _html(base_polarity or "—")
+    )
+    conf_pct = round((confidence or 0.0) * 100)
+    bar = _conf_bar(confidence or 0.0)
+    et_label = _html((event_type or "").replace("_", " "))
+
+    head_ticker = _html(ticker) if ticker else "—"
+    lines = [
+        "🇹🇷 <b>KAP DISCLOSURE</b>",
+        f"<b>{head_ticker}</b>  {_html(company or '')}".rstrip(),
+        "",
+        f"Event: <b>{et_label}</b>",
+        f"Polarity prior: <b>{pol_label}</b>",
+        f"Classifier: <i>{_html(classifier_stage or 'unclassified')}</i>  "
+        f"({conf_pct}%)  <code>{bar}</code>",
+    ]
+
+    if subject:
+        snippet = subject.strip()
+        if len(snippet) > 180:
+            snippet = snippet[:180] + "…"
+        lines.append("")
+        lines.append(f"<i>{_html(snippet)}</i>")
+
+    if url:
+        lines.append("")
+        lines.append(f'<a href="{_html(url)}">View on KAP</a>')
+
+    lines.append("")
+    lines.append(
+        "<i>Polarity-prior only — NOT a price prediction and NOT a "
+        "market-impact score. ADVICE ONLY.</i>"
+    )
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------

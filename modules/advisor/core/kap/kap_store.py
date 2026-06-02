@@ -229,7 +229,7 @@ async def get_unclassified(pool, limit: int = 100) -> List[dict]:
                d.subject, d.disclosure_type, d.summary, d.full_text,
                d.url, d.disclosed_at, d.source
         FROM kap_disclosures d
-        LEFT JOIN kap_classifications c ON c.disclosure_id = d.disclosure_id
+        LEFT JOIN kap_classifications c ON c.disclosure_id = d.id
         WHERE c.disclosure_id IS NULL
         ORDER BY d.disclosed_at DESC
         LIMIT $1
@@ -276,30 +276,43 @@ async def store_classification(pool, disclosure_id: str, event_type: str,
 
     This hook is here so the classifier agent can import from one place:
       from modules.advisor.core.kap.kap_store import store_classification
+
+    Column mapping (migration 063 kap_classifications schema):
+      disclosure_id    BIGINT  <- kap_disclosures.id (numeric PK, NOT the KAP index)
+      base_polarity            <- sentiment kwarg (taxonomy BasePolarity value)
+      classifier_stage         <- classifier_model kwarg ('rule'|'llm'|'unclassified')
     """
     import json
     sql = """
         INSERT INTO kap_classifications (
-            disclosure_id, event_type, sentiment, confidence,
-            classifier_model, extra, created_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, NOW(), NOW())
+            disclosure_id, event_type, base_polarity, params,
+            classifier_stage, confidence, raw_subject, extra,
+            classified_at, updated_at
+        ) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8::jsonb, NOW(), NOW())
         ON CONFLICT (disclosure_id) DO UPDATE SET
             event_type       = EXCLUDED.event_type,
-            sentiment        = EXCLUDED.sentiment,
+            base_polarity    = EXCLUDED.base_polarity,
+            params           = EXCLUDED.params,
+            classifier_stage = EXCLUDED.classifier_stage,
             confidence       = EXCLUDED.confidence,
-            classifier_model = EXCLUDED.classifier_model,
+            raw_subject      = EXCLUDED.raw_subject,
             extra            = EXCLUDED.extra,
             updated_at       = NOW()
     """
+    extra_d = dict(extra or {})
+    params = extra_d.pop("params", {}) or {}
+    raw_subject = str(extra_d.pop("raw_subject", "") or "")
     try:
         await pool.execute(
             sql,
-            str(disclosure_id),
+            int(disclosure_id),
             str(event_type),
-            str(sentiment) if sentiment else None,
-            float(confidence) if confidence is not None else None,
-            str(classifier_model) if classifier_model else None,
-            json.dumps(extra or {}),
+            str(sentiment) if sentiment else "NEUTRAL",
+            json.dumps(params),
+            str(classifier_model) if classifier_model else "unclassified",
+            float(confidence) if confidence is not None else 0.0,
+            raw_subject,
+            json.dumps(extra_d),
         )
         return True
     except Exception as exc:
