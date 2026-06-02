@@ -352,7 +352,7 @@
         try {
             var r = await fetch('/api/copytrading/wallets/add', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: window.withCsrfHeaders('POST'),
                 body: JSON.stringify({ wallet: addr })
             });
             var data = await r.json();

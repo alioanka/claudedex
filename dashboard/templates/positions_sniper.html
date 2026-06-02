@@ -501,7 +501,7 @@ async function closePosition(tokenAddress) {
     try {
         const response = await fetch('/api/sniper/position/close', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({ symbol: tokenAddress })
         });
 

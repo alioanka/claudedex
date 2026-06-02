@@ -1328,7 +1328,7 @@ async function unblockTrading(resetType) {
     try {
         const response = await fetch('/api/futures/trading/unblock', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({ reset_type: resetType })
         });
 
@@ -1568,7 +1568,7 @@ async function resetFuturesTradingBlock() {
     try {
         const response = await fetch('/api/futures/trading/unblock', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({ reset_type: 'all' })
         });
 

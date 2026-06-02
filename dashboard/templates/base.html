@@ -1335,7 +1335,7 @@
         if (!confirm(actions[action].msg)) return;
 
         try {
-            const response = await fetch(actions[action].url, { method: 'POST' });
+            const response = await fetch(actions[action].url, { method: 'POST', headers: window.withCsrfHeaders('POST') });
             const data = await response.json();
 
             if (response.ok) {

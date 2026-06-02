@@ -119,6 +119,16 @@ RUN pip install --no-cache-dir --timeout=300 transformers huggingface_hub || \
     echo "⚠️ transformers/huggingface_hub install failed (Kronos optional)" && \
     echo "✅ Kronos deps install attempted"
 
+# Stage 7c: Advisor module data + advice deps.
+# yfinance: US-equities (default-enabled market) + FX + degraded-BIST analyzers.
+# anthropic + openai: advice rationale + dual-advice second opinion.
+# Baked into the image (requirements.txt is NOT pip-installed by this Dockerfile).
+# Retried once, then fail-soft so the build never breaks on a transient PyPI hiccup.
+RUN pip install --no-cache-dir --timeout=300 yfinance anthropic openai || \
+    pip install --no-cache-dir --timeout=300 yfinance anthropic openai || \
+    echo "⚠️ advisor data/LLM deps failed (US-equities/FX/rationale degraded)" && \
+    echo "✅ Advisor data/LLM deps install attempted"
+
 # Stage 8: Boosting libraries
 RUN pip install --no-cache-dir \
     lightgbm \

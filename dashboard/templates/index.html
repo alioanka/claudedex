@@ -1516,9 +1516,9 @@ function updateWallets(walletData) {
 // ========================================
 // BOT CONTROL
 // ========================================
-function startBot() { if (confirm('Start the trading bot?')) { fetch('/api/bot/start', { method: 'POST' }).then(r => r.json()).then(d => { alert(d.message || 'Bot started'); refreshAllData(); }); } }
-function stopBot() { if (confirm('Stop the trading bot?')) { fetch('/api/bot/stop', { method: 'POST' }).then(r => r.json()).then(d => { alert(d.message || 'Bot stopped'); refreshAllData(); }); } }
-function restartBot() { if (confirm('Restart the trading bot?')) { fetch('/api/bot/restart', { method: 'POST' }).then(r => r.json()).then(d => { alert(d.message || 'Bot restarting...'); setTimeout(refreshAllData, 2000); }); } }
-function emergencyExit() { if (confirm('EMERGENCY EXIT: Close all positions immediately?')) { fetch('/api/bot/emergency-exit', { method: 'POST' }).then(r => r.json()).then(d => { alert(d.message || 'Emergency exit initiated'); refreshAllData(); }); } }
+function startBot() { if (confirm('Start the trading bot?')) { fetch('/api/bot/start', { method: 'POST', headers: window.withCsrfHeaders('POST') }).then(r => r.json()).then(d => { alert(d.message || 'Bot started'); refreshAllData(); }); } }
+function stopBot() { if (confirm('Stop the trading bot?')) { fetch('/api/bot/stop', { method: 'POST', headers: window.withCsrfHeaders('POST') }).then(r => r.json()).then(d => { alert(d.message || 'Bot stopped'); refreshAllData(); }); } }
+function restartBot() { if (confirm('Restart the trading bot?')) { fetch('/api/bot/restart', { method: 'POST', headers: window.withCsrfHeaders('POST') }).then(r => r.json()).then(d => { alert(d.message || 'Bot restarting...'); setTimeout(refreshAllData, 2000); }); } }
+function emergencyExit() { if (confirm('EMERGENCY EXIT: Close all positions immediately?')) { fetch('/api/bot/emergency-exit', { method: 'POST', headers: window.withCsrfHeaders('POST') }).then(r => r.json()).then(d => { alert(d.message || 'Emergency exit initiated'); refreshAllData(); }); } }
 </script>
 {% endblock %}

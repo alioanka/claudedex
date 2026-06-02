@@ -879,7 +879,7 @@ async function closeSolanaPosition(mint, symbol) {
     try {
         const response = await fetch('/api/solana/close-position', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({mint: mint})
         });
         const data = await response.json();
@@ -900,7 +900,7 @@ async function closeAllPositions() {
     try {
         const response = await fetch('/api/solana/close-all-positions', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'}
+            headers: window.withCsrfHeaders('POST')
         });
         const data = await response.json();
         if (data.success) {
@@ -1235,7 +1235,7 @@ async function resetSolanaTradingBlock() {
     try {
         const response = await fetch('/api/solana/trading/unblock', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({ reset_type: 'all' })
         });
 

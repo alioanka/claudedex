@@ -218,7 +218,7 @@ async function confirmClose() {
   try {
     const res = await fetch(`/api/advisor/simulations/${simId}/close`, {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: window.withCsrfHeaders('POST'),
       body: JSON.stringify(body),
     });
     const data = await res.json();

@@ -532,7 +532,7 @@
         try {
             const r = await fetch('/api/copytrading/wallets/remove', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: window.withCsrfHeaders('POST'),
                 body: JSON.stringify({ wallet: address })
             });
             const data = await r.json();

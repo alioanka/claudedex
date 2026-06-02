@@ -211,7 +211,7 @@ async function saveHolding() {
   try {
     const res = await fetch('/api/advisor/portfolio', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
+      headers: window.withCsrfHeaders('POST'),
       body: JSON.stringify({
         symbol, market,
         quantity: parseFloat(qty),
@@ -251,7 +251,7 @@ function editHolding(id) {
 async function deleteHolding(id, symbol) {
   if (!confirm(`Delete holding for ${symbol}?`)) return;
   try {
-    const res = await fetch(`/api/advisor/portfolio/${id}/delete`, { method: 'POST' });
+    const res = await fetch(`/api/advisor/portfolio/${id}/delete`, { method: 'POST', headers: window.withCsrfHeaders('POST') });
     const data = await res.json();
     if (data.success) { loadPortfolio(); }
     else { alert('Error: ' + data.error); }

@@ -538,7 +538,7 @@ async function reconcileArbitrageTrades() {
 
         const response = await fetch('/api/arbitrage/reconcile', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
+            headers: window.withCsrfHeaders('POST')
         });
 
         const data = await response.json();
@@ -1167,7 +1167,7 @@ async function resetBlock() {
     try {
         const response = await fetch('/api/arbitrage/trading/unblock', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({ reset_type: 'all' })
         });
 

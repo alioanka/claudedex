@@ -1240,7 +1240,7 @@ async function resetTradingBlock() {
         // First try DEX health server (for standalone dashboard mode)
         let response = await fetch('/api/dex/trading/unblock', {
             method: 'POST',
-            headers: {'Content-Type': 'application/json'},
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({ reason: reason || 'Manual reset via dashboard' })
         });
 
@@ -1248,7 +1248,7 @@ async function resetTradingBlock() {
         if (response.status === 503) {
             response = await fetch('/api/portfolio/reset-block', {
                 method: 'POST',
-                headers: {'Content-Type': 'application/json'},
+                headers: window.withCsrfHeaders('POST'),
                 body: JSON.stringify({ reason: reason || 'Manual reset via dashboard' })
             });
         }
@@ -1980,7 +1980,7 @@ async function startMLTraining() {
     try {
         const response = await fetch('/api/ml/train', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: window.withCsrfHeaders('POST'),
             body: JSON.stringify({
                 min_trades: minTrades,
                 lookback_days: lookbackDays

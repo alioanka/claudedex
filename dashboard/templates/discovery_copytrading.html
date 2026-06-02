@@ -743,7 +743,7 @@
             // Save updated settings
             const saveResponse = await fetch('/api/copytrading/settings', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: window.withCsrfHeaders('POST'),
                 body: JSON.stringify({
                     ...getData.settings,
                     target_wallets: currentWallets
