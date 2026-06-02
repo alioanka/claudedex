@@ -569,6 +569,18 @@ class TradingBotOrchestrator:
             module_key="portfolio_allocator",
         )
 
+        # Wave-20: Financial Advisor module — ADVICE-ONLY, no trade execution.
+        # Generates Long/Short/Neutral signals for CRYPTO, US equities, BIST,
+        # FX/metals, and Turkish Midas funds. Operator executes manually on Midas.
+        # Default: DISABLED. Operator opts in by setting ADVISOR_MODULE_ENABLED=true.
+        # Health server: port 8086 (ADVISOR_HEALTH_PORT).
+        self.modules['advisor'] = ModuleProcess(
+            name="Financial Advisor",
+            script_path="modules/advisor/main_advisor.py",
+            enabled_env_var="ADVISOR_MODULE_ENABLED",
+            module_key="advisor"
+        )
+
         # Setup signal handlers
         signal.signal(signal.SIGINT, self._signal_handler)
         signal.signal(signal.SIGTERM, self._signal_handler)
