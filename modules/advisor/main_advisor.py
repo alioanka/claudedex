@@ -216,7 +216,7 @@ class AdvisorApplication:
 
         # Build Kronos forecaster
         kronos = None
-        if config.get("advisor_kronos_enabled", "false").lower() == "true":
+        if str(config.get("advisor_kronos_enabled", "false")).lower() == "true":
             kronos = KronosForecaster(
                 variant=config.get("advisor_kronos_variant", "Kronos-mini"),
                 device=config.get("advisor_kronos_device", "cpu"),
@@ -264,7 +264,7 @@ class AdvisorApplication:
         # KAP ingestion (listener + return accumulator) -- Wave-23
         # Fail-soft: import error or disabled config -> log + continue
         _kap_tasks = []
-        _kap_enabled = config.get("advisor_kap_enabled", "false").lower() == "true"
+        _kap_enabled = str(config.get("advisor_kap_enabled", "false")).lower() == "true"
         if _kap_enabled:
             try:
                 from modules.advisor.core.kap.kap_listener import KapListener

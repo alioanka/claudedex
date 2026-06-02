@@ -264,7 +264,7 @@ class BISTAnalyzer(BaseAnalyzer):
             model_id=model_id,
             data_source_status=actual_status,
             data_source_note=note,
-            sim_enabled=bool(self.config.get("sim_default_enabled", "false") == "true"),
+            sim_enabled=str(self.config.get("sim_default_enabled", "false")).lower() == "true",
             sim_amount_usd=float(self.config.get("sim_default_amount_usd", 1000)),
             extra=extra,
         )
