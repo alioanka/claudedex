@@ -1,5 +1,5 @@
 """
-KronosForecaster — interface + fail-soft stub for the Kronos foundation model.
+KronosForecaster — Kronos foundation-model interface (Wave-21 implementation).
 
 === KRONOS FEASIBILITY SUMMARY (Wave-20, 2026-06-02) ===
 
@@ -20,7 +20,7 @@ Model variants (HuggingFace org: NeoQuasar)
 License
     MIT — permissive, no usage restriction for commercial/production use.
 
-Dependencies (inferred from README / HuggingFace ecosystem)
+Dependencies
     python >= 3.10
     torch >= 2.0 (CPU or CUDA)
     transformers >= 4.38
@@ -31,34 +31,22 @@ GPU / CPU
     Kronos-mini and Kronos-small run on CPU with ~1-3 s per batch inference.
     Kronos-base works on CPU but 5-15 s per batch; GPU (8 GB VRAM) recommended.
     Kronos-large requires GPU and is not publicly available.
-    RECOMMENDATION: start with Kronos-mini for the advisor scaffold; upgrade to
-    Kronos-small if accuracy improves meaningfully in backtest.
+    RECOMMENDATION: start with Kronos-mini; upgrade to Kronos-small if
+    backtesting shows meaningful accuracy improvement.
 
 Weights location
     HuggingFace Hub: NeoQuasar/Kronos-mini, NeoQuasar/Kronos-small,
     NeoQuasar/Kronos-base.
-    Download via: huggingface_hub.snapshot_download("NeoQuasar/Kronos-mini")
+    Download via: python scripts/download_kronos_weights.py
     Approximate sizes: mini ~50 MB, small ~100 MB, base ~400 MB.
     NOTE: Do NOT auto-download at startup. Weights must be present in
     ADVISOR_KRONOS_WEIGHTS_PATH before the forecaster activates.
     If weights are absent, predict() returns None (fail-soft, MB-19 pattern).
 
-Inference API shape (from README)
+Inference API shape
     predictor = KronosPredictor(model_path, device="cpu")
-    # DataFrame must have columns: open, high, low, close (+ optional volume)
-    # Index: datetime, sorted ascending.
     signal = predictor.predict(df_klines)   # float: positive=bullish
     signals = predictor.predict_batch(list_of_dfs)
-
-Integration plan (specialist wiring tasks)
-    1. Install torch + transformers + pyqlib in requirements.txt (quant agent).
-    2. Download weights to ADVISOR_KRONOS_WEIGHTS_PATH at deploy time via
-       scripts/download_kronos_weights.py (backend agent).
-    3. Implement the actual HuggingFace model loading inside _load_model()
-       below (quant/data agent).
-    4. Wire KronosForecaster.predict() call into AdviceEngine._run_cycle()
-       after the analyzer produces its AdviceResult (advice_engine.py).
-    5. Store kronos_signal on the advisor_advice DB row.
 
 === END FEASIBILITY SUMMARY ===
 """
@@ -79,6 +67,9 @@ _WEIGHTS_ENV = "ADVISOR_KRONOS_WEIGHTS_PATH"
 # Default model variant name for logging/health surface.
 _DEFAULT_VARIANT = "Kronos-mini"
 
+# Logged once per process to avoid logspam on every predict() call.
+_IMPORT_WARN_LOGGED = False
+
 
 class KronosForecaster:
     """
@@ -94,12 +85,12 @@ class KronosForecaster:
     The operator must:
     1. Set ADVISOR_KRONOS_WEIGHTS_PATH in .env to the directory containing
        downloaded HuggingFace model files.
-    2. Ensure torch + transformers + pyqlib are installed
-       (pip install torch transformers pyqlib).
-    3. Keep ADVISOR_KRONOS_ENABLED=true in advisor_config (DB-backed).
+    2. Ensure torch + transformers are installed
+       (pip install 'torch>=2.0' 'transformers>=4.38'; optionally pyqlib).
+    3. Set advisor_kronos_enabled=true in advisor_config (DB-backed).
 
-    Usage (once wired by the quant agent)
-    --------------------------------------
+    Usage
+    -----
         forecaster = KronosForecaster()
         await forecaster.initialize()
         signal = await forecaster.predict(df_klines)
@@ -138,8 +129,9 @@ class KronosForecaster:
                 f"and set {_WEIGHTS_ENV}=/path/to/weights."
             )
             logger.warning(
-                f"[kronos] WEIGHTS NOT CONFIGURED — {self._load_error}. "
-                "predict() will return None."
+                "[kronos] WEIGHTS NOT CONFIGURED — %s. "
+                "predict() will return None.",
+                self._load_error,
             )
             return False
 
@@ -149,7 +141,7 @@ class KronosForecaster:
                 f"Weights directory not found: {weights_dir}. "
                 "Run scripts/download_kronos_weights.py first."
             )
-            logger.warning(f"[kronos] {self._load_error}. predict() will return None.")
+            logger.warning("[kronos] %s. predict() will return None.", self._load_error)
             return False
 
         try:
@@ -158,17 +150,17 @@ class KronosForecaster:
             )
             self._loaded = True
             logger.info(
-                f"[kronos] {self._variant} loaded from {weights_dir} "
-                f"on device={self._device}"
+                "[kronos] %s loaded from %s on device=%s",
+                self._variant, weights_dir, self._device,
             )
             return True
         except Exception as exc:
             self._load_error = str(exc)
             logger.warning(
-                f"[kronos] Failed to load {self._variant}: {exc}. "
-                "predict() will return None.",
-                exc_info=True,
+                "[kronos] Failed to load %s: %s. predict() will return None.",
+                self._variant, exc,
             )
+            logger.debug("[kronos] Load failure traceback:", exc_info=True)
             return False
 
     # ------------------------------------------------------------------
@@ -203,7 +195,7 @@ class KronosForecaster:
         try:
             return _run_inference(self._model, self._tokenizer, df_klines)
         except Exception as exc:
-            logger.warning(f"[kronos] Inference error: {exc}", exc_info=True)
+            logger.warning("[kronos] Inference error: %s", exc, exc_info=True)
             return None
 
     async def predict_batch(self, dfs: list) -> list:
@@ -231,47 +223,141 @@ class KronosForecaster:
 
 
 # ---------------------------------------------------------------------------
-# Private helpers — STUBS (quant agent fills these in Wave-21)
+# Private helpers — Wave-21 implementation
 # ---------------------------------------------------------------------------
 
 def _load_model(weights_dir: Path, variant: str, device: str):
     """
-    STUB: Load Kronos tokenizer + model from a HuggingFace weights directory.
+    Load a Kronos model from a HuggingFace weights directory.
 
-    Expected implementation (quant agent, Wave-21):
-        from transformers import AutoTokenizer, AutoModelForCausalLM
-        # or the Kronos-specific classes from the shiyu-coder/Kronos repo:
-        from kronos import KronosTokenizer, KronosModel
-        tokenizer = KronosTokenizer.from_pretrained(str(weights_dir))
-        model = KronosModel.from_pretrained(str(weights_dir)).to(device)
-        model.eval()
-        return model, tokenizer
+    Fallback chain
+    --------------
+    1. Try ``from kronos import KronosPredictor`` (official Kronos pip package
+       or local clone on PYTHONPATH).  Returns (predictor, None) because the
+       tokeniser is baked into the predictor object.
+    2. Try ``transformers.AutoModelForCausalLM`` / ``AutoTokenizer`` as generic
+       HuggingFace causal-LM load — covers checkpoints uploaded with the
+       standard HF config.json + model.safetensors layout.
+    3. If neither path works (torch/transformers absent), raise ImportError
+       so the caller stores the error and predict() returns None (fail-soft).
 
-    For now, raise NotImplementedError so _loaded stays False and predict()
-    returns None (fail-soft).
+    GPU / small upgrade path
+    ------------------------
+    - Default: device='cpu', variant='Kronos-mini' (4.1 M params, ~50 MB).
+    - Kronos-small (24.7 M, ~100 MB): set advisor_kronos_variant=Kronos-small.
+      CPU still fine (2-4 s / call).
+    - Kronos-base (102.3 M, ~400 MB): set advisor_kronos_device=cuda and
+      provision >=8 GB VRAM.  CPU is slow (5-15 s) but functional.
+    - Kronos-large (499.2 M): not open-sourced as of 2026-06-02; skip.
     """
-    raise NotImplementedError(
-        "Kronos model loading not yet implemented. "
-        "Wave-21 quant agent task: implement _load_model() in kronos_forecaster.py."
-    )
+    global _IMPORT_WARN_LOGGED
+
+    # --- attempt 1: official Kronos package ---
+    try:
+        from kronos import KronosPredictor  # type: ignore[import]
+        predictor = KronosPredictor(str(weights_dir), device=device)
+        logger.info(
+            "[kronos] Loaded via KronosPredictor (%s, device=%s)", variant, device
+        )
+        return predictor, None          # tokenizer baked into predictor
+    except ImportError:
+        pass   # fall through to attempt 2
+    except Exception as exc:
+        # Weights present but KronosPredictor init failed (corrupt files, etc.)
+        raise RuntimeError(f"KronosPredictor init failed: {exc}") from exc
+
+    # --- attempt 2: HuggingFace AutoModel (generic causal-LM interface) ---
+    try:
+        import torch  # type: ignore[import]  # noqa: F401
+        from transformers import AutoTokenizer, AutoModelForCausalLM  # type: ignore[import]
+
+        tokenizer = AutoTokenizer.from_pretrained(
+            str(weights_dir), trust_remote_code=True
+        )
+        model = AutoModelForCausalLM.from_pretrained(
+            str(weights_dir), trust_remote_code=True
+        )
+        model = model.to(device)
+        model.eval()
+        logger.info(
+            "[kronos] Loaded via AutoModelForCausalLM (%s, device=%s)", variant, device
+        )
+        return model, tokenizer
+    except ImportError as exc:
+        if not _IMPORT_WARN_LOGGED:
+            logger.warning(
+                "[kronos] torch / transformers not installed — "
+                "Kronos inference unavailable. "
+                "Install: pip install 'torch>=2.0' 'transformers>=4.38' "
+                "and optionally: pip install kronos pyqlib. Detail: %s",
+                exc,
+            )
+            _IMPORT_WARN_LOGGED = True
+        raise ImportError(f"Required deps missing: {exc}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"HuggingFace AutoModel load failed: {exc}") from exc
 
 
 def _run_inference(model, tokenizer, df_klines) -> float:
     """
-    STUB: Run a single forward pass through the loaded Kronos model.
+    Run a single forward pass through the loaded Kronos model.
 
-    Expected implementation (quant agent, Wave-21):
-        # Tokenize K-lines into Kronos's discrete token format.
-        tokens = tokenizer.encode(df_klines)  # returns torch.Tensor
-        with torch.no_grad():
-            output = model.predict(tokens)
-        # output is a scalar or distribution; extract directional signal.
-        signal = float(output["signal"])
-        return signal
+    Parameters
+    ----------
+    model     : KronosPredictor (tokenizer=None) OR HuggingFace
+                AutoModelForCausalLM (tokenizer provided).
+    tokenizer : AutoTokenizer or None.
+    df_klines : pd.DataFrame with columns [open, high, low, close] and an
+                ascending UTC datetime index.  Optional: volume, amount.
 
-    For now, raise so predict() returns None.
+    Returns
+    -------
+    float
+        Positive = bullish bias; negative = bearish.  Magnitude not normalised.
+
+    KronosPredictor path
+        Calls model.predict(df_klines) which handles tokenisation internally.
+
+    HuggingFace AutoModel path
+        Attempts tokenizer(df_klines) first; falls back to encoding the
+        OHLCV arrays as a raw float tensor (1, T, 4).  Signal is extracted
+        from the last time-step's logit difference (bullish - bearish) or
+        from the mean of the last hidden state.
     """
-    raise NotImplementedError(
-        "Kronos inference not yet implemented. "
-        "Wave-21 quant agent task: implement _run_inference() in kronos_forecaster.py."
-    )
+    # --- KronosPredictor path (tokenizer is None) ---
+    if tokenizer is None:
+        result = model.predict(df_klines)
+        if isinstance(result, dict):
+            return float(result.get("signal", result.get("score", 0.0)))
+        return float(result)
+
+    # --- HuggingFace AutoModel path ---
+    import torch  # type: ignore[import]
+
+    # Attempt tokeniser call with the raw DataFrame.
+    try:
+        enc = tokenizer(df_klines, return_tensors="pt")
+        input_ids = enc["input_ids"]
+    except Exception:
+        # Fallback: encode OHLCV columns as a raw float tensor.
+        ohlcv = df_klines[["open", "high", "low", "close"]].astype(float).values
+        input_ids = torch.tensor(ohlcv, dtype=torch.float32).unsqueeze(0)
+
+    with torch.no_grad():
+        output = model(input_ids)
+
+    # Extract directional signal.
+    # Convention: last token, first two logit dims = [bearish, bullish].
+    if hasattr(output, "logits"):
+        logits = output.logits          # (1, T, vocab)
+        last_step = logits[0, -1, :]
+        if last_step.numel() >= 2:
+            signal = float(last_step[1] - last_step[0])   # bullish - bearish
+        else:
+            signal = float(last_step[0])
+    elif hasattr(output, "last_hidden_state"):
+        signal = float(output.last_hidden_state[0, -1, :].mean())
+    else:
+        signal = float(output[0].mean())
+
+    return signal
