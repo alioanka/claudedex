@@ -1,0 +1,278 @@
+{% extends "base.html" %}
+{% block title %}Advisor — My Portfolio{% endblock %}
+
+{% block content %}
+<style>
+  .port-summary-bar {
+    display:grid; grid-template-columns: repeat(auto-fit,minmax(150px,1fr)); gap:.8rem; margin-bottom:1.25rem;
+  }
+  .port-stat {
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);
+    border-radius:10px; padding:.85rem 1rem; text-align:center;
+  }
+  .port-stat .sv { font-size:1.45rem; font-weight:700; }
+  .port-stat .sl { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; color:#666; margin-top:.2rem; }
+
+  .port-table td, .port-table th { vertical-align:middle; font-size:.82rem; }
+  .port-table th { text-transform:uppercase; font-size:.7rem; color:#888; letter-spacing:.05em; }
+
+  .pnl-pos { color:#00e396; }
+  .pnl-neg { color:#ff4560; }
+
+  .add-form-card {
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);
+    border-radius:12px; padding:1.2rem 1.4rem; margin-bottom:1.5rem;
+  }
+  .add-form-card h6 { color:#aaa; font-size:.85rem; margin-bottom:1rem; text-transform:uppercase; letter-spacing:.05em; }
+
+  .advice-only-notice {
+    background:rgba(119,93,208,.12); border:1px solid rgba(119,93,208,.3);
+    border-radius:8px; padding:.5rem 1rem; font-size:.8rem; color:#b8a9f0;
+    display:flex; align-items:center; gap:.5rem; margin-bottom:1rem;
+  }
+
+  @media (max-width:640px) {
+    .port-summary-bar { grid-template-columns: repeat(2,1fr); }
+    .d-sm-none { display:none !important; }
+  }
+</style>
+
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0"><i class="fas fa-briefcase me-2 text-warning"></i>My Portfolio</h5>
+    <a href="/advisor/dashboard" class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-arrow-left me-1"></i>Overview
+    </a>
+  </div>
+
+  <!-- Notice -->
+  <div class="advice-only-notice">
+    <i class="fas fa-info-circle"></i>
+    <span>This is your <strong>manually-reported</strong> portfolio on Midas. No trades are executed here — data is used solely to give the advisor context about your current exposure.</span>
+  </div>
+
+  <!-- Summary bar -->
+  <div class="port-summary-bar">
+    <div class="port-stat"><div class="sv text-success" id="psTotalValue">—</div><div class="sl">Total Value</div></div>
+    <div class="port-stat"><div class="sv" id="psTotalPnl">—</div><div class="sl">Unrealized P&amp;L</div></div>
+    <div class="port-stat"><div class="sv text-info" id="psPositions">—</div><div class="sl">Positions</div></div>
+    <div class="port-stat"><div class="sv text-warning" id="psTopHolding">—</div><div class="sl">Largest Holding</div></div>
+  </div>
+
+  <!-- Add/Edit Form -->
+  <div class="add-form-card">
+    <h6><i class="fas fa-plus-circle me-2 text-success"></i>Add / Update Holding</h6>
+    <div class="row g-2">
+      <div class="col-6 col-md-2">
+        <label class="form-label form-label-sm">Symbol *</label>
+        <input type="text" class="form-control form-control-sm" id="fSymbol" placeholder="AAPL" style="text-transform:uppercase">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label form-label-sm">Market *</label>
+        <select class="form-select form-select-sm" id="fMarket">
+          <option value="crypto">Crypto</option>
+          <option value="us_equities" selected>US Equities</option>
+          <option value="bist">BIST</option>
+          <option value="fx">FX / Metals</option>
+          <option value="midas_funds">Midas Funds</option>
+        </select>
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label form-label-sm">Quantity *</label>
+        <input type="number" class="form-control form-control-sm" id="fQty" placeholder="0" step="any" min="0">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label form-label-sm">Avg Cost (USD/unit) *</label>
+        <input type="number" class="form-control form-control-sm" id="fCost" placeholder="0.00" step="any" min="0">
+      </div>
+      <div class="col-6 col-md-2">
+        <label class="form-label form-label-sm">Current Price (optional)</label>
+        <input type="number" class="form-control form-control-sm" id="fCurrentPrice" placeholder="auto" step="any" min="0">
+      </div>
+      <div class="col-12 col-md-3">
+        <label class="form-label form-label-sm">Notes (optional)</label>
+        <input type="text" class="form-control form-control-sm" id="fNotes" placeholder="e.g. Bought on Midas 2026-01-15">
+      </div>
+      <div class="col-12 col-md-1 d-flex align-items-end">
+        <button class="btn btn-success btn-sm w-100" onclick="saveHolding()">
+          <i class="fas fa-save me-1"></i>Save
+        </button>
+      </div>
+    </div>
+    <div id="formMsg" class="mt-2" style="font-size:.8rem"></div>
+  </div>
+
+  <!-- Holdings Table -->
+  <div class="table-responsive">
+    <table class="table table-dark table-hover port-table mb-0">
+      <thead>
+        <tr>
+          <th>Symbol</th>
+          <th>Market</th>
+          <th>Quantity</th>
+          <th>Avg Cost</th>
+          <th>Current Price</th>
+          <th>Market Value</th>
+          <th>Unreal. P&amp;L</th>
+          <th>P&amp;L %</th>
+          <th class="d-sm-none">Notes</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="portBody">
+        <tr><td colspan="11" class="text-center text-muted py-4">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+let holdings = [];
+
+async function loadPortfolio() {
+  try {
+    const res = await fetch('/api/advisor/portfolio');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    holdings = data.rows;
+    const tbody = document.getElementById('portBody');
+    tbody.innerHTML = '';
+
+    // Summary
+    document.getElementById('psTotalValue').textContent =
+      '$' + data.total_value.toLocaleString(undefined,{maximumFractionDigits:0});
+    const pnlEl = document.getElementById('psTotalPnl');
+    const p = data.total_pnl;
+    pnlEl.textContent = (p >= 0 ? '+' : '') + '$' + Math.abs(p).toLocaleString(undefined,{maximumFractionDigits:0});
+    pnlEl.className = 'sv ' + (p > 0 ? 'pnl-pos' : p < 0 ? 'pnl-neg' : 'text-muted');
+    document.getElementById('psPositions').textContent = holdings.length;
+
+    // Largest holding
+    const top = holdings.sort((a,b)=>(b.market_value||0)-(a.market_value||0))[0];
+    document.getElementById('psTopHolding').textContent = top ? top.symbol : '—';
+
+    if (holdings.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="11" class="text-center text-muted py-4">No holdings yet. Add your first position above.</td></tr>';
+      return;
+    }
+
+    for (const r of holdings) {
+      const tr = document.createElement('tr');
+      const pnlCls = r.unrealized_pnl == null ? '' : r.unrealized_pnl > 0 ? 'pnl-pos' : r.unrealized_pnl < 0 ? 'pnl-neg' : '';
+      const pnlPctCls = r.unrealized_pnl_pct == null ? '' : r.unrealized_pnl_pct > 0 ? 'pnl-pos' : r.unrealized_pnl_pct < 0 ? 'pnl-neg' : '';
+      const ts = r.updated_at ? new Date(r.updated_at).toLocaleDateString() : '—';
+
+      tr.innerHTML = `
+        <td><strong>${escHtml(r.symbol)}</strong></td>
+        <td style="font-size:.75rem">${fmtMarket(r.market)}</td>
+        <td>${fmtQty(r.quantity)}</td>
+        <td>$${fmtN(r.avg_cost)}</td>
+        <td>${r.current_price != null ? '$'+fmtN(r.current_price) : '<span style="color:#555">—</span>'}</td>
+        <td>${r.market_value != null ? '$'+r.market_value.toLocaleString(undefined,{maximumFractionDigits:2}) : '<span style="color:#555">—</span>'}</td>
+        <td class="${pnlCls}">${r.unrealized_pnl != null ? (r.unrealized_pnl>=0?'+$':'-$')+Math.abs(r.unrealized_pnl).toFixed(2) : '—'}</td>
+        <td class="${pnlPctCls}">${r.unrealized_pnl_pct != null ? (r.unrealized_pnl_pct>=0?'+':'')+r.unrealized_pnl_pct.toFixed(2)+'%' : '—'}</td>
+        <td class="d-sm-none" style="font-size:.75rem;color:#888">${escHtml(r.notes||'')}</td>
+        <td style="font-size:.75rem">${ts}</td>
+        <td>
+          <button class="btn btn-sm btn-outline-secondary" style="font-size:.72rem;padding:.18rem .45rem"
+                  onclick="editHolding(${r.id})">
+            <i class="fas fa-edit"></i>
+          </button>
+          <button class="btn btn-sm btn-outline-danger" style="font-size:.72rem;padding:.18rem .45rem"
+                  onclick="deleteHolding(${r.id},'${escHtml(r.symbol)}')">
+            <i class="fas fa-trash"></i>
+          </button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    }
+  } catch(e) {
+    document.getElementById('portBody').innerHTML =
+      `<tr><td colspan="11" class="text-center text-danger py-4">Error: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+async function saveHolding() {
+  const symbol = document.getElementById('fSymbol').value.trim().toUpperCase();
+  const market = document.getElementById('fMarket').value;
+  const qty = document.getElementById('fQty').value.trim();
+  const cost = document.getElementById('fCost').value.trim();
+  const cp = document.getElementById('fCurrentPrice').value.trim();
+  const notes = document.getElementById('fNotes').value.trim();
+  const msgEl = document.getElementById('formMsg');
+
+  if (!symbol || !market || !qty || !cost) {
+    msgEl.innerHTML = '<span class="text-danger">Symbol, market, quantity and avg cost are required.</span>';
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/advisor/portfolio', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({
+        symbol, market,
+        quantity: parseFloat(qty),
+        avg_cost: parseFloat(cost),
+        current_price: cp ? parseFloat(cp) : null,
+        notes,
+      }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      msgEl.innerHTML = '<span class="text-success"><i class="fas fa-check me-1"></i>' + data.message + '</span>';
+      // Clear form
+      ['fSymbol','fQty','fCost','fCurrentPrice','fNotes'].forEach(id => { document.getElementById(id).value = ''; });
+      setTimeout(() => { msgEl.innerHTML = ''; }, 3000);
+      loadPortfolio();
+    } else {
+      msgEl.innerHTML = '<span class="text-danger">Error: ' + escHtml(data.error) + '</span>';
+    }
+  } catch(e) {
+    msgEl.innerHTML = '<span class="text-danger">Request failed: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+function editHolding(id) {
+  const h = holdings.find(r => r.id === id);
+  if (!h) return;
+  document.getElementById('fSymbol').value = h.symbol;
+  document.getElementById('fMarket').value = h.market;
+  document.getElementById('fQty').value = h.quantity;
+  document.getElementById('fCost').value = h.avg_cost;
+  document.getElementById('fCurrentPrice').value = h.current_price != null ? h.current_price : '';
+  document.getElementById('fNotes').value = h.notes || '';
+  document.getElementById('fSymbol').scrollIntoView({behavior:'smooth', block:'center'});
+  document.getElementById('fSymbol').focus();
+}
+
+async function deleteHolding(id, symbol) {
+  if (!confirm(`Delete holding for ${symbol}?`)) return;
+  try {
+    const res = await fetch(`/api/advisor/portfolio/${id}/delete`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) { loadPortfolio(); }
+    else { alert('Error: ' + data.error); }
+  } catch(e) { alert('Request failed: ' + e.message); }
+}
+
+const MARKET_ICONS = { crypto:'₿', us_equities:'📈', bist:'🇹🇷', fx:'💱', midas_funds:'🏦' };
+function fmtMarket(m) { return (MARKET_ICONS[m]||'') + ' ' + (m||'').replace('_',' '); }
+function fmtN(n) {
+  if (n == null) return '—';
+  const f = parseFloat(n);
+  if (f >= 1000) return f.toLocaleString(undefined,{maximumFractionDigits:2});
+  if (f >= 1) return f.toFixed(4);
+  return f.toFixed(6);
+}
+function fmtQty(q) {
+  const f = parseFloat(q);
+  return f >= 100 ? f.toLocaleString(undefined,{maximumFractionDigits:4}) : f.toFixed(6).replace(/\.?0+$/,'');
+}
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+loadPortfolio();
+</script>
+{% endblock %}

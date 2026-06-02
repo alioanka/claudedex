@@ -1,0 +1,397 @@
+{% extends "base.html" %}
+{% block title %}Advisor — Settings{% endblock %}
+
+{% block content %}
+<style>
+  .settings-tabs .nav-link { color: #aaa; border-radius: 8px 8px 0 0; }
+  .settings-tabs .nav-link.active { color: #fff; background: rgba(0,143,251,.18); border-color: rgba(0,143,251,.4) rgba(0,143,251,.4) transparent; }
+  .settings-tabs .nav-link:hover:not(.active) { color: #ddd; }
+
+  .tab-section-title {
+    font-size:.7rem; text-transform:uppercase; letter-spacing:.07em; color:#555;
+    margin: 1.4rem 0 .6rem; padding-bottom:.3rem; border-bottom:1px solid rgba(255,255,255,.07);
+  }
+  .form-label-sm { font-size:.8rem; color:#ccc; }
+  .form-text    { font-size:.72rem; color:#666; }
+
+  .guide-block {
+    background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07);
+    border-radius:8px; padding:1rem 1.2rem; margin-bottom:1rem;
+  }
+  .guide-block h6 { font-size:.82rem; color:#aaa; margin-bottom:.4rem; }
+  .guide-block p  { font-size:.8rem; color:#888; margin:0; }
+  .guide-block .guide-default { color:#00e396; font-size:.78rem; }
+  .guide-block .guide-recommended { color:#008ffb; font-size:.78rem; }
+
+  .token-notice {
+    background:rgba(254,176,25,.1); border:1px solid rgba(254,176,25,.3);
+    border-radius:8px; padding:.6rem 1rem; font-size:.8rem; color:#feb019;
+    margin-bottom:.8rem;
+  }
+</style>
+
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0"><i class="fas fa-cog me-2 text-secondary"></i>Advisor Settings</h5>
+    <a href="/advisor/dashboard" class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-arrow-left me-1"></i>Overview
+    </a>
+  </div>
+
+  <!-- Tabs -->
+  <ul class="nav nav-tabs settings-tabs mb-3" id="settingsTabs">
+    <li class="nav-item">
+      <a class="nav-link active" href="#" onclick="switchTab('settings',this); return false;">
+        <i class="fas fa-sliders-h me-1"></i>Settings
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link" href="#" onclick="switchTab('guide',this); return false;">
+        <i class="fas fa-book me-1"></i>Guide
+      </a>
+    </li>
+  </ul>
+
+  <div id="tabSettings">
+    <div class="row">
+      <!-- Left column -->
+      <div class="col-md-6">
+
+        <div class="tab-section-title">LLM &amp; Engine</div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Anthropic Model ID</label>
+          <input type="text" class="form-control form-control-sm" id="s_advisor_anthropic_model"
+                 placeholder="claude-opus-4-5">
+          <div class="form-text">Model used for LLM rationale generation. Loud WARN on 404 — no silent fallback.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Advice Cycle (minutes)</label>
+          <input type="number" class="form-control form-control-sm" id="s_run_interval_minutes"
+                 min="5" max="1440" step="5">
+          <div class="form-text">How often the advice engine runs. Default: 60 min.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Minimum Confidence to Publish</label>
+          <input type="number" class="form-control form-control-sm" id="s_min_confidence"
+                 min="0" max="1" step="0.01">
+          <div class="form-text">Advice below this confidence is suppressed. Default: 0.35.</div>
+        </div>
+
+        <div class="tab-section-title">Markets &amp; Watchlists</div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Enabled Markets</label>
+          <input type="text" class="form-control form-control-sm" id="s_enabled_markets"
+                 placeholder="crypto,us_equities">
+          <div class="form-text">Comma-separated: crypto | us_equities | bist | fx | midas_funds</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Enabled Horizons</label>
+          <input type="text" class="form-control form-control-sm" id="s_enabled_horizons"
+                 placeholder="short,mid,long">
+          <div class="form-text">Comma-separated: short | mid | long</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Crypto Watchlist (ccxt format)</label>
+          <input type="text" class="form-control form-control-sm" id="s_watchlist_crypto"
+                 placeholder="BTC/USDT,ETH/USDT,SOL/USDT">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">US Equities Watchlist (yfinance)</label>
+          <input type="text" class="form-control form-control-sm" id="s_watchlist_us_equities"
+                 placeholder="AAPL,MSFT,NVDA,TSLA,AMZN">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">BIST Watchlist</label>
+          <input type="text" class="form-control form-control-sm" id="s_watchlist_bist"
+                 placeholder="THYAO.IS,GARAN.IS (yfinance) or THYAO (Matriks)">
+          <div class="form-text">Requires advisor_bist_data_source to be set.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">FX &amp; Metals Watchlist</label>
+          <input type="text" class="form-control form-control-sm" id="s_watchlist_fx"
+                 placeholder="EURUSD=X,GBPUSD=X,XAUUSD=X,XAGUSD=X">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Midas Funds (Tefas FONKODU)</label>
+          <input type="text" class="form-control form-control-sm" id="s_watchlist_midas_funds"
+                 placeholder="TPP,AKP">
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Blocked Symbols</label>
+          <input type="text" class="form-control form-control-sm" id="s_blocked_symbols"
+                 placeholder="comma-separated, advice suppressed for these">
+        </div>
+
+      </div>
+
+      <!-- Right column -->
+      <div class="col-md-6">
+
+        <div class="tab-section-title">Data Sources</div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Crypto Exchange (ccxt ID)</label>
+          <select class="form-select form-select-sm" id="s_advisor_crypto_exchange">
+            <option value="binance">binance (default)</option>
+            <option value="coinbase">coinbase</option>
+            <option value="kraken">kraken</option>
+            <option value="bybit">bybit</option>
+            <option value="okx">okx</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">BIST Data Source</label>
+          <select class="form-select form-select-sm" id="s_advisor_bist_data_source">
+            <option value="">Disabled</option>
+            <option value="yfinance">yfinance (degraded, free)</option>
+            <option value="matriks">Matriks (paid — needs ADVISOR_BIST_API_KEY)</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">FX Data Source</label>
+          <select class="form-select form-select-sm" id="s_advisor_fx_data_source">
+            <option value="yfinance">yfinance (free, default)</option>
+            <option value="alphavantage">Alpha Vantage (needs ADVISOR_FX_ALPHAVANTAGE_KEY)</option>
+            <option value="stooq">Stooq (free, no SLA)</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Midas Funds Data Source</label>
+          <select class="form-select form-select-sm" id="s_advisor_midas_data_source">
+            <option value="">Disabled</option>
+            <option value="tefas_scrape">Tefas scrape (undocumented, fragile)</option>
+            <option value="manual">Manual (operator enters NAV)</option>
+          </select>
+        </div>
+
+        <div class="tab-section-title">Simulations</div>
+
+        <div class="mb-2 form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="s_sim_default_enabled">
+          <label class="form-check-label" for="s_sim_default_enabled" style="font-size:.82rem">
+            Auto-open sim position per published advice
+          </label>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Sim Default Notional (USD)</label>
+          <input type="number" class="form-control form-control-sm" id="s_sim_default_amount_usd"
+                 min="10" step="50">
+          <div class="form-text">USD notional for auto-opened sim positions. Default: 1000.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Max Open Sim Positions</label>
+          <input type="number" class="form-control form-control-sm" id="s_max_sim_positions"
+                 min="1" max="200" step="1">
+          <div class="form-text">Cap on concurrent open sims. Default: 20.</div>
+        </div>
+
+        <div class="tab-section-title">Telegram (Separate Advisor Bot)</div>
+
+        <div class="token-notice">
+          <i class="fas fa-key me-1"></i>
+          <strong>Token/Chat ID</strong> must be set via <a href="/credentials" class="text-warning">Secure Credentials</a>
+          as <code>ADVISOR_TELEGRAM_BOT_TOKEN</code> and <code>ADVISOR_TELEGRAM_CHAT_ID</code>.
+          These fields below will not overwrite a blank value.
+        </div>
+
+        <div class="mb-2 form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="s_advisor_telegram_enabled">
+          <label class="form-check-label" for="s_advisor_telegram_enabled" style="font-size:.82rem">
+            Enable Advisor Telegram Bot
+          </label>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Daily Digest Hour (0–23, local TZ)</label>
+          <input type="number" class="form-control form-control-sm" id="s_advisor_telegram_digest_hour"
+                 min="0" max="23" step="1">
+          <div class="form-text">Hour of day to send the daily market digest. Default: 8 (08:00).</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Digest Timezone</label>
+          <input type="text" class="form-control form-control-sm" id="s_advisor_telegram_digest_tz"
+                 placeholder="Europe/Istanbul">
+          <div class="form-text">IANA timezone name for digest schedule. Default: Europe/Istanbul.</div>
+        </div>
+
+        <div class="tab-section-title">Kronos Forecaster</div>
+
+        <div class="mb-2 form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="s_advisor_kronos_enabled">
+          <label class="form-check-label" for="s_advisor_kronos_enabled" style="font-size:.82rem">
+            Enable Kronos K-Line Forecast Overlay
+          </label>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Kronos Variant</label>
+          <select class="form-select form-select-sm" id="s_advisor_kronos_variant">
+            <option value="Kronos-mini">Kronos-mini (4.1M params — CPU, ~50 MB)</option>
+            <option value="Kronos-small">Kronos-small (24.7M — ~100 MB)</option>
+            <option value="Kronos-base">Kronos-base (102.3M — GPU recommended)</option>
+          </select>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Kronos Device</label>
+          <select class="form-select form-select-sm" id="s_advisor_kronos_device">
+            <option value="cpu">cpu (default)</option>
+            <option value="cuda">cuda (GPU)</option>
+          </select>
+        </div>
+
+        <div class="tab-section-title">ML (Wave-22)</div>
+
+        <div class="mb-2 form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="s_advisor_ml_enabled" disabled>
+          <label class="form-check-label" for="s_advisor_ml_enabled" style="font-size:.82rem;color:#666">
+            ML Self-Improvement Loop (Wave-22, not yet active)
+          </label>
+        </div>
+
+      </div>
+    </div>
+
+    <div class="d-flex gap-2 mt-3">
+      <button class="btn btn-primary" onclick="saveSettings()">
+        <i class="fas fa-save me-2"></i>Save Settings
+      </button>
+      <button class="btn btn-outline-secondary" onclick="loadSettings()">
+        <i class="fas fa-redo me-2"></i>Reload
+      </button>
+    </div>
+    <div id="saveMsg" class="mt-2" style="font-size:.83rem"></div>
+  </div>
+
+  <!-- Guide Tab -->
+  <div id="tabGuide" style="display:none">
+    <div class="guide-block">
+      <h6>LLM Model</h6>
+      <p class="guide-default">Default: <code>claude-opus-4-5</code></p>
+      <p>Controls which Anthropic model generates advice rationale. Bump this key in DB when a new model ships. A loud WARNING is logged on 404 — the module never silently falls back.</p>
+    </div>
+    <div class="guide-block">
+      <h6>Enabled Markets</h6>
+      <p class="guide-default">Default: <code>crypto,us_equities</code></p>
+      <p>Each market needs a data source before enabling. BIST requires <code>advisor_bist_data_source</code>; FX works out-of-box with yfinance; Midas needs <code>tefas_scrape</code> or <code>manual</code>.</p>
+    </div>
+    <div class="guide-block">
+      <h6>Min Confidence</h6>
+      <p class="guide-default">Default: <code>0.35</code></p>
+      <p class="guide-recommended">Recommended: <code>0.30</code>–<code>0.50</code> — live LLM scores cluster around 0.35–0.50.</p>
+      <p>Advice below this threshold is computed but not published to the DB, dashboard, or Telegram.</p>
+    </div>
+    <div class="guide-block">
+      <h6>Sim Auto-Open</h6>
+      <p class="guide-default">Default: <code>off</code></p>
+      <p>When enabled every published advice automatically opens a $<code>sim_default_amount_usd</code> dry-run position. Good for backtesting signal quality. Turn off if you only want the dashboard overview.</p>
+    </div>
+    <div class="guide-block">
+      <h6>Advisor Telegram Bot (separate)</h6>
+      <p>Create a <strong>NEW Telegram bot</strong> via @BotFather. Add the token as <code>ADVISOR_TELEGRAM_BOT_TOKEN</code> in Secure Credentials. Add your chat or group ID as <code>ADVISOR_TELEGRAM_CHAT_ID</code>. This is a completely different bot from the trading module bot.</p>
+      <p>The daily digest sends one message per market with that day's short/mid/long advice at the configured <code>advisor_telegram_digest_hour</code>. De-dup logic prevents re-sending the same advice ID twice.</p>
+    </div>
+    <div class="guide-block">
+      <h6>Kronos Weights</h6>
+      <p>Download weights once: <code>python -c "from huggingface_hub import snapshot_download; snapshot_download('NeoQuasar/Kronos-mini', local_dir='/data/kronos/Kronos-mini')"</code></p>
+      <p>Set <code>ADVISOR_KRONOS_WEIGHTS_PATH=/data/kronos/Kronos-mini</code> in <code>.env</code>. Then enable via the toggle above. Kronos returns <code>None</code> if weights are missing — the advice cycle always continues.</p>
+    </div>
+    <div class="guide-block">
+      <h6>Activation Checklist</h6>
+      <ol style="font-size:.8rem;color:#aaa;padding-left:1.2rem">
+        <li>Set <code>ADVISOR_ANTHROPIC_API_KEY</code> in Secure Credentials.</li>
+        <li>Set <code>ADVISOR_MODULE_ENABLED=true</code> in <code>.env</code>.</li>
+        <li>Optionally set Telegram bot token + chat ID in Secure Credentials.</li>
+        <li>Restart the dashboard subprocess from Module Control.</li>
+        <li>Check <code>logs/advisor/advisor.log</code> for the first advice cycle.</li>
+      </ol>
+    </div>
+  </div>
+</div>
+
+<script>
+function switchTab(name, linkEl) {
+  document.getElementById('tabSettings').style.display = name === 'settings' ? '' : 'none';
+  document.getElementById('tabGuide').style.display   = name === 'guide'    ? '' : 'none';
+  document.querySelectorAll('#settingsTabs .nav-link').forEach(l => l.classList.remove('active'));
+  linkEl.classList.add('active');
+}
+
+function setVal(id, val) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.type === 'checkbox') { el.checked = val === true || val === 'true'; }
+  else { el.value = val != null ? val : ''; }
+}
+
+async function loadSettings() {
+  try {
+    const res = await fetch('/api/advisor/settings');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+    const s = data.settings;
+    Object.keys(s).forEach(k => setVal('s_' + k, s[k]));
+  } catch(e) {
+    document.getElementById('saveMsg').innerHTML = '<span class="text-danger">Load failed: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+async function saveSettings() {
+  const fields = [
+    'advisor_anthropic_model','run_interval_minutes','min_confidence',
+    'enabled_markets','enabled_horizons',
+    'watchlist_crypto','watchlist_us_equities','watchlist_bist',
+    'watchlist_fx','watchlist_midas_funds','blocked_symbols',
+    'advisor_crypto_exchange','advisor_bist_data_source',
+    'advisor_fx_data_source','advisor_midas_data_source',
+    'sim_default_enabled','sim_default_amount_usd','max_sim_positions',
+    'advisor_telegram_enabled','advisor_telegram_digest_hour','advisor_telegram_digest_tz',
+    'advisor_kronos_enabled','advisor_kronos_variant','advisor_kronos_device',
+  ];
+  const payload = {};
+  for (const f of fields) {
+    const el = document.getElementById('s_' + f);
+    if (!el) continue;
+    payload[f] = el.type === 'checkbox' ? el.checked : el.value;
+  }
+  try {
+    const res = await fetch('/api/advisor/settings', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    const msgEl = document.getElementById('saveMsg');
+    if (data.success) {
+      msgEl.innerHTML = '<span class="text-success"><i class="fas fa-check me-1"></i>' + data.message + '</span>';
+      setTimeout(() => { msgEl.innerHTML = ''; }, 3000);
+    } else {
+      msgEl.innerHTML = '<span class="text-danger">Error: ' + escHtml(data.error) + '</span>';
+    }
+  } catch(e) {
+    document.getElementById('saveMsg').innerHTML = '<span class="text-danger">Request failed: ' + escHtml(e.message) + '</span>';
+  }
+}
+
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+loadSettings();
+</script>
+{% endblock %}

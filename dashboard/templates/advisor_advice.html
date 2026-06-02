@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% block title %}Advisor — Advice History{% endblock %}
+
+{% block content %}
+<style>
+  .adv-filter-bar {
+    display: flex; flex-wrap: wrap; gap: .6rem; margin-bottom: 1.25rem; align-items: center;
+  }
+  .adv-filter-bar .form-select, .adv-filter-bar .form-control {
+    width: auto; min-width: 120px; font-size: .82rem;
+  }
+  .dir-badge { font-size:.68rem; font-weight:700; padding:.18rem .55rem; border-radius:20px; white-space:nowrap; }
+  .dir-long    { background:rgba(0,227,150,.15); color:#00e396; }
+  .dir-short   { background:rgba(255,69,96,.15);  color:#ff4560; }
+  .dir-neutral { background:rgba(254,176,25,.15); color:#feb019; }
+  .dsrc-available   { color:#00e396; }
+  .dsrc-degraded    { color:#feb019; }
+  .dsrc-not_configured { color:#888; }
+  .dsrc-error       { color:#ff4560; }
+  .conf-chip {
+    display:inline-block; width:48px; height:8px; border-radius:4px;
+    vertical-align:middle; margin-right:4px;
+  }
+  .rationale-cell {
+    max-width: 280px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    cursor: pointer;
+    font-size: .78rem;
+    color: #ccc;
+  }
+  .rationale-cell:hover { color: #fff; white-space: normal; max-width:none; }
+
+  .adv-table td, .adv-table th { vertical-align:middle; font-size:.82rem; }
+  .adv-table th { text-transform:uppercase; letter-spacing:.05em; font-size:.7rem; color:#888; }
+
+  /* Pagination */
+  .adv-pagination { display:flex; gap:.4rem; margin-top:1rem; align-items:center; flex-wrap:wrap; }
+  .adv-pagination button { padding:.3rem .7rem; border-radius:6px; font-size:.8rem; }
+
+  @media (max-width:640px) { .rationale-cell { display:none; } }
+</style>
+
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0"><i class="fas fa-lightbulb me-2 text-warning"></i>Advice History</h5>
+    <a href="/advisor/dashboard" class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-arrow-left me-1"></i>Overview
+    </a>
+  </div>
+
+  <!-- Filters -->
+  <div class="adv-filter-bar">
+    <select class="form-select form-select-sm" id="fMarket">
+      <option value="">All Markets</option>
+      <option value="crypto">Crypto</option>
+      <option value="us_equities">US Equities</option>
+      <option value="bist">BIST</option>
+      <option value="fx">FX &amp; Metals</option>
+      <option value="midas_funds">Midas Funds</option>
+    </select>
+    <select class="form-select form-select-sm" id="fHorizon">
+      <option value="">All Horizons</option>
+      <option value="short">Short</option>
+      <option value="mid">Mid</option>
+      <option value="long">Long</option>
+    </select>
+    <select class="form-select form-select-sm" id="fDirection">
+      <option value="">All Directions</option>
+      <option value="long">Long</option>
+      <option value="short">Short</option>
+      <option value="neutral">Neutral</option>
+    </select>
+    <input type="text" class="form-control form-control-sm" id="fSymbol" placeholder="Symbol…" style="width:120px">
+    <button class="btn btn-primary btn-sm" onclick="loadPage(0)">
+      <i class="fas fa-filter me-1"></i>Apply
+    </button>
+    <span class="text-muted ms-auto" id="resultCount" style="font-size:.8rem"></span>
+  </div>
+
+  <!-- Table -->
+  <div class="table-responsive">
+    <table class="table table-dark table-hover adv-table mb-0">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Time</th>
+          <th>Market</th>
+          <th>Symbol</th>
+          <th>Horizon</th>
+          <th>Direction</th>
+          <th>Entry Range</th>
+          <th>Target</th>
+          <th>Stop</th>
+          <th>Confidence</th>
+          <th>Data Source</th>
+          <th>Kronos</th>
+          <th class="d-none d-md-table-cell">Rationale</th>
+          <th>Model</th>
+        </tr>
+      </thead>
+      <tbody id="adviceBody">
+        <tr><td colspan="14" class="text-center text-muted py-4">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination -->
+  <div class="adv-pagination" id="pagination"></div>
+</div>
+
+<!-- Rationale modal -->
+<div class="modal fade" id="rationaleModal" tabindex="-1">
+  <div class="modal-dialog modal-lg">
+    <div class="modal-content bg-dark text-light border-secondary">
+      <div class="modal-header border-secondary">
+        <h6 class="modal-title" id="rTitle">Rationale</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body" id="rBody" style="white-space:pre-wrap;font-size:.88rem"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentOffset = 0;
+const PAGE_SIZE = 50;
+let totalRows = 0;
+
+function buildUrl(offset) {
+  const mkt = document.getElementById('fMarket').value;
+  const hor = document.getElementById('fHorizon').value;
+  const dir = document.getElementById('fDirection').value;
+  const sym = document.getElementById('fSymbol').value.trim();
+  let url = `/api/advisor/advice?limit=${PAGE_SIZE}&offset=${offset}`;
+  if (mkt) url += `&market=${encodeURIComponent(mkt)}`;
+  if (hor) url += `&horizon=${encodeURIComponent(hor)}`;
+  if (dir) url += `&direction=${encodeURIComponent(dir)}`;
+  if (sym) url += `&symbol=${encodeURIComponent(sym)}`;
+  return url;
+}
+
+async function loadPage(offset) {
+  currentOffset = offset;
+  const tbody = document.getElementById('adviceBody');
+  tbody.innerHTML = '<tr><td colspan="14" class="text-center text-muted py-4"><i class="fas fa-circle-notch fa-spin"></i></td></tr>';
+
+  try {
+    const res = await fetch(buildUrl(offset));
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    totalRows = data.total;
+    document.getElementById('resultCount').textContent =
+      `${data.total.toLocaleString()} result${data.total !== 1 ? 's' : ''}`;
+
+    tbody.innerHTML = '';
+    if (data.rows.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="14" class="text-center text-muted py-4">No advice found for the selected filters.</td></tr>';
+      renderPagination();
+      return;
+    }
+
+    for (const r of data.rows) {
+      const tr = document.createElement('tr');
+      const conf = r.confidence;
+      const confColor = conf >= .7 ? '#00e396' : conf >= .45 ? '#feb019' : '#ff4560';
+      const ts = r.created_at ? new Date(r.created_at).toLocaleString() : '—';
+      const entryRange = r.entry_low && r.entry_high
+        ? `${fmtN(r.entry_low)} – ${fmtN(r.entry_high)}` : '—';
+      const dsClass = 'dsrc-' + (r.data_source_status || 'not_configured');
+      const kronosHtml = r.kronos_signal != null
+        ? `<span style="color:${r.kronos_signal>0?'#00e396':'#ff4560'}">${r.kronos_signal>0?'+':''}${r.kronos_signal.toFixed(3)}</span>`
+        : '<span style="color:#555">—</span>';
+      const shortRat = r.rationale
+        ? escHtml(r.rationale.substring(0,80)) + (r.rationale.length>80?'…':'')
+        : '<span style="color:#555">—</span>';
+
+      tr.innerHTML = `
+        <td class="text-muted">${r.id}</td>
+        <td style="white-space:nowrap;font-size:.75rem">${ts}</td>
+        <td>${fmtMarket(r.market)}</td>
+        <td><strong>${escHtml(r.symbol)}</strong></td>
+        <td><span class="badge bg-secondary">${r.horizon}</span></td>
+        <td><span class="dir-badge dir-${r.direction}">${dirLabel(r.direction)}</span></td>
+        <td style="white-space:nowrap">${entryRange}</td>
+        <td style="color:#00e396">${fmtN(r.target_price)}</td>
+        <td style="color:#ff4560">${fmtN(r.stop_price)}</td>
+        <td>
+          <span class="conf-chip" style="background:${confColor};opacity:.7"></span>
+          ${(conf*100).toFixed(0)}%
+        </td>
+        <td class="${dsClass}">${(r.data_source_status||'').replace('_',' ')}</td>
+        <td>${kronosHtml}</td>
+        <td class="rationale-cell d-none d-md-table-cell" title="Click to expand"
+            onclick="showRationale(${r.id},'${escHtml(r.symbol)} ${r.direction.toUpperCase()} ${r.horizon}', this)">
+          ${shortRat}
+        </td>
+        <td style="font-size:.7rem;color:#777">${escHtml(r.model_id||'')}</td>
+      `;
+      tr.dataset.rationale = r.rationale || '';
+      tbody.appendChild(tr);
+    }
+    renderPagination();
+  } catch(e) {
+    tbody.innerHTML = `<tr><td colspan="14" class="text-center text-danger py-4">Error: ${e.message}</td></tr>`;
+  }
+}
+
+function renderPagination() {
+  const pg = document.getElementById('pagination');
+  pg.innerHTML = '';
+  const pages = Math.ceil(totalRows / PAGE_SIZE);
+  if (pages <= 1) return;
+
+  const currentPage = Math.floor(currentOffset / PAGE_SIZE);
+
+  const prevBtn = document.createElement('button');
+  prevBtn.className = 'btn btn-sm btn-outline-secondary';
+  prevBtn.textContent = '‹ Prev';
+  prevBtn.disabled = currentPage === 0;
+  prevBtn.onclick = () => loadPage((currentPage-1)*PAGE_SIZE);
+  pg.appendChild(prevBtn);
+
+  const info = document.createElement('span');
+  info.style.cssText = 'font-size:.8rem;color:#888;padding:0 .5rem';
+  info.textContent = `Page ${currentPage+1} of ${pages}`;
+  pg.appendChild(info);
+
+  const nextBtn = document.createElement('button');
+  nextBtn.className = 'btn btn-sm btn-outline-secondary';
+  nextBtn.textContent = 'Next ›';
+  nextBtn.disabled = currentPage >= pages-1;
+  nextBtn.onclick = () => loadPage((currentPage+1)*PAGE_SIZE);
+  pg.appendChild(nextBtn);
+}
+
+function showRationale(id, title, cell) {
+  const row = cell.closest('tr');
+  const full = row.dataset.rationale || 'No rationale';
+  document.getElementById('rTitle').textContent = title;
+  document.getElementById('rBody').textContent = full;
+  new bootstrap.Modal(document.getElementById('rationaleModal')).show();
+}
+
+const MARKET_ICONS = { crypto:'₿', us_equities:'📈', bist:'🇹🇷', fx:'💱', midas_funds:'🏦' };
+function fmtMarket(m) { return (MARKET_ICONS[m]||'') + ' ' + (m||'').replace('_',' '); }
+function dirLabel(d) { return d==='long'?'LONG ▲': d==='short'?'SHORT ▼':'HOLD ~'; }
+function fmtN(n) {
+  if (n == null) return '—';
+  const f = parseFloat(n);
+  if (f >= 1000) return f.toLocaleString(undefined,{maximumFractionDigits:2});
+  if (f >= 1) return f.toFixed(4);
+  return f.toFixed(6);
+}
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// Enter key filter
+document.getElementById('fSymbol').addEventListener('keydown', e => {
+  if (e.key === 'Enter') loadPage(0);
+});
+
+loadPage(0);
+</script>
+{% endblock %}

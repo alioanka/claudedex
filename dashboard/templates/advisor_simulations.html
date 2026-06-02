@@ -1,0 +1,252 @@
+{% extends "base.html" %}
+{% block title %}Advisor — Simulations{% endblock %}
+
+{% block content %}
+<style>
+  .sim-summary-bar {
+    display:grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap:.8rem; margin-bottom:1.25rem;
+  }
+  .sim-stat {
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08);
+    border-radius:10px; padding:.8rem 1rem; text-align:center;
+  }
+  .sim-stat .sv { font-size:1.45rem; font-weight:700; line-height:1.1; }
+  .sim-stat .sl { font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; color:#666; margin-top:.2rem; }
+
+  .dir-badge { font-size:.68rem; font-weight:700; padding:.18rem .55rem; border-radius:20px; }
+  .dir-long    { background:rgba(0,227,150,.15); color:#00e396; }
+  .dir-short   { background:rgba(255,69,96,.15);  color:#ff4560; }
+  .dir-neutral { background:rgba(254,176,25,.15); color:#feb019; }
+
+  .status-open   { color:#00e396; font-weight:600; }
+  .status-closed { color:#888; }
+  .status-expired{ color:#feb019; }
+
+  .pnl-pos { color:#00e396; }
+  .pnl-neg { color:#ff4560; }
+  .pnl-zero{ color:#888; }
+
+  .sim-table td, .sim-table th { vertical-align:middle; font-size:.82rem; }
+  .sim-table th { text-transform:uppercase; font-size:.7rem; color:#888; letter-spacing:.05em; }
+
+  .close-btn { font-size:.72rem; padding:.18rem .5rem; }
+
+  .tab-filter { display:flex; gap:.4rem; margin-bottom:1rem; flex-wrap:wrap; }
+  .tab-filter .btn { font-size:.8rem; }
+
+  @media (max-width:640px) {
+    .sim-summary-bar { grid-template-columns: repeat(2,1fr); }
+    .d-sm-none { display:none !important; }
+  }
+</style>
+
+<div class="container-fluid py-3">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0"><i class="fas fa-flask me-2 text-info"></i>Dry-Run Simulations</h5>
+    <a href="/advisor/dashboard" class="btn btn-sm btn-outline-secondary">
+      <i class="fas fa-arrow-left me-1"></i>Overview
+    </a>
+  </div>
+
+  <!-- Summary -->
+  <div class="sim-summary-bar" id="simSummary">
+    <div class="sim-stat"><div class="sv text-info" id="ssOpen">—</div><div class="sl">Open Sims</div></div>
+    <div class="sim-stat"><div class="sv" id="ssPnl">—</div><div class="sl">Closed P&amp;L</div></div>
+    <div class="sim-stat"><div class="sv text-warning" id="ssWin">—</div><div class="sl">Win Rate</div></div>
+    <div class="sim-stat"><div class="sv text-primary" id="ssTotal">—</div><div class="sl">Total Sims</div></div>
+  </div>
+
+  <!-- Filter tabs -->
+  <div class="tab-filter">
+    <button class="btn btn-sm btn-primary active" id="tabAll" onclick="setFilter('all', this)">All</button>
+    <button class="btn btn-sm btn-outline-success" id="tabOpen" onclick="setFilter('open', this)">Open</button>
+    <button class="btn btn-sm btn-outline-secondary" id="tabClosed" onclick="setFilter('closed', this)">Closed</button>
+  </div>
+
+  <!-- Table -->
+  <div class="table-responsive">
+    <table class="table table-dark table-hover sim-table mb-0">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Symbol</th>
+          <th>Market</th>
+          <th>Direction</th>
+          <th>Horizon</th>
+          <th>Entry</th>
+          <th>Current / Exit</th>
+          <th>Target</th>
+          <th>Stop</th>
+          <th>Notional</th>
+          <th>P&amp;L %</th>
+          <th>P&amp;L $</th>
+          <th>Status</th>
+          <th>Opened</th>
+          <th class="d-sm-none">Close Reason</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="simBody">
+        <tr><td colspan="16" class="text-center text-muted py-4">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Close sim modal -->
+<div class="modal fade" id="closeSimModal" tabindex="-1">
+  <div class="modal-dialog modal-sm">
+    <div class="modal-content bg-dark text-light border-secondary">
+      <div class="modal-header border-secondary">
+        <h6 class="modal-title">Close Sim Position</h6>
+        <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+      </div>
+      <div class="modal-body">
+        <div class="mb-3">
+          <label class="form-label form-label-sm">Exit Price (optional)</label>
+          <input type="number" class="form-control form-control-sm" id="exitPriceInput"
+                 placeholder="Leave blank to use current price" step="any">
+          <div class="form-text">If blank, P&amp;L is computed from last known price.</div>
+        </div>
+        <input type="hidden" id="closeSimId">
+      </div>
+      <div class="modal-footer border-secondary">
+        <button class="btn btn-sm btn-secondary" data-bs-dismiss="modal">Cancel</button>
+        <button class="btn btn-sm btn-danger" onclick="confirmClose()">Close Position</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+let activeFilter = 'all';
+let simRows = [];
+
+function setFilter(f, btn) {
+  activeFilter = f;
+  document.querySelectorAll('.tab-filter .btn').forEach(b => {
+    b.className = b.id === btn.id
+      ? (f==='open' ? 'btn btn-sm btn-success active' : f==='closed' ? 'btn btn-sm btn-secondary active' : 'btn btn-sm btn-primary active')
+      : 'btn btn-sm btn-outline-' + (b.id==='tabOpen'?'success': b.id==='tabClosed'?'secondary':'primary');
+  });
+  renderTable();
+}
+
+async function loadSims() {
+  try {
+    const res = await fetch('/api/advisor/simulations?status=all&limit=500');
+    const data = await res.json();
+    if (!data.success) throw new Error(data.error);
+
+    simRows = data.rows;
+    const s = data.summary;
+
+    const pnl = s.total_pnl_usd;
+    document.getElementById('ssOpen').textContent = s.total_open;
+    const pnlEl = document.getElementById('ssPnl');
+    pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
+    pnlEl.className = 'sv ' + (pnl > 0 ? 'text-success' : pnl < 0 ? 'text-danger' : 'text-muted');
+    document.getElementById('ssWin').textContent = s.win_rate + '%';
+    document.getElementById('ssTotal').textContent = simRows.length;
+
+    renderTable();
+  } catch(e) {
+    document.getElementById('simBody').innerHTML =
+      `<tr><td colspan="16" class="text-center text-danger py-4">Error: ${escHtml(e.message)}</td></tr>`;
+  }
+}
+
+function renderTable() {
+  const tbody = document.getElementById('simBody');
+  const rows = activeFilter === 'all' ? simRows : simRows.filter(r => r.status === activeFilter);
+  tbody.innerHTML = '';
+
+  if (rows.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="16" class="text-center text-muted py-4">No simulations found.</td></tr>';
+    return;
+  }
+
+  for (const r of rows) {
+    const tr = document.createElement('tr');
+    const pnlPct = r.pnl_pct;
+    const pnlUsd = r.pnl_usd;
+    const pnlCls = pnlPct == null ? 'pnl-zero' : pnlPct > 0 ? 'pnl-pos' : pnlPct < 0 ? 'pnl-neg' : 'pnl-zero';
+    const currentOrExit = r.status === 'closed'
+      ? (r.exit_price != null ? fmtN(r.exit_price) : '—')
+      : (r.current_price != null ? fmtN(r.current_price) : '—');
+    const ts = r.opened_at ? new Date(r.opened_at).toLocaleDateString() : '—';
+    const actionBtn = r.status === 'open'
+      ? `<button class="btn btn-danger close-btn" onclick="openCloseModal(${r.id})">
+           <i class="fas fa-times-circle me-1"></i>Close
+         </button>`
+      : '<span class="text-muted" style="font-size:.72rem">' + (r.close_reason || 'closed') + '</span>';
+
+    tr.innerHTML = `
+      <td class="text-muted">${r.id}</td>
+      <td><strong>${escHtml(r.symbol)}</strong></td>
+      <td style="font-size:.75rem">${fmtMarket(r.market)}</td>
+      <td><span class="dir-badge dir-${r.direction}">${dirLabel(r.direction)}</span></td>
+      <td><span class="badge bg-secondary">${r.horizon}</span></td>
+      <td>${fmtN(r.entry_price)}</td>
+      <td>${currentOrExit}</td>
+      <td style="color:#00e396">${fmtN(r.target_price)}</td>
+      <td style="color:#ff4560">${fmtN(r.stop_price)}</td>
+      <td>$${fmtUsd(r.notional_usd)}</td>
+      <td class="${pnlCls}">${pnlPct != null ? (pnlPct >= 0 ? '+':'') + pnlPct.toFixed(2) + '%' : '—'}</td>
+      <td class="${pnlCls}">${pnlUsd != null ? (pnlUsd >= 0 ? '+$':'-$') + Math.abs(pnlUsd).toFixed(2) : '—'}</td>
+      <td class="status-${r.status}">${r.status.toUpperCase()}</td>
+      <td style="font-size:.75rem;white-space:nowrap">${ts}</td>
+      <td class="d-sm-none" style="font-size:.72rem;color:#888">${escHtml(r.close_reason||'')}</td>
+      <td>${actionBtn}</td>
+    `;
+    tbody.appendChild(tr);
+  }
+}
+
+function openCloseModal(simId) {
+  document.getElementById('closeSimId').value = simId;
+  document.getElementById('exitPriceInput').value = '';
+  new bootstrap.Modal(document.getElementById('closeSimModal')).show();
+}
+
+async function confirmClose() {
+  const simId = document.getElementById('closeSimId').value;
+  const exitPrice = document.getElementById('exitPriceInput').value.trim();
+  const body = {};
+  if (exitPrice) body.exit_price = parseFloat(exitPrice);
+
+  try {
+    const res = await fetch(`/api/advisor/simulations/${simId}/close`, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.success) {
+      bootstrap.Modal.getInstance(document.getElementById('closeSimModal')).hide();
+      loadSims();
+    } else {
+      alert('Error: ' + data.error);
+    }
+  } catch(e) { alert('Request failed: ' + e.message); }
+}
+
+const MARKET_ICONS = { crypto:'₿', us_equities:'📈', bist:'🇹🇷', fx:'💱', midas_funds:'🏦' };
+function fmtMarket(m) { return (MARKET_ICONS[m]||'') + ' ' + (m||'').replace('_',' '); }
+function dirLabel(d) { return d==='long'?'LONG ▲': d==='short'?'SHORT ▼':'HOLD ~'; }
+function fmtN(n) {
+  if (n == null) return '—';
+  const f = parseFloat(n);
+  if (f >= 1000) return f.toLocaleString(undefined,{maximumFractionDigits:2});
+  if (f >= 1) return f.toFixed(4);
+  return f.toFixed(6);
+}
+function fmtUsd(n) {
+  return n != null ? parseFloat(n).toLocaleString(undefined,{maximumFractionDigits:2}) : '—';
+}
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+loadSims();
+setInterval(loadSims, 60000);
+</script>
+{% endblock %}

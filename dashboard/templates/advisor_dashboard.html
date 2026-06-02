@@ -1,0 +1,455 @@
+{% extends "base.html" %}
+{% block title %}Financial Advisor — Overview{% endblock %}
+
+{% block content %}
+<style>
+  /* ── Advisor brand colours ── */
+  :root {
+    --adv-green:  #00e396;
+    --adv-red:    #ff4560;
+    --adv-amber:  #feb019;
+    --adv-blue:   #008ffb;
+    --adv-purple: #775dd0;
+    --adv-card-bg: rgba(255,255,255,0.04);
+  }
+
+  /* Summary band */
+  .adv-summary-band {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  .adv-stat-card {
+    background: var(--adv-card-bg);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    text-align: center;
+  }
+  .adv-stat-card .adv-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .adv-stat-card .adv-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    opacity: .6;
+    margin-top: .3rem;
+  }
+
+  /* Market section headers */
+  .market-header {
+    display: flex;
+    align-items: center;
+    gap: .6rem;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: .04em;
+    text-transform: uppercase;
+    margin: 1.5rem 0 .75rem;
+    padding-bottom: .4rem;
+    border-bottom: 2px solid rgba(255,255,255,0.1);
+  }
+  .market-badge {
+    font-size: .65rem;
+    font-weight: 700;
+    padding: .2rem .55rem;
+    border-radius: 20px;
+  }
+  .badge-available   { background: rgba(0,227,150,.2); color: #00e396; }
+  .badge-degraded    { background: rgba(254,176,25,.2); color: #feb019; }
+  .badge-not_configured { background: rgba(255,255,255,.1); color: #aaa; }
+  .badge-error       { background: rgba(255,69,96,.2); color: #ff4560; }
+
+  /* Advice card grid */
+  .advice-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: .85rem;
+  }
+  .advice-card {
+    background: var(--adv-card-bg);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 1rem 1.1rem;
+    position: relative;
+    overflow: hidden;
+    transition: border-color .2s, transform .1s;
+  }
+  .advice-card:hover { border-color: rgba(255,255,255,.2); transform: translateY(-2px); }
+  .advice-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 3px;
+  }
+  .advice-card.long  ::before, .advice-card.long  { border-top: 3px solid var(--adv-green); }
+  .advice-card.short { border-top: 3px solid var(--adv-red); }
+  .advice-card.neutral { border-top: 3px solid var(--adv-amber); }
+
+  .card-symbol {
+    font-size: 1rem;
+    font-weight: 700;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: .5rem;
+  }
+  .dir-badge {
+    font-size: .7rem;
+    font-weight: 700;
+    padding: .2rem .6rem;
+    border-radius: 20px;
+  }
+  .dir-long    { background: rgba(0,227,150,.15); color: var(--adv-green); }
+  .dir-short   { background: rgba(255,69,96,.15); color: var(--adv-red); }
+  .dir-neutral { background: rgba(254,176,25,.15); color: var(--adv-amber); }
+
+  .horizon-tabs {
+    display: flex; gap: .3rem; margin-bottom: .75rem;
+  }
+  .htab {
+    font-size: .65rem;
+    padding: .2rem .5rem;
+    border-radius: 8px;
+    cursor: pointer;
+    background: rgba(255,255,255,.06);
+    border: 1px solid transparent;
+    color: #aaa;
+    white-space: nowrap;
+    transition: all .15s;
+  }
+  .htab.active {
+    background: rgba(0,143,251,.18);
+    border-color: var(--adv-blue);
+    color: #fff;
+  }
+
+  .price-row {
+    font-size: .78rem;
+    display: flex;
+    justify-content: space-between;
+    gap: .5rem;
+    margin-bottom: .25rem;
+    color: #ccc;
+  }
+  .price-row span:first-child { opacity: .6; }
+
+  /* Confidence bar */
+  .conf-wrap {
+    margin-top: .6rem;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+  }
+  .conf-bar-bg {
+    flex: 1;
+    height: 4px;
+    background: rgba(255,255,255,.1);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+  .conf-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width .4s;
+  }
+  .conf-pct { font-size: .7rem; color: #aaa; min-width: 32px; text-align: right; }
+
+  /* Advice only notice */
+  .advice-only-notice {
+    background: rgba(119,93,208,.12);
+    border: 1px solid rgba(119,93,208,.3);
+    border-radius: 8px;
+    padding: .5rem 1rem;
+    font-size: .8rem;
+    color: #b8a9f0;
+    display: flex;
+    align-items: center;
+    gap: .5rem;
+    margin-bottom: 1rem;
+  }
+
+  /* Empty state */
+  .adv-empty {
+    text-align: center; padding: 3rem 1rem; color: #666;
+  }
+
+  @media (max-width: 576px) {
+    .advice-grid { grid-template-columns: 1fr; }
+    .adv-summary-band { grid-template-columns: repeat(2,1fr); }
+  }
+</style>
+
+<div class="container-fluid py-3">
+
+  <!-- Advice-only notice -->
+  <div class="advice-only-notice">
+    <i class="fas fa-info-circle"></i>
+    <span><strong>Advice-only module.</strong> All signals are for your manual review on Midas. No trades are executed automatically.</span>
+  </div>
+
+  <!-- Summary band -->
+  <div class="adv-summary-band" id="summaryBand">
+    <div class="adv-stat-card">
+      <div class="adv-value text-success" id="statPortfolioValue">—</div>
+      <div class="adv-label">Portfolio Value</div>
+    </div>
+    <div class="adv-stat-card">
+      <div class="adv-value text-info" id="statOpenSims">—</div>
+      <div class="adv-label">Open Sims</div>
+    </div>
+    <div class="adv-stat-card">
+      <div class="adv-value text-success" id="statSimPnl">—</div>
+      <div class="adv-label">Sim P&amp;L (closed)</div>
+    </div>
+    <div class="adv-stat-card">
+      <div class="adv-value text-warning" id="statWinRate">—</div>
+      <div class="adv-label">Sim Win Rate</div>
+    </div>
+    <div class="adv-stat-card">
+      <div class="adv-value text-primary" id="statTotalAdvice">—</div>
+      <div class="adv-label">Advice (24h)</div>
+    </div>
+    <div class="adv-stat-card">
+      <div class="adv-value" id="statBestAdvice" style="font-size:1rem">—</div>
+      <div class="adv-label">Best Signal</div>
+    </div>
+  </div>
+
+  <!-- Market Advice Cards -->
+  <div id="marketSections">
+    <!-- Populated by JS -->
+    <div class="adv-empty" id="loadingState">
+      <i class="fas fa-circle-notch fa-spin fa-2x mb-3"></i>
+      <div>Loading advice data…</div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+const MARKETS = [
+  { id: 'crypto',      label: 'Crypto',        icon: '₿' },
+  { id: 'us_equities', label: 'US Equities',   icon: '📈' },
+  { id: 'bist',        label: 'BIST (Borsa Istanbul)', icon: '🇹🇷' },
+  { id: 'fx',          label: 'FX & Metals',   icon: '💱' },
+  { id: 'midas_funds', label: 'Midas Funds',   icon: '🏦' },
+];
+
+const HORIZON_LABEL = { short: 'Short (1d–1w)', mid: 'Mid (1w–3mo)', long: 'Long (3mo–2y)' };
+const DIR_COLOR = { long: '#00e396', short: '#ff4560', neutral: '#feb019' };
+
+// advice by [market][symbol][horizon]
+let adviceData = {};
+
+async function loadSummary() {
+  try {
+    const [portRes, simRes] = await Promise.all([
+      fetch('/api/advisor/portfolio').then(r=>r.json()),
+      fetch('/api/advisor/simulations?status=all&limit=500').then(r=>r.json()),
+    ]);
+    if (portRes.success) {
+      document.getElementById('statPortfolioValue').textContent =
+        portRes.total_value > 0 ? '$' + portRes.total_value.toLocaleString(undefined,{maximumFractionDigits:0}) : '—';
+    }
+    if (simRes.success) {
+      const s = simRes.summary;
+      document.getElementById('statOpenSims').textContent = s.total_open;
+      const pnl = s.total_pnl_usd;
+      const el = document.getElementById('statSimPnl');
+      el.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toLocaleString(undefined,{maximumFractionDigits:0});
+      el.className = 'adv-value ' + (pnl >= 0 ? 'text-success' : 'text-danger');
+      document.getElementById('statWinRate').textContent = s.win_rate + '%';
+    }
+  } catch(e) { console.warn('summary load error', e); }
+}
+
+async function loadAdvice() {
+  try {
+    const res = await fetch('/api/advisor/advice?limit=200');
+    const data = await res.json();
+    if (!data.success) return;
+    const rows = data.rows;
+
+    // Count 24h advice
+    const cutoff = Date.now() - 86400*1000;
+    const recent = rows.filter(r => new Date(r.created_at).getTime() > cutoff);
+    document.getElementById('statTotalAdvice').textContent = recent.length;
+
+    // Best signal = highest confidence LONG
+    const best = rows.filter(r=>r.direction==='long').sort((a,b)=>b.confidence-a.confidence)[0];
+    if (best) {
+      document.getElementById('statBestAdvice').textContent = best.symbol + ' (' + (best.confidence*100).toFixed(0) + '%)';
+      document.getElementById('statBestAdvice').style.color = '#00e396';
+    }
+
+    // Group by market→symbol→horizon (latest row)
+    adviceData = {};
+    for (const r of rows) {
+      if (!adviceData[r.market]) adviceData[r.market] = {};
+      if (!adviceData[r.market][r.symbol]) adviceData[r.market][r.symbol] = {};
+      // keep latest per horizon
+      const existing = adviceData[r.market][r.symbol][r.horizon];
+      if (!existing || new Date(r.created_at) > new Date(existing.created_at)) {
+        adviceData[r.market][r.symbol][r.horizon] = r;
+      }
+    }
+    renderMarkets();
+  } catch(e) {
+    console.error('advice load error', e);
+    document.getElementById('loadingState').innerHTML =
+      '<i class="fas fa-exclamation-triangle fa-2x mb-2 text-warning"></i><div>Failed to load advice data</div>';
+  }
+}
+
+function renderMarkets() {
+  const container = document.getElementById('marketSections');
+  container.innerHTML = '';
+
+  for (const mkt of MARKETS) {
+    const symbols = adviceData[mkt.id] || {};
+    const symbolKeys = Object.keys(symbols);
+
+    // Determine data source status from the latest advice in this market
+    let dsStatus = 'not_configured';
+    for (const sym of symbolKeys) {
+      for (const h of ['short','mid','long']) {
+        if (symbols[sym] && symbols[sym][h]) {
+          dsStatus = symbols[sym][h].data_source_status || 'available';
+          break;
+        }
+      }
+      if (dsStatus !== 'not_configured') break;
+    }
+
+    const section = document.createElement('div');
+    section.className = 'mb-4';
+
+    const header = document.createElement('div');
+    header.className = 'market-header';
+    header.innerHTML = `<span>${mkt.icon}</span><span>${mkt.label}</span>
+      <span class="market-badge badge-${dsStatus}">${dsStatus.replace('_',' ').toUpperCase()}</span>`;
+    section.appendChild(header);
+
+    if (symbolKeys.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:#666;font-size:.85rem;padding:.5rem 0';
+      empty.textContent = dsStatus === 'not_configured'
+        ? 'No data source configured for this market. Configure via Advisor Settings.'
+        : 'No advice generated yet.';
+      section.appendChild(empty);
+      container.appendChild(section);
+      continue;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'advice-grid';
+
+    for (const sym of symbolKeys) {
+      const horizons = symbols[sym];
+      // default show: first available horizon
+      const defaultH = ['short','mid','long'].find(h => horizons[h]) || 'short';
+      const card = buildCard(sym, horizons, defaultH);
+      grid.appendChild(card);
+    }
+    section.appendChild(grid);
+    container.appendChild(section);
+  }
+}
+
+function buildCard(symbol, horizons, activeH) {
+  const card = document.createElement('div');
+  const row = horizons[activeH] || {};
+  const dir = row.direction || 'neutral';
+  card.className = `advice-card ${dir}`;
+  card.setAttribute('data-symbol', symbol);
+
+  const tabs = ['short','mid','long'].map(h => {
+    const cls = h === activeH ? 'htab active' : 'htab';
+    const dis = horizons[h] ? '' : 'style="opacity:.35;cursor:default"';
+    return `<span class="${cls}" data-h="${h}" ${dis}>${h.charAt(0).toUpperCase()+h.slice(1)}</span>`;
+  }).join('');
+
+  const dirLabel = {long:'LONG ▲', short:'SHORT ▼', neutral:'HOLD ~'}[dir] || dir.toUpperCase();
+  const conf = row.confidence || 0;
+  const confColor = conf >= .7 ? '#00e396' : conf >= .45 ? '#feb019' : '#ff4560';
+
+  let priceHtml = '';
+  if (row.entry_low && row.entry_high) {
+    priceHtml += `<div class="price-row"><span>Entry</span><span>${fmtNum(row.entry_low)} – ${fmtNum(row.entry_high)}</span></div>`;
+  }
+  if (row.target_price) {
+    priceHtml += `<div class="price-row"><span>Target</span><span style="color:var(--adv-green)">${fmtNum(row.target_price)}</span></div>`;
+  }
+  if (row.stop_price) {
+    priceHtml += `<div class="price-row"><span>Stop</span><span style="color:var(--adv-red)">${fmtNum(row.stop_price)}</span></div>`;
+  }
+
+  let kronosHtml = '';
+  if (row.kronos_signal != null) {
+    const kb = row.kronos_signal > 0 ? 'Bullish' : 'Bearish';
+    const kc = row.kronos_signal > 0 ? '#00e396' : '#ff4560';
+    kronosHtml = `<div class="price-row" style="margin-top:.4rem">
+      <span>Kronos</span><span style="color:${kc}">${kb} (${row.kronos_signal > 0 ? '+':''}${row.kronos_signal.toFixed(3)})</span>
+    </div>`;
+  }
+
+  const ts = row.created_at ? new Date(row.created_at).toLocaleString() : '—';
+
+  card.innerHTML = `
+    <div class="card-symbol">
+      <span>${symbol}</span>
+      <span class="dir-badge dir-${dir}">${dirLabel}</span>
+    </div>
+    <div class="horizon-tabs">${tabs}</div>
+    ${priceHtml || '<div style="font-size:.75rem;color:#666;margin-bottom:.4rem">No price targets</div>'}
+    ${kronosHtml}
+    <div class="conf-wrap">
+      <div class="conf-bar-bg">
+        <div class="conf-bar-fill" style="width:${(conf*100).toFixed(0)}%;background:${confColor}"></div>
+      </div>
+      <span class="conf-pct">${(conf*100).toFixed(0)}%</span>
+    </div>
+    <div style="font-size:.68rem;color:#555;margin-top:.5rem;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">
+      ${row.rationale ? escHtml(row.rationale.substring(0,120)) + (row.rationale.length > 120 ? '…' : '') : 'No rationale available'}
+    </div>
+    <div style="font-size:.65rem;color:#444;margin-top:.5rem">${ts}</div>
+  `;
+
+  // Horizon tab click
+  card.querySelectorAll('.htab').forEach(tab => {
+    tab.addEventListener('click', e => {
+      e.stopPropagation();
+      const h = tab.dataset.h;
+      if (!horizons[h]) return;
+      const newCard = buildCard(symbol, horizons, h);
+      card.replaceWith(newCard);
+    });
+  });
+
+  return card;
+}
+
+function fmtNum(n) {
+  if (n == null) return '—';
+  const f = parseFloat(n);
+  if (f >= 1000) return f.toLocaleString(undefined,{maximumFractionDigits:2});
+  if (f >= 1) return f.toFixed(4);
+  return f.toFixed(6);
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Init
+loadSummary();
+loadAdvice();
+
+// Auto-refresh every 5 minutes
+setInterval(() => { loadSummary(); loadAdvice(); }, 300000);
+</script>
+{% endblock %}
