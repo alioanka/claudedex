@@ -1315,12 +1315,21 @@ class EVMArbitrageEngine:
             self._near_miss_counters[reason] = self._near_miss_counters.get(reason, 0) + 1
             # One-line structured log so a grep on the rotating file tells
             # the operator immediately why nothing is firing.
+            # Wave-18: thin_pool_artifact fires hundreds of times per minute
+            # on every pair (working-as-designed: absurdly wide spreads from
+            # stale/low-TVL pools are correctly filtered).  Demote to DEBUG so
+            # the INFO log is not flooded; the STATS summary still prints at INFO
+            # every N minutes via _log_stats_if_needed.
             parts = [f"{k}={v}" for k, v in fields.items()
                      if v is not None and k in (
                          'pair', 'buy_dex', 'sell_dex', 'profit_bps',
                          'price_spread_bps', 'threshold_bps', 'gas_usd', 'detail'
                      )]
-            self.logger.info(f"[arb-skip] reason={reason} " + " ".join(parts))
+            log_msg = f"[arb-skip] reason={reason} " + " ".join(parts)
+            if reason == 'thin_pool_artifact':
+                self.logger.debug(log_msg)
+            else:
+                self.logger.info(log_msg)
         except Exception:
             pass
 
