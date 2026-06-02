@@ -67,6 +67,23 @@
         </div>
 
         <div class="mb-3">
+          <label class="form-label form-label-sm">OpenAI Dual-Advice (second opinion)</label>
+          <select class="form-select form-select-sm" id="s_advisor_dual_advice_mode">
+            <option value="off">Off — Anthropic only (default)</option>
+            <option value="both">Both — show Anthropic + OpenAI rationale side by side</option>
+            <option value="consensus">Consensus — combine both into one verdict</option>
+          </select>
+          <div class="form-text">Requires <code>ADVISOR_OPENAI_API_KEY</code> in Secure Credentials. If the key is missing, dual-advice is silently skipped and Anthropic-only is used.</div>
+        </div>
+
+        <div class="mb-3">
+          <label class="form-label form-label-sm">OpenAI Model ID</label>
+          <input type="text" class="form-control form-control-sm" id="s_advisor_openai_model"
+                 placeholder="gpt-4o">
+          <div class="form-text">Model used for the OpenAI second opinion when dual-advice is on. Default: gpt-4o.</div>
+        </div>
+
+        <div class="mb-3">
           <label class="form-label form-label-sm">Advice Cycle (minutes)</label>
           <input type="number" class="form-control form-control-sm" id="s_run_interval_minutes"
                  min="5" max="1440" step="5">
@@ -355,7 +372,8 @@ async function loadSettings() {
 
 async function saveSettings() {
   const fields = [
-    'advisor_anthropic_model','run_interval_minutes','min_confidence',
+    'advisor_anthropic_model','advisor_dual_advice_mode','advisor_openai_model',
+    'run_interval_minutes','min_confidence',
     'enabled_markets','enabled_horizons',
     'watchlist_crypto','watchlist_us_equities','watchlist_bist',
     'watchlist_fx','watchlist_midas_funds','blocked_symbols',
