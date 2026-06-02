@@ -45,7 +45,10 @@ _REPO_MAP = {
     "base":  "NeoQuasar/Kronos-base",
 }
 
-_DEFAULT_DIR = Path(os.getenv("KRONOS_WEIGHTS_BASE", "/data/kronos"))
+# Default to /app/data/kronos: /app/data is the mounted ./data volume, so
+# weights downloaded here PERSIST across `docker compose up --build`. A bare
+# /data path would be ephemeral container disk and wiped on every rebuild.
+_DEFAULT_DIR = Path(os.getenv("KRONOS_WEIGHTS_BASE", "/app/data/kronos"))
 
 
 def _check_huggingface_hub() -> None:

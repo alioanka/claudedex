@@ -141,4 +141,8 @@ textblob
 
 torch
 
+transformers
+
+huggingface_hub
+
 xgboost

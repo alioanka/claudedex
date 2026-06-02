@@ -110,6 +110,15 @@ RUN pip install --no-cache-dir --timeout=300 torch || \
     echo "⚠️ PyTorch installation failed (optional)" && \
     echo "✅ PyTorch installation attempted"
 
+# Stage 7b: Kronos K-line forecaster deps (advisor module, optional/fail-soft).
+# transformers + huggingface_hub are needed for the advisor Kronos forecaster
+# (download + AutoModel inference). Baked into the image so they survive
+# rebuilds — an ephemeral in-container `pip install` would be lost on --build.
+RUN pip install --no-cache-dir --timeout=300 transformers huggingface_hub || \
+    pip install --no-cache-dir --timeout=300 transformers huggingface_hub || \
+    echo "⚠️ transformers/huggingface_hub install failed (Kronos optional)" && \
+    echo "✅ Kronos deps install attempted"
+
 # Stage 8: Boosting libraries
 RUN pip install --no-cache-dir \
     lightgbm \

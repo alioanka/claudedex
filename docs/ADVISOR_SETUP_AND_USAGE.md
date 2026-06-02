@@ -124,16 +124,55 @@ analyzer fails **soft** to DEGRADED/manual — the module never crashes; the bad
 ---
 
 ## 5. Kronos K-line forecaster (optional, operator step)
-Kronos needs model weights (not auto-downloaded — they're large). One-time:
+Kronos needs model weights (not auto-downloaded — they're large). The Python
+deps (`torch`, `transformers`, `huggingface_hub`) are **baked into the image**,
+so after a `docker compose up --build` you do NOT pip-install anything — you
+only download the weights once.
+
+### Why the path matters (read this first)
+The weights MUST live under a **mounted volume** or they vanish on the next
+`--build`. The `trading-bot` container mounts `./data → /app/data`, so the only
+rebuild-safe location is **`/app/data/kronos`** (host: `~/claudedex/data/kronos`).
+Do NOT use `/data/kronos` — that is ephemeral container disk and is wiped on
+every rebuild. The download script now defaults to `/app/data/kronos`.
+
+### Step-by-step (run from your VPS, bot already built & running)
 ```bash
-# inside the container (or rebuild image with these in requirements):
-pip install 'torch>=2.0' 'transformers>=4.38' huggingface_hub
-python scripts/download_kronos_weights.py --variant mini --dir /data/kronos
-#   -> prints the path; put it in .env:  ADVISOR_KRONOS_WEIGHTS_PATH=/data/kronos/Kronos-mini
-PG -c "UPDATE config_settings SET value='true' WHERE config_type='advisor_config' AND key='advisor_kronos_enabled';"
-docker compose restart trading-bot
+cd ~/claudedex
+
+# 1. Download the weights INTO the running container (writes to the mounted
+#    ./data volume → persists). 'mini' is CPU-feasible (~50MB).
+docker exec -it trading-bot python scripts/download_kronos_weights.py --variant mini
+#    ^ on success it prints, verbatim, the exact line to copy, e.g.:
+#         Download complete: /app/data/kronos/Kronos-mini
+#         ADVISOR_KRONOS_WEIGHTS_PATH=/app/data/kronos/Kronos-mini
+
+# 2. Confirm the files actually landed on the HOST (proves they'll survive a rebuild):
+ls -la ~/claudedex/data/kronos/Kronos-mini      # should list config.json, *.safetensors, etc.
+
+# 3. Put that path in .env (it's read at module start):
+#      ADVISOR_KRONOS_WEIGHTS_PATH=/app/data/kronos/Kronos-mini
+nano .env        # add/edit the line, save
+
+# 4. Turn Kronos on in the DB (PG helper from the runbook):
+PG -c "UPDATE config_settings SET value='true'  WHERE config_type='advisor_config' AND key='advisor_kronos_enabled';"
+PG -c "UPDATE config_settings SET value='Kronos-mini' WHERE config_type='advisor_config' AND key='advisor_kronos_variant';"
+
+# 5. Restart so .env + config reload (no --build needed — deps are already in the image):
+docker compose up -d         # or: docker compose restart trading-bot
 ```
-Kronos-mini is CPU-feasible (~50MB). Until enabled, advice still flows (AI-forecast layer = "unavailable").
+
+### Verify it loaded
+```bash
+docker exec trading-bot sh -c 'grep -iE "kronos" logs/financial_advisor/*.log | tail -10'
+#  expect: "[kronos] Loaded via ... (Kronos-mini, device=cpu)"  (NOT "weights path not set")
+curl -s localhost:8086/health | grep -i kronos   # health surface reports weights_path + loaded state
+```
+
+**Notes.** `--variant small` (~100MB) / `base` (~400MB, GPU recommended) work the
+same way. To use a different host folder, mount it and pass `--dir /app/data/<your-dir>`.
+Until Kronos is enabled, advice still flows normally — the AI-forecast layer
+just reports "unavailable" and the other six signal layers carry the decision.
 
 ---
 
