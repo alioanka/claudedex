@@ -5,18 +5,26 @@ One cycle per run_interval_minutes (default 60):
   1. Load enabled markets + symbols from advisor_config.
   2. For each (market, symbol, horizon): call the appropriate analyzer.
   3. Optionally overlay Kronos forecast signal.
-  4. Pass through AdvisorRiskEngine gate.
-  5. Persist accepted advice to advisor_advice table.
-  6. If sim_enabled on advice: open sim position via portfolio_engine.
-  7. Notify via AdvisorTelegramBot.
-  8. Mark-to-market existing open sim positions.
-  9. Auto-close expired / target-hit / stop-hit sims.
+  4. Compute multi-layer composite signal (signal_engine) and store in extra['signal'].
+  5. Pass through AdvisorRiskEngine gate.
+  6. Persist accepted advice to advisor_advice table.
+  7. If sim_enabled on advice: open sim position via portfolio_engine.
+  8. Notify via AdvisorTelegramBot.
+  9. Mark-to-market existing open sim positions.
+  10. Auto-close expired / target-hit / stop-hit sims.
 
 Wave-21 changes (quant agent)
   - _mark_to_market_open_sims: uses sim.id (from DB) not advice_id.
   - auto-close hook: calls portfolio.auto_close_expired() after mark-to-market.
   - _ml_learning_tick: implemented (see advisor_ml.py).
   - Kronos overlay: None handled cleanly; advice still produced.
+
+Wave-22 changes (quant agent)
+  - _overlay_signal: compute_composite_signal called after Kronos overlay;
+    result stored in AdviceResult.extra['signal']. Fail-soft.
+  - build_rationale now accepts extra= kwarg to receive dual-advice artefacts
+    (rationale_anthropic, rationale_openai, providers_disagree) when
+    advisor_dual_advice_mode != 'off'. Analyzers pass result.extra through.
 """
 
 from __future__ import annotations
@@ -32,6 +40,7 @@ from modules.advisor.core.kronos_forecaster import KronosForecaster
 from modules.advisor.core.models import AdviceResult, DataSourceStatus, Horizon, Market
 from modules.advisor.core.portfolio_engine import AdvisorPortfolioEngine
 from modules.advisor.core.risk_engine import AdvisorRiskEngine
+from modules.advisor.core.signal_engine import compute_composite_signal
 
 logger = logging.getLogger("advisor.advice_engine")
 
@@ -175,6 +184,16 @@ class AdviceEngine:
                     "[advice] Kronos overlay failed for %s: %s", symbol, exc
                 )
 
+        # Multi-layer composite signal (Wave-22). Fail-soft: any error leaves
+        # extra['signal'] absent; advice cycle is unaffected.
+        await self._overlay_composite_signal(result)
+
+        # Dual-advice: if advisor_dual_advice_mode != 'off' and an OpenAI key
+        # is available, fetch the OpenAI rationale and store artefacts.
+        # The primary result.rationale (from the analyzer / Anthropic) is
+        # preserved; OpenAI text goes into result.extra['rationale_openai'].
+        await self._overlay_dual_advice(result, symbol, horizon)
+
         # Risk gate.
         passes, reject_reason = self.risk.should_publish(result, open_sim_count)
         if not passes:
@@ -242,6 +261,139 @@ class AdviceEngine:
                 "[advice] Failed to persist advice for %s: %s", result.symbol, exc
             )
             return None
+
+    async def _overlay_composite_signal(self, result: AdviceResult) -> None:
+        """
+        Wave-22: compute multi-layer composite signal and store in extra['signal'].
+
+        Reads the klines DataFrame from extra['klines_df'] (populated by the
+        analyzer). Fail-soft: any error is caught and logged at DEBUG level;
+        the advice cycle continues without the composite signal.
+        """
+        try:
+            klines = result.extra.get("klines_df")
+            if klines is None or len(klines) < 20:
+                return
+            signal = compute_composite_signal(
+                ohlcv_df=klines,
+                market=result.market.value,
+                config=self.config,
+                kronos_signal=result.kronos_signal,
+            )
+            result.extra["signal"] = signal
+            logger.debug(
+                "[advice] signal overlay for %s: action=%s confidence=%d regime=%s",
+                result.symbol,
+                signal.get("action", "?"),
+                signal.get("confidence", 0),
+                signal.get("market_regime", "?"),
+            )
+        except Exception as exc:
+            logger.debug(
+                "[advice] _overlay_composite_signal failed for %s: %s",
+                result.symbol, exc,
+            )
+
+    async def _overlay_dual_advice(
+        self,
+        result: AdviceResult,
+        symbol: str,
+        horizon: Horizon,
+    ) -> None:
+        """
+        Wave-22: fetch OpenAI second opinion if advisor_dual_advice_mode != 'off'.
+
+        The Anthropic rationale is already in result.rationale (produced by the
+        analyzer). This method:
+          1. Checks advisor_dual_advice_mode in config.
+          2. If 'both' or 'consensus': calls OpenAI and stores:
+               extra['rationale_anthropic'] = result.rationale (copy)
+               extra['rationale_openai']    = OpenAI text
+               extra['dual_advice_mode']    = mode
+          3. In 'consensus' mode: compares direction keywords extracted from
+             each rationale; if they disagree:
+               extra['providers_disagree'] = True
+             The dashboard uses this flag to show a disagreement warning.
+
+        Fail-soft: any error silently skips dual-advice; primary rationale unchanged.
+        """
+        from modules.advisor.core.rationale_helper import (
+            _resolve_openai_key,
+            _DUAL_MODE_OFF,
+            _DUAL_MODE_BOTH,
+            _DUAL_MODE_CONSENSUS,
+            _build_signal_summary,
+            _build_prompt,
+            _MARKET_LABEL,
+            _call_openai,
+            _extract_direction_from_text,
+            build_rule_based_rationale,
+        )
+        from modules.advisor.core.models import Direction
+
+        dual_mode = str(
+            self.config.get("advisor_dual_advice_mode", _DUAL_MODE_OFF)
+        ).lower().strip()
+
+        if dual_mode == _DUAL_MODE_OFF:
+            return
+
+        openai_key = _resolve_openai_key(self.config)
+        if not openai_key:
+            return
+
+        try:
+            # Re-extract signals from extra for the prompt (best-effort).
+            # The analyzer may not have put a clean signal dict at extra['signals'],
+            # so we build a minimal one from the existing klines or stored values.
+            stored_signals = result.extra.get("signals", {})
+            # Fallback: reconstruct a minimal signals dict from result fields.
+            if not stored_signals:
+                stored_signals = {
+                    "close":      result.entry_low or 0,
+                    "sma20":      0,
+                    "sma50":      0,
+                    "rsi":        50,
+                    "sma_signal": 1 if result.direction.value == "long" else -1,
+                }
+
+            from modules.advisor.core.models import Horizon as _Horizon
+            openai_model  = self.config.get("advisor_openai_model", "gpt-4o")
+            mkt_label     = _MARKET_LABEL.get(result.market, result.market.value)
+            signal_summary = _build_signal_summary(
+                symbol, result.market, horizon, stored_signals, result.direction
+            )
+            prompt = _build_prompt(signal_summary, mkt_label)
+            fallback = result.rationale  # use existing rationale as fallback
+
+            openai_text = await _call_openai(
+                prompt, openai_model, openai_key, fallback, logger, symbol
+            )
+
+            result.extra["dual_advice_mode"]     = dual_mode
+            result.extra["rationale_anthropic"]  = result.rationale
+            result.extra["rationale_openai"]     = openai_text
+
+            if dual_mode == _DUAL_MODE_CONSENSUS:
+                dir_a = _extract_direction_from_text(result.rationale)
+                dir_o = _extract_direction_from_text(openai_text)
+                disagree = (
+                    dir_a is not None
+                    and dir_o is not None
+                    and dir_a != dir_o
+                )
+                result.extra["providers_disagree"] = disagree
+                if disagree:
+                    logger.info(
+                        "[advice] Dual-advice DISAGREE for %s: "
+                        "anthropic=%s openai=%s",
+                        symbol, dir_a, dir_o,
+                    )
+
+        except Exception as exc:
+            logger.debug(
+                "[advice] _overlay_dual_advice failed for %s: %s", symbol, exc
+            )
 
     async def _mark_to_market_open_sims(self) -> None:
         """
