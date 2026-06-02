@@ -176,6 +176,28 @@ python scripts/crawl_kap_history.py --tickers THYAO,AKBNK,EREGL,HEDEF --since 20
 give "+4.8% / 74% confidence" impact scores — those need months of accumulated forward-return data.
 The engine starts collecting that the moment you enable it.
 
+**Phase-1 wiring (now end-to-end, all gated by `advisor_kap_enabled`):**
+- **Classification worker** — a third KAP background task (`KapClassifierWorker`,
+  `modules/advisor/core/kap/classifier_worker.py`) runs every
+  `advisor_kap_classify_interval_s` (default 60s): pulls unclassified disclosures,
+  classifies them (rule stage + optional LLM fallback, fail-soft), and persists to
+  `kap_classifications`. Started alongside the listener + return accumulator in `main_advisor.py`.
+- **Telegram polarity-prior alerts** — `AdvisorTelegramBot.send_kap_alert(...)` fires only for
+  **non-NEUTRAL** disclosures with confidence ≥ `advisor_kap_alert_min_confidence` (default 0.5),
+  capped at `advisor_kap_alert_max_per_cycle` (default 10) per cycle (excess logged, not sent).
+  Every alert carries an explicit "polarity-prior only — NOT a price prediction" disclaimer.
+- **BIST advice overlay** — `AdviceEngine._overlay_kap_context()` attaches recent classified
+  disclosures (within `advisor_kap_lookback_days`, default 7) to BIST `AdviceResult.extra['kap_context']`
+  as operator **context only**. It does **NOT** flip the action or change the numeric confidence.
+- **Dashboard** — the **`/advisor/kap`** page lists recent disclosures with their classification
+  (ticker, time, event type, polarity-prior glyph, classifier stage, confidence, subject), with a
+  prominent polarity-prior disclaimer and a needs-time note. API: `/api/advisor/kap/disclosures`
+  (`?limit=`, `?ticker=`).
+
+New config keys (seeded by **migration `064_kap_phase1_wiring.sql`**, `config_type='advisor_config'`):
+`advisor_kap_classify_interval_s` (60), `advisor_kap_alert_min_confidence` (0.5),
+`advisor_kap_alert_max_per_cycle` (10), `advisor_kap_lookback_days` (7).
+
 ---
 
 ## 9. Advisor Telegram bot (separate from the trading bot)
@@ -191,6 +213,8 @@ The engine starts collecting that the moment you enable it.
 - **/advisor/advice** — history, filter by market/horizon/direction, expandable rationale (both LLMs if dual-advice on).
 - **/advisor/simulations** — DRY-RUN sim tracker with live mark-to-market PnL.
 - **/advisor/portfolio** — manually enter Midas holdings (context only; places no orders).
+- **/advisor/kap** — recent KAP disclosures with classification (event type, polarity-prior glyph,
+  classifier stage, confidence, subject), filterable by ticker. Polarity-prior-only — no impact scores.
 - **/advisor/settings** — every `advisor_config` key with a Guide tab.
 
 ---

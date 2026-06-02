@@ -73,6 +73,29 @@ python -c "from huggingface_hub import snapshot_download; snapshot_download('Neo
 ```
 Then set `ADVISOR_KRONOS_WEIGHTS_PATH=/data/kronos/Kronos-mini` in env and `advisor_kronos_enabled=true` in advisor_config.
 
+## KAP engine (Borsa İstanbul disclosures) — Phase 1 (wired end-to-end)
+KAP disclosure ingestion + classification + alerts + advice-overlay + dashboard, all gated by
+`advisor_kap_enabled` (advisor_config, default `false`). ADVICE-ONLY; emits a documented
+base_polarity PRIOR only — no market-impact score (impact stats accumulate over months in `kap_returns`).
+- **Ingestion**: `core/kap/kap_listener.py` (`KapListener.run()`), polite rate-limited.
+- **Classification worker**: `core/kap/classifier_worker.py` (`KapClassifierWorker.run()`) — third
+  `_kap_tasks` entry in `main_advisor.py`. Every `advisor_kap_classify_interval_s` (default 60) pulls
+  `kap_store.get_unclassified`, runs `classifier.classify` (rule + LLM fallback, fail-soft), persists
+  via `kap_store.store_classification`.
+- **Telegram alerts**: `AdvisorTelegramBot.send_kap_alert(...)` — fires for non-NEUTRAL disclosures
+  with confidence ≥ `advisor_kap_alert_min_confidence` (0.5), capped at
+  `advisor_kap_alert_max_per_cycle` (10) per cycle. Polarity-prior-only disclaimer on every alert.
+- **BIST advice overlay**: `AdviceEngine._overlay_kap_context()` — BIST-only, after composite signal.
+  Attaches recent classified disclosures (`advisor_kap_lookback_days`, default 7) to
+  `AdviceResult.extra['kap_context']` as CONTEXT. Does NOT mutate action or numeric confidence.
+- **Dashboard**: `/advisor/kap` page (`dashboard/templates/advisor_kap.html`), API
+  `/api/advisor/kap/disclosures` in `monitoring/enhanced_dashboard.py`.
+- **Config keys** seeded by **migration `064_kap_phase1_wiring.sql`**: `advisor_kap_classify_interval_s`,
+  `advisor_kap_alert_min_confidence`, `advisor_kap_alert_max_per_cycle`, `advisor_kap_lookback_days`.
+- **Schema fix**: `kap_store.store_classification` now writes the actual migration-063 columns
+  (`base_polarity`, `params`, `classifier_stage`, `confidence`, `raw_subject`, `extra`) keyed on the
+  BIGINT `disclosure_id` (= `kap_disclosures.id`); `get_unclassified` dedup join corrected to `c.disclosure_id = d.id`.
+
 ## DB tables (migration 058)
 - `advisor_advice` — every published advice event (market, symbol, horizon, direction, entry range, target, stop, confidence, rationale, model_id, kronos_signal)
 - `advisor_sim_positions` — dry-run position tracking (seeded from advice; marked-to-market daily)
