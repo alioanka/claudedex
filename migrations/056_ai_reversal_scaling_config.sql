@@ -1,4 +1,4 @@
--- Migration 055: AI wave-18 reversal + scaling config keys
+-- Migration 056: AI wave-18 reversal + scaling config keys
 -- ai_reversal_min_score: minimum |score| for a counter-directional signal to
 --   trigger position reversal (close existing + open opposite). Default 0.5.
 -- ai_max_scale_ins: how many times a same-direction signal may add to an
