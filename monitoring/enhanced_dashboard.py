@@ -13798,19 +13798,31 @@ class DashboardEndpoints:
                     signals_count = await conn.fetchval("SELECT COUNT(*) FROM ai_trades WHERE status = 'open'")
                     stats['active_signals'] = signals_count or 0
 
-                    # Get trade stats from ai_trades
+                    # Get trade stats from ai_trades.
+                    # Wave-18 Total P&L fix: sum realized (closed) + unrealized
+                    # (open rows). Wave-16 writes live profit_loss to open rows
+                    # every monitor cycle, so COALESCE over ALL rows gives a
+                    # non-zero combined figure even before any position closes.
                     row = await conn.fetchrow("""
                         SELECT
-                            COUNT(*) as total_trades,
-                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
-                            COALESCE(SUM(profit_loss), 0) as total_pnl
+                            COUNT(*) FILTER (WHERE status = 'closed') as total_trades,
+                            COUNT(*) FILTER (WHERE status = 'closed' AND profit_loss > 0) as wins,
+                            COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'), 0) as realized_pnl,
+                            COALESCE(SUM(profit_loss) FILTER (WHERE status = 'open'), 0)   as unrealized_pnl
                         FROM ai_trades
-                        WHERE status = 'closed'
                     """)
-                    if row and row['total_trades'] > 0:
-                        stats['total_trades'] = row['total_trades']
-                        stats['total_pnl'] = float(row['total_pnl'] or 0)
-                        stats['accuracy'] = float(row['wins'] / row['total_trades'] * 100)
+                    if row:
+                        total_trades = int(row['total_trades'] or 0)
+                        realized_pnl = float(row['realized_pnl'] or 0)
+                        unrealized_pnl = float(row['unrealized_pnl'] or 0)
+                        stats['total_trades'] = total_trades
+                        stats['realized_pnl'] = realized_pnl
+                        stats['unrealized_pnl'] = unrealized_pnl
+                        # total_pnl = realized + unrealized so the card is never stuck at $0
+                        stats['total_pnl'] = realized_pnl + unrealized_pnl
+                        if total_trades > 0:
+                            wins = int(row['wins'] or 0)
+                            stats['accuracy'] = float(wins / total_trades * 100)
 
             return web.json_response({'success': True, 'stats': stats})
         except Exception as e:

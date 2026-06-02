@@ -322,6 +322,16 @@ class SentimentEngine:
         self.ai_symbols: List[str] = ['BTC', 'ETH', 'SOL']
         self.ai_max_positions: int = 3
 
+        # Wave-18 position-reversal + scaling config (migration 055).
+        # ai_reversal_min_score: minimum |score| required for a counter-directional
+        #   signal to trigger "close existing + open opposite". Set 0 to disable.
+        # ai_max_scale_ins: how many times a same-direction signal may add to an
+        #   already-open position. 0 = disabled (default; operator opts in via DB).
+        self.ai_reversal_min_score: float = 0.5
+        self.ai_max_scale_ins: int = 0
+        # Per-symbol scale-in counter so we don't exceed ai_max_scale_ins.
+        self._scale_in_counts: Dict[str, int] = {}
+
         # Multi-provider quorum (A6 E1). When both openai+anthropic keys are
         # configured AND quorum_required=true, _quorum_sentiment() requires
         # both providers to agree (sign + magnitude). Saves the bot from a
@@ -553,6 +563,19 @@ class SentimentEngine:
                                 self.ai_max_positions = cap
                         except (ValueError, TypeError):
                             pass
+                    elif key == 'ai_reversal_min_score':
+                        # Wave-18: minimum |score| to trigger position reversal.
+                        # 0 disables reversals entirely.
+                        try:
+                            self.ai_reversal_min_score = max(0.0, min(1.0, float(val)))
+                        except (ValueError, TypeError):
+                            pass
+                    elif key == 'ai_max_scale_ins':
+                        # Wave-18: max same-direction scale-ins per symbol. 0 = off.
+                        try:
+                            self.ai_max_scale_ins = max(0, int(val))
+                        except (ValueError, TypeError):
+                            pass
 
             logger.info(f"📋 AI Settings loaded:")
             logger.info(f"   Provider: {self.ai_provider.upper()}")
@@ -563,6 +586,7 @@ class SentimentEngine:
             logger.info(f"   OpenAI model: {self._openai_model}")
             logger.info(f"   Exit: TP={self.take_profit_pct}% SL={self.stop_loss_pct}% max_hold={self.max_hold_hours}h")
             logger.info(f"   Symbols: {self.ai_symbols} (max_positions={self.ai_max_positions})")
+            logger.info(f"   Reversal min_score={self.ai_reversal_min_score} scale_ins={self.ai_max_scale_ins}")
         except Exception as e:
             logger.warning(f"Failed to load AI settings: {e}")
 
@@ -1594,19 +1618,109 @@ class SentimentEngine:
         and does not breach the ai_max_positions cap.  One DB row per new
         position; per-symbol de-dup, calibration, and bandit binding are all
         preserved from the single-symbol path.
+
+        Wave-18 position-reversal + scaling:
+        - REVERSAL: if a symbol holds an open position whose direction is OPPOSITE
+          to the new signal AND |score| >= ai_reversal_min_score, close the existing
+          position (recording realized PnL) then open the new direction in the same
+          cycle. The position cap is not consumed by the close — the book makes room
+          for the new direction without the operator having to wait for TP/SL/timeout.
+        - SCALING (default OFF): if a symbol already has an open position in the
+          SAME direction AND ai_max_scale_ins > 0 AND _scale_in_counts[symbol]
+          < ai_max_scale_ins AND the overall cap allows, add to the position. Operator
+          opts in by setting ai_max_scale_ins > 0 in config_settings (migration 055).
         """
         side = "buy" if score > 0 else "sell"
         action_type = "LONG" if side == "buy" else "SHORT"
+        score_abs = abs(score)
 
         logger.info(
-            f"🤖 AI Signal {action_type} (score={score:.2f}): evaluating symbols "
+            f"AI Signal {action_type} (score={score:.2f}): evaluating symbols "
             f"{self.ai_symbols} (cap={self.ai_max_positions}, "
             f"open={len(self.active_positions)})"
         )
 
         opened = 0
         for symbol in self.ai_symbols:
-            # Respect global position cap before attempting each symbol.
+            # -- REVERSAL / SCALING CHECK: symbol already has an open position --
+            if symbol in self.active_positions:
+                existing = self.active_positions[symbol]
+                existing_side = existing.get('side', '')
+                same_direction = (existing_side == side)
+
+                if not same_direction:
+                    # Opposite direction signal — attempt reversal.
+                    if self.ai_reversal_min_score > 0 and score_abs >= self.ai_reversal_min_score:
+                        logger.info(
+                            f"[ai-reversal] {symbol}: existing {existing_side.upper()} "
+                            f"vs new {side.upper()} signal (score={score:.2f} >= "
+                            f"reversal_min={self.ai_reversal_min_score}). Closing first."
+                        )
+                        current_price = await self.executor._get_current_price(symbol)
+                        if current_price > 0:
+                            ep = existing['entry_price']
+                            pnl_pct = (
+                                ((current_price - ep) / ep) * 100
+                                if existing_side == 'buy'
+                                else ((ep - current_price) / ep) * 100
+                            )
+                            await self._close_position(
+                                symbol, existing,
+                                f"REVERSAL(score={score:.2f})",
+                                current_price, pnl_pct,
+                            )
+                            # Reset scale-in counter; fall through to open new position.
+                            self._scale_in_counts.pop(symbol, None)
+                        else:
+                            logger.warning(
+                                f"[ai-reversal] {symbol}: cannot fetch price for reversal close; skipping."
+                            )
+                            self._record_skip(
+                                'reversal_price_unavailable', score=score,
+                                sentiment=score, symbol=symbol,
+                            )
+                            continue
+                    else:
+                        # Opposite signal but below reversal threshold (or reversals disabled).
+                        self._record_skip(
+                            'reversal_below_threshold', score=score, sentiment=score,
+                            symbol=symbol,
+                            extra={
+                                'existing_side': existing_side,
+                                'reversal_min': str(self.ai_reversal_min_score),
+                            },
+                        )
+                        continue
+                else:
+                    # Same direction — check scaling.
+                    sc = self._scale_in_counts.get(symbol, 0)
+                    if self.ai_max_scale_ins > 0 and sc < self.ai_max_scale_ins:
+                        # Cap still applies even for scale-ins.
+                        if len(self.active_positions) >= self.ai_max_positions:
+                            self._record_skip(
+                                'position_cap', score=score, sentiment=score, symbol=symbol,
+                                extra={'cap': str(self.ai_max_positions)},
+                            )
+                            break
+                        logger.info(
+                            f"[ai-scale-in] {symbol}: adding to existing {side.upper()} "
+                            f"position (scale_in #{sc + 1}/{self.ai_max_scale_ins})"
+                        )
+                        # Fall through to open logic (is_scale_in=True prevents overwriting
+                        # the primary position dict entry).
+                    else:
+                        reason = (
+                            'scale_in_cap_reached'
+                            if self.ai_max_scale_ins > 0
+                            else 'position_exists'
+                        )
+                        self._record_skip(
+                            reason, score=score, sentiment=score, symbol=symbol,
+                            extra={'scale_in_count': str(self._scale_in_counts.get(symbol, 0))},
+                        )
+                        continue
+
+            # -- GLOBAL POSITION CAP (checked after reversal may have freed a slot) --
             if len(self.active_positions) >= self.ai_max_positions:
                 self._record_skip(
                     'position_cap', score=score, sentiment=score, symbol=symbol,
@@ -1614,14 +1728,7 @@ class SentimentEngine:
                 )
                 break
 
-            # Per-symbol de-dup.
-            if symbol in self.active_positions:
-                self._record_skip(
-                    'position_exists', score=score, sentiment=score, symbol=symbol,
-                )
-                continue
-
-            # Cooldown guard.
+            # -- COOLDOWN CHECK --
             if symbol in self._symbol_cooldowns:
                 cooldown_expires = self._symbol_cooldowns[symbol]
                 if datetime.now() < cooldown_expires:
@@ -1634,6 +1741,8 @@ class SentimentEngine:
                 else:
                     del self._symbol_cooldowns[symbol]
 
+            # -- OPEN NEW POSITION (or scale-in) --
+            is_scale_in = symbol in self.active_positions  # still present → scale-in path
             trade_id = f"ai_{symbol.lower()}_{int(datetime.now().timestamp())}"
 
             try:
@@ -1661,18 +1770,23 @@ class SentimentEngine:
                 entry_price = result.get('price', 0)
                 amount = result.get('amount', 0)
 
-                # Track position in-memory.
-                self.active_positions[symbol] = {
-                    'trade_id': trade_id,
-                    'symbol': symbol,
-                    'side': side,
-                    'entry_price': entry_price,
-                    'amount': amount,
-                    'amount_usd': self.trade_amount_usd,
-                    'entry_time': datetime.now(),
-                    'sentiment_score': score,
-                    'order_id': result.get('order_id')
-                }
+                if not is_scale_in:
+                    # Track as primary position.
+                    self.active_positions[symbol] = {
+                        'trade_id': trade_id,
+                        'symbol': symbol,
+                        'side': side,
+                        'entry_price': entry_price,
+                        'amount': amount,
+                        'amount_usd': self.trade_amount_usd,
+                        'entry_time': datetime.now(),
+                        'sentiment_score': score,
+                        'order_id': result.get('order_id')
+                    }
+                else:
+                    # Scale-in: increment counter; do NOT overwrite the primary
+                    # position dict (entry_price must stay as-is for PnL calc).
+                    self._scale_in_counts[symbol] = self._scale_in_counts.get(symbol, 0) + 1
 
                 # Persist to ai_trades.
                 if self.db_pool:
@@ -1704,6 +1818,7 @@ class SentimentEngine:
                             json.dumps({
                                 'reason': f"Sentiment score {score:.2f} >= {self.confidence_threshold}",
                                 'ai_symbols': self.ai_symbols,
+                                'scale_in': is_scale_in,
                             })
                         )
 
@@ -1723,9 +1838,10 @@ class SentimentEngine:
                             trade_id=trade_id,
                         )
 
+                kind = "scale-in" if is_scale_in else action_type
                 logger.info(
-                    f"✅ AI Trade {'Simulated' if self.dry_run else 'Executed'}: "
-                    f"{action_type} {symbol} @ ${entry_price:,.2f} (trade_id={trade_id})"
+                    f"AI Trade {'Simulated' if self.dry_run else 'Executed'}: "
+                    f"{kind} {symbol} @ ${entry_price:,.2f} (trade_id={trade_id})"
                 )
                 opened += 1
 
@@ -2021,12 +2137,16 @@ class SentimentEngine:
                         trade_id=trade_id,
                     )
 
-                # Remove from active positions
+                # Remove from active positions and reset scale-in counter.
                 del self.active_positions[symbol]
+                self._scale_in_counts.pop(symbol, None)
 
-                # Set cooldown to prevent rapid re-entry
-                self._symbol_cooldowns[symbol] = datetime.now() + self._cooldown_duration
-                logger.info(f"⏳ Set {self._cooldown_duration.total_seconds() / 60:.0f} min cooldown for {symbol}")
+                # Set cooldown to prevent rapid re-entry.
+                # REVERSAL exits skip the cooldown so the new direction can
+                # open immediately in the same _execute_trade cycle.
+                if not exit_reason.startswith('REVERSAL'):
+                    self._symbol_cooldowns[symbol] = datetime.now() + self._cooldown_duration
+                    logger.info(f"⏳ Set {self._cooldown_duration.total_seconds() / 60:.0f} min cooldown for {symbol}")
 
             else:
                 logger.error(f"Failed to close position: {result.get('error')}")
