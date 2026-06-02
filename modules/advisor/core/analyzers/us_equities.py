@@ -8,9 +8,13 @@ this structure but their data sources require operator setup.
 Data source: FREE (yfinance). No API key required.
 Installed via: pip install yfinance
 
-LLM rationale: calls Anthropic API to generate a natural-language summary.
-Model id is loaded from advisor_config.advisor_anthropic_model.
-Prompt injection: strip non-ASCII + truncate financial data before LLM call.
+LLM rationale: calls Anthropic API via the shared rationale_helper module.
+Model id is loaded from advisor_config.advisor_anthropic_model (default
+claude-opus-4-5). Loud WARNING on 404; never silent-fallback — rule-based
+text is produced instead.
+
+Prompt injection: strip non-printable chars + truncate before LLM call
+(handled inside rationale_helper._sanitize).
 
 ADVICE-ONLY: This analyzer produces no orders. The rationale field is
 the only LLM output; it is stored in advisor_advice.rationale (read-only).
@@ -30,6 +34,7 @@ from modules.advisor.core.models import (
     Horizon,
     Market,
 )
+from modules.advisor.core.rationale_helper import build_rationale
 
 logger = logging.getLogger("advisor.analyzer.us_equities")
 
@@ -38,13 +43,6 @@ _LOOKBACK: dict = {
     Horizon.SHORT: 30,    # 30 calendar days of daily bars
     Horizon.MID: 180,     # 6 months
     Horizon.LONG: 730,    # 2 years
-}
-
-# Horizon → natural-language label for LLM prompt
-_HORIZON_LABEL: dict = {
-    Horizon.SHORT: "1 day – 1 week",
-    Horizon.MID: "1 week – 3 months",
-    Horizon.LONG: "3 months – 2 years",
 }
 
 
@@ -123,8 +121,16 @@ class USEquitiesAnalyzer(BaseAnalyzer):
         # Cache last price for mark-to-market
         self.last_price[symbol] = signals.get("close", 0)
 
-        # LLM rationale (fail-soft: if Anthropic key missing, use rule-based text)
-        rationale = await self._llm_rationale(symbol, horizon, signals, direction)
+        # LLM rationale — shared helper; fail-soft rule-based on any failure
+        rationale = await build_rationale(
+            symbol=symbol,
+            market=self.market,
+            horizon=horizon,
+            signals=signals,
+            direction=direction,
+            config=self.config,
+            caller_logger=self.logger,
+        )
 
         model_id = self.config.get("advisor_anthropic_model", "claude-opus-4-5")
 
@@ -231,73 +237,6 @@ class USEquitiesAnalyzer(BaseAnalyzer):
             "df": df[["open", "high", "low", "close", "volume"]].tail(lookback_days),
         }
 
-    async def _llm_rationale(
-        self,
-        symbol: str,
-        horizon: Horizon,
-        signals: dict,
-        direction: Direction,
-    ) -> str:
-        """
-        Generate a natural-language rationale via Anthropic.
-        Fail-soft: returns a rule-based summary if Anthropic key is absent
-        or the API call fails.
-        """
-        fallback = _rule_based_rationale(symbol, horizon, signals, direction)
-
-        api_key = self.config.get("advisor_anthropic_api_key")
-        if not api_key:
-            import os
-            api_key = os.getenv("ADVISOR_ANTHROPIC_API_KEY")
-        if not api_key:
-            return fallback
-
-        model_id = self.config.get("advisor_anthropic_model", "claude-opus-4-5")
-
-        # Sanitize: strip control chars from any signal values sent to LLM
-        signal_summary = (
-            f"Symbol: {_sanitize(symbol)}\n"
-            f"Horizon: {_HORIZON_LABEL[horizon]}\n"
-            f"Close: {signals['close']:.4f}\n"
-            f"SMA20: {signals['sma20']:.4f} | SMA50: {signals['sma50']:.4f}\n"
-            f"RSI-14: {signals['rsi']:.1f}\n"
-            f"BB upper: {signals['bb_upper']:.4f} | lower: {signals['bb_lower']:.4f}\n"
-            f"Volume ratio vs 20d avg: {signals['vol_ratio']:.2f}x\n"
-            f"Computed direction: {direction.value.upper()}\n"
-        )
-
-        prompt = (
-            "You are a professional financial analyst. "
-            "Given the following technical signals for a US equity, "
-            "write a concise 2-4 sentence rationale explaining the directional "
-            "advice for the stated horizon. Focus on the key technical factors. "
-            "Do NOT recommend specific trade sizes or execution venues. "
-            "Do NOT make promises about future returns.\n\n"
-            f"{signal_summary}"
-        )
-
-        try:
-            import anthropic
-            client = anthropic.Anthropic(api_key=api_key)
-            msg = client.messages.create(
-                model=model_id,
-                max_tokens=256,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            text = msg.content[0].text if msg.content else fallback
-            return text[:2000]  # cap to DB column size
-        except Exception as exc:
-            logger.warning(
-                f"[us_equities] Anthropic rationale failed for {symbol} "
-                f"(model={model_id}): {exc}. Using rule-based fallback."
-            )
-            if "404" in str(exc) or "not_found" in str(exc).lower():
-                logger.warning(
-                    f"[us_equities] MODEL NOT FOUND: {model_id}. "
-                    "Update advisor_anthropic_model in advisor_config DB table."
-                )
-            return fallback
-
 
 # ---------------------------------------------------------------------------
 # Signal helpers (pure functions — no side effects)
@@ -381,21 +320,3 @@ def _stop_price(signals: dict, direction: Direction) -> Optional[float]:
     return None
 
 
-def _rule_based_rationale(
-    symbol: str, horizon: Horizon, signals: dict, direction: Direction
-) -> str:
-    """Simple deterministic rationale when LLM is unavailable."""
-    d = direction.value.upper()
-    h = _HORIZON_LABEL[horizon]
-    rsi = signals.get("rsi", 50)
-    sma_cross = "above" if signals.get("sma_signal", 0) > 0 else "below"
-    return (
-        f"{symbol} shows a {d} bias for the {h} horizon. "
-        f"SMA20 is {sma_cross} SMA50. RSI-14 = {rsi:.1f}. "
-        f"This is an automated technical signal; conduct your own due diligence before acting."
-    )
-
-
-def _sanitize(text: str) -> str:
-    """Remove control characters from strings sent to LLM."""
-    return "".join(c for c in text if c.isprintable())
