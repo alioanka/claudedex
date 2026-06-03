@@ -35,6 +35,10 @@ from modules.advisor.core.models import (
     Market,
 )
 from modules.advisor.core.rationale_helper import build_rationale
+from modules.advisor.core.analyzers.levels import (
+    horizon_levels,
+    signal_confidence,
+)
 
 logger = logging.getLogger("advisor.analyzer.us_equities")
 
@@ -113,10 +117,10 @@ class USEquitiesAnalyzer(BaseAnalyzer):
             )
 
         direction = _signals_to_direction(signals)
-        confidence = _compute_confidence(signals)
-        entry_low, entry_high = _entry_range(signals)
-        target = _target_price(signals, direction)
-        stop = _stop_price(signals, direction)
+        confidence = signal_confidence(signals, horizon, config=self.config)
+        entry_low, entry_high, target, stop = horizon_levels(
+            signals, direction, horizon, config=self.config, price_decimals=4
+        )
 
         # Cache last price for mark-to-market
         self.last_price[symbol] = signals.get("close", 0)
@@ -222,6 +226,9 @@ class USEquitiesAnalyzer(BaseAnalyzer):
         last_vol = df["volume"].iloc[-1]
         vol_ratio = last_vol / max(avg_vol, 1)
 
+        # ATR-14 as a fraction of close — volatility unit for horizon-aware levels.
+        atr_pct = _atr_pct(df["high"], df["low"], close, 14)
+
         return {
             "close": last_close,
             "sma20": sma20.iloc[-1],
@@ -234,6 +241,7 @@ class USEquitiesAnalyzer(BaseAnalyzer):
             "rsi_signal": rsi_signal,
             "bb_signal": bb_signal,
             "vol_ratio": vol_ratio,
+            "atr_pct": atr_pct,
             "df": df[["open", "high", "low", "close", "volume"]].tail(lookback_days),
         }
 
@@ -251,6 +259,25 @@ def _rsi(series, period: int = 14):
     return 100 - (100 / (1 + rs))
 
 
+def _atr_pct(high, low, close, period: int = 14) -> Optional[float]:
+    """ATR-`period` as a fraction of last close. None on insufficient/NaN data."""
+    try:
+        import math as _math
+        prev_close = close.shift(1)
+        tr = (
+            (high - low).abs()
+            .combine((high - prev_close).abs(), max)
+            .combine((low - prev_close).abs(), max)
+        )
+        atr = tr.rolling(period).mean().iloc[-1]
+        last_close = float(close.iloc[-1])
+        if atr is None or _math.isnan(atr) or last_close <= 0:
+            return None
+        return float(atr) / last_close
+    except Exception:
+        return None
+
+
 def _signals_to_direction(signals: dict) -> Direction:
     """Majority vote across SMA, RSI, BB signals."""
     votes = (
@@ -263,60 +290,5 @@ def _signals_to_direction(signals: dict) -> Direction:
     elif votes < 0:
         return Direction.SHORT
     return Direction.NEUTRAL
-
-
-def _compute_confidence(signals: dict) -> float:
-    """
-    Confidence in [0.0, 1.0] based on signal agreement + volume confirmation.
-    """
-    # Agreement: 3/3 signals pointing same way = 1.0, 2/3 = 0.67, 1/3 = 0.33
-    abs_vote = abs(
-        signals["sma_signal"] + signals["rsi_signal"] + signals["bb_signal"]
-    )
-    base_conf = abs_vote / 3.0
-
-    # Volume amplifier: high volume (>1.5x avg) adds 10% confidence
-    vol_boost = 0.10 if signals.get("vol_ratio", 1.0) > 1.5 else 0.0
-
-    return min(base_conf + vol_boost, 1.0)
-
-
-def _entry_range(signals: dict) -> tuple:
-    """Suggest entry range as (low, high) = ±0.5% around last close."""
-    close = signals["close"]
-    return round(close * 0.995, 4), round(close * 1.005, 4)
-
-
-def _target_price(signals: dict, direction: Direction) -> Optional[float]:
-    """
-    Primary price target.
-    LONG : BB upper band (short-term) or +5% (conservative).
-    SHORT: BB lower band or -5%.
-    """
-    if direction == Direction.LONG:
-        return round(
-            max(signals["bb_upper"], signals["close"] * 1.05),
-            4
-        )
-    elif direction == Direction.SHORT:
-        return round(
-            min(signals["bb_lower"], signals["close"] * 0.95),
-            4
-        )
-    return None
-
-
-def _stop_price(signals: dict, direction: Direction) -> Optional[float]:
-    """
-    Suggested stop-loss.
-    LONG : -3% from close.
-    SHORT: +3% from close.
-    """
-    close = signals["close"]
-    if direction == Direction.LONG:
-        return round(close * 0.97, 4)
-    elif direction == Direction.SHORT:
-        return round(close * 1.03, 4)
-    return None
 
 

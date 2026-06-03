@@ -47,6 +47,10 @@ from modules.advisor.core.models import (
     Market,
 )
 from modules.advisor.core.rationale_helper import build_rationale
+from modules.advisor.core.analyzers.levels import (
+    horizon_levels,
+    signal_confidence,
+)
 
 logger = logging.getLogger("advisor.analyzer.fx")
 
@@ -145,10 +149,10 @@ class FXAnalyzer(BaseAnalyzer):
             )
 
         direction = _signals_to_direction(signals)
-        confidence = _compute_confidence(signals)
-        entry_low, entry_high = _entry_range(signals)
-        target = _target_price(signals, direction)
-        stop = _stop_price(signals, direction)
+        confidence = signal_confidence(signals, horizon, config=self.config)
+        entry_low, entry_high, target, stop = horizon_levels(
+            signals, direction, horizon, config=self.config, price_decimals=6
+        )
 
         self.last_price[symbol] = signals.get("close", 0)
 
@@ -353,6 +357,9 @@ def _compute_technicals(df, lookback: int) -> Optional[dict]:
     else:
         vol_ratio = 1.0  # no volume data — neutral
 
+    # ATR-14 as a fraction of close — volatility unit for horizon-aware levels.
+    atr_pct = _atr_pct(df["high"], df["low"], df["close"], 14)
+
     return {
         "close": last_close,
         "sma20": sma20.iloc[-1],
@@ -365,6 +372,7 @@ def _compute_technicals(df, lookback: int) -> Optional[dict]:
         "rsi_signal": rsi_signal,
         "bb_signal": bb_signal,
         "vol_ratio": vol_ratio,
+        "atr_pct": atr_pct,
         "df": df[["open", "high", "low", "close"]].tail(lookback),
     }
 
@@ -381,6 +389,25 @@ def _rsi(series, period: int = 14):
     return 100 - (100 / (1 + rs))
 
 
+def _atr_pct(high, low, close, period: int = 14) -> Optional[float]:
+    """ATR-`period` as a fraction of last close. None on insufficient/NaN data."""
+    try:
+        import math as _math
+        prev_close = close.shift(1)
+        tr = (
+            (high - low).abs()
+            .combine((high - prev_close).abs(), max)
+            .combine((low - prev_close).abs(), max)
+        )
+        atr = tr.rolling(period).mean().iloc[-1]
+        last_close = float(close.iloc[-1])
+        if atr is None or _math.isnan(atr) or last_close <= 0:
+            return None
+        return float(atr) / last_close
+    except Exception:
+        return None
+
+
 def _signals_to_direction(signals: dict) -> Direction:
     votes = (
         signals["sma_signal"]
@@ -392,34 +419,3 @@ def _signals_to_direction(signals: dict) -> Direction:
     elif votes < 0:
         return Direction.SHORT
     return Direction.NEUTRAL
-
-
-def _compute_confidence(signals: dict) -> float:
-    abs_vote = abs(
-        signals["sma_signal"] + signals["rsi_signal"] + signals["bb_signal"]
-    )
-    base_conf = abs_vote / 3.0
-    vol_boost = 0.10 if signals.get("vol_ratio", 1.0) > 1.5 else 0.0
-    return min(base_conf + vol_boost, 1.0)
-
-
-def _entry_range(signals: dict) -> tuple:
-    close = signals["close"]
-    return round(close * 0.9975, 6), round(close * 1.0025, 6)
-
-
-def _target_price(signals: dict, direction: Direction) -> Optional[float]:
-    if direction == Direction.LONG:
-        return round(max(signals["bb_upper"], signals["close"] * 1.02), 6)
-    elif direction == Direction.SHORT:
-        return round(min(signals["bb_lower"], signals["close"] * 0.98), 6)
-    return None
-
-
-def _stop_price(signals: dict, direction: Direction) -> Optional[float]:
-    close = signals["close"]
-    if direction == Direction.LONG:
-        return round(close * 0.98, 6)   # FX: 2% stop
-    elif direction == Direction.SHORT:
-        return round(close * 1.02, 6)
-    return None
