@@ -154,6 +154,18 @@ async function loadSims() {
   }
 }
 
+async function closeAllInChannel(channel) {
+  if (!confirm('Close ALL open sims in the "' + channel + '" channel?\n' +
+               'They are marked closed at their current price (dry-run — no real orders).')) return;
+  try {
+    const res = await fetch('/api/advisor/simulations/channel/' +
+                            encodeURIComponent(channel) + '/close-all', {method: 'POST'});
+    const j = await res.json();
+    if (j.success) { alert('Closed ' + j.closed + ' sim(s) in ' + channel + '.'); loadSims(); }
+    else { alert('Close-all failed: ' + (j.error || 'unknown')); }
+  } catch (e) { alert('Close-all error: ' + e); }
+}
+
 function renderPanels() {
   const container = document.getElementById('channelPanels');
   // Bucket rows by channel (fallback to market when channel missing).
@@ -204,7 +216,10 @@ function renderChannelPanel(channel, rows) {
     <div class="chan-panel">
       <div class="chan-head">
         <span class="chan-name">${CHANNEL_ICONS[channel]||''} ${fmtChannel(channel)}</span>
-        <span class="${capCls}">${openCount}/${capPerChannel}</span>
+        <span style="display:flex;align-items:center;gap:8px;">
+          <span class="${capCls}">${openCount}/${capPerChannel}</span>
+          ${openCount > 0 ? `<button onclick="closeAllInChannel('${channel}')" title="Close every open sim in this channel (dry-run)" style="font-size:11px;padding:2px 8px;background:#3a1f24;color:#ff6b6b;border:1px solid #5a2a30;border-radius:4px;cursor:pointer;">Close all</button>` : ''}
+        </span>
       </div>
       <div class="chan-scroll">
         <table class="table table-dark table-hover sim-table">

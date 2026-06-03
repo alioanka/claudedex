@@ -1475,6 +1475,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/advisor/discovery', self.api_get_advisor_discovery)
         self.app.router.add_get('/api/advisor/simulations', self.api_get_advisor_simulations)
         self.app.router.add_post('/api/advisor/simulations/{sim_id}/close', self.api_close_advisor_sim)
+        self.app.router.add_post('/api/advisor/simulations/channel/{channel}/close-all', self.api_close_advisor_channel_sims)
         self.app.router.add_get('/api/advisor/portfolio', self.api_get_advisor_portfolio)
         self.app.router.add_post('/api/advisor/portfolio', self.api_save_advisor_portfolio)
         self.app.router.add_post('/api/advisor/portfolio/{holding_id}/delete', self.api_delete_advisor_holding)
@@ -16357,6 +16358,47 @@ class DashboardEndpoints:
             return web.json_response({'success': True, 'message': f'Sim {sim_id} closed'})
         except Exception as exc:
             logger.error(f'[advisor] api_close_advisor_sim error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_close_advisor_channel_sims(self, request):
+        """Bulk-close ALL open sims in one channel (operator 'Close all in channel').
+
+        Closes at each sim's last marked-to-market current_price (falls back to
+        entry_price -> 0 PnL if never marked). ADVICE-ONLY dry-run bookkeeping —
+        no orders are placed. Channel is validated against the known set.
+        """
+        try:
+            channel = str(request.match_info.get('channel', '')).strip().lower()
+            valid = set(getattr(self, '_ADVISOR_SIM_CHANNELS',
+                                ('crypto', 'us_equities', 'bist', 'fx',
+                                 'midas_funds', 'gems', 'kap')))
+            if channel not in valid:
+                return web.json_response(
+                    {'success': False, 'error': f'unknown channel: {channel}'}, status=400)
+            closed = 0
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        """UPDATE advisor_sim_positions
+                              SET status='closed', close_reason='operator_bulk',
+                                  exit_price = COALESCE(current_price, entry_price),
+                                  pnl_pct = CASE WHEN entry_price > 0
+                                      THEN ROUND((((COALESCE(current_price, entry_price) - entry_price)
+                                                   / entry_price) * 100)::numeric, 4) ELSE 0 END,
+                                  pnl_usd = CASE WHEN entry_price > 0
+                                      THEN ROUND((notional_usd * ((COALESCE(current_price, entry_price)
+                                                   - entry_price) / entry_price))::numeric, 2) ELSE 0 END,
+                                  closed_at = NOW(), updated_at = NOW()
+                            WHERE status='open' AND COALESCE(channel, market) = $1
+                            RETURNING id""",
+                        channel,
+                    )
+                    closed = len(rows)
+            return web.json_response(
+                {'success': True, 'closed': closed,
+                 'message': f'Closed {closed} sim(s) in {channel}'})
+        except Exception as exc:
+            logger.error(f'[advisor] api_close_advisor_channel_sims error: {exc}')
             return web.json_response({'success': False, 'error': str(exc)}, status=500)
 
     async def api_get_advisor_portfolio(self, request):
