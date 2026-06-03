@@ -231,14 +231,21 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         tefas-crawler installs as the 'tefas' package and talks to the
         2026 tefas.gov.tr/api/funds/ JSON API (per-fund history, up to 5y).
 
-        tefas-crawler API (as of 2026-06-02):
+        VERIFIED tefas-crawler API (PyPI tefas-crawler>=0.6.0, README contract):
           from tefas import Crawler
           crawler = Crawler()
-          df = crawler.fetch(symbol, start_date='2024-01-01', end_date='2026-06-01',
-                             columns=['date', 'price'])
-          # Returns DataFrame with columns: date (index), price (float)
-          # Some versions also expose: title, code, price, number_of_shares,
-          #   number_of_investors, total_value
+          # Fund code goes in `name`; period via `start`/`end` (NOT start_date/
+          # end_date). Returns one row per business day with `date` + `price`.
+          df = crawler.fetch(
+              start="2024-01-01", end="2026-06-01",
+              name="TPP", columns=["code", "date", "price"],
+          )
+          # Returned DataFrame columns: code, date, price (+ title in some
+          # versions). Schema maps tefas JSON `tarih`->date, `fiyat`->price.
+
+        The 0.6.0 line talks to the new tefas.gov.tr/api/funds/ JSON API
+        internally, so the legacy /api/DB/BindHistoryInfo 404 does not apply
+        to this path.
 
         Import-guarded: if not installed, caller falls back to tefasfon.
         """
@@ -298,18 +305,47 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         end_dt = datetime.utcnow()
         start_dt = end_dt - timedelta(days=lookback + 60)
 
-        try:
-            crawler = Crawler()
-            df = crawler.fetch(
-                symbol.upper(),
-                start_date=start_dt.strftime("%Y-%m-%d"),
-                end_date=end_dt.strftime("%Y-%m-%d"),
-                columns=["date", "price"],
-            )
-        except Exception as exc:
+        code = symbol.upper()
+        start_s = start_dt.strftime("%Y-%m-%d")
+        end_s = end_dt.strftime("%Y-%m-%d")
+
+        # CORRECT tefas-crawler signature (>=0.6.0):
+        #   fetch(start=, end=, name=<FONKODU>, columns=[...])
+        # The previous code used the non-existent start_date=/end_date= kwargs
+        # and a positional symbol, which raised TypeError on every call and
+        # silently fell through to the 404ing legacy scrape. We try the
+        # documented keyword form first, then a positional-`start` form for
+        # older releases, before giving up.
+        df = None
+        last_exc: Optional[Exception] = None
+        for attempt in (
+            lambda c: c.fetch(
+                start=start_s, end=end_s, name=code,
+                columns=["code", "date", "price"],
+            ),
+            lambda c: c.fetch(
+                start_s, end_s, name=code,
+                columns=["code", "date", "price"],
+            ),
+            # Last-ditch: minimal columns in case 'code' is rejected.
+            lambda c: c.fetch(start=start_s, end=end_s, name=code),
+        ):
+            try:
+                df = attempt(Crawler())
+                if df is not None and not getattr(df, "empty", True):
+                    break
+            except TypeError as exc:
+                last_exc = exc  # signature mismatch -> try next form
+                continue
+            except Exception as exc:
+                last_exc = exc
+                break
+
+        if df is None or getattr(df, "empty", True):
             logger.warning(
-                "[midas_funds] tefas-crawler.fetch(%r) failed: %s",
-                symbol, exc,
+                "[midas_funds] tefas-crawler.fetch(name=%r) returned no data%s",
+                code,
+                f" (last error: {last_exc})" if last_exc else "",
             )
             return None
 
@@ -320,16 +356,20 @@ class MidasFundsAnalyzer(BaseAnalyzer):
             )
             return None
 
-        # Normalise columns (tefas-crawler may use 'price' or 'fiyat')
+        # Normalise columns. tefas-crawler returns lowercase 'price'/'date';
+        # raw-JSON variants may surface 'fiyat'/'tarih'/'borsabultenfiyat'.
         df = df.copy()
         df.columns = [str(c).lower() for c in df.columns]
         col_map = {}
         for c in df.columns:
-            if c in ("price", "fiyat", "nav"):
+            if c in ("price", "fiyat", "nav", "borsabultenfiyat"):
                 col_map[c] = "close"
-            elif c == "date":
+            elif c in ("date", "tarih"):
                 col_map[c] = "date"
         df = df.rename(columns=col_map)
+        # If the rename produced duplicate 'close' columns (e.g. both price and
+        # borsabultenfiyat present), keep the first.
+        df = df.loc[:, ~df.columns.duplicated()]
 
         # If date is a column (not index), set as index
         if "date" in df.columns:
