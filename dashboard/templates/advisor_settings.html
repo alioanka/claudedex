@@ -274,13 +274,69 @@
           </select>
         </div>
 
-        <div class="tab-section-title">ML (Wave-22)</div>
+        <div class="tab-section-title">Advice Levels (horizon-aware)</div>
+        <div class="form-text mb-2">Entry/target/stop distance = asset volatility × these multipliers, scaled per horizon. Raise/lower if targets look unrealistic. (migration 067)</div>
+        <div class="row g-2">
+          <div class="col-4"><label class="form-label form-label-sm">Entry mult — short</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_levels_entry_mult_short"></div>
+          <div class="col-4"><label class="form-label form-label-sm">mid</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_levels_entry_mult_mid"></div>
+          <div class="col-4"><label class="form-label form-label-sm">long</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_levels_entry_mult_long"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Target mult — short</label><input type="number" step="0.5" class="form-control form-control-sm" id="s_levels_target_mult_short"></div>
+          <div class="col-4"><label class="form-label form-label-sm">mid</label><input type="number" step="0.5" class="form-control form-control-sm" id="s_levels_target_mult_mid"></div>
+          <div class="col-4"><label class="form-label form-label-sm">long</label><input type="number" step="0.5" class="form-control form-control-sm" id="s_levels_target_mult_long"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Stop mult — short</label><input type="number" step="0.5" class="form-control form-control-sm" id="s_levels_stop_mult_short"></div>
+          <div class="col-4"><label class="form-label form-label-sm">mid</label><input type="number" step="0.5" class="form-control form-control-sm" id="s_levels_stop_mult_mid"></div>
+          <div class="col-4"><label class="form-label form-label-sm">long</label><input type="number" step="0.5" class="form-control form-control-sm" id="s_levels_stop_mult_long"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Target R:R</label><input type="number" step="0.1" class="form-control form-control-sm" id="s_levels_target_rr"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Vol floor</label><input type="number" step="0.001" class="form-control form-control-sm" id="s_levels_vol_floor"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Vol ceiling</label><input type="number" step="0.01" class="form-control form-control-sm" id="s_levels_vol_ceiling"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Conf floor</label><input type="number" step="0.01" class="form-control form-control-sm" id="s_levels_conf_floor"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Conf ceiling</label><input type="number" step="0.01" class="form-control form-control-sm" id="s_levels_conf_ceiling"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Disagree penalty</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_levels_conf_disagree_penalty"></div>
+        </div>
 
+        <div class="tab-section-title">Signal Weights (composite, should sum ~1.0)</div>
+        <div class="row g-2">
+          <div class="col"><label class="form-label form-label-sm">Trend</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_signal_weight_trend"></div>
+          <div class="col"><label class="form-label form-label-sm">Momentum</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_signal_weight_momentum"></div>
+          <div class="col"><label class="form-label form-label-sm">Volume</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_signal_weight_volume"></div>
+          <div class="col"><label class="form-label form-label-sm">Volatility</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_signal_weight_volatility"></div>
+          <div class="col"><label class="form-label form-label-sm">Regime</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_signal_weight_regime"></div>
+        </div>
+
+        <div class="tab-section-title">Sim Horizon Max-Hold (days)</div>
+        <div class="row g-2">
+          <div class="col"><label class="form-label form-label-sm">Short</label><input type="number" class="form-control form-control-sm" id="s_sim_horizon_days_short"></div>
+          <div class="col"><label class="form-label form-label-sm">Mid</label><input type="number" class="form-control form-control-sm" id="s_sim_horizon_days_mid"></div>
+          <div class="col"><label class="form-label form-label-sm">Long</label><input type="number" class="form-control form-control-sm" id="s_sim_horizon_days_long"></div>
+        </div>
+
+        <div class="tab-section-title">KAP Event Engine (Borsa İstanbul)</div>
         <div class="mb-2 form-check form-switch">
-          <input class="form-check-input" type="checkbox" id="s_advisor_ml_enabled" disabled>
-          <label class="form-check-label" for="s_advisor_ml_enabled" style="font-size:.82rem;color:#666">
-            ML Self-Improvement Loop (Wave-22, not yet active)
-          </label>
+          <input class="form-check-input" type="checkbox" id="s_advisor_kap_enabled">
+          <label class="form-check-label" for="s_advisor_kap_enabled" style="font-size:.82rem">Enable KAP disclosure ingestion + classification + alerts</label>
+        </div>
+        <div class="row g-2">
+          <div class="col-6"><label class="form-label form-label-sm">Poll interval (s)</label><input type="number" class="form-control form-control-sm" id="s_advisor_kap_poll_interval_s"></div>
+          <div class="col-6"><label class="form-label form-label-sm">Classify interval (s)</label><input type="number" class="form-control form-control-sm" id="s_advisor_kap_classify_interval_s"></div>
+          <div class="col-6"><label class="form-label form-label-sm">Alert min confidence</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_advisor_kap_alert_min_confidence"></div>
+          <div class="col-6"><label class="form-label form-label-sm">Alert max per cycle</label><input type="number" class="form-control form-control-sm" id="s_advisor_kap_alert_max_per_cycle"></div>
+          <div class="col-6"><label class="form-label form-label-sm">Advice lookback (days)</label><input type="number" class="form-control form-control-sm" id="s_advisor_kap_lookback_days"></div>
+          <div class="col-6"><label class="form-label form-label-sm">Return windows (days, csv)</label><input type="text" class="form-control form-control-sm" id="s_kap_return_windows"></div>
+        </div>
+
+        <div class="tab-section-title">ML Self-Improvement (Wave-22)</div>
+        <div class="mb-2 form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="s_advisor_ml_enabled">
+          <label class="form-check-label" for="s_advisor_ml_enabled" style="font-size:.82rem">Enable ML confidence model (needs ≥ min-samples closed sims first)</label>
+        </div>
+        <div class="mb-2 form-check form-switch">
+          <input class="form-check-input" type="checkbox" id="s_advisor_ml_daily_learning">
+          <label class="form-check-label" for="s_advisor_ml_daily_learning" style="font-size:.82rem">Daily auto-retrain</label>
+        </div>
+        <div class="row g-2">
+          <div class="col-4"><label class="form-label form-label-sm">Min samples</label><input type="number" class="form-control form-control-sm" id="s_advisor_ml_min_samples"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Retrain (days)</label><input type="number" class="form-control form-control-sm" id="s_advisor_ml_retrain_days"></div>
+          <div class="col-4"><label class="form-label form-label-sm">Blend weight</label><input type="number" step="0.05" class="form-control form-control-sm" id="s_advisor_ml_blend_weight"></div>
         </div>
 
       </div>
@@ -382,6 +438,24 @@ async function saveSettings() {
     'sim_default_enabled','sim_default_amount_usd','max_sim_positions',
     'advisor_telegram_enabled','advisor_telegram_digest_hour','advisor_telegram_digest_tz',
     'advisor_kronos_enabled','advisor_kronos_variant','advisor_kronos_device',
+    // Advice levels (mig 067)
+    'levels_entry_mult_short','levels_entry_mult_mid','levels_entry_mult_long',
+    'levels_target_mult_short','levels_target_mult_mid','levels_target_mult_long',
+    'levels_stop_mult_short','levels_stop_mult_mid','levels_stop_mult_long',
+    'levels_target_rr','levels_vol_floor','levels_vol_ceiling',
+    'levels_conf_floor','levels_conf_ceiling','levels_conf_disagree_penalty',
+    // Signal weights
+    'signal_weight_trend','signal_weight_momentum','signal_weight_volume',
+    'signal_weight_volatility','signal_weight_regime',
+    // Sim horizons
+    'sim_horizon_days_short','sim_horizon_days_mid','sim_horizon_days_long',
+    // KAP engine
+    'advisor_kap_enabled','advisor_kap_poll_interval_s','advisor_kap_classify_interval_s',
+    'advisor_kap_alert_min_confidence','advisor_kap_alert_max_per_cycle',
+    'advisor_kap_lookback_days','kap_return_windows',
+    // ML
+    'advisor_ml_enabled','advisor_ml_daily_learning','advisor_ml_min_samples',
+    'advisor_ml_retrain_days','advisor_ml_blend_weight',
   ];
   const payload = {};
   for (const f of fields) {
