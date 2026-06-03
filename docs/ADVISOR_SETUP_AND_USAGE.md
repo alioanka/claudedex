@@ -164,7 +164,7 @@ docker compose up -d         # or: docker compose restart trading-bot
 
 ### Verify it loaded
 ```bash
-docker exec trading-bot sh -c 'grep -iE "kronos" logs/financial_advisor/*.log | tail -10'
+docker exec trading-bot sh -c 'grep -iE "kronos" logs/advisor/*.log | tail -10'
 #  expect: "[kronos] Loaded via ... (Kronos-mini, device=cpu)"  (NOT "weights path not set")
 curl -s localhost:8086/health | grep -i kronos   # health surface reports weights_path + loaded state
 ```

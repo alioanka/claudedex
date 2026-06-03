@@ -363,8 +363,18 @@ class ModuleProcess:
         try:
             logger.info(f"🚀 Starting {self.name} module...")
 
-            # Create log directory for module output
-            log_dir = Path("logs") / self.name.lower().replace(" ", "_")
+            # Create log directory for module output.
+            # Derive from name (e.g. "DEX Trading" -> logs/dex_trading), which
+            # already matches each module's own RotatingFileHandler dir EXCEPT
+            # the advisor: its name is "Financial Advisor" (-> financial_advisor)
+            # but its own logger writes to logs/advisor/. To avoid two split
+            # advisor log folders, pin the advisor's stdout/stderr capture to
+            # logs/advisor/ so it lands beside advisor.log / advisor_errors.log.
+            _capture_dir_overrides = {"advisor": "advisor"}
+            _dir_name = _capture_dir_overrides.get(
+                self.module_key, self.name.lower().replace(" ", "_")
+            )
+            log_dir = Path("logs") / _dir_name
             log_dir.mkdir(parents=True, exist_ok=True)
 
             # Open rotating log files for subprocess stdout/stderr
