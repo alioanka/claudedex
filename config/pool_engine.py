@@ -69,6 +69,11 @@ full_handler.setLevel(logging.DEBUG)
 full_logger = logging.getLogger("PoolEngine.Full")
 full_logger.setLevel(logging.DEBUG)
 full_logger.addHandler(full_handler)
+# BUG 1: confine to its own file. These are children of "PoolEngine" and were
+# propagating UP to the parent's console + main-file handlers, so every line
+# was emitted three times (parent console, parent main.log, own file). Pinning
+# propagate=False stops the storm while keeping each dedicated audit file.
+full_logger.propagate = False
 
 # Rate Limit Log - rate limit events specifically
 rate_limit_handler = RotatingFileHandler(log_dir / 'pool_engine_rate_limits.log', maxBytes=5*1024*1024, backupCount=3)
@@ -76,6 +81,7 @@ rate_limit_handler.setFormatter(log_formatter)
 rate_limit_logger = logging.getLogger("PoolEngine.RateLimit")
 rate_limit_logger.setLevel(logging.INFO)
 rate_limit_logger.addHandler(rate_limit_handler)
+rate_limit_logger.propagate = False
 
 # Health Check Log - health check results
 health_handler = RotatingFileHandler(log_dir / 'pool_engine_health.log', maxBytes=5*1024*1024, backupCount=3)
@@ -83,6 +89,7 @@ health_handler.setFormatter(log_formatter)
 health_logger = logging.getLogger("PoolEngine.Health")
 health_logger.setLevel(logging.INFO)
 health_logger.addHandler(health_handler)
+health_logger.propagate = False
 
 # Console output (shared across all pool engine loggers)
 console = logging.StreamHandler()
@@ -253,6 +260,56 @@ class ProviderEndpoints:
         return min(candidates, key=lambda e: e.seconds_until_available)
 
 
+class TokenBucket:
+    """
+    Async token-bucket rate limiter (FEATURE 2/3).
+
+    Reusable, fail-soft pacing primitive shared via the PoolEngine so any
+    module can space its outbound bursts instead of stampeding a single
+    free-tier key. ``rate`` tokens are added per second up to ``capacity``;
+    ``acquire()`` waits until a token is available, spreading an N-call burst
+    over time rather than firing it all at once.
+
+    Design notes:
+    - Monotonic clock; immune to wall-clock jumps.
+    - A single asyncio.Lock serialises refill+take so concurrent callers are
+      naturally spaced (each waits its slice).
+    - Conservative: never raises. A misuse (rate<=0) degrades to a no-op so a
+      bad config can never wedge a module.
+    """
+
+    def __init__(self, rate: float, capacity: float):
+        self.rate = max(0.0, float(rate))
+        self.capacity = max(1.0, float(capacity))
+        self._tokens = self.capacity
+        self._last = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    def _refill(self) -> None:
+        now = time.monotonic()
+        elapsed = now - self._last
+        if elapsed > 0:
+            self._tokens = min(self.capacity, self._tokens + elapsed * self.rate)
+            self._last = now
+
+    async def acquire(self, tokens: float = 1.0) -> None:
+        """Block until ``tokens`` are available, then consume them."""
+        if self.rate <= 0:
+            return  # no-op limiter (disabled by config)
+        tokens = min(tokens, self.capacity)
+        while True:
+            async with self._lock:
+                self._refill()
+                if self._tokens >= tokens:
+                    self._tokens -= tokens
+                    return
+                deficit = tokens - self._tokens
+                wait = deficit / self.rate if self.rate > 0 else 0.05
+            # Sleep OUTSIDE the lock so other callers can refill-check too;
+            # the lock-reacquire on the next loop re-serialises the take.
+            await asyncio.sleep(max(0.001, wait))
+
+
 class PoolEngine:
     """
     Centralized RPC/API Pool Engine
@@ -279,6 +336,34 @@ class PoolEngine:
         # Rate limit backoff settings
         self._default_rate_limit_duration = 300  # 5 minutes
         self._max_consecutive_failures = 10
+
+        # BUG 1 — rate-limit log-storm control.
+        # Track which endpoints are CURRENTLY in the logged rate-limited state
+        # so we emit exactly ONE concise WARNING per state transition (entered
+        # rate-limit / recovered) instead of one line per 429 from three
+        # loggers. Repeats within the window are demoted to DEBUG.
+        # key = endpoint id; value = monotonic ts of last WARNING emitted.
+        self._rl_logged_state: Dict[int, bool] = {}
+        self._rl_last_warn_ts: Dict[int, float] = {}
+        self._rl_suppressed_count: Dict[int, int] = {}
+        self._rl_warn_throttle_s = 60.0  # re-WARN at most once per endpoint/min
+
+        # FEATURE 4 — keep-alive liveness rotation.
+        # Cheap getHealth/eth_blockNumber ping rotated slowly through EVERY
+        # endpoint (including low-priority fallbacks) so provider keys that
+        # auto-disable on idle (e.g. Ankr 30-day) stay warm. Index walks the
+        # flattened endpoint list; interval is deliberately slow.
+        self._keepalive_interval = 1800  # 30 min between single-endpoint pings
+        self._keepalive_task: Optional[asyncio.Task] = None
+        self._keepalive_cursor = 0
+
+        # FEATURE 2/3 — per-provider outbound pacing (token bucket).
+        # Reusable async rate limiters keyed by provider_type so any module
+        # can space its bursts instead of stampeding a free-tier key. Lazily
+        # created on first acquire(); conservative Helius-free-tier defaults.
+        self._rate_limiters: Dict[str, 'TokenBucket'] = {}
+        self._default_rps = 8.0   # ~8 req/s — under Helius free ~10 req/s
+        self._default_burst = 8
 
         logger.info("PoolEngine initialized (not yet connected)")
 
@@ -675,6 +760,56 @@ class PoolEngine:
         endpoints = await self.get_all_endpoints(provider_type)
         return endpoints[:max_fallbacks] if endpoints else []
 
+    # =========================================================================
+    # Public API - Outbound Pacing (FEATURE 2/3)
+    # =========================================================================
+
+    def configure_rate_limiter(
+        self, provider_type: str, rps: float, burst: Optional[float] = None
+    ) -> None:
+        """
+        Configure (or reconfigure) the per-provider token-bucket limiter.
+
+        Any module that fans out many calls to one provider (e.g. COPY polling
+        33 Solana wallets through HELIUS_API) should call this once with a
+        rate suited to that provider's free-tier ceiling, then await
+        ``acquire_rate_limit(provider_type)`` before each outbound request.
+
+        Fail-soft: invalid input is clamped, never raised.
+        """
+        try:
+            rps = max(0.0, float(rps))
+            cap = float(burst) if burst is not None else max(1.0, rps)
+            existing = self._rate_limiters.get(provider_type)
+            if existing is None:
+                self._rate_limiters[provider_type] = TokenBucket(rps, cap)
+            else:
+                # Reconfigure in place so live tokens aren't reset to full.
+                existing.rate = rps
+                existing.capacity = max(1.0, cap)
+            logger.debug(
+                f"Rate limiter configured: {provider_type} -> {rps:.1f} req/s (burst {cap:.0f})"
+            )
+        except Exception as e:
+            logger.debug(f"configure_rate_limiter({provider_type}) ignored: {e}")
+
+    async def acquire_rate_limit(self, provider_type: str, tokens: float = 1.0) -> None:
+        """
+        Wait for outbound capacity on ``provider_type`` before a request.
+
+        Lazily creates a conservative default limiter (``_default_rps``) the
+        first time a provider is seen, so callers get sane pacing even without
+        an explicit ``configure_rate_limiter`` call. Fail-soft: never raises.
+        """
+        try:
+            limiter = self._rate_limiters.get(provider_type)
+            if limiter is None:
+                limiter = TokenBucket(self._default_rps, self._default_burst)
+                self._rate_limiters[provider_type] = limiter
+            await limiter.acquire(tokens)
+        except Exception as e:
+            logger.debug(f"acquire_rate_limit({provider_type}) no-op: {e}")
+
     def _get_env_fallback(self, provider_type: str) -> Optional[str]:
         """Get fallback from environment variable"""
         env_var_mappings = {
@@ -729,13 +864,11 @@ class PoolEngine:
         if not endpoint:
             return
 
-        # If the caller supplied a concrete duration (e.g. parsed from Retry-After header)
-        # honour it exactly; otherwise use exponential back-off so repeated 429s from the
-        # same endpoint cool down progressively (cap at 30 min).
+        # Honour a caller-supplied duration exactly (e.g. parsed Retry-After);
+        # otherwise exponential back-off so repeated 429s cool down (cap 30 min).
         if duration_seconds:
             duration = duration_seconds
         else:
-            # Exponential: base * 2^(count-1), capped at 1800 s (30 min)
             base = self._default_rate_limit_duration  # 300 s
             duration = min(base * (2 ** max(0, endpoint.rate_limit_count)), 1800)
 
@@ -748,20 +881,58 @@ class PoolEngine:
         # Move to end of queue by increasing priority
         endpoint.priority = min(endpoint.priority + 50, 1000)
 
+        # BUG 1 — single concise log line per STATE TRANSITION, not per 429.
+        # The previous code emitted the same WARNING from three loggers
+        # (PoolEngine, PoolEngine.RateLimit, PoolEngine.Full) on EVERY hit,
+        # flooding copy_trading/stderr.log under 33-wallet bursts. Now: one
+        # WARNING when the endpoint ENTERS the rate-limited state (or once per
+        # throttle window thereafter), and repeats are demoted to DEBUG with a
+        # suppressed-count audited to the dedicated rate-limit log file.
+        eid = endpoint.id
+        now_mono = time.monotonic()
+        was_logged = self._rl_logged_state.get(eid, False)
+        last_warn = self._rl_last_warn_ts.get(eid, 0.0)
         rate_limit_msg = (
             f"Rate limited: {provider_type} - {endpoint.name} "
-            f"(until {endpoint.rate_limit_until}, duration={duration}s, "
-            f"count={endpoint.rate_limit_count}, priority: {endpoint.priority})"
+            f"(until {endpoint.rate_limit_until}, count={endpoint.rate_limit_count}, "
+            f"duration={duration}s, priority={endpoint.priority})"
         )
-        logger.warning(rate_limit_msg)
+        if not was_logged or (now_mono - last_warn) >= self._rl_warn_throttle_s:
+            suppressed = self._rl_suppressed_count.pop(eid, 0)
+            suffix = (
+                f" [+{suppressed} further occurrences demoted to DEBUG]"
+                if suppressed else
+                f" (further occurrences demoted to DEBUG for {int(self._rl_warn_throttle_s)}s)"
+            )
+            logger.warning(rate_limit_msg + suffix)
+            self._rl_logged_state[eid] = True
+            self._rl_last_warn_ts[eid] = now_mono
+        else:
+            self._rl_suppressed_count[eid] = self._rl_suppressed_count.get(eid, 0) + 1
+            logger.debug(rate_limit_msg + " (throttled)")
+        # Audit trail (file-only; not console) keeps full forensic history.
         rate_limit_logger.info(rate_limit_msg)
-        full_logger.warning(rate_limit_msg)
 
         # Update database
         await self._update_endpoint_status(endpoint)
 
         # Log usage
         await self._log_usage(endpoint, False, error_type='rate_limit', error_message=error_message)
+
+    def _note_rate_limit_recovery(self, endpoint: Endpoint) -> None:
+        """
+        BUG 1 — log exactly ONE recovery line per state transition and clear
+        the storm-control bookkeeping so the NEXT rate-limit logs fresh.
+        """
+        eid = endpoint.id
+        if self._rl_logged_state.get(eid):
+            suppressed = self._rl_suppressed_count.pop(eid, 0)
+            tail = f" ({suppressed} suppressed while limited)" if suppressed else ""
+            logger.info(f"Recovered from rate limit: {endpoint.name}{tail}")
+            health_logger.info(f"Endpoint recovered from rate limit: {endpoint.name}")
+        self._rl_logged_state.pop(eid, None)
+        self._rl_last_warn_ts.pop(eid, None)
+        self._rl_suppressed_count.pop(eid, None)
 
     async def report_success(
         self,
@@ -790,7 +961,7 @@ class PoolEngine:
             if not endpoint.rate_limit_until or datetime.utcnow() >= endpoint.rate_limit_until:
                 endpoint.status = EndpointStatus.ACTIVE
                 endpoint.rate_limit_until = None
-                full_logger.info(f"Endpoint recovered from rate limit: {endpoint.name}")
+                self._note_rate_limit_recovery(endpoint)
 
         # Reset status if it was unhealthy
         if endpoint.status == EndpointStatus.UNHEALTHY:
@@ -1024,9 +1195,7 @@ class PoolEngine:
                         endpoint.status = EndpointStatus.ACTIVE
                         endpoint.rate_limit_until = None
                         results['recovered'] += 1
-                        recovery_msg = f"Endpoint recovered from rate limit: {endpoint.name}"
-                        logger.info(recovery_msg)
-                        health_logger.info(recovery_msg)
+                        self._note_rate_limit_recovery(endpoint)
 
                 # For RPC endpoints, try a simple health check
                 if 'RPC' in provider_type and endpoint.is_enabled:
