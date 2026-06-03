@@ -17,9 +17,12 @@
           referrerpolicy="no-referrer">
 
     <!-- Custom CSS - Loaded AFTER Bootstrap to override Bootstrap styles -->
-    <link rel="stylesheet" href="/static/css/main.css">
-    <link rel="stylesheet" href="/static/css/dashboard.css">
-    <link rel="stylesheet" href="/static/css/charts.css">
+    <!-- ?v=asset_version (git SHA / startup ts) busts the browser cache on every
+         deploy — JS was already busted; CSS was not, which left stale stylesheets
+         against new HTML after a rebuild (caused the post-login "frozen page"). -->
+    <link rel="stylesheet" href="/static/css/main.css?v={{ asset_version or 'dev' }}">
+    <link rel="stylesheet" href="/static/css/dashboard.css?v={{ asset_version or 'dev' }}">
+    <link rel="stylesheet" href="/static/css/charts.css?v={{ asset_version or 'dev' }}">
 
     <!-- Chart.js -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"
@@ -537,6 +540,28 @@
     {% block extra_head %}{% endblock %}
 </head>
 <body class="theme-dark">
+    <script>
+    // Safety net: never let a stray modal/overlay/scroll-lock survive a page
+    // (re)load or a bfcache restore. No page opens a modal at init, so clearing
+    // these on load can only UN-stick a broken state — it can't close a
+    // legitimately-open dialog. Prevents the post-login "frozen / can't click or
+    // scroll" page regardless of root cause.
+    (function () {
+        function unstick() {
+            try {
+                document.querySelectorAll('.modal-backdrop').forEach(function (el) { el.remove(); });
+                document.querySelectorAll(
+                    '.custom-modal.active, .modal.show, .modal-overlay.active, #modalOverlay.active, .sidebar-overlay.active'
+                ).forEach(function (el) { el.classList.remove('active', 'show'); });
+                document.body.classList.remove('modal-open');
+                document.documentElement.style.overflow = '';
+                document.body.style.overflow = '';
+            } catch (e) { /* never block page load on this */ }
+        }
+        document.addEventListener('DOMContentLoaded', unstick);
+        window.addEventListener('pageshow', unstick);   // also fires on bfcache restore
+    })();
+    </script>
     <div id="restart-alert-banner" style="display:none; position:sticky; top:0; z-index:9999;
          background:#d32f2f; color:#fff; padding:8px 16px; text-align:center; font-weight:600;
          box-shadow:0 2px 4px rgba(0,0,0,0.3);">
