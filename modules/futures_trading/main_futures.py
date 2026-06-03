@@ -848,7 +848,8 @@ class FuturesTradingApplication:
                         self.logger.info("Telegram remote control enabled")
                         await self.telegram_controller.notify(
                             "Futures Trading Bot started. Send /help for commands.",
-                            priority="normal"
+                            priority="normal",
+                            category="lifecycle",
                         )
                 except Exception as e:
                     self.logger.warning(f"Telegram controller failed to initialize: {e}")

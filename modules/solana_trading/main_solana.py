@@ -595,7 +595,8 @@ class SolanaTradingApplication:
                         self.logger.info("📱 Telegram remote control enabled")
                         await self.telegram_controller.notify(
                             "Solana Trading Bot started. Send /help for commands.",
-                            priority="normal"
+                            priority="normal",
+                            category="lifecycle",
                         )
                 except Exception as e:
                     self.logger.warning(f"Telegram controller failed to initialize: {e}")

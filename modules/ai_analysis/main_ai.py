@@ -200,7 +200,7 @@ async def main():
                 )
                 await telegram_controller.start_polling()
                 logger.info("📱 Telegram remote control enabled")
-                await telegram_controller.notify("AI Analysis Module started. Send /help for commands.", priority="normal")
+                await telegram_controller.notify("AI Analysis Module started. Send /help for commands.", priority="normal", category="lifecycle")
         except Exception as e:
             logger.warning(f"Telegram controller failed to initialize: {e}")
 

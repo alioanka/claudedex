@@ -409,7 +409,8 @@ async def main():
                 logger.info("📱 Telegram remote control enabled")
                 await telegram_controller.notify(
                     f"Arbitrage Module started with {len(manager.engines)} engines. Send /help for commands.",
-                    priority="normal"
+                    priority="normal",
+                    category="lifecycle",
                 )
         except Exception as e:
             logger.warning(f"Telegram controller failed to initialize: {e}")
