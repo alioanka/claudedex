@@ -459,10 +459,26 @@ class AdviceEngine:
                 )
                 result.extra["providers_disagree"] = disagree
                 if disagree:
+                    # A provider disagreement should LOWER confidence — it is a
+                    # real signal of uncertainty. The analyzer computed confidence
+                    # before dual-advice ran, so apply the penalty here once.
+                    try:
+                        penalty = float(
+                            self.config.get("levels_conf_disagree_penalty", 0.20)
+                        )
+                    except (TypeError, ValueError):
+                        penalty = 0.20
+                    try:
+                        conf_floor = float(self.config.get("levels_conf_floor", 0.05))
+                    except (TypeError, ValueError):
+                        conf_floor = 0.05
+                    before = result.confidence
+                    result.confidence = max(conf_floor, result.confidence - penalty)
+                    result.extra["confidence_pre_disagree"] = before
                     logger.info(
                         "[advice] Dual-advice DISAGREE for %s: "
-                        "anthropic=%s openai=%s",
-                        symbol, dir_a, dir_o,
+                        "anthropic=%s openai=%s; confidence %.3f -> %.3f",
+                        symbol, dir_a, dir_o, before, result.confidence,
                     )
 
         except Exception as exc:

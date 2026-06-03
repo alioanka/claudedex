@@ -265,3 +265,48 @@ def signal_confidence(
         confidence -= _cfg_float(config, "levels_conf_disagree_penalty")
 
     return round(max(floor, min(confidence, ceiling)), 4)
+
+
+# ---------------------------------------------------------------------------
+# Self-check — run `python -m modules.advisor.core.analyzers.levels`
+# Verifies short/mid/long produce DIFFERENT target/stop for the same inputs and
+# that confidence varies with signal strength and dual-advice disagreement.
+# ---------------------------------------------------------------------------
+
+def _self_check() -> None:
+    sig = {
+        "close": 67000.0, "bb_upper": 70000.0, "bb_lower": 64000.0,
+        "rsi": 62.0, "sma_signal": 1, "rsi_signal": 0, "bb_signal": 1,
+        "vol_ratio": 1.3, "atr_pct": 0.03,
+    }
+    tgts, stops = [], []
+    for h in (Horizon.SHORT, Horizon.MID, Horizon.LONG):
+        _, _, t, s = horizon_levels(sig, Direction.LONG, h)
+        tgts.append(t)
+        stops.append(s)
+    assert len(set(tgts)) == 3, f"targets not horizon-differentiated: {tgts}"
+    assert len(set(stops)) == 3, f"stops not horizon-differentiated: {stops}"
+    # target distance must widen short < mid < long (LONG direction)
+    assert tgts[0] < tgts[1] < tgts[2], f"target ordering wrong: {tgts}"
+    assert stops[0] > stops[1] > stops[2], f"stop ordering wrong: {stops}"
+
+    weak = dict(sig, sma_signal=1, rsi_signal=-1, bb_signal=0, rsi=50, vol_ratio=1.0)
+    strong = dict(sig, sma_signal=1, rsi_signal=1, bb_signal=1, rsi=78, vol_ratio=1.8)
+    c_weak = signal_confidence(weak, Horizon.SHORT)
+    c_strong = signal_confidence(strong, Horizon.SHORT)
+    c_disagree = signal_confidence(strong, Horizon.SHORT, providers_disagree=True)
+    assert c_strong > c_weak, f"strong({c_strong}) !> weak({c_weak})"
+    assert c_disagree < c_strong, f"disagree({c_disagree}) !< strong({c_strong})"
+    # horizon affects confidence (longer = lower, all else equal)
+    assert (
+        signal_confidence(strong, Horizon.SHORT)
+        > signal_confidence(strong, Horizon.LONG)
+    ), "horizon factor not applied"
+    print("levels self-check PASSED")
+    print(f"  targets short/mid/long = {tgts}")
+    print(f"  stops   short/mid/long = {stops}")
+    print(f"  conf weak/strong/disagree = {c_weak}/{c_strong}/{c_disagree}")
+
+
+if __name__ == "__main__":
+    _self_check()

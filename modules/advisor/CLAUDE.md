@@ -3,6 +3,56 @@
 ## What it does
 Standalone financial advisor — **ADVICE-ONLY, no trade execution**. Generates Long/Short/Neutral signals for CRYPTO, US equities (NASDAQ/NYSE), BIST (Borsa Istanbul), FX including metals (XAU/XAG), and Turkish Midas funds. Operator executes manually on Midas exchange. Completely isolated from all trading modules.
 
+## Advice quality: horizon-aware levels + real confidence (migration 067)
+All analyzers now derive entry/target/stop and confidence from one shared, transparent
+module: `modules/advisor/core/analyzers/levels.py`. This fixes two real defects observed
+in live advice: (1) short/mid/long showed IDENTICAL entry/target/stop for a symbol, and
+(2) confidence was frozen (looked stuck at ~43%) across symbols and horizons.
+
+**Root cause.** Each analyzer previously used FIXED percentage bands (entry +/-0.5%,
+target +/-5%, stop +/-3%) with NO horizon input, and confidence was `abs(vote)/3` (+0.1
+vol boost) — a tiny discrete ladder that barely moved.
+
+**Horizon-aware levels.** `levels.horizon_levels(signals, direction, horizon, config)`:
+```
+vol_unit            = clamp(atr_pct OR bb_half_width/2/close OR nav_return_stdev,
+                            levels_vol_floor, levels_vol_ceiling)
+entry_band_frac     = vol_unit * levels_entry_mult_<h>
+target_distance_frac= vol_unit * levels_target_mult_<h> * levels_target_rr
+stop_distance_frac  = vol_unit * levels_stop_mult_<h>
+```
+Multipliers grow short < mid < long, so target/stop distances widen with horizon, and a
+more volatile asset gets wider bands than a quiet one. Volatility unit source per market:
+crypto/us_equities/fx/bist use ATR-14 as a fraction of close (Bollinger-width proxy if
+ATR is NaN); Midas funds (NAV-only, no OHLCV) use the daily NAV-return stdev.
+
+**Real confidence.** `levels.signal_confidence(signals, horizon, config, providers_disagree)`:
+```
+agreement = abs(signed vote sum) / n_votes          # alignment strength [0,1]
+magnitude = 0.7*RSI_extremity + 0.3*BB_extremity     # reading extremity [0,1]
+volume    = clamp(vol_ratio - 1, 0, 1)               # volume confirmation [0,1]
+base      = 0.55*agreement + 0.30*magnitude + 0.15*volume
+conf      = base * horizon_factor (short 1.00 / mid 0.92 / long 0.85)
+            - levels_conf_disagree_penalty (if dual-advice providers disagree)
+conf      = clamp(conf, levels_conf_floor, levels_conf_ceiling)   # default [0.05, 0.95]
+```
+Every term is continuous, so confidence varies per symbol AND per horizon — it is no
+longer a constant. **Dual-advice DISAGREE lowers confidence:** `AdviceEngine._overlay_dual_advice`
+subtracts `levels_conf_disagree_penalty` (default 0.20) from `result.confidence` when the
+anthropic vs openai directions disagree, before the `min_confidence` risk gate runs
+(pre-disagree value stored in `extra['confidence_pre_disagree']`).
+
+**Tunables** (migration `067_advisor_advice_quality.sql`, all `config_type='advisor_config'`,
+operator-tunable, surface in dashboard Settings): `levels_entry_mult_{short,mid,long}`,
+`levels_target_mult_{short,mid,long}`, `levels_stop_mult_{short,mid,long}`,
+`levels_target_rr`, `levels_vol_floor`, `levels_vol_ceiling`, `levels_conf_floor`,
+`levels_conf_ceiling`, `levels_conf_disagree_penalty`.
+
+**HONESTY.** These are HEURISTIC levels and a heuristic confidence — NOT predictions or
+guarantees. The defaults are a starting calibration (the LONG target multiplier of 20x
+vol_unit can be aggressive for high-vol assets; lower it if targets look unrealistic).
+ADVICE-ONLY: no orders are placed. Self-check: `python -m modules.advisor.core.analyzers.levels`.
+
 ## Entry point
 `modules/advisor/main_advisor.py` — launched as a subprocess by `main.py` when `ADVISOR_MODULE_ENABLED=true` (default `false`). Health server on port 8086 (env override: `ADVISOR_HEALTH_PORT`).
 
