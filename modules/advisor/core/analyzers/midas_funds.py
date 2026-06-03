@@ -70,6 +70,10 @@ from modules.advisor.core.models import (
     Market,
 )
 from modules.advisor.core.rationale_helper import build_rationale
+from modules.advisor.core.analyzers.levels import (
+    horizon_levels,
+    signal_confidence,
+)
 
 logger = logging.getLogger("advisor.analyzer.midas_funds")
 
@@ -698,7 +702,10 @@ class MidasFundsAnalyzer(BaseAnalyzer):
     ) -> AdviceResult:
         """Build AdviceResult from a NAV signals dict (async, awaits rationale)."""
         direction = _signals_to_direction_fund(signals)
-        confidence = _compute_confidence_fund(signals)
+        # Funds: only SMA + RSI vote (no BB on NAV-only series) -> n_votes=2.
+        confidence = signal_confidence(
+            signals, horizon, config=self.config, n_votes=2
+        )
         last_nav = signals.get("close", 0)
 
         self.last_price[symbol] = last_nav
@@ -716,15 +723,19 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         model_id = self.config.get("advisor_anthropic_model", "claude-opus-4-5")
         extra = {"klines_df": signals.get("df"), "data_source": data_source_tag}
 
+        entry_low, entry_high, target, stop = horizon_levels(
+            signals, direction, horizon, config=self.config, price_decimals=4
+        )
+
         return AdviceResult(
             market=self.market,
             symbol=symbol,
             horizon=horizon,
             direction=direction,
-            entry_low=round(last_nav * 0.999, 4),
-            entry_high=round(last_nav * 1.001, 4),
-            target_price=_target_fund(signals, direction),
-            stop_price=_stop_fund(signals, direction),
+            entry_low=entry_low,
+            entry_high=entry_high,
+            target_price=target,
+            stop_price=stop,
             confidence=confidence,
             rationale=rationale,
             model_id=model_id,
@@ -767,6 +778,10 @@ def _compute_fund_signals(df, lookback: int) -> Optional[dict]:
     last_close = close.iloc[-1]
     return_bars = min(lookback, len(df))
 
+    # NAV daily-return stdev as the volatility unit (no OHLCV -> no true ATR).
+    # This lets horizon_levels scale fund target/stop by the fund's own vol.
+    atr_pct = _nav_vol_pct(close)
+
     return {
         "close": last_close,
         "sma20": sma20.iloc[-1],
@@ -777,8 +792,28 @@ def _compute_fund_signals(df, lookback: int) -> Optional[dict]:
         "rsi_signal": rsi_signal,
         "bb_signal": 0,       # neutral -- no Bollinger on NAV-only series
         "vol_ratio": 1.0,     # no volume for mutual funds
+        "atr_pct": atr_pct,
         "df": df[["close"]].tail(return_bars),
     }
+
+
+def _nav_vol_pct(close, window: int = 20) -> Optional[float]:
+    """
+    Daily NAV-return standard deviation (fractional) over the last `window` bars.
+    Serves as the volatility unit for funds (which have no OHLCV/ATR). None on
+    insufficient/NaN data so levels.py falls back to the configured vol floor.
+    """
+    try:
+        import math as _math
+        rets = close.pct_change().dropna()
+        if len(rets) < 5:
+            return None
+        vol = float(rets.tail(window).std())
+        if vol is None or _math.isnan(vol) or vol <= 0:
+            return None
+        return vol
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -804,34 +839,6 @@ def _signals_to_direction_fund(signals: dict) -> Direction:
     elif votes < 0:
         return Direction.SHORT
     return Direction.NEUTRAL
-
-
-def _compute_confidence_fund(signals: dict) -> float:
-    """Confidence based on 2-signal agreement (lower ceiling than OHLCV)."""
-    abs_vote = abs(signals.get("sma_signal", 0) + signals.get("rsi_signal", 0))
-    return min(abs_vote / 2.0 * 0.8, 1.0)  # cap at 0.8 -- no OHLCV validation
-
-
-def _target_fund(signals: dict, direction: Direction) -> Optional[float]:
-    close = signals.get("close", 0)
-    if not close:
-        return None
-    if direction == Direction.LONG:
-        return round(close * 1.03, 4)   # 3% target for fund NAV
-    elif direction == Direction.SHORT:
-        return round(close * 0.97, 4)
-    return None
-
-
-def _stop_fund(signals: dict, direction: Direction) -> Optional[float]:
-    close = signals.get("close", 0)
-    if not close:
-        return None
-    if direction == Direction.LONG:
-        return round(close * 0.98, 4)   # 2% stop for fund NAV
-    elif direction == Direction.SHORT:
-        return round(close * 1.02, 4)
-    return None
 
 
 def _extract_tefas_csrf(html: str) -> Optional[str]:
