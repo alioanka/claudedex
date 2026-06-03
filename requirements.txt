@@ -83,13 +83,13 @@ pyotp==2.9.0
 PyJWT
 
 # Advisor module
-# PIN <0.2.61: yfinance>=0.2.61 imports `websockets.asyncio` at module load,
-# which only exists in websockets>=13, but this project pins websockets==12.0
-# (used by the exchange feeds). An unbounded yfinance here clobbered the
-# Dockerfile pin and broke the US-equities/FX/BIST analyzers with
-# "ModuleNotFoundError: No module named 'websockets.asyncio'". Bounded here so
-# requirements.txt is the single source of truth.
-yfinance>=0.2.40,<0.2.61
+# PIN <0.2.59: yfinance 0.2.59 (PR #2201) added live.py which imports
+# `websockets.asyncio` at module load — that submodule only exists in
+# websockets>=13, but this project pins websockets==12.0 (used by the exchange
+# feeds). So 0.2.59/0.2.60 ALSO crash with "No module named websockets.asyncio";
+# the boundary must be <0.2.59, not <0.2.61. Bounded here as the single source
+# of truth so it can't be clobbered by an unbounded spec elsewhere.
+yfinance>=0.2.40,<0.2.59
 anthropic>=0.40.0
 requests>=2.31.0
 
