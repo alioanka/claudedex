@@ -96,13 +96,25 @@ _NOT_CONFIGURED_NOTE = (
     "Look up FONKODU at https://www.tefas.gov.tr."
 )
 
-# Tefas legacy scrape endpoint (fallback only)
+# Tefas legacy scrape endpoint (LAST-resort fallback only).
+# The /api/DB/BindHistoryInfo POST is undocumented and has been observed to 404
+# / be WAF-rejected; the maintained tefas-crawler/tefasfon libraries are the
+# robust paths. We keep this path only for the rare case both libs are absent.
 _TEFAS_BASE = "https://www.tefas.gov.tr"
 _TEFAS_HISTORY_API = f"{_TEFAS_BASE}/api/DB/BindHistoryInfo"
+# Historically-correct legacy form fields are lowercase: fontip/fonkod/
+# bastarih/bittarih with dd.mm.yyyy dates (NOT the FONKODU/BASTARIH the code
+# used before). Headers need Origin + a realistic UA to pass the WAF.
 _TEFAS_HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
     "X-Requested-With": "XMLHttpRequest",
+    "Origin": _TEFAS_BASE,
     "Referer": f"{_TEFAS_BASE}/TarihselVeriler.aspx",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
 }
 
 
@@ -608,8 +620,13 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         Runs in executor (sync). Legacy fallback.
 
         Endpoint: POST /api/DB/BindHistoryInfo
-        Form: FONKODU=<code>&BASTARIH=<DD.MM.YYYY>&BITTARIH=<DD.MM.YYYY>
-        CSRF: extracted from homepage cookie on initial GET.
+        Legacy form (lowercase): fontip=YAT&fonkod=<CODE>&bastarih=<dd.mm.yyyy>
+            &bittarih=<dd.mm.yyyy>  (the prior FONKODU/BASTARIH casing was wrong)
+        Response: {"data": [{"TARIH": <epoch_ms str>, "FONKODU": ..., "FIYAT": ...}]}
+        Cookies/anti-CSRF primed via a homepage GET first.
+
+        This endpoint is undocumented and frequently 404s / is WAF-blocked; it is
+        the LAST resort behind tefas-crawler and tefasfon.
         """
         try:
             import requests
@@ -626,7 +643,7 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         end_str = end_dt.strftime(date_fmt)
 
         session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; advisor)"})
+        session.headers.update(_TEFAS_HEADERS)
 
         try:
             home_resp = session.get(
@@ -639,10 +656,13 @@ class MidasFundsAnalyzer(BaseAnalyzer):
 
         csrf_token = _extract_tefas_csrf(home_resp.text)
 
+        # Legacy BindHistoryInfo expects lowercase fontip/fonkod/bastarih/bittarih
+        # (fontip=YAT for securities funds). The fonkod is the 3-letter FONKODU.
         form_data = {
-            "FONKODU": symbol.upper(),
-            "BASTARIH": start_str,
-            "BITTARIH": end_str,
+            "fontip": "YAT",
+            "fonkod": symbol.upper(),
+            "bastarih": start_str,
+            "bittarih": end_str,
         }
         if csrf_token:
             form_data["__RequestVerificationToken"] = csrf_token
@@ -687,19 +707,29 @@ class MidasFundsAnalyzer(BaseAnalyzer):
             df = pd.DataFrame(records)
             col_map = {}
             for c in df.columns:
-                cu = c.upper()
+                cu = str(c).upper()
                 if cu in ("TARIH", "DATE"):
                     col_map[c] = "date"
-                elif cu in ("FIYAT", "PRICE", "NAV"):
+                elif cu in ("FIYAT", "PRICE", "NAV", "BORSABULTENFIYAT"):
                     col_map[c] = "close"
             df = df.rename(columns=col_map)
+            df = df.loc[:, ~df.columns.duplicated()]
             if "date" not in df.columns or "close" not in df.columns:
                 self.logger.warning(
                     "[midas_funds] Unexpected Tefas scrape columns: %s",
                     list(df.columns),
                 )
                 return None
-            df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
+            # BindHistoryInfo TARIH is epoch-milliseconds (numeric/str). Older
+            # variants return dd.mm.yyyy strings. Try ms first, then dd.mm.yyyy.
+            raw_date = df["date"]
+            num_date = pd.to_numeric(raw_date, errors="coerce")
+            if num_date.notna().mean() > 0.5:
+                df["date"] = pd.to_datetime(num_date, unit="ms", errors="coerce")
+            else:
+                df["date"] = pd.to_datetime(
+                    raw_date, dayfirst=True, errors="coerce"
+                )
             df["close"] = pd.to_numeric(df["close"], errors="coerce")
             df = df.dropna(subset=["date", "close"])
             df = df.set_index("date").sort_index()
