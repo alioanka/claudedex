@@ -232,7 +232,10 @@ class RPCProvider:
         pool = await cls._get_pool()
         if pool and pool.initialized:
             await pool.report_rate_limit(provider_type, url, duration_seconds)
-            logger.warning(f"Rate limit reported for {provider_type}: {url[:50]}...")
+            # pool.report_rate_limit already logs a THROTTLED warning; this
+            # per-call line fired once per outbound request under a burst and
+            # flooded the logs. Demoted to debug to avoid the duplicate storm.
+            logger.debug(f"Rate limit reported for {provider_type}: {url[:50]}...")
 
     @classmethod
     async def report_success(

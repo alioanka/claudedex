@@ -2016,6 +2016,23 @@ class CopyTradingEngine(BaseModule):
 
         async def _handle_wallet(session: aiohttp.ClientSession, wallet: str) -> int:
             async with sem:
+                # PER-WALLET key rotation: resolve a fresh HELIUS_API endpoint
+                # per wallet so the 33-wallet fan-out spreads across ALL Helius
+                # keys (round-robin) instead of pinning ONE key per cycle. With
+                # 4 keys this turns a 33-call burst on one key into ~8 calls per
+                # key — the actual fix for the api.helius.xyz 429 storm. Falls
+                # back to the cycle-level helius_key if the lookup yields nothing.
+                wallet_key = helius_key
+                if pool is not None and use_helius:
+                    try:
+                        ep = await pool.get_endpoint('HELIUS_API')
+                        if ep:
+                            import urllib.parse as _up
+                            k = _up.parse_qs(_up.urlparse(ep).query).get('api-key', [None])[0]
+                            if k:
+                                wallet_key = k
+                    except Exception:
+                        pass
                 # BUG 2: block on the shared token bucket so consecutive
                 # wallet calls are SPACED to copy_helius_rps. Replaces the old
                 # random 0-200 ms jitter (which didn't bound aggregate rate).
@@ -2026,7 +2043,7 @@ class CopyTradingEngine(BaseModule):
                         pass
                 try:
                     if use_helius:
-                        txs = await self._fetch_wallet_txs_helius(session, wallet, helius_key)
+                        txs = await self._fetch_wallet_txs_helius(session, wallet, wallet_key)
                         # Wave-16: txs=None means Helius transport failure
                         # (429 / non-200 / timeout) — only then fall back
                         # to the public SOLANA_RPC poll.  txs=[] (success,

@@ -576,14 +576,28 @@ class MidasFundsAnalyzer(BaseAnalyzer):
             api_resp.raise_for_status()
             payload = api_resp.json()
         except Exception as exc:
-            self.logger.warning(
-                "[midas_funds] Tefas API POST failed for %s: %s", symbol, exc
-            )
+            # Tefas POST commonly 404s (undocumented endpoint changes); 10 funds
+            # x retries flooded advisor_errors.log. Log ONE warning per 5 min,
+            # demote the rest to debug. If Tefas stays down, disable midas_funds
+            # in enabled_markets — it produces no advice anyway.
+            import time as _t
+            now = _t.monotonic()
+            if now - getattr(self, "_tefas_warn_ts", 0.0) >= 300.0:
+                self._tefas_warn_ts = now
+                self.logger.warning(
+                    "[midas_funds] Tefas API unavailable (e.g. %s: %s) — further "
+                    "occurrences suppressed 5m. Disable midas_funds in "
+                    "enabled_markets if Tefas stays down.", symbol, exc
+                )
+            else:
+                self.logger.debug(
+                    "[midas_funds] Tefas API POST failed for %s: %s", symbol, exc
+                )
             return None
 
         records = payload if isinstance(payload, list) else payload.get("data", [])
         if not records:
-            self.logger.warning(
+            self.logger.debug(
                 "[midas_funds] Tefas scrape returned empty data for %s", symbol
             )
             return None
