@@ -176,6 +176,39 @@ class AdvisorTelegramBot:
             f"[advisor_tg] Configured: token=****{self._token[-4:]} "
             f"chat={self._chat_id}"
         )
+
+        # Low-risk startup self-test: getMe validates the token (no message is
+        # sent to the operator). If the token is bad we log it loudly here so
+        # the failure is visible in logs/advisor/advisor_errors.log BEFORE the
+        # first advice cycle silently no-ops. getMe never triggers the 403
+        # "can't initiate conversation" case (that only happens on sendMessage
+        # to a user who hasn't pressed Start), so the most common silent-send
+        # cause is surfaced with an explicit operator hint instead.
+        try:
+            session = await self._get_session()
+            if session is not None:
+                url = f"{_TG_API_BASE}/bot{self._token}/getMe"
+                async with session.get(url) as resp:
+                    if resp.status == 200:
+                        body = await resp.json()
+                        uname = (body.get("result") or {}).get("username", "unknown")
+                        logger.info(
+                            f"[advisor_tg] getMe OK: @{uname}. If advice never "
+                            f"arrives, the operator must press Start (or send any "
+                            f"message) to @{uname} so the bot may initiate the "
+                            f"chat — Telegram returns 403 'bot can't initiate "
+                            f"conversation with a user' until then."
+                        )
+                    else:
+                        b = await resp.text()
+                        logger.warning(
+                            f"[advisor_tg] getMe failed HTTP {resp.status}: "
+                            f"{b[:200]}. Token likely invalid — check "
+                            f"ADVISOR_TELEGRAM_BOT_TOKEN in Secure Credentials."
+                        )
+        except Exception as exc:
+            logger.debug(f"[advisor_tg] getMe self-test skipped: {exc}")
+
         return True
 
     async def close(self) -> None:
@@ -393,10 +426,25 @@ class AdvisorTelegramBot:
                         continue
                     if resp.status in (401, 403, 404):
                         body = await resp.text()
+                        hint = (
+                            "Check ADVISOR_TELEGRAM_BOT_TOKEN in Secure Credentials."
+                        )
+                        # 403 with "can't initiate conversation" is the #1 cause
+                        # of a silent advisor bot: a bot may not DM a user who has
+                        # never pressed Start. Make the remedy explicit in the log.
+                        if resp.status == 403 and (
+                            "can't initiate" in body.lower()
+                            or "bot can" in body.lower()
+                        ):
+                            hint = (
+                                f"The operator must press Start (or send any "
+                                f"message) to this bot first — chat_id="
+                                f"{self._chat_id}. A bot cannot initiate a DM."
+                            )
                         logger.warning(
-                            f"[advisor_tg] HTTP {resp.status} — likely invalid token or "
-                            f"bot not in chat. Response: {body[:200]}. "
-                            f"Check ADVISOR_TELEGRAM_BOT_TOKEN in Secure Credentials."
+                            f"[advisor_tg] HTTP {resp.status} — likely invalid token, "
+                            f"bot not in chat, or Start not pressed. "
+                            f"Response: {body[:200]}. {hint}"
                         )
                         return False
                     # Other HTTP error
