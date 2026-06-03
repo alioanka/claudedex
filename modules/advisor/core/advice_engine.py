@@ -86,6 +86,9 @@ class AdviceEngine:
         self._last_advice_at: Optional[datetime] = None
         # Track last ML tick date so we run at most once per calendar day.
         self._last_ml_tick_date: Optional[str] = None
+        # Discovery cadence: in-memory last-run timestamp (seeded from the
+        # persisted config row on first use so a restart respects the cadence).
+        self._last_discovery_at: Optional[datetime] = None
 
     # ------------------------------------------------------------------
     # Public lifecycle
@@ -139,6 +142,15 @@ class AdviceEngine:
                         self._last_advice_at = datetime.now(timezone.utc)
             open_sim_by_market[market.value] = market_open
 
+        # GATED discovery pass — surfaces NEW symbols beyond the watchlist on a
+        # slow cadence (advisor_discovery_refresh_hours). Default OFF. Fail-soft:
+        # any error here NEVER affects the watchlist advice already published.
+        try:
+            disc = await self._run_discovery_pass(horizons, open_sim_by_market)
+            published.extend(disc)
+        except Exception as exc:
+            logger.warning("[advice] discovery pass error (fail-soft): %s", exc)
+
         # Mark-to-market all open sim positions (best-effort).
         await self._mark_to_market_open_sims()
 
@@ -164,8 +176,14 @@ class AdviceEngine:
         symbol: str,
         horizon: Horizon,
         open_sim_count: int,
+        origin: str = "watchlist",
     ) -> Optional[AdviceResult]:
-        """Run analysis + risk gate + persist for one (symbol, horizon)."""
+        """Run analysis + risk gate + persist for one (symbol, horizon).
+
+        `origin` marks the advice provenance: 'watchlist' (default) or
+        'discovery' (surfaced by the New Gems discovery layer). It is stored on
+        the AdviceResult (extra['origin']) and persisted to advisor_advice.origin.
+        """
         try:
             result = await analyzer.analyze(symbol, horizon)
         except Exception as exc:
@@ -206,6 +224,9 @@ class AdviceEngine:
         # preserved; OpenAI text goes into result.extra['rationale_openai'].
         await self._overlay_dual_advice(result, symbol, horizon)
 
+        # Provenance marker (watchlist vs discovery) — for persistence + dashboard.
+        result.extra["origin"] = origin
+
         # Risk gate.
         passes, reject_reason = self.risk.should_publish(result, open_sim_count)
         if not passes:
@@ -215,7 +236,7 @@ class AdviceEngine:
             return None
 
         # Persist.
-        advice_id = await self._persist_advice(result)
+        advice_id = await self._persist_advice(result, origin=origin)
 
         # Open sim position if requested.
         if result.sim_enabled and advice_id is not None:
@@ -231,42 +252,89 @@ class AdviceEngine:
 
         return result
 
-    async def _persist_advice(self, result: AdviceResult) -> Optional[int]:
-        """Write advice to advisor_advice table. Returns inserted id or None."""
+    async def _persist_advice(
+        self, result: AdviceResult, origin: str = "watchlist"
+    ) -> Optional[int]:
+        """Write advice to advisor_advice table. Returns inserted id or None.
+
+        `origin` is persisted to advisor_advice.origin (migration 076). The
+        INSERT is resilient to a DB that has not yet run migration 076: on an
+        UndefinedColumn error it retries without the origin column (fail-soft).
+        """
         if self.db_pool is None:
             return None
+        extra_json = json.dumps({k: v for k, v in result.extra.items()
+                                 if k != "klines_df"})  # never persist raw DF
         try:
             async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO advisor_advice
-                      (market, symbol, horizon, direction,
-                       entry_low, entry_high, target_price, stop_price,
-                       confidence, rationale, model_id,
-                       kronos_signal, data_source_status,
-                       sim_enabled, sim_amount_usd, extra, created_at)
-                    VALUES
-                      ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
-                    RETURNING id
-                    """,
-                    result.market.value,
-                    result.symbol,
-                    result.horizon.value,
-                    result.direction.value,
-                    result.entry_low,
-                    result.entry_high,
-                    result.target_price,
-                    result.stop_price,
-                    result.confidence,
-                    result.rationale,
-                    result.model_id,
-                    result.kronos_signal,
-                    result.data_source_status.value,
-                    result.sim_enabled,
-                    result.sim_amount_usd,
-                    json.dumps({k: v for k, v in result.extra.items()
-                                if k != "klines_df"}),  # never persist raw DF
-                )
+                try:
+                    row = await conn.fetchrow(
+                        """
+                        INSERT INTO advisor_advice
+                          (market, symbol, horizon, direction,
+                           entry_low, entry_high, target_price, stop_price,
+                           confidence, rationale, model_id,
+                           kronos_signal, data_source_status,
+                           sim_enabled, sim_amount_usd, extra, origin, created_at)
+                        VALUES
+                          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NOW())
+                        RETURNING id
+                        """,
+                        result.market.value,
+                        result.symbol,
+                        result.horizon.value,
+                        result.direction.value,
+                        result.entry_low,
+                        result.entry_high,
+                        result.target_price,
+                        result.stop_price,
+                        result.confidence,
+                        result.rationale,
+                        result.model_id,
+                        result.kronos_signal,
+                        result.data_source_status.value,
+                        result.sim_enabled,
+                        result.sim_amount_usd,
+                        extra_json,
+                        origin,
+                    )
+                except Exception as col_exc:
+                    # Pre-migration-076 DB has no origin column — fall back.
+                    if "origin" not in str(col_exc).lower():
+                        raise
+                    logger.debug(
+                        "[advice] origin column missing (run migration 076); "
+                        "persisting without it."
+                    )
+                    row = await conn.fetchrow(
+                        """
+                        INSERT INTO advisor_advice
+                          (market, symbol, horizon, direction,
+                           entry_low, entry_high, target_price, stop_price,
+                           confidence, rationale, model_id,
+                           kronos_signal, data_source_status,
+                           sim_enabled, sim_amount_usd, extra, created_at)
+                        VALUES
+                          ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,NOW())
+                        RETURNING id
+                        """,
+                        result.market.value,
+                        result.symbol,
+                        result.horizon.value,
+                        result.direction.value,
+                        result.entry_low,
+                        result.entry_high,
+                        result.target_price,
+                        result.stop_price,
+                        result.confidence,
+                        result.rationale,
+                        result.model_id,
+                        result.kronos_signal,
+                        result.data_source_status.value,
+                        result.sim_enabled,
+                        result.sim_amount_usd,
+                        extra_json,
+                    )
                 return row["id"] if row else None
         except Exception as exc:
             logger.error(
@@ -532,6 +600,222 @@ class AdviceEngine:
         except Exception as exc:
             logger.debug("[advice] auto_close_expired error: %s", exc)
 
+    # ------------------------------------------------------------------
+    # Discovery ("New Gems") pass
+    # ------------------------------------------------------------------
+
+    async def _run_discovery_pass(
+        self,
+        horizons: List[Horizon],
+        open_sim_by_market: Dict[str, int],
+    ) -> List[AdviceResult]:
+        """
+        GATED discovery pass. Surfaces NEW symbols beyond the watchlist and runs
+        them through the SAME analyzer pipeline, flagged origin='discovery'.
+
+        Gates (all must hold):
+          - advisor_discovery_enabled == true
+          - cadence: at least advisor_discovery_refresh_hours since last run
+
+        COST DISCIPLINE: discovery candidates default to rule-based rationale
+        (NO LLM) — the analyzer config is shallow-copied with
+        _advisor_force_rule_based=true. Only the top advisor_discovery_llm_max
+        candidates per pass get LLM narration, and that path still flows through
+        the global daily paid-LLM budget (core/llm_budget) — discovery cannot
+        blow the budget.
+
+        Fail-soft throughout: any error -> empty list, watchlist advice intact.
+        """
+        if str(self.config.get("advisor_discovery_enabled", "false")).lower() != "true":
+            return []
+        if not self._discovery_due():
+            return []
+
+        try:
+            from modules.advisor.core.discovery import discover_candidates
+        except Exception as exc:
+            logger.warning("[discovery] import failed (fail-soft): %s", exc)
+            return []
+
+        markets = [
+            m.strip() for m in
+            str(self.config.get("advisor_discovery_markets", "crypto,us_equities,bist")).split(",")
+            if m.strip()
+        ]
+        try:
+            llm_max = int(float(self.config.get("advisor_discovery_llm_max", 0)))
+        except (TypeError, ValueError):
+            llm_max = 0
+        llm_budget_remaining = max(0, llm_max)
+
+        # Build per-market exclusion data once.
+        watch_list = self._load_watchlist()
+        open_symbols_by_market = await self._open_sim_symbols_by_market()
+        blocklist = [
+            s.strip() for s in str(self.config.get("blocked_symbols", "")).split(",")
+            if s.strip()
+        ]
+
+        # Rule-based config clone for the cost-free discovery analysis path.
+        rule_based_cfg = dict(self.config)
+        rule_based_cfg["_advisor_force_rule_based"] = "true"
+
+        published: List[AdviceResult] = []
+        total_new = 0
+        for market_str in markets:
+            try:
+                market = Market(market_str)
+            except ValueError:
+                logger.debug("[discovery] unknown market '%s' skipped.", market_str)
+                continue
+            analyzer = self.analyzers.get(market)
+            if analyzer is None:
+                continue
+
+            wl = watch_list.get(market, [])
+            open_syms = open_symbols_by_market.get(market.value, [])
+            try:
+                candidates = await discover_candidates(
+                    market.value, self.config,
+                    watchlist=wl, open_sims=open_syms, blocklist=blocklist,
+                )
+            except Exception as exc:
+                logger.warning("[discovery] %s candidate fetch failed: %s", market.value, exc)
+                continue
+
+            if not candidates:
+                continue
+
+            logger.info(
+                "[discovery] %s: %d new candidate(s): %s",
+                market.value, len(candidates),
+                ", ".join(c.symbol for c in candidates),
+            )
+            total_new += len(candidates)
+            market_open = open_sim_by_market.get(market.value, 0)
+
+            for cand in candidates:
+                # Pick the rationale config: LLM-narrate only while budget allows.
+                if llm_budget_remaining > 0:
+                    cfg_for_call = self.config
+                    llm_budget_remaining -= 1
+                else:
+                    cfg_for_call = rule_based_cfg
+                for horizon in horizons:
+                    result = await self._run_discovery_symbol(
+                        analyzer, cand, horizon, market_open, cfg_for_call
+                    )
+                    if result is not None:
+                        published.append(result)
+                        market_open += int(result.sim_enabled)
+                        self._last_advice_at = datetime.now(timezone.utc)
+            open_sim_by_market[market.value] = market_open
+
+        # Record the run so cadence is honoured (in-memory + best-effort DB).
+        await self._mark_discovery_ran()
+        logger.info(
+            "[discovery] pass complete: %d candidate(s) across %d market(s); "
+            "%d discovery advice(s) published.",
+            total_new, len(markets), len(published),
+        )
+        return published
+
+    async def _run_discovery_symbol(
+        self,
+        analyzer: BaseAnalyzer,
+        cand,
+        horizon: Horizon,
+        open_sim_count: int,
+        cfg_for_call: dict,
+    ) -> Optional[AdviceResult]:
+        """
+        Analyze one discovery candidate with the (possibly rule-based) config,
+        then publish with origin='discovery'. Temporarily swaps the analyzer's
+        config so the rationale-helper cost short-circuit applies, then restores.
+        """
+        original_cfg = analyzer.config
+        try:
+            analyzer.config = cfg_for_call
+            result = await self._run_symbol(
+                analyzer, cand.symbol, horizon, open_sim_count, origin="discovery"
+            )
+            if result is not None:
+                # Attach the discovery score/metrics for the dashboard.
+                result.extra["discovery"] = {
+                    "score": getattr(cand, "score", None),
+                    "source": getattr(cand, "source", ""),
+                    "change_pct_24h": getattr(cand, "change_pct_24h", None),
+                    "quote_volume": getattr(cand, "quote_volume", None),
+                }
+            return result
+        except Exception as exc:
+            logger.debug("[discovery] analyze failed for %s: %s", cand.symbol, exc)
+            return None
+        finally:
+            analyzer.config = original_cfg
+
+    def _discovery_due(self) -> bool:
+        """True if the discovery cadence window has elapsed since last run."""
+        try:
+            refresh_hours = float(self.config.get("advisor_discovery_refresh_hours", 12))
+        except (TypeError, ValueError):
+            refresh_hours = 12.0
+        if refresh_hours <= 0:
+            return True  # 0 = run every cycle (not recommended)
+
+        last = self._last_discovery_at
+        if last is None:
+            # Seed from the persisted config row so a restart respects cadence.
+            last = self._parse_iso(self.config.get("advisor_discovery_last_run_at", ""))
+            self._last_discovery_at = last
+        if last is None:
+            return True
+        elapsed_h = (datetime.now(timezone.utc) - last).total_seconds() / 3600.0
+        return elapsed_h >= refresh_hours
+
+    async def _mark_discovery_ran(self) -> None:
+        """Persist the discovery last-run timestamp (in-memory + best-effort DB)."""
+        now = datetime.now(timezone.utc)
+        self._last_discovery_at = now
+        if self.db_pool is None:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    UPDATE config_settings
+                       SET value = $1, updated_at = NOW()
+                     WHERE config_type = 'advisor_config'
+                       AND key = 'advisor_discovery_last_run_at'
+                    """,
+                    now.isoformat(),
+                )
+        except Exception as exc:
+            logger.debug("[discovery] last-run persist failed (soft): %s", exc)
+
+    async def _open_sim_symbols_by_market(self) -> Dict[str, List[str]]:
+        """Return open-sim symbols grouped by market value (for dedupe)."""
+        out: Dict[str, List[str]] = {}
+        try:
+            for s in await self.portfolio.list_open_sims():
+                out.setdefault(s.market.value, []).append(s.symbol)
+        except Exception as exc:
+            logger.debug("[discovery] open-sim symbol load failed (soft): %s", exc)
+        return out
+
+    @staticmethod
+    def _parse_iso(raw) -> Optional[datetime]:
+        """Parse an ISO-8601 timestamp; tz-aware UTC. None on any failure."""
+        if not raw:
+            return None
+        try:
+            dt = datetime.fromisoformat(str(raw))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            return None
+
     async def _ml_learning_tick(self) -> None:
         """
         Daily ML learning loop (Wave-21).
@@ -595,6 +879,10 @@ class AdviceEngine:
             "kronos_health": self.kronos.health() if self.kronos else None,
             "ml_enabled": str(self.config.get("advisor_ml_enabled", "false")).lower() == "true",
             "ml_last_tick_date": self._last_ml_tick_date,
+            "discovery_enabled": str(self.config.get("advisor_discovery_enabled", "false")).lower() == "true",
+            "discovery_last_run_at": (
+                self._last_discovery_at.isoformat() if self._last_discovery_at else None
+            ),
         }
 
 

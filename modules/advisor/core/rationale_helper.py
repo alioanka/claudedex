@@ -472,6 +472,16 @@ async def build_rationale(
     log = caller_logger or logger
     fallback = build_rule_based_rationale(symbol, market, horizon, signals, direction)
 
+    # COST SHORT-CIRCUIT (discovery layer): when the caller injects
+    # _advisor_force_rule_based=true into config, return the FREE rule-based
+    # rationale immediately and make NO paid LLM call. The discovery pass uses
+    # this so trending candidates default to zero-cost narration; only the
+    # explicitly budgeted top-N are LLM-narrated by the engine afterwards.
+    if str(config.get("_advisor_force_rule_based", "false")).lower() == "true":
+        if extra is not None:
+            extra["rationale_rule_based_forced"] = True
+        return fallback
+
     dual_mode = str(config.get("advisor_dual_advice_mode", _DUAL_MODE_OFF)).lower().strip()
     if dual_mode not in (_DUAL_MODE_OFF, _DUAL_MODE_BOTH, _DUAL_MODE_CONSENSUS):
         log.warning(
