@@ -1086,6 +1086,17 @@ class CopyTradingEngine(BaseModule):
         # Tune via config_settings.copytrading_config.copy_max_concurrent_wallets.
         self.copy_max_concurrent_wallets = 5
 
+        # BUG 2 — outbound req/s ceiling for the Solana/Helius fan-out.
+        # The Semaphore caps CONCURRENCY but not RATE: 5 concurrent calls can
+        # still all complete in the same ~100 ms window and re-fire, so 33
+        # wallets still produced an instant 429 burst on the Helius free tier.
+        # This feeds a shared pool_engine TokenBucket (provider HELIUS_API) so
+        # consecutive wallet calls are SPACED to ~copy_helius_rps req/s. The
+        # whole 33-wallet watchlist is still polled every cycle — just spread
+        # over time instead of stampeding. Default 8 req/s (< Helius free ~10).
+        self.copy_helius_rps = 8.0
+        self._rate_limiter_configured = False
+
         # Wave-16: throttle for fallback-poll rate-limit WARNING log.
         # With 33 wallets the "Solana RPC rate limited in fallback poll"
         # line fired once per wallet per 15 s cycle (33 WARNINGs / 15 s).
@@ -1423,6 +1434,19 @@ class CopyTradingEngine(BaseModule):
                             # Clamp: at least 1, at most 20 (above that the
                             # Helius plan rate limit is the binding constraint).
                             self.copy_max_concurrent_wallets = max(1, min(20, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_helius_rps':
+                        # BUG 2 — per-provider outbound pacing. The real
+                        # root cause of the instant Helius 429 was the
+                        # STAMPEDE: 33 wallet calls fired at once. This sets
+                        # the token-bucket refill rate (req/s) for HELIUS_API
+                        # so the fan-out is SPREAD instead of bursting.
+                        # Default 8 req/s sits just under the Helius free
+                        # tier (~10 req/s). Clamp 1..50.
+                        try:
+                            v = float(val) if val else 8.0
+                            self.copy_helius_rps = max(1.0, min(50.0, v))
                         except (TypeError, ValueError):
                             pass
                     elif key == 'copy_max_signal_age_s':
@@ -1954,6 +1978,7 @@ class CopyTradingEngine(BaseModule):
             return 0
 
         helius_key: Optional[str] = None
+        pool = None
         try:
             from config.pool_engine import PoolEngine
             pool = await PoolEngine.get_instance()
@@ -1969,6 +1994,20 @@ class CopyTradingEngine(BaseModule):
 
         use_helius = bool(helius_key)
 
+        # BUG 2 — configure the shared pool_engine token bucket once per
+        # process so the wallet fan-out is rate-LIMITED, not just
+        # concurrency-capped. acquire_rate_limit() below spaces every outbound
+        # Helius call to copy_helius_rps req/s, eliminating the synchronized
+        # 33-wallet burst that tripped the free-tier 429 instantly.
+        if pool is not None and not getattr(self, '_rate_limiter_configured', False):
+            try:
+                rps = float(getattr(self, 'copy_helius_rps', 8.0))
+                pool.configure_rate_limiter('HELIUS_API', rps, burst=max(1.0, rps))
+                self._rate_limiter_configured = True
+                logger.info(f"Copy: Helius outbound pacing set to {rps:.0f} req/s")
+            except Exception as e:
+                logger.debug(f"configure_rate_limiter(HELIUS_API) skipped: {e}")
+
         # Wave-15: cap concurrency so we don't hammer Helius with 33
         # simultaneous REST calls.  Default 5; operator-tunable via
         # copy_max_concurrent_wallets in config_settings.
@@ -1976,11 +2015,15 @@ class CopyTradingEngine(BaseModule):
         sem = asyncio.Semaphore(concurrency)
 
         async def _handle_wallet(session: aiohttp.ClientSession, wallet: str) -> int:
-            import random as _random
             async with sem:
-                # Small per-wallet jitter (0-200 ms) spreads bursts
-                # further and reduces synchronised 429 windows.
-                await asyncio.sleep(_random.uniform(0, 0.2))
+                # BUG 2: block on the shared token bucket so consecutive
+                # wallet calls are SPACED to copy_helius_rps. Replaces the old
+                # random 0-200 ms jitter (which didn't bound aggregate rate).
+                if pool is not None:
+                    try:
+                        await pool.acquire_rate_limit('HELIUS_API')
+                    except Exception:
+                        pass
                 try:
                     if use_helius:
                         txs = await self._fetch_wallet_txs_helius(session, wallet, helius_key)
