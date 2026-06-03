@@ -81,7 +81,7 @@ VALUES
      'Crypto discovery: maximum market cap (USD) if known. 0 = no ceiling.',
      NOW(), NOW()),
     ('advisor_config', 'advisor_discovery_crypto_min_abs_change_pct', '3', 'float',
-     'Crypto discovery: minimum absolute 24h %% move to be considered a mover.',
+     'Crypto discovery: minimum absolute 24h % move to be considered a mover.',
      NOW(), NOW()),
     ('advisor_config', 'advisor_discovery_crypto_universe_cap', '400', 'int',
      'Crypto discovery: cap the ranked universe to the top-N by volume before '
@@ -96,7 +96,7 @@ VALUES
      'US-equity discovery: minimum daily dollar volume (price*shares).',
      NOW(), NOW()),
     ('advisor_config', 'advisor_discovery_us_min_abs_change_pct', '2', 'float',
-     'US-equity discovery: minimum absolute %% move to be considered a mover.',
+     'US-equity discovery: minimum absolute % move to be considered a mover.',
      NOW(), NOW()),
     ('advisor_config', 'advisor_discovery_us_screens', 'day_gainers,most_actives,undervalued_growth_stocks', 'string',
      'US-equity discovery: comma-sep Yahoo predefined screener ids to pull '
@@ -108,7 +108,7 @@ VALUES
 
     -- bist screening thresholds (degraded/fragile)
     ('advisor_config', 'advisor_discovery_bist_min_abs_change_pct', '2', 'float',
-     'BIST discovery: minimum absolute %% move. BIST discovery is best-effort and '
+     'BIST discovery: minimum absolute % move. BIST discovery is best-effort and '
      'commonly returns nothing — that is acceptable (fail-soft).',
      NOW(), NOW()),
     ('advisor_config', 'advisor_discovery_bist_universe_cap', '100', 'int',
