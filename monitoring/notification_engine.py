@@ -45,6 +45,37 @@ import aiohttp
 
 logger = logging.getLogger("NotificationEngine")
 
+
+def _setup_notification_logging() -> None:
+    """Give the notification engine its OWN log file instead of leaking into
+    whichever module subprocess happens to call it (e.g. futures_errors.log).
+
+    Writes to logs/notifications/notifications.log with the module/category
+    context that each message now carries. propagate=False keeps these lines
+    out of the host module's error log. Idempotent — safe to call repeatedly.
+    """
+    if getattr(logger, "_notif_handler_attached", False):
+        return
+    try:
+        from logging.handlers import RotatingFileHandler
+        from pathlib import Path
+        log_dir = Path("logs/notifications")
+        log_dir.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            log_dir / "notifications.log", maxBytes=5 * 1024 * 1024, backupCount=3,
+            delay=True,
+        )
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s"
+        ))
+        logger.addHandler(handler)
+        logger.setLevel(logging.INFO)
+        logger.propagate = False  # keep out of the host module's log files
+        logger._notif_handler_attached = True  # type: ignore[attr-defined]
+    except Exception:
+        # Never let logging setup break notifications.
+        pass
+
 # ---------------------------------------------------------------------------
 # Module metadata
 # ---------------------------------------------------------------------------
@@ -130,6 +161,7 @@ class TelegramNotificationEngine:
     """
 
     def __init__(self, db_pool=None):
+        _setup_notification_logging()
         self.db_pool = db_pool
 
         # Credentials are resolved lazily from secrets_manager/env on first use
@@ -262,8 +294,17 @@ class TelegramNotificationEngine:
         chat_id: str,
         thread_id: Optional[str] = None,
         parse_mode: str = 'MarkdownV2',
+        *,
+        ctx: str = '',
     ) -> bool:
-        """Low-level sendMessage call with optional message_thread_id."""
+        """Low-level sendMessage call with optional message_thread_id.
+
+        If a thread_id is supplied but Telegram rejects it with
+        'message thread not found' (the configured topic id is wrong or the
+        group is not a forum), retry ONCE without the thread so the message
+        still lands in the group's general topic instead of being lost +
+        spamming the error log. `ctx` is a 'module/category' label for logs.
+        """
         if not self._bot_token:
             return False
 
@@ -292,10 +333,41 @@ class TelegramNotificationEngine:
                     if resp.status == 200:
                         return True
                     body = await resp.text()
-                    logger.warning(f"Telegram sendMessage {resp.status}: {body[:200]}")
+                    # Graceful fallback: bad topic thread id -> resend to the
+                    # group's general topic (no thread) so the message is not
+                    # lost. Logged once at INFO, not as a recurring WARNING.
+                    if (
+                        resp.status == 400
+                        and 'message_thread_id' in payload
+                        and 'message thread not found' in body.lower()
+                    ):
+                        logger.info(
+                            "[%s] topic thread_id=%s not found in chat %s — "
+                            "delivering to general topic instead. Fix "
+                            "topic_thread_id_* in Telegram settings to route "
+                            "per-module.",
+                            ctx or 'notify', payload.get('message_thread_id'), chat_id,
+                        )
+                        payload.pop('message_thread_id', None)
+                        async with session.post(
+                            url, json=payload,
+                            timeout=aiohttp.ClientTimeout(total=15)
+                        ) as resp2:
+                            if resp2.status == 200:
+                                return True
+                            body2 = await resp2.text()
+                            logger.warning(
+                                "[%s] Telegram sendMessage %s (no-thread retry): %s",
+                                ctx or 'notify', resp2.status, body2[:200],
+                            )
+                            return False
+                    logger.warning(
+                        "[%s] Telegram sendMessage %s: %s",
+                        ctx or 'notify', resp.status, body[:200],
+                    )
                     return False
         except Exception as e:
-            logger.warning(f"Telegram sendMessage error: {e}")
+            logger.warning("[%s] Telegram sendMessage error: %s", ctx or 'notify', e)
             return False
 
     # ------------------------------------------------------------------
@@ -465,7 +537,9 @@ class TelegramNotificationEngine:
         if not target_chat:
             return False
 
-        return await self._send_raw(text, target_chat, thread_id)
+        return await self._send_raw(
+            text, target_chat, thread_id, ctx=f"{module}/{category}"
+        )
 
     # ------------------------------------------------------------------
     # Convenience: send_notification (wraps header + body)

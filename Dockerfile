@@ -112,20 +112,25 @@ RUN pip install --no-cache-dir --timeout=300 torch || \
 
 # Stage 7b: Kronos K-line forecaster deps (advisor module, optional/fail-soft).
 # transformers + huggingface_hub are needed for the advisor Kronos forecaster
-# (download + AutoModel inference). Baked into the image so they survive
+# (download + AutoModel inference). sentencepiece is required to convert the
+# Kronos slow tokenizer to a fast one (without it: "You need to have
+# sentencepiece or tiktoken installed"). Baked into the image so they survive
 # rebuilds — an ephemeral in-container `pip install` would be lost on --build.
-RUN pip install --no-cache-dir --timeout=300 transformers huggingface_hub || \
-    pip install --no-cache-dir --timeout=300 transformers huggingface_hub || \
-    echo "⚠️ transformers/huggingface_hub install failed (Kronos optional)" && \
+RUN pip install --no-cache-dir --timeout=300 transformers huggingface_hub sentencepiece || \
+    pip install --no-cache-dir --timeout=300 transformers huggingface_hub sentencepiece || \
+    echo "⚠️ transformers/huggingface_hub/sentencepiece install failed (Kronos optional)" && \
     echo "✅ Kronos deps install attempted"
 
 # Stage 7c: Advisor module data + advice deps.
 # yfinance: US-equities (default-enabled market) + FX + degraded-BIST analyzers.
+#   PINNED <0.2.61: newer yfinance imports `websockets.asyncio` at module load,
+#   which only exists in websockets>=13, but this image pins websockets==12.0
+#   (Stage 10) -> ModuleNotFoundError: No module named 'websockets.asyncio'.
 # anthropic + openai: advice rationale + dual-advice second opinion.
 # Baked into the image (requirements.txt is NOT pip-installed by this Dockerfile).
 # Retried once, then fail-soft so the build never breaks on a transient PyPI hiccup.
-RUN pip install --no-cache-dir --timeout=300 yfinance anthropic openai || \
-    pip install --no-cache-dir --timeout=300 yfinance anthropic openai || \
+RUN pip install --no-cache-dir --timeout=300 'yfinance<0.2.61' anthropic openai || \
+    pip install --no-cache-dir --timeout=300 'yfinance<0.2.61' anthropic openai || \
     echo "⚠️ advisor data/LLM deps failed (US-equities/FX/rationale degraded)" && \
     echo "✅ Advisor data/LLM deps install attempted"
 
