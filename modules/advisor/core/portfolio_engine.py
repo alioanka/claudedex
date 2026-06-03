@@ -37,6 +37,7 @@ from modules.advisor.core.models import (
     Market,
     PortfolioHolding,
     SimPosition,
+    derive_channel,
 )
 
 logger = logging.getLogger("advisor.portfolio_engine")
@@ -129,6 +130,16 @@ class AdvisorPortfolioEngine:
         days = self._horizon_days(result.horizon)
         horizon_end = datetime.now(timezone.utc) + timedelta(days=days)
 
+        # Derive the sim CHANNEL (independent capped bucket, migration 077):
+        #   - 'gems' for discovered advice (origin='discovery'), ANY market
+        #   - 'kap'  for KAP-driven sims (extra['kap_driven'] True)
+        #   - else the market value (watchlist sims)
+        channel = derive_channel(
+            result.market,
+            origin=str(result.extra.get("origin", "watchlist")),
+            kap_driven=bool(result.extra.get("kap_driven", False)),
+        )
+
         sim = SimPosition(
             symbol=result.symbol,
             market=result.market,
@@ -139,6 +150,7 @@ class AdvisorPortfolioEngine:
             stop_price=result.stop_price,
             notional_usd=result.sim_amount_usd,
             advice_id=result.extra.get("advice_id"),
+            channel=channel,
         )
 
         if self.db_pool is None:
@@ -149,33 +161,64 @@ class AdvisorPortfolioEngine:
 
         try:
             async with self.db_pool.acquire() as conn:
-                row = await conn.fetchrow(
-                    """
-                    INSERT INTO advisor_sim_positions
-                      (advice_id, symbol, market, direction, horizon,
-                       entry_price, target_price, stop_price,
-                       notional_usd, status, opened_at, horizon_end_date)
-                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open',NOW(),$10)
-                    RETURNING id
-                    """,
-                    sim.advice_id,
-                    sim.symbol,
-                    sim.market.value,
-                    sim.direction.value,
-                    sim.horizon.value,
-                    sim.entry_price,
-                    sim.target_price,
-                    sim.stop_price,
-                    sim.notional_usd,
-                    horizon_end,
-                )
+                try:
+                    row = await conn.fetchrow(
+                        """
+                        INSERT INTO advisor_sim_positions
+                          (advice_id, symbol, market, direction, horizon,
+                           entry_price, target_price, stop_price,
+                           notional_usd, status, opened_at, horizon_end_date,
+                           channel)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open',NOW(),$10,$11)
+                        RETURNING id
+                        """,
+                        sim.advice_id,
+                        sim.symbol,
+                        sim.market.value,
+                        sim.direction.value,
+                        sim.horizon.value,
+                        sim.entry_price,
+                        sim.target_price,
+                        sim.stop_price,
+                        sim.notional_usd,
+                        horizon_end,
+                        sim.channel,
+                    )
+                except Exception as col_exc:
+                    # Pre-migration-077 DB has no channel column — fall back.
+                    if "channel" not in str(col_exc).lower():
+                        raise
+                    logger.debug(
+                        "[portfolio] channel column missing (run migration 077); "
+                        "opening sim without it."
+                    )
+                    row = await conn.fetchrow(
+                        """
+                        INSERT INTO advisor_sim_positions
+                          (advice_id, symbol, market, direction, horizon,
+                           entry_price, target_price, stop_price,
+                           notional_usd, status, opened_at, horizon_end_date)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'open',NOW(),$10)
+                        RETURNING id
+                        """,
+                        sim.advice_id,
+                        sim.symbol,
+                        sim.market.value,
+                        sim.direction.value,
+                        sim.horizon.value,
+                        sim.entry_price,
+                        sim.target_price,
+                        sim.stop_price,
+                        sim.notional_usd,
+                        horizon_end,
+                    )
                 sim_id = row["id"]
                 self._sim_cache[sim_id] = sim
                 logger.info(
                     "[portfolio] Opened sim #%d: %s %s @ %.4f notional=$%.2f "
-                    "horizon_end=%s",
+                    "channel=%s horizon_end=%s",
                     sim_id, sim.direction.value, sim.symbol,
-                    sim.entry_price, sim.notional_usd,
+                    sim.entry_price, sim.notional_usd, sim.channel,
                     horizon_end.date().isoformat(),
                 )
                 return sim_id
@@ -426,6 +469,26 @@ class AdvisorPortfolioEngine:
             logger.error("[portfolio] count_open_sims_by_market error: %s", exc)
         return counts
 
+    async def count_open_sims_by_channel(self) -> Dict[str, int]:
+        """
+        Return open sim-position counts keyed by CHANNEL (migration 077):
+        crypto | us_equities | bist | fx | midas_funds | gems | kap.
+
+        Channels are independent capped buckets — the operator may run 15 crypto
+        + 15 gems + 15 kap sims at once. Used to enforce the per-CHANNEL sim cap
+        (advisor_sim_cap_per_channel). Rows with no channel set (pre-077 / legacy
+        in-memory sims) fall back to their market value via derive_channel().
+        Channels with zero open sims are absent from the dict. Fail-soft: {}.
+        """
+        counts: Dict[str, int] = {}
+        try:
+            for s in await self.list_open_sims():
+                ch = s.channel or derive_channel(s.market)
+                counts[ch] = counts.get(ch, 0) + 1
+        except Exception as exc:
+            logger.error("[portfolio] count_open_sims_by_channel error: %s", exc)
+        return counts
+
     # ------------------------------------------------------------------
     # Backtest
     # ------------------------------------------------------------------
@@ -631,6 +694,7 @@ def _row_to_sim(row) -> SimPosition:
         stop_price=float(row["stop_price"]) if row.get("stop_price") else None,
         notional_usd=float(row["notional_usd"]),
         advice_id=row.get("advice_id"),
+        channel=row.get("channel"),
         opened_at=row["opened_at"],
         closed_at=row.get("closed_at"),
         exit_price=float(row["exit_price"]) if row.get("exit_price") else None,

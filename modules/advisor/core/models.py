@@ -47,6 +47,46 @@ class DataSourceStatus(str, Enum):
 
 
 # ---------------------------------------------------------------------------
+# Sim channels — independent dry-run buckets, each with its own cap.
+# ---------------------------------------------------------------------------
+# A channel is NOT always the same as a market: discovered ("New Gems") advice
+# routes to 'gems' regardless of its underlying market, and KAP-driven sims
+# route to 'kap'. The seven channels each have an independent per-channel cap
+# (advisor_sim_cap_per_channel, default 15). See migration 077.
+SIM_CHANNELS: tuple = (
+    "crypto",
+    "us_equities",
+    "bist",
+    "fx",
+    "midas_funds",
+    "gems",
+    "kap",
+)
+
+
+def derive_channel(market, origin: str = "watchlist", kap_driven: bool = False) -> str:
+    """
+    Map an advice's (market, origin) to its sim channel.
+
+    Rules (in priority order):
+      1. kap_driven=True       -> 'kap'  (KAP strong-polarity BIST sims)
+      2. origin == 'discovery' -> 'gems' (New Gems layer; ANY underlying market)
+      3. otherwise             -> the market's value (watchlist sims)
+
+    `market` may be a Market enum or its string value. A None market falls back
+    to 'crypto' only as a last resort; callers should pass a valid market. Pure
+    function, no I/O — safe to unit-test without a DB.
+    """
+    if kap_driven:
+        return "kap"
+    if str(origin).lower() == "discovery":
+        return "gems"
+    if market is None:
+        return "crypto"
+    return market.value if hasattr(market, "value") else str(market)
+
+
+# ---------------------------------------------------------------------------
 # Core advice result
 # ---------------------------------------------------------------------------
 
@@ -150,6 +190,10 @@ class SimPosition:
     notional_usd: float
 
     advice_id: Optional[int] = None   # FK to advisor_advice.id
+    # Sim channel (independent capped bucket). For watchlist sims this equals
+    # the market value; for discovered sims it is 'gems'; for KAP-driven sims
+    # it is 'kap'. Defaults to the market value if not explicitly set at open.
+    channel: Optional[str] = None
     opened_at: datetime = field(default_factory=datetime.utcnow)
     closed_at: Optional[datetime] = None
     exit_price: Optional[float] = None
@@ -187,3 +231,53 @@ class PortfolioHolding:
         if mv is None:
             return None
         return mv - (self.quantity * self.avg_cost)
+
+
+# ---------------------------------------------------------------------------
+# Self-test (no DB): channel derivation + per-channel cap counting.
+#   python -m modules.advisor.core.models
+# ---------------------------------------------------------------------------
+def _selftest() -> None:
+    # 1. derive_channel rules.
+    assert derive_channel(Market.CRYPTO) == "crypto"
+    assert derive_channel(Market.US_EQUITIES, origin="watchlist") == "us_equities"
+    # discovery routes to gems regardless of market (even a US ticker).
+    assert derive_channel(Market.US_EQUITIES, origin="discovery") == "gems"
+    assert derive_channel(Market.CRYPTO, origin="discovery") == "gems"
+    # kap_driven wins over everything.
+    assert derive_channel(Market.BIST, origin="watchlist", kap_driven=True) == "kap"
+    assert derive_channel(Market.US_EQUITIES, origin="discovery", kap_driven=True) == "kap"
+    # string market value also accepted.
+    assert derive_channel("fx") == "fx"
+    assert set(SIM_CHANNELS) == {
+        "crypto", "us_equities", "bist", "fx", "midas_funds", "gems", "kap"
+    }
+
+    # 2. per-channel cap counting + enforcement (mock open sims, no DB).
+    def channel_of(market, origin="watchlist", kap=False):
+        return derive_channel(market, origin=origin, kap_driven=kap)
+
+    open_sims = (
+        [channel_of(Market.CRYPTO)] * 15
+        + [channel_of(Market.US_EQUITIES, origin="discovery")] * 15  # -> gems
+        + [channel_of(Market.BIST, kap=True)] * 15                   # -> kap
+    )
+    counts: dict = {}
+    for ch in open_sims:
+        counts[ch] = counts.get(ch, 0) + 1
+    assert counts == {"crypto": 15, "gems": 15, "kap": 15}, counts
+
+    # cap=15: each channel is independently at the cap; a new crypto sim is
+    # blocked, but a new gems sim is NOT (different bucket).
+    cap = 15
+    assert counts.get("crypto", 0) >= cap          # crypto full
+    assert counts.get("fx", 0) < cap               # fx empty -> allowed
+    # a gem on a US ticker counts as gems, not us_equities.
+    assert counts.get("us_equities", 0) == 0
+    assert counts.get("gems", 0) == 15
+
+    print("models self-test OK: channel derivation + per-channel cap counting")
+
+
+if __name__ == "__main__":
+    _selftest()
