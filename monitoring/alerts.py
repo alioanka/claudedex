@@ -132,8 +132,16 @@ class AlertsSystem:
     Comprehensive alerts and notification system
     """
     
-    def __init__(self, config: Optional[Dict] = None):
-        """Initialize alerts system"""
+    def __init__(self, config: Optional[Dict] = None, module: str = 'system'):
+        """Initialize alerts system.
+
+        ``module`` tags every Telegram alert so it routes through the
+        Wave-19 ``TelegramNotificationEngine`` to the correct per-module
+        forum topic (instead of the legacy single chat_id channel). The
+        DEX subprocess and ``AlertManager`` both construct this with their
+        own module name; default ``'system'`` keeps old callers working.
+        """
+        self.module: str = (module or 'system').lower()
         self.config = config or self._default_config()
         self.alerts_queue: asyncio.Queue = asyncio.Queue()
         self.alerts_history: deque = deque(maxlen=1000)
@@ -788,7 +796,47 @@ class AlertsSystem:
 
     @retry_async(max_retries=3, delay=5, exponential_backoff=True)
     async def _send_telegram(self, alert: Alert) -> bool:
-        """Send alert via Telegram"""
+        """Send alert via Telegram.
+
+        Wave-19/notification-engine: route through the topic-aware
+        ``TelegramNotificationEngine`` first so the alert lands in this
+        module's forum topic (keyed by ``self.module``) instead of the
+        legacy single chat_id channel. Falls back to the direct
+        per-channel send below when the engine is not configured
+        (empty ``telegram_group_id``) or the send is suppressed/fails.
+        """
+        try:
+            from monitoring.notification_engine import (
+                get_engine, format_header, escape_mdv2,
+            )
+            engine = get_engine()
+            cfg = await engine._load_config()
+            if cfg.notifications_enabled and cfg.telegram_group_id:
+                # Map AlertPriority -> notification level + category.
+                category = 'error' if alert.priority in (
+                    AlertPriority.HIGH, AlertPriority.CRITICAL
+                ) else 'trade'
+                level = {
+                    AlertPriority.LOW: 'info',
+                    AlertPriority.MEDIUM: 'info',
+                    AlertPriority.HIGH: 'warning',
+                    AlertPriority.CRITICAL: 'critical',
+                }.get(alert.priority, 'info')
+                title = 'Error' if category == 'error' else 'Alert'
+                header = format_header(self.module, title)
+                body = escape_mdv2(f"{alert.title}\n{alert.message}"[:1500])
+                text = f"{header}\n{body}"
+                sent = await engine.notify(self.module, category, text, level=level)
+                if sent:
+                    return True
+                # Suppressed (verbosity/throttle/de-dup) or routing failed.
+                # Do NOT double-send via the legacy channel when the engine
+                # is configured — the suppression was intentional.
+                return False
+        except Exception:
+            # Fall through to the legacy direct send below.
+            pass
+
         try:
             config = self.channel_configs.get(NotificationChannel.TELEGRAM)
             if not config or not config.enabled:
