@@ -537,9 +537,32 @@ class TelegramNotificationEngine:
         if not target_chat:
             return False
 
-        return await self._send_raw(
+        sent = await self._send_raw(
             text, target_chat, thread_id, ctx=f"{module}/{category}"
         )
+
+        # Audit trail: record every dispatched notification (what / where).
+        # Previously notifications.log only ever showed "periodic jobs
+        # started" because successful sends were never logged — only
+        # failures were WARNINGs. Now each delivery is an INFO line with
+        # module, category, level, chat + topic thread. Fail-soft: logging
+        # must never affect the notification result.
+        try:
+            if sent:
+                logger.info(
+                    "SENT module=%s category=%s level=%s chat=%s thread=%s",
+                    module, category, level, target_chat,
+                    thread_id if thread_id else "general",
+                )
+            else:
+                logger.info(
+                    "NOT-SENT (suppressed/failed) module=%s category=%s level=%s",
+                    module, category, level,
+                )
+        except Exception:
+            pass
+
+        return sent
 
     # ------------------------------------------------------------------
     # Convenience: send_notification (wraps header + body)

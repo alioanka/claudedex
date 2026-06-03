@@ -847,7 +847,8 @@ class TelegramBotController:
 
     # ========== NOTIFICATION METHODS ==========
 
-    async def notify(self, message: str, priority: str = "normal"):
+    async def notify(self, message: str, priority: str = "normal",
+                     category: str = "trade"):
         """
         Send notification to Telegram.
 
@@ -859,6 +860,14 @@ class TelegramBotController:
         Args:
             message: Message to send
             priority: 'low', 'normal', 'high', 'critical'
+            category: notification category routed to the engine.
+                Defaults to 'trade' (verbosity/throttle-gated). Pass
+                'lifecycle' for startup/shutdown messages so they are NOT
+                suppressed for modules in 'summary' verbosity mode (e.g.
+                Solana defaults to summary, which silently dropped its
+                'X started…' notice). 'lifecycle' still routes to the
+                module's own topic (engine falls back to the module topic
+                for any category that is not error/dashboard/summary).
         """
         level_map = {'low': 'info', 'normal': 'info', 'high': 'warning', 'critical': 'critical'}
         level = level_map.get(priority, 'info')
@@ -879,7 +888,7 @@ class TelegramBotController:
                 header = format_header(mod, 'Info')
                 body = escape_mdv2(str(message))
                 text = f"{emoji} {header}\n{body}"
-                sent = await engine.notify(mod, 'trade', text, level=level)
+                sent = await engine.notify(mod, category, text, level=level)
                 if sent:
                     return
         except Exception:

@@ -138,29 +138,14 @@ def _normalise_pykap_item(item: dict, ticker: str, dtype: str,
     if disclosed_at is None:
         return None
 
-    # `ticker` arg is the bare BIST code we queried; PyKap items may also carry
-    # stockCodes/stockCode. Prefer an explicit code on the item, else the arg.
-    item_ticker = _extract_ticker(item) or (ticker.upper() if ticker else None)
-    # Company name: the member/kap title is the real human name (comp.name);
-    # fall back to titles on the item, then the ticker.
-    company_name = (
-        _first_nonempty(item, "memberTitle", "kapTitle", "companyTitle", "companyName")
-        or (comp_name or "")
-        or (item_ticker or "")
-    )[:200]
-    subject = _first_nonempty(item, "subject", "title")[:256]
-    summary = _first_nonempty(item, "summary")
-    if not subject and summary:
-        subject = summary[:256]
-
     return {
         "disclosure_id":   disc_id,
-        "ticker":          item_ticker,
-        "tickers":         _extract_tickers(item) or ([item_ticker] if item_ticker else []),
-        "company_name":    company_name,
-        "subject":         subject,
+        "ticker":          ticker,
+        "tickers":         [ticker],
+        "company_name":    item.get("stockCode") or comp_name or ticker,
+        "subject":         item.get("title") or item.get("summary", "")[:256],
         "disclosure_type": dtype,
-        "summary":         summary,
+        "summary":         str(item.get("summary", "")),
         "full_text":       "",   # PyKap does not return full text in list calls
         "url":             f"{_KAP_BASE}/tr/Bildirim/{disc_id}",
         "disclosed_at":    disclosed_at,
@@ -246,102 +231,33 @@ def _fetch_via_kap_api_sync(since: datetime, member_oid_list: Optional[List[str]
     return results
 
 
-def _first_nonempty(d: dict, *keys) -> str:
-    """Return the first non-empty string value among keys (str-coerced)."""
-    for k in keys:
-        v = d.get(k)
-        if v not in (None, ""):
-            return str(v)
-    return ""
-
-
-def _extract_ticker(d: dict) -> Optional[str]:
-    """
-    Extract the primary ticker from a KAP item.
-
-    KAP returns the ticker under `stockCodes` (comma-separated, PLURAL) in the
-    byCriteria API. Older/other shapes use `stockCode` (singular). A disclosure
-    can list multiple tickers (e.g. "DAPGM, DAPGB"); we take the first as the
-    primary and return the full list separately via _extract_tickers().
-    """
-    raw = _first_nonempty(d, "stockCodes", "stockCode")
-    if not raw:
-        return None
-    first = raw.split(",")[0].strip().upper()
-    return first or None
-
-
-def _extract_tickers(d: dict) -> List[str]:
-    """Return all tickers listed on a KAP item (deduped, upper-cased)."""
-    raw = _first_nonempty(d, "stockCodes", "stockCode")
-    if not raw:
-        return []
-    out: List[str] = []
-    for t in raw.split(","):
-        t = t.strip().upper()
-        if t and t not in out:
-            out.append(t)
-    return out
-
-
 def _normalise_kap_rest_item(item: dict) -> Optional[dict]:
-    """
-    Normalise a raw KAP byCriteria API item.
-
-    Field mapping (verified against the KAP byCriteria response shape that
-    pykap / kap-client surface). The raw API may nest the fields under a
-    `basic` or `disclosureBasic` wrapper, so we merge the wrapper into a
-    top-level view before reading.
-
-      ticker (Borsa İstanbul code)  <- stockCodes (comma-sep, PLURAL) / stockCode
-      company / member title        <- memberTitle / kapTitle / companyTitle / companyName
-      subject (Bildirim konusu)     <- subject / title
-      summary (Özet Bilgi)          <- summary
-      disclosure index              <- disclosureIndex
-      publish date                  <- publishDate
-
-    Previously this read the singular `stockCode` (almost always absent) and used
-    `title` for BOTH company_name and subject, so ticker/company/subject all came
-    back empty in the dashboard. Hence issue #3.
-    """
+    """Normalise a raw KAP byCriteria API item."""
     if not isinstance(item, dict):
         return None
-    wrapper = item.get("disclosureBasic") or item.get("basic") or {}
-    # Merge so either nesting style resolves; top-level item keys win ties.
-    disc = {**(wrapper if isinstance(wrapper, dict) else {}), **item}
-
-    disc_id = str(disc.get("disclosureIndex", "") or "")
+    disc_basic = item.get("disclosureBasic") or item
+    disc_id = str(disc_basic.get("disclosureIndex", ""))
     if not disc_id:
         return None
 
-    disclosed_at = _parse_kap_date(disc.get("publishDate", ""))
+    disclosed_at = _parse_kap_date(disc_basic.get("publishDate", ""))
     if not disclosed_at:
         return None
 
-    ticker = _extract_ticker(disc)
-    tickers = _extract_tickers(disc)
-    company_name = _first_nonempty(
-        disc, "memberTitle", "kapTitle", "companyTitle", "companyName", "title",
-    )[:200] or (ticker or "")
-    # subject = disclosure subject line; summary = Özet Bilgi.
-    subject = _first_nonempty(disc, "subject", "title")[:256]
-    summary = _first_nonempty(disc, "summary")
-    if not subject and summary:
-        subject = summary[:256]
-
+    ticker = disc_basic.get("stockCode", "").upper() or None
     return {
         "disclosure_id":   disc_id,
         "ticker":          ticker,
-        "tickers":         tickers,
-        "company_name":    company_name,
-        "subject":         subject,
-        "disclosure_type": _first_nonempty(disc, "disclosureClass", "disclosureType"),
-        "summary":         summary,
+        "tickers":         [ticker] if ticker else [],
+        "company_name":    disc_basic.get("title", "")[:200] or disc_basic.get("stockCode", ""),
+        "subject":         disc_basic.get("title", "")[:256],
+        "disclosure_type": disc_basic.get("disclosureClass", ""),
+        "summary":         disc_basic.get("summary", ""),
         "full_text":       "",
         "url":             f"{_KAP_BASE}/tr/Bildirim/{disc_id}",
         "disclosed_at":    disclosed_at,
         "source":          "scrape",
-        "raw_payload":     disc,
+        "raw_payload":     disc_basic,
     }
 
 
