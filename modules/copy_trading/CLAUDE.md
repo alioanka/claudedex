@@ -169,6 +169,26 @@ only; private keys/keypairs are never logged or surfaced.
   empty string until resolved). Dashboard agent: read these to show the
   operator which wallet funds copy trades per chain.
 
+## Wave-19 (2026-06-03) — Solana fallback-poll RPC routing + cadence
+**Operator-reported (15h):** `Solana RPC rate limited in fallback poll - backing off` every ~5 min; `EVM Copies: 0 | Solana Copies: 0` for 33 wallets. Public Solana endpoints (`rpc.ankr.com/solana`, `free.rpcpool.com`, `api.mainnet-beta`) were `unhealthy` while the operator's Helius endpoints were `active`/high-priority.
+
+**Root cause.** The Helius JSON-RPC endpoint is registered under pool_engine provider type `HELIUS_API`, NOT `SOLANA_RPC`. `get_endpoint('SOLANA_RPC')` therefore only ever returned the rate-limited PUBLIC endpoints. The fallback poll (`_poll_wallet_sigs`) POSTed `getSignaturesForAddress` to a **pinned, static** `self.solana_rpc_url`; whenever the Helius key wasn't resolved synchronously at `__init__`, that pinned value was a public endpoint, and the old 429 handler rotated only within the public `SOLANA_RPC` pool — so it could never escape to Helius.
+
+**How the RPC is now resolved (fallback poll).** `_poll_wallet_sigs` no longer uses the pinned URL. It calls `_resolve_solana_rpc()` fresh **per cycle**:
+1. `pool_engine.get_endpoint('HELIUS_API')` — the healthy Helius JSON-RPC URL (`https://mainnet.helius-rpc.com/?api-key=...`) is a valid JSON-RPC endpoint and is preferred when present.
+2. `pool_engine.get_endpoint('SOLANA_RPC')` — public pool, used only when no Helius key.
+3. `self.solana_rpc_url` — last-resort static value.
+Every call reports `report_success` / `report_failure` / `report_rate_limit` back to pool_engine under the resolved provider type so health/priority is honoured each cycle. The fast path (`_fetch_wallet_txs_helius`, `api.helius.xyz/v0` enhanced-tx REST) is unchanged and still preferred; the fallback poll only fires on Helius transport failure.
+
+**Cadence knobs (migration 068, `copytrading_config`).**
+- `copy_poll_interval_s` (float, default `15`, clamp 5..300) — full monitor-cycle cadence; replaces the hardcoded 15 s `asyncio.sleep`.
+- `copy_request_spacing_s` (float, default `0`, clamp 0..5) — global minimum gap between consecutive outbound Solana RPC calls, enforced across the wallet fan-out via `_space_solana_request()` so N wallets don't fire one synchronized burst.
+Pre-existing related knobs still apply: `copy_max_concurrent_wallets` (default 5), `copy_max_signal_age_s` (default 5), `copy_cursor_lookback_minutes` (default 15).
+
+**Rate-limit WARNING throttle.** Confirmed working: `_fallback_rl_throttle_s=300` demotes repeats to DEBUG for 5 min; the WARNING now names the endpoint (Helius vs public) so a single line per 5 min is not masking total failure.
+
+**Honest sustainability assessment (33 wallets).** The PRIMARY load is the Helius **enhanced-tx REST** path (one `GET /v0/addresses/{w}/transactions` per wallet per cycle), NOT JSON-RPC `getSignaturesForAddress` — the fallback poll only runs when Helius REST fails. At the default 15 s cadence, 33 wallets = ~2.2 REST calls/s sustained (bursty up to `copy_max_concurrent_wallets=5` concurrent). Helius free/developer tier (~10 req/s, 100k credits/day) makes this borderline: 33 wallets × 5760 cycles/day ≈ 190k calls/day, which EXCEEDS a 100k/day free credit budget. Recommendation: on the free tier either raise `copy_poll_interval_s` to ~30 s (halves daily calls to ~95k) or trim the watchlist to ~17 wallets; a paid Helius plan (Developer 10M credits/mo) sustains 33 wallets comfortably at 15 s. This change FIXES the routing (Helius is now actually used) but does not raise the operator's Helius quota — if the free tier is exhausted, the symptom shifts from "always 429 on public RPC" to "429 on Helius once daily credits run out," which the per-endpoint WARNING now makes visible.
+
 ## See also
 ## Wave-9 honest-scoring audit (2026-05-26)
 Audited `leader_scorer.py` + the `copy_engine.py` entry path for the two

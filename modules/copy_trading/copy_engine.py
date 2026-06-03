@@ -1074,6 +1074,30 @@ class CopyTradingEngine(BaseModule):
         self._fallback_rl_last_warn: float = 0.0
         self._fallback_rl_throttle_s: float = 300.0
 
+        # Wave-19: Solana poll cadence + endpoint routing.
+        # Root cause of the "Solana RPC rate limited in fallback poll" spam:
+        # the fallback JSON-RPC poll (_poll_wallet_sigs) was pinned to the
+        # static self.solana_rpc_url and, when the Helius key wasn't resolved
+        # synchronously at __init__, that value was a PUBLIC endpoint
+        # (rpc.ankr.com/solana, free.rpcpool.com, api.mainnet-beta) which
+        # 429s instantly under 33 wallets. The poll now resolves the best
+        # endpoint per cycle via pool_engine, PREFERRING the operator's
+        # Helius JSON-RPC endpoint (HELIUS_API provider type, which is the
+        # healthy/high-priority one) and only using the public SOLANA_RPC
+        # pool when no Helius key exists.
+        #
+        # copy_poll_interval_s: full-cycle cadence (was a hardcoded 15 s
+        # sleep). Larger value = fewer getSignaturesForAddress bursts.
+        # copy_request_spacing_s: minimum spacing between consecutive
+        # outbound Solana RPC calls (enforced globally across the wallet
+        # fan-out) so 33 wallets don't fire in one synchronized burst.
+        # Both tunable via config_settings.copytrading_config (migration 068).
+        self.copy_poll_interval_s: float = 15.0
+        self.copy_request_spacing_s: float = 0.0
+        # Monotonic timestamp of the last outbound Solana RPC call (for spacing).
+        self._last_sol_rpc_ts: float = 0.0
+        self._sol_rpc_spacing_lock = asyncio.Lock()
+
         # Wave-15: per-wallet cursor (most-recent processed signature).
         # On first run the cursor is absent; we record the newest sig
         # returned by the API as the cursor and skip ALL history — old
@@ -1207,10 +1231,11 @@ class CopyTradingEngine(BaseModule):
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
 
-                await asyncio.sleep(15)  # Poll every 15s
+                # Wave-19: config-driven cadence (copy_poll_interval_s).
+                await asyncio.sleep(float(getattr(self, 'copy_poll_interval_s', 15.0)))
             except Exception as e:
                 logger.error(f"Copy loop error: {e}")
-                await asyncio.sleep(15)
+                await asyncio.sleep(float(getattr(self, 'copy_poll_interval_s', 15.0)))
         return True
 
     async def process_opportunity(self, opportunity: Dict) -> Optional[Dict]:
@@ -1393,6 +1418,27 @@ class CopyTradingEngine(BaseModule):
                         try:
                             v = float(val) if val else 15.0
                             self.copy_cursor_lookback_minutes = max(0.0, min(120.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_poll_interval_s':
+                        # Wave-19 full-cycle cadence. Clamp: floor 5 s
+                        # (below that the burst rate alone can 429 even on
+                        # Helius free tier), ceiling 300 s (5 min, beyond
+                        # which the 5 s signal-staleness guard drops every
+                        # signal anyway).
+                        try:
+                            v = float(val) if val else 15.0
+                            self.copy_poll_interval_s = max(5.0, min(300.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_request_spacing_s':
+                        # Wave-19 per-request spacing. Minimum gap between
+                        # consecutive outbound Solana RPC calls. 0 disables.
+                        # Clamp upper end at 5 s so a fat-finger can't stall
+                        # the whole fan-out.
+                        try:
+                            v = float(val) if val else 0.0
+                            self.copy_request_spacing_s = max(0.0, min(5.0, v))
                         except (TypeError, ValueError):
                             pass
 
@@ -1594,6 +1640,59 @@ class CopyTradingEngine(BaseModule):
             logger.debug(f"Helius enhanced-tx fetch failed for {wallet[:10]}: {e}")
             return None  # transport failure — caller may fall back
 
+    async def _resolve_solana_rpc(self) -> Optional[str]:
+        """Resolve the best Solana JSON-RPC endpoint for the fallback poll.
+
+        Wave-19 root-cause fix: the fallback poll must NOT pin a static URL
+        that may be a rate-limited PUBLIC endpoint. Resolution order, fresh
+        per call so pool_engine health/priority is honoured every cycle:
+
+          1. pool_engine.get_endpoint('HELIUS_API') — the operator's Helius
+             endpoint (https://mainnet.helius-rpc.com/?api-key=...) is a
+             valid JSON-RPC endpoint AND is the healthy/high-priority one.
+             Public SOLANA_RPC endpoints are registered under a DIFFERENT
+             provider type, so get_endpoint('SOLANA_RPC') would only ever
+             hand back the rate-limited free endpoints — never Helius.
+          2. pool_engine.get_endpoint('SOLANA_RPC') — public pool (only used
+             when no Helius key is configured).
+          3. self.solana_rpc_url — last-resort static value from initialize().
+
+        Returns the URL or None. The caller reports success/rate-limit back
+        to pool_engine so the health tracker keeps Helius pinned as primary.
+        """
+        try:
+            from config.pool_engine import PoolEngine
+            pool = await PoolEngine.get_instance()
+            helius_url = await pool.get_endpoint('HELIUS_API')
+            if helius_url and 'helius' in helius_url.lower():
+                return helius_url
+            public_url = await pool.get_endpoint('SOLANA_RPC')
+            if public_url:
+                return public_url
+        except Exception as e:
+            logger.debug(f"_resolve_solana_rpc pool_engine lookup failed: {e}")
+        return self.solana_rpc_url
+
+    async def _space_solana_request(self) -> None:
+        """Enforce a minimum gap between consecutive outbound Solana RPC calls.
+
+        Wave-19: with the wallet fan-out bounded by copy_max_concurrent_wallets,
+        this adds a global minimum spacing so even the permitted concurrency
+        doesn't fire all calls in one synchronized burst that trips the
+        per-second rate limit. No-op when copy_request_spacing_s == 0.
+        """
+        spacing = float(getattr(self, 'copy_request_spacing_s', 0.0))
+        if spacing <= 0:
+            return
+        import time as _t
+        async with self._sol_rpc_spacing_lock:
+            now = _t.monotonic()
+            wait = (self._last_sol_rpc_ts + spacing) - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+                now = _t.monotonic()
+            self._last_sol_rpc_ts = now
+
     async def _poll_wallet_sigs(
         self,
         session: aiohttp.ClientSession,
@@ -1613,50 +1712,72 @@ class CopyTradingEngine(BaseModule):
             "method": "getSignaturesForAddress",
             "params": [wallet, {"limit": 5}],
         }
+        # Wave-19: resolve the endpoint fresh per call (prefers the healthy
+        # Helius JSON-RPC endpoint) instead of pinning a possibly-public URL.
+        rpc_url = await self._resolve_solana_rpc()
+        if not rpc_url:
+            return 0
+        on_helius = 'helius' in rpc_url.lower()
+        provider_type = 'HELIUS_API' if on_helius else 'SOLANA_RPC'
+        # Enforce global per-request spacing before the outbound call.
+        await self._space_solana_request()
+        _t0 = _time.monotonic()
         try:
             async with session.post(
-                self.solana_rpc_url, json=payload,
+                rpc_url, json=payload,
                 timeout=aiohttp.ClientTimeout(total=8),
             ) as resp:
                 if resp.status == 429:
                     # Wave-16: throttle — emit WARNING at most once per
-                    # _fallback_rl_throttle_s (60 s default) regardless of
+                    # _fallback_rl_throttle_s (300 s default) regardless of
                     # wallet count.  Subsequent hits are DEBUG to avoid the
-                    # 33-wallet * 15 s = 33 WARNINGs/15 s flood.
+                    # 33-wallet flood.
                     import time as _rl_time
                     _now_rl = _rl_time.time()
                     _last = getattr(self, '_fallback_rl_last_warn', 0.0)
-                    _throttle = getattr(self, '_fallback_rl_throttle_s', 60.0)
+                    _throttle = getattr(self, '_fallback_rl_throttle_s', 300.0)
+                    _endpoint = 'Helius' if on_helius else 'public'
                     if _now_rl - _last >= _throttle:
                         logger.warning(
-                            "Solana RPC rate limited in fallback poll - backing off "
-                            "(further occurrences demoted to DEBUG for %ds)", int(_throttle)
+                            "Solana RPC rate limited in fallback poll (%s endpoint) - "
+                            "backing off (further occurrences demoted to DEBUG for %ds)",
+                            _endpoint, int(_throttle)
                         )
                         self._fallback_rl_last_warn = _now_rl
                     else:
                         logger.debug(
-                            "Solana RPC rate limited in fallback poll - backing off "
-                            "(throttled)"
+                            "Solana RPC rate limited in fallback poll (%s) - backing off "
+                            "(throttled)", _endpoint
                         )
+                    # Report the 429 to pool_engine for BOTH provider types so
+                    # the health tracker penalises the offending endpoint and
+                    # get_endpoint hands back the next-best one next cycle.
                     try:
-                        on_helius = 'helius' in (self.solana_rpc_url or '').lower()
-                        if not on_helius:
-                            await RPCProvider.report_rate_limit(
-                                'SOLANA_RPC', self.solana_rpc_url, 300
-                            )
-                            new_url = await RPCProvider.get_rpc('SOLANA_RPC')
-                            if new_url and new_url != self.solana_rpc_url:
-                                self.solana_rpc_url = new_url
-                                logger.info("Rotated to new Solana RPC")
+                        await RPCProvider.report_rate_limit(provider_type, rpc_url, 60)
                     except Exception:
                         pass
                     return 0
                 if resp.status != 200:
+                    try:
+                        await RPCProvider.report_failure(provider_type, rpc_url)
+                    except Exception:
+                        pass
                     return 0
                 data = await resp.json()
                 signatures = data.get('result', [])
+                try:
+                    await RPCProvider.report_success(
+                        provider_type, rpc_url,
+                        latency_ms=(_time.monotonic() - _t0) * 1000.0,
+                    )
+                except Exception:
+                    pass
         except Exception as e:
             logger.debug(f"getSignaturesForAddress failed for {wallet[:10]}: {e}")
+            try:
+                await RPCProvider.report_failure(provider_type, rpc_url)
+            except Exception:
+                pass
             return 0
 
         now_ts = _time.time()
