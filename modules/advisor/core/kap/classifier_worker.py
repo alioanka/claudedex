@@ -70,6 +70,15 @@ class KapClassifierWorker:
         self.db_pool = db_pool
         self.telegram = telegram
         self._running = False
+        # Disclosures already CLASSIFY-attempted in this process run. Guards
+        # against a runaway re-classification loop: if store_classification()
+        # fails (e.g. the kap_classifications table is missing) the disclosure
+        # would otherwise stay "unclassified" and be re-LLM'd every cycle —
+        # which once burned a full day of paid API credit in ~3 hours. We never
+        # re-attempt the same disclosure within a run; a process restart retries
+        # once. The global llm_budget cap is the second, hard backstop.
+        self._attempted_ids: set = set()
+        self._store_failure_warned = False
 
     # ------------------------------------------------------------------
     # Config accessors
@@ -152,16 +161,27 @@ class KapClassifierWorker:
         max_alerts = self.alert_max_per_cycle
 
         for row in rows:
+            row_id = row.get("id")
+
+            # Runaway-loop hard-stop: never re-attempt a disclosure already
+            # classified this run. Without this, a persistent store failure
+            # re-LLM's the same rows every cycle (the cost runaway).
+            if row_id in self._attempted_ids:
+                continue
+
             # The classifier reads disclosure['id'] / 'subject' / 'text'.
             # kap_disclosures stores body text under 'full_text'.
             disclosure = {
-                "id":      row.get("id"),
+                "id":      row_id,
                 "subject": row.get("subject", ""),
                 "text":    row.get("full_text", "") or row.get("summary", ""),
             }
 
             # classify() never raises: LLM failure -> rule/UNCLASSIFIED fallback.
             result = classify(disclosure, config=self.config, caller_logger=logger)
+            # Mark attempted REGARDLESS of store success below — a failed store
+            # must not cause the same disclosure to be re-classified next cycle.
+            self._attempted_ids.add(row_id)
 
             # disclosure_id column in kap_classifications is the BIGINT PK
             # (kap_disclosures.id), not the KAP string index.
@@ -180,6 +200,14 @@ class KapClassifierWorker:
             )
             if ok:
                 classified += 1
+            elif not self._store_failure_warned:
+                self._store_failure_warned = True
+                logger.warning(
+                    "[kap.classifier_worker] store_classification FAILED (is the "
+                    "kap_classifications table present? run migrations). "
+                    "Classified disclosures will NOT be re-LLM'd this run "
+                    "(loop-guard active), but classifications are not persisting."
+                )
 
             # Polarity-prior alert (non-NEUTRAL, high-confidence only).
             if (

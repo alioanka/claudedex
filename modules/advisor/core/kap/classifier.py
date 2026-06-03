@@ -333,6 +333,14 @@ def _call_llm_classify(
     """
     import os
 
+    # Hard global daily cap on paid LLM calls (shared with advice rationale).
+    # When exhausted, skip the API entirely → caller returns UNCLASSIFIED / rule
+    # fallback. This is the backstop that makes a KAP re-classify runaway loop
+    # impossible regardless of store-failure / cycle frequency.
+    from modules.advisor.core.llm_budget import try_consume
+    if not try_consume(config, kind="kap_classify", log=log):
+        return None
+
     prompt = _build_llm_prompt(subject, body)
 
     # ---- Anthropic ----

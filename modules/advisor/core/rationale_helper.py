@@ -508,7 +508,10 @@ async def build_rationale(
             return cached
 
     # --- Anthropic call ---
-    if anthropic_key:
+    # Hard global daily cap on paid LLM calls (shared with KAP classifier). When
+    # exhausted, fall back to rule-based prose and make NO API call.
+    from modules.advisor.core.llm_budget import try_consume
+    if anthropic_key and try_consume(config, kind="advice_rationale", log=log):
         model_id      = config.get("advisor_anthropic_model", "claude-opus-4-8")
         signal_summary = _build_signal_summary(symbol, market, horizon, signals, direction)
         mkt_label      = _MARKET_LABEL.get(market, market.value)
@@ -523,7 +526,8 @@ async def build_rationale(
 
     # --- Dual-advice: OpenAI call ---
     openai_text: Optional[str] = None
-    if dual_mode != _DUAL_MODE_OFF and openai_key:
+    if (dual_mode != _DUAL_MODE_OFF and openai_key
+            and try_consume(config, kind="advice_openai", log=log)):
         openai_model  = config.get("advisor_openai_model", "gpt-4o")
         signal_summary = _build_signal_summary(symbol, market, horizon, signals, direction)
         mkt_label      = _MARKET_LABEL.get(market, market.value)
