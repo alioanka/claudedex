@@ -362,16 +362,29 @@ async def store_classification(pool, disclosure_id: str, event_type: str,
         )
         return True
     except Exception as exc:
-        err_str = str(exc).lower()
-        if "kap_classifications" in err_str or "does not exist" in err_str:
+        # Precisely distinguish a MISSING table from other DB errors. The old
+        # heuristic ("kap_classifications" in str(exc)) mis-reported FK
+        # violations / column mismatches as "table not found", which sent the
+        # operator chasing migration 063 when the real cause was different.
+        sqlstate = getattr(exc, "sqlstate", None)
+        cls = type(exc).__name__
+        if sqlstate == "42P01" or cls == "UndefinedTableError":   # undefined_table
             logger.warning(
-                "[kap.store] kap_classifications table not found -- "
-                "run migration 063 (sibling classifier agent) first. "
+                "[kap.store] kap_classifications table genuinely missing "
+                "(SQLSTATE 42P01) -- run migrations (063/073). "
                 "store_classification(%s) skipped.", disclosure_id
             )
+        elif sqlstate == "23503" or cls == "ForeignKeyViolationError":  # fk_violation
+            logger.warning(
+                "[kap.store] store_classification(%s) FK violation: event_type=%r "
+                "is not present in kap_event_taxonomy (seed missing? run migration "
+                "063/069). %s", disclosure_id, event_type, exc
+            )
         else:
-            logger.warning("[kap.store] store_classification failed for %s: %s",
-                           disclosure_id, exc)
+            logger.warning(
+                "[kap.store] store_classification(%s) failed [%s/%s]: %s",
+                disclosure_id, cls, sqlstate, exc
+            )
         return False
 
 
