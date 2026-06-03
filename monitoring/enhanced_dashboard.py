@@ -16196,18 +16196,58 @@ class DashboardEndpoints:
             # Fail-soft: hide the section rather than show an error.
             return web.json_response({'success': True, 'rows': [], 'enabled': False})
 
+    # Canonical sim CHANNELS, in display order (migration 077). The page renders
+    # one table per channel, always all seven, even when empty.
+    _ADVISOR_SIM_CHANNELS = (
+        'crypto', 'us_equities', 'bist', 'fx', 'midas_funds', 'gems', 'kap',
+    )
+
     async def api_get_advisor_simulations(self, request):
-        """Return open and recent closed sim positions."""
+        """
+        Return sim positions grouped per CHANNEL (migration 077), plus per-channel
+        open-count / cap and a per-channel total P&L (open unrealized + closed
+        realized). Each of the seven channels is independently capped at
+        advisor_sim_cap_per_channel (default 15). Falls back gracefully on a
+        pre-077 DB (no channel column -> channel = market).
+        """
         try:
             params = request.rel_url.query
             status_filter = params.get('status', '')  # open | closed | all
             limit = min(int(params.get('limit', 100)), 500)
 
             rows = []
+            cap = 15
             summary = {'total_open': 0, 'total_pnl_usd': 0.0, 'win_rate': 0.0,
-                       'open_by_market': {}}
+                       'open_by_market': {}, 'open_by_channel': {},
+                       'cap_per_channel': cap, 'channels': list(self._ADVISOR_SIM_CHANNELS)}
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    # Per-channel cap (advisor_sim_cap_per_channel; legacy
+                    # max_sim_positions as fallback alias).
+                    try:
+                        cap_row = await conn.fetchrow(
+                            """SELECT value FROM config_settings
+                               WHERE config_type='advisor_config'
+                                 AND key IN ('advisor_sim_cap_per_channel','max_sim_positions')
+                               ORDER BY (key='advisor_sim_cap_per_channel') DESC
+                               LIMIT 1"""
+                        )
+                        if cap_row and cap_row['value'] not in (None, ''):
+                            cap = int(float(cap_row['value']))
+                    except Exception:
+                        pass
+                    summary['cap_per_channel'] = cap
+
+                    # channel expression: COALESCE(channel, market) on a 077 DB,
+                    # plain market on a pre-077 DB (channel column absent).
+                    chan_expr = "COALESCE(channel, market)"
+                    try:
+                        await conn.fetchval(
+                            "SELECT channel FROM advisor_sim_positions LIMIT 1"
+                        )
+                    except Exception:
+                        chan_expr = "market"
+
                     where = ''
                     args = []
                     if status_filter and status_filter != 'all':
@@ -16216,7 +16256,9 @@ class DashboardEndpoints:
                     else:
                         where = "WHERE status IN ('open','closed','expired')"
                     db_rows = await conn.fetch(
-                        f'''SELECT id, advice_id, symbol, market, direction, horizon,
+                        f'''SELECT id, advice_id, symbol, market,
+                                   {chan_expr} AS channel,
+                                   direction, horizon,
                                    entry_price, current_price, target_price, stop_price,
                                    notional_usd, exit_price, pnl_pct, pnl_usd, status,
                                    close_reason, opened_at, closed_at
@@ -16231,6 +16273,7 @@ class DashboardEndpoints:
                             'advice_id': r['advice_id'],
                             'symbol': r['symbol'],
                             'market': r['market'],
+                            'channel': r['channel'] or r['market'],
                             'direction': r['direction'],
                             'horizon': r['horizon'],
                             'entry_price': float(r['entry_price']),
@@ -16261,7 +16304,17 @@ class DashboardEndpoints:
                         total_closed = int(stats['total_closed'] or 0)
                         wins = int(stats['wins'] or 0)
                         summary['win_rate'] = round(wins / total_closed * 100, 1) if total_closed else 0.0
-                    # Per-market open counts (issue #13: sim cap is per-market).
+                    # Per-channel open counts (migration 077: cap is per-channel).
+                    by_chan = await conn.fetch(
+                        f"""SELECT {chan_expr} AS channel, COUNT(*) AS n
+                            FROM advisor_sim_positions
+                            WHERE status='open'
+                            GROUP BY {chan_expr}"""
+                    )
+                    summary['open_by_channel'] = {
+                        str(r['channel']): int(r['n']) for r in by_chan
+                    }
+                    # Keep open_by_market for backward compat.
                     by_mkt = await conn.fetch(
                         """SELECT market, COUNT(*) AS n
                            FROM advisor_sim_positions
