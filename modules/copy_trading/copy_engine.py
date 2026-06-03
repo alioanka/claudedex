@@ -258,6 +258,33 @@ class CopyTradeExecutor:
             except Exception:
                 pass
 
+        # Connect the shared PoolEngine ONCE before any RPC lookup. Without
+        # this, pool.initialized stays False and every get_endpoint() /
+        # RPCProvider.get_rpc() call below falls through to the .env path and
+        # logs "PoolEngine not initialized, using .env fallback" on EVERY call,
+        # flooding stderr. Mirrors the sniper/arbitrage main_*.py init order:
+        # get_instance() -> initialize(db_pool) -> RPCProvider.set_pool_engine().
+        # initialize() is idempotent against the singleton (re-init guarded by
+        # the pool's own `initialized` flag) and fail-soft (it loads the .env
+        # pool itself if the DB is empty), so subsequent get_endpoint calls hit
+        # the live pool and .env remains a genuine last resort. If the pool
+        # truly can't connect we log ONCE here, not per-call.
+        try:
+            from config.pool_engine import PoolEngine
+            from config.rpc_provider import RPCProvider as _RPCP
+            pool = await PoolEngine.get_instance()
+            if not pool.initialized:
+                ok = await pool.initialize(self.db_pool)
+                if ok:
+                    logger.info("✅ PoolEngine connected for Copy Trading RPC management")
+                else:
+                    logger.warning(
+                        "PoolEngine connect returned False; RPC lookups will use .env fallback"
+                    )
+            _RPCP.set_pool_engine(pool)
+        except Exception as e:
+            logger.warning(f"PoolEngine init failed, using .env fallback for RPCs: {e}")
+
         # Resolve Solana RPC. Wave-7 (issue 17b): prefer the Helius
         # endpoint when a HELIUS_API_KEY is configured (it lives in the
         # encrypted DB, so resolve it via get_async AFTER db_pool init).
