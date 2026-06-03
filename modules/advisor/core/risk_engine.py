@@ -49,6 +49,23 @@ class AdvisorRiskEngine:
         return int(self.config.get("max_sim_positions", 20))
 
     @property
+    def sim_cap_per_channel(self) -> int:
+        """
+        Per-CHANNEL open-sim cap (migration 077). Reads
+        advisor_sim_cap_per_channel (default 15) and falls back to the legacy
+        max_sim_positions key if the new key is absent (so a pre-077 config still
+        enforces a sensible cap). Each channel (crypto, us_equities, bist, fx,
+        midas_funds, gems, kap) is capped independently.
+        """
+        raw = self.config.get("advisor_sim_cap_per_channel")
+        if raw is None or str(raw).strip() == "":
+            return self.max_sim_positions
+        try:
+            return int(float(raw))
+        except (TypeError, ValueError):
+            return self.max_sim_positions
+
+    @property
     def blocked_symbols(self) -> set:
         raw = self.config.get("blocked_symbols", "")
         return {s.strip().upper() for s in raw.split(",") if s.strip()}
@@ -58,6 +75,7 @@ class AdvisorRiskEngine:
         result: AdviceResult,
         open_sim_count: int = 0,
         min_confidence_override=None,
+        channel: str = "",
     ) -> tuple[bool, str]:
         """
         Gate an AdviceResult through risk checks.
@@ -65,7 +83,13 @@ class AdvisorRiskEngine:
         Parameters
         ----------
         result                  : The AdviceResult candidate.
-        open_sim_count          : Current count of open sim positions (cap check).
+        open_sim_count          : Current count of open sim positions for THIS
+                                  advice's CHANNEL (migration 077). The caller
+                                  passes the channel-specific count so the cap is
+                                  enforced per channel (gems/kap have their own).
+        channel                 : The channel this advice's sim would open in
+                                  (crypto|...|gems|kap). Used only for the reject
+                                  message; defaults to the market value.
         min_confidence_override : When not None, use this confidence floor instead
                                   of self.min_confidence. Discovery ("New Gems")
                                   passes a lower floor (default 0.0) so trending
@@ -97,12 +121,14 @@ class AdvisorRiskEngine:
             return False, f"symbol={result.symbol} is in blocked_symbols"
 
         # 4. Sim position cap (only relevant when sim is enabled for this advice).
-        # open_sim_count is the PER-MARKET open count (issue #13), so the cap is
-        # enforced independently per market/strategy.
-        if result.sim_enabled and open_sim_count >= self.max_sim_positions:
+        # open_sim_count is the PER-CHANNEL open count (migration 077), so the cap
+        # is enforced independently per channel — gems and kap have their own 15
+        # slots and never consume crypto/us/fx slots.
+        if result.sim_enabled and open_sim_count >= self.sim_cap_per_channel:
+            ch = channel or result.market.value
             return False, (
-                f"per-market sim cap reached for {result.market.value}: "
-                f"{open_sim_count}/{self.max_sim_positions}"
+                f"per-channel sim cap reached for {ch}: "
+                f"{open_sim_count}/{self.sim_cap_per_channel}"
             )
 
         # 5. NEUTRAL direction is informational only — still publish

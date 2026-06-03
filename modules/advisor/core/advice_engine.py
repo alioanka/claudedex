@@ -37,7 +37,13 @@ from typing import Dict, List, Optional
 
 from modules.advisor.core.base_analyzer import BaseAnalyzer
 from modules.advisor.core.kronos_forecaster import KronosForecaster
-from modules.advisor.core.models import AdviceResult, DataSourceStatus, Horizon, Market
+from modules.advisor.core.models import (
+    AdviceResult,
+    DataSourceStatus,
+    Horizon,
+    Market,
+    derive_channel,
+)
 from modules.advisor.core.portfolio_engine import AdvisorPortfolioEngine
 from modules.advisor.core.risk_engine import AdvisorRiskEngine
 from modules.advisor.core.signal_engine import compute_composite_signal
@@ -115,11 +121,13 @@ class AdviceEngine:
             [h.value for h in horizons],
         )
 
-        # PER-MARKET sim caps (issue #13): max_sim_positions is the cap PER
-        # market/strategy (e.g. 10 crypto + 10 BIST independently), NOT one
-        # global cap across all markets. We track the open count per market and
-        # pass the relevant market's count to the risk gate.
-        open_sim_by_market = await self.portfolio.count_open_sims_by_market()
+        # PER-CHANNEL sim caps (migration 077): advisor_sim_cap_per_channel
+        # (default 15) is the cap PER CHANNEL — crypto, us_equities, bist, fx,
+        # midas_funds, gems, kap — each enforced independently. Watchlist sims
+        # use their market's channel; discovered ("gems") sims use the 'gems'
+        # channel (NOT the underlying market). We track the open count per
+        # channel and pass the relevant channel's count to the risk gate.
+        open_sim_by_channel = await self.portfolio.count_open_sims_by_channel()
 
         for market in enabled_markets:
             analyzer = self.analyzers.get(market)
@@ -129,24 +137,27 @@ class AdviceEngine:
                 )
                 continue
 
-            market_open = open_sim_by_market.get(market.value, 0)
+            # Watchlist advice routes to its market's channel.
+            channel = market.value
+            channel_open = open_sim_by_channel.get(channel, 0)
             symbols = watch_list.get(market, [])
             for symbol in symbols:
                 for horizon in horizons:
                     result = await self._run_symbol(
-                        analyzer, symbol, horizon, market_open
+                        analyzer, symbol, horizon, channel_open
                     )
                     if result is not None:
                         published.append(result)
-                        market_open += int(result.sim_enabled)
+                        channel_open += int(result.sim_enabled)
                         self._last_advice_at = datetime.now(timezone.utc)
-            open_sim_by_market[market.value] = market_open
+            open_sim_by_channel[channel] = channel_open
 
         # GATED discovery pass — surfaces NEW symbols beyond the watchlist on a
         # slow cadence (advisor_discovery_refresh_hours). Default OFF. Fail-soft:
         # any error here NEVER affects the watchlist advice already published.
+        # Discovered advice auto-sims into the 'gems' channel.
         try:
-            disc = await self._run_discovery_pass(horizons, open_sim_by_market)
+            disc = await self._run_discovery_pass(horizons, open_sim_by_channel)
             published.extend(disc)
         except Exception as exc:
             logger.warning("[advice] discovery pass error (fail-soft): %s", exc)
@@ -227,18 +238,23 @@ class AdviceEngine:
         # Provenance marker (watchlist vs discovery) — for persistence + dashboard.
         result.extra["origin"] = origin
 
-        # Discovery "New Gems" are surfaced for REVIEW, not auto-simmed. If left
-        # sim-enabled they hit the per-market sim cap (usually already full of
-        # watchlist sims) and get rejected -> the New Gems section stays empty.
-        # Publish them without consuming a sim slot; operator can manually sim a
-        # gem they like.
-        if origin == "discovery":
-            result.sim_enabled = False
+        # Sim CHANNEL routing (migration 077): discovered ("New Gems") advice
+        # auto-sims into the 'gems' channel — NOT the underlying market's channel
+        # — so gems have their own 15-slot cap and never consume crypto/us/fx
+        # slots. Watchlist advice keeps sim_enabled as the analyzer set it
+        # (sim_default_enabled) and routes to its market channel.
+        channel = derive_channel(
+            result.market,
+            origin=origin,
+            kap_driven=bool(result.extra.get("kap_driven", False)),
+        )
 
         # Risk gate. Discovery ("New Gems") uses a lower confidence floor
         # (advisor_discovery_min_confidence, default 0.0) so trending candidates
         # are SHOWN even at low confidence — otherwise the min_confidence gate
-        # silently suppresses every gem and the section stays empty.
+        # silently suppresses every gem and the section stays empty. The sim cap
+        # is now per-CHANNEL: open_sim_count is the count for THIS advice's
+        # channel (gems use the gems count), passed by the caller.
         disc_floor = None
         if origin == "discovery":
             try:
@@ -246,7 +262,7 @@ class AdviceEngine:
             except (TypeError, ValueError):
                 disc_floor = 0.0
         passes, reject_reason = self.risk.should_publish(
-            result, open_sim_count, min_confidence_override=disc_floor
+            result, open_sim_count, min_confidence_override=disc_floor, channel=channel
         )
         if not passes:
             logger.debug(
@@ -626,11 +642,17 @@ class AdviceEngine:
     async def _run_discovery_pass(
         self,
         horizons: List[Horizon],
-        open_sim_by_market: Dict[str, int],
+        open_sim_by_channel: Dict[str, int],
     ) -> List[AdviceResult]:
         """
         GATED discovery pass. Surfaces NEW symbols beyond the watchlist and runs
         them through the SAME analyzer pipeline, flagged origin='discovery'.
+
+        SIM CHANNEL: every discovered advice auto-sims into the SINGLE shared
+        'gems' channel (migration 077) regardless of its underlying market — a
+        discovered US ticker counts against the gems cap, not us_equities. So we
+        track ONE gems open-count across all discovery markets and pass it to the
+        per-channel cap gate.
 
         Gates (all must hold):
           - advisor_discovery_enabled == true
@@ -681,6 +703,8 @@ class AdviceEngine:
 
         published: List[AdviceResult] = []
         total_new = 0
+        # All discovered sims share the 'gems' channel — one running count.
+        gems_open = open_sim_by_channel.get("gems", 0)
         for market_str in markets:
             try:
                 market = Market(market_str)
@@ -711,7 +735,6 @@ class AdviceEngine:
                 ", ".join(c.symbol for c in candidates),
             )
             total_new += len(candidates)
-            market_open = open_sim_by_market.get(market.value, 0)
 
             for cand in candidates:
                 # Pick the rationale config: LLM-narrate only while budget allows.
@@ -721,14 +744,16 @@ class AdviceEngine:
                 else:
                     cfg_for_call = rule_based_cfg
                 for horizon in horizons:
+                    # Pass the shared gems open-count: discovered sims all land in
+                    # the 'gems' channel and share its 15-slot cap.
                     result = await self._run_discovery_symbol(
-                        analyzer, cand, horizon, market_open, cfg_for_call
+                        analyzer, cand, horizon, gems_open, cfg_for_call
                     )
                     if result is not None:
                         published.append(result)
-                        market_open += int(result.sim_enabled)
+                        gems_open += int(result.sim_enabled)
                         self._last_advice_at = datetime.now(timezone.utc)
-            open_sim_by_market[market.value] = market_open
+        open_sim_by_channel["gems"] = gems_open
 
         # Record the run so cadence is honoured (in-memory + best-effort DB).
         await self._mark_discovery_ran()
