@@ -400,6 +400,11 @@ class FuturesTradingEngine:
             # FUT-RM-20 (Wave 7): one-entry-per-candle throttle
             self.one_entry_per_candle = bool(getattr(
                 strategy_config, 'one_entry_per_candle', True))
+            # FUT-RM-26 (Wave 24): hard kill of NEW entries (neutralization).
+            # When set, the engine monitors/exits existing positions but opens
+            # no new momentum or carry positions. See migration 066 + report.
+            self.entries_suppressed = bool(getattr(
+                strategy_config, 'entries_suppressed', False))
             self.verbose_signals = strategy_config.verbose_signals
 
             # FUT-RM-25 (Wave 14): funding-rate carry config.
@@ -463,6 +468,8 @@ class FuturesTradingEngine:
             self.edge_slippage_pct = 0.05
             self.edge_funding_fallback_pct = 0.05
             self.one_entry_per_candle = True
+            # FUT-RM-26 (Wave 24) fallback default: entries enabled unless DB says otherwise
+            self.entries_suppressed = False
             # FUT-RM-21 (Wave 7) fallback default
             self.block_counter_trend_entries = True
             self.require_trend_confirmation = False
@@ -1121,12 +1128,30 @@ class FuturesTradingEngine:
             # 2. Monitor existing positions
             await self._monitor_positions()
 
-            # 3. Check for new opportunities
-            await self._scan_opportunities()
+            # FUT-RM-26 (Wave 24): entry suppression / neutralization gate.
+            # When set, the engine still monitors and exits existing positions
+            # (step 2 above and step 5 below) but opens NO new momentum or carry
+            # positions. This is the futures equivalent of the wave-18 budget=0
+            # neutralization for sniper/arb — see migration 066 + the wave-24
+            # strategy review. Reversible: flip strategy.entries_suppressed back
+            # to false (or delete the row) to re-enable entries.
+            if getattr(self, 'entries_suppressed', False):
+                _now = datetime.now()
+                _last_supp = getattr(self, '_last_suppressed_log_at', None)
+                if _last_supp is None or (_now - _last_supp).total_seconds() >= 300:
+                    logger.warning(
+                        "FUT-RM-26: new-entry suppression ACTIVE "
+                        "(strategy.entries_suppressed=true) — monitoring/exiting "
+                        "existing positions only, no new entries"
+                    )
+                    self._last_suppressed_log_at = _now
+            else:
+                # 3. Check for new opportunities
+                await self._scan_opportunities()
 
-            # 4. FUT-RM-25: funding-carry scan (parallel strategy, separate cap)
-            if getattr(self, 'funding_carry_enabled', False):
-                await self._scan_funding_carry_opportunities()
+                # 4. FUT-RM-25: funding-carry scan (parallel strategy, separate cap)
+                if getattr(self, 'funding_carry_enabled', False):
+                    await self._scan_funding_carry_opportunities()
 
             # 5. Execute pending orders
             await self._process_orders()

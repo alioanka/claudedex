@@ -282,6 +282,18 @@ class FuturesStrategyConfig(BaseModel):
     # scanned/entered within the current signal-timeframe candle is skipped.
     one_entry_per_candle: bool = True
 
+    # Wave-24 FUT-RM-26: hard kill of NEW entries (neutralization switch).
+    # When true the engine opens NO new momentum or carry positions — existing
+    # positions are still monitored and exited normally (SL/TP/time/manual).
+    # This is the futures equivalent of the wave-18 budget=0 neutralization for
+    # sniper/arb: budget_usd_futures=0 alone is a no-op here because the
+    # allocation guard treats 0 as "unlimited", so suppression must be an
+    # explicit engine gate. Default False (no behavior change on existing DBs);
+    # migration 066 seeds it True after the wave-24 strategy review concluded
+    # the momentum stack is structurally unprofitable. Flip back to false (or
+    # delete the row) to re-enable entries.
+    entries_suppressed: bool = False
+
     # Additional filters for trade quality
     require_trend_alignment: bool = True  # Trade only in direction of trend
     require_volume_confirmation: bool = True  # Require above-average volume
@@ -829,6 +841,8 @@ class FuturesConfigManager:
             'require_trend_alignment': FuturesConfigType.STRATEGY,
             'require_volume_confirmation': FuturesConfigType.STRATEGY,
             'min_signal_confluence_count': FuturesConfigType.STRATEGY,
+            # FUT-RM-26 (Wave 24): hard entry-suppression / neutralization switch
+            'entries_suppressed': FuturesConfigType.STRATEGY,
             # FUT-RM-19/20 (Wave 7): edge gate + per-candle throttle
             'min_edge_gate_enabled': FuturesConfigType.STRATEGY,
             'min_net_edge_pct': FuturesConfigType.STRATEGY,

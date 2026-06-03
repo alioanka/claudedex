@@ -18,6 +18,28 @@ Centralized-exchange perp trading on Binance Futures and Bybit V5. Multi-strateg
 `logs/futures_trading/` — main, errors, trades (rotating handler).
 ## Primary risk-policy gate
 `FuturesRiskManager.validate_new_position(...)` — wired on the live path post-MB-17. Defined in `modules/futures_trading/futures_risk_manager.py`; called from `core/futures_engine.py` open-position path.
+## Wave-24 VERDICT (2026-06-03): NEUTRALIZED — entries suppressed
+Deep strategy review (`docs/agents/wave24/futures_strategy_review.md`) concluded
+the momentum stack is **structurally unprofitable** on this setup, not a tuning
+gap. Root cause: the SL/TP payoff geometry (SL 1.2% full size, TP1 1.8% closing
+40% then stop→breakeven) implies a **~62.5% break-even win rate**, but observed
+win rates are 27–64% — almost all below it. Fee drag on the 4-leg partial
+scale-out and an incoherent signal stack (RSI mean-reversion summed with
+Bollinger/EMA trend-following) compound it. Six prior tuning waves did not
+restore an edge. Per the working rule, neutralized rather than re-tuned again.
+- **FUT-RM-26** — new config `futures_strategy.entries_suppressed` (default
+  `False`; read by the engine init + fallback). When `True`, `_trading_cycle`
+  skips `_scan_opportunities` AND the funding-carry scan; existing positions are
+  still monitored + exited (SL/TP/time/manual). DRY_RUN-safe and live-safe.
+- **Migration 066** (`066_futures_strategy_review.sql`, idempotent) seeds
+  `entries_suppressed='true'` (load-bearing) and `budget_usd_futures='0'`
+  (documentation/belt — budget=0 is a NO-OP for futures because the allocation
+  guard treats 0 as unlimited and the engine never consults it on the open
+  path; the engine gate is what stops entries).
+- **Reversible:** set `entries_suppressed='false'` (and budget back to 200) to
+  re-enable. A profitable re-enable requires a redesign (single larger TP, no
+  4-leg scale-out, one coherent signal thesis) validated in DRY_RUN first.
+
 ## Live-trade readiness
 AMBER → GREEN candidate (pending production verification). MB-16 (init order), MB-17 (margin mode + validate_new_position wiring), MB-17b (Bybit V5 helpers), MB-18 (mark vs last price) closed. Reconcile observability hardened with `last_reconcile_at` + RESTART OVER-CAP detection (`24241e3`); BaseModule reconcile hook (`3981ffd`); Binance↔Bybit position-shape normalizer (`ed350d0`) re-enables liquidation-risk grading for Bybit positions.
 
