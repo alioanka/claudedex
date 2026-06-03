@@ -1290,6 +1290,13 @@ class SolanaTradingEngine:
 
         # State tracking
         self._last_pause_log_time = None
+        # Trading-pause logging: log the transition ONCE at WARNING (when the
+        # pause first trips) and demote the per-cycle repeat to a throttled
+        # INFO (every 15 min) — a working cooldown is not an ERROR, so the
+        # ~60s ERROR-log spam during the 2h cooldown is eliminated. Reset on
+        # transition back to can_trade so the next trip logs cleanly again.
+        self._trading_paused_logged = False
+        self._pause_throttle_interval_s = 900  # 15 min
 
         # PnL Tracker for Sharpe/Sortino calculations
         self.pnl_tracker = PnLTracker(
@@ -2646,6 +2653,10 @@ class SolanaTradingEngine:
             # Check and reset time-based loss block (AUTO-RELEASE after block_duration_hours)
             if self.risk_metrics.check_and_reset_loss_block():
                 logger.info("🔓 Trading resumed after time-based loss block expired")
+                # Auto-reset transition: clear the pause-log latch so the next
+                # trip logs its WARNING transition cleanly.
+                self._trading_paused_logged = False
+                self._last_pause_log_time = None
 
             # Check risk limits for NEW trades only
             if not self.risk_metrics.can_trade:
@@ -2667,18 +2678,42 @@ class SolanaTradingEngine:
 
                 reason_str = " and ".join(pause_reason) if pause_reason else "unknown"
 
-                # Log error only once every minute to avoid spam
-                should_log = False
-                if self._last_pause_log_time is None:
-                    should_log = True
-                elif (datetime.utcnow() - self._last_pause_log_time).total_seconds() > 60:
-                    should_log = True
-
-                if should_log:
-                    logger.error(f"⚠️ Trading paused - {reason_str}. Positions still being monitored for SL/TP.")
+                # A working cooldown is NOT an error. Log the TRANSITION once at
+                # WARNING (when the pause first trips this episode), then demote
+                # the per-cycle repeat to a throttled INFO (every
+                # _pause_throttle_interval_s) so the ~60s ERROR-log spam over the
+                # full 2h cooldown is gone. The latch is cleared on resume /
+                # auto-reset so the next episode logs its transition again.
+                if not self._trading_paused_logged:
+                    logger.warning(
+                        f"⏸️ Trading paused - {reason_str}. "
+                        f"Positions still being monitored for SL/TP."
+                    )
+                    self._trading_paused_logged = True
                     self._last_pause_log_time = datetime.utcnow()
+                elif (
+                    self._last_pause_log_time is None
+                    or (datetime.utcnow() - self._last_pause_log_time).total_seconds()
+                    > self._pause_throttle_interval_s
+                ):
+                    logger.info(
+                        f"⏸️ Trading still paused - {reason_str}. "
+                        f"Positions still being monitored for SL/TP."
+                    )
+                    self._last_pause_log_time = datetime.utcnow()
+                else:
+                    logger.debug(f"Trading still paused - {reason_str}")
 
                 return
+
+            # can_trade is True here — clear the pause-log latch so a fresh
+            # pause episode logs its WARNING transition cleanly. Covers the
+            # daily-loss-limit reset path (which does not go through
+            # check_and_reset_loss_block) as well as any external resume.
+            if self._trading_paused_logged:
+                logger.info("✅ Trading resumed - risk limits cleared")
+                self._trading_paused_logged = False
+                self._last_pause_log_time = None
 
             # Scan for opportunities per strategy
             if Strategy.JUPITER in self.strategies:
@@ -3620,15 +3655,35 @@ class SolanaTradingEngine:
                     logger.warning(f"⚠️ Drift RiskManager check failed: {e} — skipping entry")
                     continue
 
-            try:
-                tx_sig = await self.drift_helper.open_position(
-                    market_index=market_index,
-                    direction=direction,
-                    base_amount=base_amount,
+            # DRY_RUN fail-soft: when no chain is connected the helper holds
+            # drift_client=None and DriftHelper.open_position returns None at
+            # its "client not initialized" guard BEFORE reaching the DRY_RUN
+            # sentinel — so the sim Drift leg never opens and Drift looks dead
+            # even in DRY_RUN (the whole point of the simulated funding rate is
+            # to exercise the wiring end-to-end). Synthesize the sentinel here
+            # so the success path (stats / trade-log / monitoring) still runs.
+            # LIVE is untouched: _init_drift strips drift_helper AND the DRIFT
+            # strategy entirely when it cannot reach chain, so this branch is
+            # unreachable in LIVE; a connected DRY_RUN helper still flows
+            # through open_position (which returns its own DRY_RUN sentinel and
+            # honours killswitch/pause via should_skip_live).
+            helper_connected = getattr(self.drift_helper, 'drift_client', None) is not None
+            if self.dry_run and not helper_connected:
+                tx_sig = f"DRY_RUN_DRIFT_{market_index}_{direction}_{int(base_amount * 1e6)}"
+                logger.info(
+                    f"🔶 [DRY_RUN] Drift {market_name}: chain not connected — "
+                    f"synthesizing sim open sentinel to exercise wiring"
                 )
-            except Exception as e:
-                logger.error(f"❌ Drift open_position failed for {market_name}: {e}")
-                continue
+            else:
+                try:
+                    tx_sig = await self.drift_helper.open_position(
+                        market_index=market_index,
+                        direction=direction,
+                        base_amount=base_amount,
+                    )
+                except Exception as e:
+                    logger.error(f"❌ Drift open_position failed for {market_name}: {e}")
+                    continue
 
             if tx_sig:
                 sim_tag = "[DRY_RUN] " if self.dry_run else ""
