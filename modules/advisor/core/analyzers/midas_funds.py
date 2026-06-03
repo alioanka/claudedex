@@ -444,14 +444,19 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         Sync fetch via tefasfon. Runs in executor.
         Returns signals dict or None on any failure.
 
-        tefasfon API (pip install tefasfon):
+        tefasfon API (pip install tefasfon). Two known shapes are supported
+        defensively (library versions differ):
+          # Module-level function form (documented README, dd.mm.yyyy dates):
+          from tefasfon import get_funds
+          df = get_funds(fund_type="YAT", start_date="01.04.2026",
+                         end_date="30.04.2026", fund_codes=["TPP"])
+          # -> DataFrame columns: fonKodu, fiyat, tarih, borsaBultenFiyat, ...
+          # Class form (older releases):
           from tefasfon import Tefas
-          t = Tefas()
-          df = t.get_fund(symbol, start_date='YYYY-MM-DD', end_date='YYYY-MM-DD')
-          # DataFrame with columns: date, price (or similar)
+          df = Tefas().get_fund(code, start_date=..., end_date=...)
         """
         try:
-            from tefasfon import Tefas  # import guard (pip install tefasfon)
+            import tefasfon  # import guard (pip install tefasfon)
         except ImportError:
             logger.debug(
                 "[midas_funds] tefasfon not installed. "
@@ -467,29 +472,65 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         lookback = _LOOKBACK[horizon]
         end_dt = datetime.utcnow()
         start_dt = end_dt - timedelta(days=lookback + 60)
+        code = symbol.upper()
+        # tefasfon's documented function form expects dd.mm.yyyy.
+        s_dot = start_dt.strftime("%d.%m.%Y")
+        e_dot = end_dt.strftime("%d.%m.%Y")
+        s_iso = start_dt.strftime("%Y-%m-%d")
+        e_iso = end_dt.strftime("%Y-%m-%d")
 
-        try:
-            t = Tefas()
-            df = t.get_fund(
-                symbol.upper(),
-                start_date=start_dt.strftime("%Y-%m-%d"),
-                end_date=end_dt.strftime("%Y-%m-%d"),
-            )
-        except Exception as exc:
-            logger.warning(
-                "[midas_funds] tefasfon.get_fund(%r) failed: %s",
-                symbol, exc,
-            )
-            return None
+        df = None
+        last_exc: Optional[Exception] = None
 
-        if df is None or df.empty or len(df) < 10:
+        # 1) Module-level get_funds(...) -- documented current API.
+        get_funds = getattr(tefasfon, "get_funds", None)
+        if callable(get_funds):
+            # fund_type defaults to securities funds (YAT). Tefas funds the
+            # operator tracks via Midas are predominantly YAT; if a code is a
+            # pension fund this returns empty and we fall through.
+            for ftype in ("YAT", "EMK", "BYF"):
+                try:
+                    df = get_funds(
+                        fund_type=ftype,
+                        start_date=s_dot,
+                        end_date=e_dot,
+                        fund_codes=[code],
+                    )
+                    if df is not None and not getattr(df, "empty", True):
+                        break
+                except Exception as exc:  # signature/network/parse
+                    last_exc = exc
+                    df = None
+
+        # 2) Class form Tefas().get_fund(...) -- older releases.
+        if df is None or getattr(df, "empty", True):
+            Tefas = getattr(tefasfon, "Tefas", None)
+            if Tefas is not None:
+                for kwargs in (
+                    {"start_date": s_iso, "end_date": e_iso},
+                    {"start_date": s_dot, "end_date": e_dot},
+                ):
+                    try:
+                        df = Tefas().get_fund(code, **kwargs)
+                        if df is not None and not getattr(df, "empty", True):
+                            break
+                    except Exception as exc:
+                        last_exc = exc
+                        df = None
+
+        if df is None or getattr(df, "empty", True) or len(df) < 10:
+            if last_exc is not None:
+                logger.warning(
+                    "[midas_funds] tefasfon fetch for %r failed: %s",
+                    symbol, last_exc,
+                )
             return None
 
         df = df.copy()
         df.columns = [str(c).lower() for c in df.columns]
 
-        # Map price-like columns to 'close'
-        for candidate in ("price", "fiyat", "nav", "close"):
+        # Map price-like columns to 'close' (tefasfon: fiyat / borsabultenfiyat).
+        for candidate in ("price", "fiyat", "nav", "borsabultenfiyat", "close"):
             if candidate in df.columns and candidate != "close":
                 df = df.rename(columns={candidate: "close"})
                 break
