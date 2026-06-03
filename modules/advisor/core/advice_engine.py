@@ -227,8 +227,19 @@ class AdviceEngine:
         # Provenance marker (watchlist vs discovery) — for persistence + dashboard.
         result.extra["origin"] = origin
 
-        # Risk gate.
-        passes, reject_reason = self.risk.should_publish(result, open_sim_count)
+        # Risk gate. Discovery ("New Gems") uses a lower confidence floor
+        # (advisor_discovery_min_confidence, default 0.0) so trending candidates
+        # are SHOWN even at low confidence — otherwise the min_confidence gate
+        # silently suppresses every gem and the section stays empty.
+        disc_floor = None
+        if origin == "discovery":
+            try:
+                disc_floor = float(self.config.get("advisor_discovery_min_confidence", 0.0))
+            except (TypeError, ValueError):
+                disc_floor = 0.0
+        passes, reject_reason = self.risk.should_publish(
+            result, open_sim_count, min_confidence_override=disc_floor
+        )
         if not passes:
             logger.debug(
                 "[advice] %s/%s rejected: %s", symbol, horizon.value, reject_reason

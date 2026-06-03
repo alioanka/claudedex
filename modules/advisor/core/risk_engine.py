@@ -57,14 +57,20 @@ class AdvisorRiskEngine:
         self,
         result: AdviceResult,
         open_sim_count: int = 0,
+        min_confidence_override=None,
     ) -> tuple[bool, str]:
         """
         Gate an AdviceResult through risk checks.
 
         Parameters
         ----------
-        result          : The AdviceResult candidate.
-        open_sim_count  : Current count of open sim positions (for cap check).
+        result                  : The AdviceResult candidate.
+        open_sim_count          : Current count of open sim positions (cap check).
+        min_confidence_override : When not None, use this confidence floor instead
+                                  of self.min_confidence. Discovery ("New Gems")
+                                  passes a lower floor (default 0.0) so trending
+                                  candidates are SHOWN even at low confidence —
+                                  the whole point is to surface them for review.
 
         Returns
         -------
@@ -78,11 +84,12 @@ class AdvisorRiskEngine:
         ):
             return False, f"data_source_status={result.data_source_status.value}"
 
-        # 2. Confidence floor
-        if result.confidence < self.min_confidence:
+        # 2. Confidence floor (overridable for discovery)
+        floor = self.min_confidence if min_confidence_override is None else min_confidence_override
+        if result.confidence < floor:
             return False, (
                 f"confidence={result.confidence:.3f} < "
-                f"min_confidence={self.min_confidence:.3f}"
+                f"min_confidence={floor:.3f}"
             )
 
         # 3. Symbol blocklist
