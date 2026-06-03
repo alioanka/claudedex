@@ -16107,7 +16107,8 @@ class DashboardEndpoints:
             limit = min(int(params.get('limit', 100)), 500)
 
             rows = []
-            summary = {'total_open': 0, 'total_pnl_usd': 0.0, 'win_rate': 0.0}
+            summary = {'total_open': 0, 'total_pnl_usd': 0.0, 'win_rate': 0.0,
+                       'open_by_market': {}}
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     where = ''
@@ -16163,6 +16164,16 @@ class DashboardEndpoints:
                         total_closed = int(stats['total_closed'] or 0)
                         wins = int(stats['wins'] or 0)
                         summary['win_rate'] = round(wins / total_closed * 100, 1) if total_closed else 0.0
+                    # Per-market open counts (issue #13: sim cap is per-market).
+                    by_mkt = await conn.fetch(
+                        """SELECT market, COUNT(*) AS n
+                           FROM advisor_sim_positions
+                           WHERE status='open'
+                           GROUP BY market"""
+                    )
+                    summary['open_by_market'] = {
+                        str(r['market']): int(r['n']) for r in by_mkt
+                    }
             return web.json_response({'success': True, 'rows': rows, 'summary': summary})
         except Exception as exc:
             logger.error(f'[advisor] api_get_advisor_simulations error: {exc}')
@@ -16287,10 +16298,16 @@ class DashboardEndpoints:
                 'enabled_horizons': 'short,mid,long',
                 'run_interval_minutes': 60,
                 'min_confidence': 0.35,
-                'max_sim_positions': 20,
+                # Per-market sim cap (issue #13): applies independently to each
+                # market (10 crypto + 10 BIST + 10 US ...), NOT one global cap.
+                'max_sim_positions': 10,
                 'blocked_symbols': '',
                 'sim_default_enabled': False,
                 'sim_default_amount_usd': 1000.0,
+                # LLM rationale cache (issue #12): avoid re-calling the LLM every
+                # cycle when the signal/direction is unchanged.
+                'advisor_llm_rationale_cache_enabled': True,
+                'advisor_llm_rationale_max_age_minutes': 360,
                 'watchlist_crypto': 'BTC/USDT,ETH/USDT,SOL/USDT',
                 'watchlist_us_equities': 'AAPL,MSFT,NVDA,TSLA,AMZN',
                 'watchlist_bist': '',

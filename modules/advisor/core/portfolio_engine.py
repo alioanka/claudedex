@@ -409,6 +409,23 @@ class AdvisorPortfolioEngine:
         sims = await self.list_open_sims()
         return len(sims)
 
+    async def count_open_sims_by_market(self) -> Dict[str, int]:
+        """
+        Return open sim-position counts keyed by market value
+        (e.g. {'crypto': 7, 'bist': 3}). Used to enforce a PER-MARKET sim cap
+        (issue #13) rather than one global cap across all markets. Markets with
+        zero open sims are simply absent from the dict. Fail-soft: returns {} if
+        listing fails.
+        """
+        counts: Dict[str, int] = {}
+        try:
+            for s in await self.list_open_sims():
+                mkt = s.market.value if hasattr(s.market, "value") else str(s.market)
+                counts[mkt] = counts.get(mkt, 0) + 1
+        except Exception as exc:
+            logger.error("[portfolio] count_open_sims_by_market error: %s", exc)
+        return counts
+
     # ------------------------------------------------------------------
     # Backtest
     # ------------------------------------------------------------------

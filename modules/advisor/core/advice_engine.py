@@ -112,7 +112,11 @@ class AdviceEngine:
             [h.value for h in horizons],
         )
 
-        open_sim_count = await self.portfolio.count_open_sims()
+        # PER-MARKET sim caps (issue #13): max_sim_positions is the cap PER
+        # market/strategy (e.g. 10 crypto + 10 BIST independently), NOT one
+        # global cap across all markets. We track the open count per market and
+        # pass the relevant market's count to the risk gate.
+        open_sim_by_market = await self.portfolio.count_open_sims_by_market()
 
         for market in enabled_markets:
             analyzer = self.analyzers.get(market)
@@ -122,16 +126,18 @@ class AdviceEngine:
                 )
                 continue
 
+            market_open = open_sim_by_market.get(market.value, 0)
             symbols = watch_list.get(market, [])
             for symbol in symbols:
                 for horizon in horizons:
                     result = await self._run_symbol(
-                        analyzer, symbol, horizon, open_sim_count
+                        analyzer, symbol, horizon, market_open
                     )
                     if result is not None:
                         published.append(result)
-                        open_sim_count += int(result.sim_enabled)
+                        market_open += int(result.sim_enabled)
                         self._last_advice_at = datetime.now(timezone.utc)
+            open_sim_by_market[market.value] = market_open
 
         # Mark-to-market all open sim positions (best-effort).
         await self._mark_to_market_open_sims()

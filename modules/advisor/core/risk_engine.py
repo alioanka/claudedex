@@ -7,7 +7,11 @@ whether an AdviceResult is stored and broadcast to the operator.
 
 Gates (all configurable via advisor_config DB keys):
   - min_confidence      : float, default 0.35
-  - max_sim_positions   : int,   default 20 (cap on open sim positions)
+  - max_sim_positions   : int,   default 20 — cap on open sim positions PER
+                          MARKET/STRATEGY (issue #13). The caller (AdviceEngine)
+                          passes the open-sim count for the CURRENT market only,
+                          so this cap applies independently to crypto, BIST, US,
+                          etc. (e.g. 10 each) rather than as one global cap.
   - blocked_symbols     : comma-sep list, default "" (blocklist)
   - horizon_filter      : "short,mid,long" or subset (default all)
 """
@@ -85,10 +89,13 @@ class AdvisorRiskEngine:
         if result.symbol.upper() in self.blocked_symbols:
             return False, f"symbol={result.symbol} is in blocked_symbols"
 
-        # 4. Sim position cap (only relevant when sim is enabled for this advice)
+        # 4. Sim position cap (only relevant when sim is enabled for this advice).
+        # open_sim_count is the PER-MARKET open count (issue #13), so the cap is
+        # enforced independently per market/strategy.
         if result.sim_enabled and open_sim_count >= self.max_sim_positions:
             return False, (
-                f"sim position cap reached: {open_sim_count}/{self.max_sim_positions}"
+                f"per-market sim cap reached for {result.market.value}: "
+                f"{open_sim_count}/{self.max_sim_positions}"
             )
 
         # 5. NEUTRAL direction is informational only — still publish

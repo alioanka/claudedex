@@ -283,7 +283,17 @@ async function loadSummary() {
     }
     if (simRes.success) {
       const s = simRes.summary;
-      document.getElementById('statOpenSims').textContent = s.total_open;
+      const openEl = document.getElementById('statOpenSims');
+      openEl.textContent = s.total_open;
+      // Per-market breakdown (issue #13: sim cap is enforced per market).
+      const byMkt = s.open_by_market || {};
+      const parts = Object.keys(byMkt).map(k => `${k}: ${byMkt[k]}`);
+      if (parts.length) {
+        openEl.title = 'Open sims per market — ' + parts.join(', ');
+        const lbl = openEl.parentElement.querySelector('.adv-label');
+        if (lbl) lbl.innerHTML = 'Open Sims <span style="opacity:.7;font-size:.62rem">('
+          + parts.join(' · ') + ')</span>';
+      }
       const pnl = s.total_pnl_usd;
       const el = document.getElementById('statSimPnl');
       el.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toLocaleString(undefined,{maximumFractionDigits:0});
