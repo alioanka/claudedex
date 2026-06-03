@@ -469,6 +469,17 @@ IMPORTANT:
         config = self.providers[provider]
         start_time = datetime.utcnow()
 
+        # HARD bot-wide daily cap on paid LLM calls (shared with the advisor).
+        # When exhausted, make NO API call and fail soft — this is the backstop
+        # that prevents a runaway from burning API credit.
+        try:
+            from core.llm_budget import try_consume
+            if not try_consume(kind=f"ai_{provider.value}", log=logger):
+                return {'success': False, 'error': 'daily LLM budget reached',
+                        'budget_exhausted': True}
+        except Exception:
+            pass  # never let the budget gate itself break analysis
+
         try:
             if provider == AIProvider.OPENAI:
                 result = await self._call_openai(config, prompt)
