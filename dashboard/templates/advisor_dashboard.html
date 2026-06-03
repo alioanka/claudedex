@@ -219,6 +219,32 @@
     </div>
   </div>
 
+  <!-- KAP high-confidence summary (Borsa Istanbul disclosures) -->
+  <div id="kapSummaryWrap" style="display:none;margin-bottom:1.5rem">
+    <div class="market-header">
+      <span>🇹🇷</span><span>KAP — Recent High-Confidence Disclosures</span>
+      <a href="/advisor/kap" class="market-badge badge-available" style="text-decoration:none">VIEW ALL</a>
+    </div>
+    <div style="font-size:.72rem;color:#b8a9f0;background:rgba(119,93,208,.10);
+                border:1px solid rgba(119,93,208,.28);border-radius:8px;
+                padding:.4rem .8rem;margin-bottom:.6rem">
+      <i class="fas fa-info-circle me-1"></i>
+      Polarity prior only — a qualitative event prior, <strong>not</strong> a
+      price prediction or market-impact score. Advice-only context.
+    </div>
+    <div class="table-responsive">
+      <table class="table table-dark table-hover mb-0" style="font-size:.8rem">
+        <thead>
+          <tr style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:#888">
+            <th>Ticker</th><th>Event Type</th><th>Polarity</th><th>Conf</th>
+            <th class="d-none d-md-table-cell">Time</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="kapSummaryBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Market Advice Cards -->
   <div id="marketSections">
     <!-- Populated by JS -->
@@ -445,11 +471,67 @@ function escHtml(s) {
   return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
 
+// ── KAP high-confidence summary ──────────────────────────────────────────
+const KAP_POL = {
+  strong_positive: { glyph: '⬆️', color: '#00e396', label: 'STRONG POSITIVE' },
+  positive:        { glyph: '▲',  color: '#00e396', label: 'POSITIVE' },
+  neutral:         { glyph: '~',  color: '#feb019', label: 'NEUTRAL' },
+  negative:        { glyph: '▼',  color: '#ff4560', label: 'NEGATIVE' },
+  very_negative:   { glyph: '⬇️', color: '#ff4560', label: 'VERY NEGATIVE' },
+};
+const KAP_SUMMARY_MIN_CONF = 0.5;   // mirrors advisor_kap_alert_min_confidence default
+const KAP_SUMMARY_LIMIT = 6;
+
+async function loadKapSummary() {
+  const wrap = document.getElementById('kapSummaryWrap');
+  const body = document.getElementById('kapSummaryBody');
+  try {
+    const res = await fetch('/api/advisor/kap/disclosures?limit=200');
+    const data = await res.json();
+    if (!data.success || !Array.isArray(data.rows)) { wrap.style.display = 'none'; return; }
+
+    // High-confidence = rule-classified OR confidence >= threshold, non-neutral preferred.
+    const hi = data.rows.filter(r => {
+      const c = (r.confidence != null) ? r.confidence : 0;
+      const ruleClf = r.classifier_stage === 'rule';
+      return r.event_type && (ruleClf || c >= KAP_SUMMARY_MIN_CONF);
+    }).slice(0, KAP_SUMMARY_LIMIT);
+
+    if (hi.length === 0) { wrap.style.display = 'none'; return; }
+
+    body.innerHTML = '';
+    for (const r of hi) {
+      const pol = KAP_POL[(r.base_polarity || '').toLowerCase()] || { glyph:'', color:'#888', label:'—' };
+      const conf = (r.confidence != null) ? (r.confidence * 100).toFixed(0) + '%' : '—';
+      const ts = r.disclosed_at ? new Date(r.disclosed_at).toLocaleString() : '—';
+      const evt = r.event_type ? escHtml(r.event_type.replace(/_/g, ' ')) : '—';
+      const link = r.url
+        ? `<a href="${escHtml(r.url)}" target="_blank" rel="noopener" style="color:var(--adv-blue);text-decoration:none">View on KAP</a>`
+        : '';
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${r.ticker ? escHtml(r.ticker) : '—'}</strong>
+            <span style="color:#888;font-size:.7rem">${escHtml((r.company_name || '').substring(0,28))}</span></td>
+        <td>${evt}</td>
+        <td style="color:${pol.color};font-weight:700;white-space:nowrap">${pol.glyph} ${pol.label}</td>
+        <td>${conf}</td>
+        <td class="d-none d-md-table-cell" style="font-size:.72rem;color:#888;white-space:nowrap">${ts}</td>
+        <td style="font-size:.72rem">${link}</td>`;
+      body.appendChild(tr);
+    }
+    wrap.style.display = 'block';
+  } catch(e) {
+    console.warn('kap summary load error', e);
+    wrap.style.display = 'none';
+  }
+}
+
 // Init
 loadSummary();
 loadAdvice();
+loadKapSummary();
 
 // Auto-refresh every 5 minutes
-setInterval(() => { loadSummary(); loadAdvice(); }, 300000);
+setInterval(() => { loadSummary(); loadAdvice(); loadKapSummary(); }, 300000);
 </script>
 {% endblock %}
