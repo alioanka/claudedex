@@ -54,6 +54,7 @@ class RPCPoolRoutes:
         app.router.add_put('/api/rpc-pool/endpoints/{endpoint_id}', self.update_endpoint)
         app.router.add_delete('/api/rpc-pool/endpoints/{endpoint_id}', self.delete_endpoint)
         app.router.add_post('/api/rpc-pool/endpoints/{endpoint_id}/test', self.test_endpoint)
+        app.router.add_post('/api/rpc-pool/test-all', self.test_all_endpoints)
         app.router.add_get('/api/rpc-pool/provider-types', self.get_provider_types)
         app.router.add_get('/api/rpc-pool/stats', self.get_usage_stats)
         app.router.add_post('/api/rpc-pool/health-check', self.run_health_check)
@@ -257,47 +258,36 @@ class RPCPoolRoutes:
                 'error': str(e)
             }, status=500)
 
-    async def test_endpoint(self, request: web.Request) -> web.Response:
+    async def _probe_endpoint(self, endpoint: Dict, session: Optional[aiohttp.ClientSession] = None) -> Dict:
         """
-        Test an endpoint's connectivity and response time
+        Probe a single endpoint's connectivity + latency and report the result
+        back to the pool engine. Returns a result dict. Shared by the
+        single-endpoint test route and the TEST ALL action so behaviour is
+        identical. Fail-soft: any exception is captured into the result dict,
+        never raised.
 
         Args:
-            request: HTTP request
+            endpoint: endpoint data dict (must have 'url', 'provider_type', 'id')
+            session: optional shared aiohttp session (TEST ALL reuses one)
 
         Returns:
-            web.Response: JSON response with test results
+            dict with id, name, provider_type, success, latency_ms, error,
+            rate_limited
         """
+        url = endpoint['url']
+        provider_type = endpoint['provider_type']
+
+        start_time = time.time()
+        success = False
+        error_message = None
+        is_rate_limited = False
+
+        # When no session is supplied, manage our own (single-test path).
+        own_session = session is None
+        if own_session:
+            session = aiohttp.ClientSession()
         try:
-            if not self.pool_engine:
-                return web.json_response({
-                    'success': False,
-                    'error': 'Pool engine not initialized'
-                }, status=500)
-
-            endpoint_id = int(request.match_info['endpoint_id'])
-
-            # Find the endpoint
-            endpoints = await self.pool_engine.get_all_endpoints_data()
-            endpoint = next((e for e in endpoints if e['id'] == endpoint_id), None)
-
-            if not endpoint:
-                return web.json_response({
-                    'success': False,
-                    'error': 'Endpoint not found'
-                }, status=404)
-
-            # Perform test based on endpoint type
-            url = endpoint['url']
-            provider_type = endpoint['provider_type']
-
-            start_time = time.time()
-            success = False
-            error_message = None
-
             try:
-                is_rate_limited = False
-
-                # Helper function to check if error message indicates rate limit
                 def check_rate_limit_message(msg):
                     if not msg:
                         return False
@@ -317,12 +307,11 @@ class RPCPoolRoutes:
                     else:
                         payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []}
 
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            url,
-                            json=payload,
-                            timeout=aiohttp.ClientTimeout(total=10)
-                        ) as response:
+                    async with session.post(
+                        url,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
                             response_text = await response.text()
 
                             # Check for rate limit (HTTP 429)
@@ -379,11 +368,10 @@ class RPCPoolRoutes:
                                     is_rate_limited = True
                 else:
                     # Test API endpoint with simple GET
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(
-                            url,
-                            timeout=aiohttp.ClientTimeout(total=10)
-                        ) as response:
+                    async with session.get(
+                        url,
+                        timeout=aiohttp.ClientTimeout(total=10)
+                    ) as response:
                             response_text = await response.text()
 
                             # Check for rate limit (HTTP 429)
@@ -418,24 +406,127 @@ class RPCPoolRoutes:
 
             latency_ms = int((time.time() - start_time) * 1000)
 
-            # Report result to pool engine
-            if success:
-                await self.pool_engine.report_success(provider_type, url, latency_ms)
-            elif is_rate_limited:
-                # Report rate limit with 5 minute cooldown
-                await self.pool_engine.report_rate_limit(provider_type, url, duration_seconds=300, error_message=error_message)
-            else:
-                await self.pool_engine.report_failure(provider_type, url, 'test_failure', error_message)
+            # Report result to pool engine (fail-soft).
+            try:
+                if success:
+                    await self.pool_engine.report_success(provider_type, url, latency_ms)
+                elif is_rate_limited:
+                    # Report rate limit with 5 minute cooldown
+                    await self.pool_engine.report_rate_limit(provider_type, url, duration_seconds=300, error_message=error_message)
+                else:
+                    await self.pool_engine.report_failure(provider_type, url, 'test_failure', error_message)
+            except Exception as report_err:
+                self.logger.debug(f"Pool-engine report failed during probe: {report_err}")
 
-            return web.json_response({
+            return {
+                'id': endpoint.get('id'),
+                'name': endpoint.get('name'),
+                'provider_type': provider_type,
+                'chain': endpoint.get('chain'),
                 'success': success,
                 'latency_ms': latency_ms,
                 'error': error_message,
-                'rate_limited': is_rate_limited
-            })
+                'rate_limited': is_rate_limited,
+            }
+        finally:
+            if own_session and session is not None:
+                await session.close()
+
+    async def test_endpoint(self, request: web.Request) -> web.Response:
+        """
+        Test a single endpoint's connectivity and response time.
+
+        Args:
+            request: HTTP request
+
+        Returns:
+            web.Response: JSON response with test results
+        """
+        try:
+            if not self.pool_engine:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Pool engine not initialized'
+                }, status=500)
+
+            endpoint_id = int(request.match_info['endpoint_id'])
+            endpoints = await self.pool_engine.get_all_endpoints_data()
+            endpoint = next((e for e in endpoints if e['id'] == endpoint_id), None)
+            if not endpoint:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Endpoint not found'
+                }, status=404)
+
+            result = await self._probe_endpoint(endpoint)
+            return web.json_response(result)
 
         except Exception as e:
             self.logger.error(f"Error testing endpoint: {e}", exc_info=True)
+            return web.json_response({
+                'success': False,
+                'error': str(e)
+            }, status=500)
+
+    async def test_all_endpoints(self, request: web.Request) -> web.Response:
+        """
+        FEATURE 5 — TEST ALL: probe every endpoint and report connectivity +
+        latency. Runs with bounded concurrency (default 8) over ONE shared
+        aiohttp session so a large pool (85 endpoints) finishes quickly without
+        opening 85 sockets at once or stampeding any single provider.
+
+        Returns a per-endpoint result list plus a summary tally.
+        """
+        try:
+            if not self.pool_engine:
+                return web.json_response({
+                    'success': False,
+                    'error': 'Pool engine not initialized'
+                }, status=500)
+
+            endpoints = await self.pool_engine.get_all_endpoints_data()
+            if not endpoints:
+                return web.json_response({
+                    'success': True, 'results': [], 'summary': {
+                        'total': 0, 'passed': 0, 'failed': 0, 'rate_limited': 0
+                    }
+                })
+
+            sem = asyncio.Semaphore(8)
+
+            async def _bounded(session, ep):
+                async with sem:
+                    try:
+                        return await self._probe_endpoint(ep, session=session)
+                    except Exception as e:
+                        return {
+                            'id': ep.get('id'), 'name': ep.get('name'),
+                            'provider_type': ep.get('provider_type'),
+                            'chain': ep.get('chain'), 'success': False,
+                            'latency_ms': 0, 'error': str(e), 'rate_limited': False,
+                        }
+
+            async with aiohttp.ClientSession() as session:
+                results = await asyncio.gather(
+                    *[_bounded(session, ep) for ep in endpoints]
+                )
+
+            passed = sum(1 for r in results if r.get('success'))
+            rate_limited = sum(1 for r in results if r.get('rate_limited'))
+            failed = len(results) - passed - rate_limited
+            return web.json_response({
+                'success': True,
+                'results': results,
+                'summary': {
+                    'total': len(results),
+                    'passed': passed,
+                    'failed': failed,
+                    'rate_limited': rate_limited,
+                },
+            })
+
+        except Exception as e:
+            self.logger.error(f"Error in test-all: {e}", exc_info=True)
             return web.json_response({
                 'success': False,
                 'error': str(e)
