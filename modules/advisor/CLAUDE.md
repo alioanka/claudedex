@@ -64,7 +64,9 @@ ADVICE-ONLY: no orders are placed. Self-check: `python -m modules.advisor.core.a
 | `enabled_horizons` | string | `short,mid,long` | Time horizons to generate advice for |
 | `run_interval_minutes` | int | 60 | Advice cycle cadence |
 | `min_confidence` | float | 0.35 | Minimum confidence to publish advice |
-| `max_sim_positions` | int | 20 | Open sim position cap |
+| `advisor_sim_cap_per_channel` | int | 15 | Open-sim cap PER CHANNEL (migration 077; replaces per-market cap) |
+| `max_sim_positions` | int | 20 | LEGACY/FALLBACK for the per-channel cap (alias) |
+| `advisor_kap_sim_enabled` | bool | true | Open KAP strong-polarity BIST sims in the 'kap' channel |
 | `sim_default_enabled` | bool | false | Auto-open sim position per advice |
 | `sim_default_amount_usd` | float | 1000.0 | Default sim notional |
 | `watchlist_crypto` | string | BTC/USDT,ETH/USDT,SOL/USDT | Crypto pairs (ccxt format) |
@@ -248,9 +250,62 @@ base_polarity PRIOR only — no market-impact score (impact stats accumulate ove
   (`base_polarity`, `params`, `classifier_stage`, `confidence`, `raw_subject`, `extra`) keyed on the
   BIGINT `disclosure_id` (= `kap_disclosures.id`); `get_unclassified` dedup join corrected to `c.disclosure_id = d.id`.
 
+## Sim CHANNELS — per-channel sim tables + caps (migration 077)
+Sim positions are bucketed into **seven independent CHANNELS**, each with its own
+cap (`advisor_sim_cap_per_channel`, default **15**; `max_sim_positions` is kept as
+a working fallback/alias). The operator can run 15 crypto + 15 gems + 15 kap sims
+simultaneously without one channel starving another. This REPLACES the old
+per-market cap (issue #13 / migration 071). ADVICE-ONLY — dry-run bookkeeping; no
+orders are placed.
+
+**Channels:** `crypto`, `us_equities`, `bist`, `fx`, `midas_funds`, `gems`, `kap`.
+
+**Channel derivation** (`models.derive_channel(market, origin, kap_driven)` — pure,
+self-tested via `python -m modules.advisor.core.models`):
+- `kap_driven=True`        → `'kap'`  (KAP strong-polarity BIST sims)
+- `origin=='discovery'`    → `'gems'` (New Gems layer, ANY underlying market — a
+  discovered US ticker counts against the `gems` cap, NOT `us_equities`)
+- otherwise                → the market value (watchlist sims)
+
+**Schema** (migration 077): `advisor_sim_positions.channel VARCHAR(16)` (indexed).
+Existing rows backfilled `channel=market`, and any sim whose advice has
+`origin='discovery'` → `'gems'`. `portfolio_engine.open_sim_position` writes the
+channel at open (fail-soft to a pre-077 DB) and `count_open_sims_by_channel()`
+groups by it; `count_open_sims_by_market()` is retained. The cap gate is in
+`risk_engine.should_publish(..., channel=...)` using `sim_cap_per_channel`.
+
+**gems channel.** The old discovery `sim_enabled=False` stopgap is removed: gems
+now auto-sim (per `sim_default_enabled`) into the `gems` channel. The discovery
+pass tracks one shared `gems` open-count across all discovery markets.
+
+**kap channel — KAP-driven sims** (`core/kap/kap_sim.py`, self-test
+`python -m modules.advisor.core.kap.kap_sim`). When the KAP classifier worker
+classifies a disclosure with a STRONG polarity — `STRONG_POSITIVE` → LONG or
+`VERY_NEGATIVE` → SHORT — AND confidence ≥ `advisor_kap_alert_min_confidence`
+(default 0.5), and `advisor_kap_sim_enabled='true'` (default), it opens a dry-run
+BIST sim for that ticker in the `kap` channel. Entry/target/stop come from the
+EXISTING BIST analyzer (real current price) with the KAP-implied direction applied
+via the shared `levels.horizon_levels()` (synthetic ±band fallback if BIST data is
+thin; SKIP if no usable price). Respects the 15-slot kap cap + per-ticker dedupe
+(no duplicate open kap sim for the same ticker). **Fully FAIL-SOFT**: any error in
+the hook NEVER breaks the classifier worker. `main_advisor` wires the shared
+portfolio engine + BIST analyzer into `KapClassifierWorker`. CAVEAT: KAP-driven
+sims depend on BIST data availability on the operator's host (borsapy/yfinance);
+where BIST data is unavailable the sim is skipped, not fabricated.
+
+**Dashboard** (`/advisor/simulations`): the page renders ONE TABLE PER CHANNEL
+(all seven always visible, empty ones show a "no open sims" row) with a sticky
+`thead`, a per-channel TOTAL P&L footer (open unrealized + closed realized), and an
+open-count vs cap badge (e.g. "CRYPTO 12/15"). API `/api/advisor/simulations`
+returns `channel` per row + `summary.open_by_channel` + `summary.cap_per_channel`.
+
+**Config keys** (migration `077_advisor_sim_channels.sql`, surface in Advisor
+Settings): `advisor_sim_cap_per_channel` (int, 15), `advisor_kap_sim_enabled`
+(bool, true). `max_sim_positions` remains as the per-channel fallback alias.
+
 ## DB tables (migration 058)
 - `advisor_advice` — every published advice event (market, symbol, horizon, direction, entry range, target, stop, confidence, rationale, model_id, kronos_signal)
-- `advisor_sim_positions` — dry-run position tracking (seeded from advice; marked-to-market daily)
+- `advisor_sim_positions` — dry-run position tracking (seeded from advice; marked-to-market daily). `channel` column (migration 077) buckets each sim into one of the seven independent capped channels.
 - `advisor_portfolio` — operator-reported holdings (manual entry via dashboard)
 - `config_settings` rows with `config_type='advisor_config'` — all knobs above
 
