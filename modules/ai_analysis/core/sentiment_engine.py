@@ -20,6 +20,7 @@ import os
 
 from core.dry_run import should_skip_live
 from modules.futures_trading.exchanges.binance_futures import BinanceFuturesExecutor
+from modules.ai_analysis.ai_alerts import AITelegramAlerts, AITradeAlert
 
 logger = logging.getLogger("SentimentEngine")
 openai_logger = logging.getLogger("OpenAI_API")
@@ -297,6 +298,8 @@ class SentimentEngine:
         # Wave-13: set True after a 404/not_found probe so we WARN loudly
         # once rather than spam the log every cycle.
         self._claude_model_warned: bool = False
+        # Wave-24: engine-routed Telegram alerts (topic 15, [AI] header, fail-soft).
+        self.telegram_alerts = AITelegramAlerts()
 
         # Trading settings (loaded from DB/Config)
         self.direct_trading = False
@@ -1783,6 +1786,16 @@ class SentimentEngine:
                         'sentiment_score': score,
                         'order_id': result.get('order_id')
                     }
+                    # Wave-24: notify the AI Telegram topic (fail-soft, never raises).
+                    try:
+                        await self.telegram_alerts.send_entry_alert(AITradeAlert(
+                            symbol=symbol, action='entry',
+                            direction='long' if side == 'buy' else 'short',
+                            entry_price=entry_price, confidence=abs(score),
+                            provider=self.ai_provider, is_simulated=self.dry_run,
+                        ))
+                    except Exception:
+                        pass
                 else:
                     # Scale-in: increment counter; do NOT overwrite the primary
                     # position dict (entry_price must stay as-is for PnL calc).
@@ -2092,6 +2105,17 @@ class SentimentEngine:
 
             if result.get('success'):
                 logger.info(f"✅ Position closed: {symbol} | P&L: {pnl_pct:+.2f}% | Reason: {exit_reason}")
+
+                # Wave-24: notify the AI Telegram topic (fail-soft, never raises).
+                try:
+                    await self.telegram_alerts.send_exit_alert(AITradeAlert(
+                        symbol=symbol, action='exit',
+                        direction='long' if side == 'buy' else 'short',
+                        entry_price=position.get('entry_price', 0), exit_price=exit_price,
+                        pnl_pct=pnl_pct, reason=exit_reason, is_simulated=self.dry_run,
+                    ))
+                except Exception:
+                    pass
 
                 # Update dedicated ai_trades table
                 if self.db_pool:
