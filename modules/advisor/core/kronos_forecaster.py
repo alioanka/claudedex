@@ -1,54 +1,47 @@
 """
-KronosForecaster — Kronos foundation-model interface (Wave-21 implementation).
+KronosForecaster — REAL Kronos K-line foundation-model interface.
 
-=== KRONOS FEASIBILITY SUMMARY (Wave-20, 2026-06-02) ===
+=== WHAT KRONOS ACTUALLY IS (verified 2026-06-03) ===
 
-Source: https://github.com/shiyu-coder/Kronos
+Source of truth: https://github.com/shiyu-coder/Kronos  (NeoQuasar / shiyu-coder),
+README "Model Zoo" + examples/prediction_example.py, and the HuggingFace model
+cards under org NeoQuasar.
 
-Architecture
-    Decoder-only autoregressive Transformer (two-stage):
-    Stage 1 — a hierarchical tokenizer converts OHLCV K-line (candlestick)
-    data into discrete tokens.
-    Stage 2 — large-scale transformer pre-training on K-lines from 45+ exchanges.
+Kronos is NOT a HuggingFace causal-LM. The earlier implementation tried
+``transformers.AutoModelForCausalLM`` / ``AutoTokenizer`` which fails at load
+("Couldn't instantiate the backend tokenizer ... need sentencepiece or tiktoken")
+because Kronos ships its OWN custom model code: a hierarchical BSQ tokenizer
+(``KronosTokenizer``) + a two-stage autoregressive transformer (``Kronos``) +
+a forecasting wrapper (``KronosPredictor``). That code is vendored offline in
+``modules/advisor/core/kronos_vendor/`` (MIT). Generic transformers can never
+load it; sentencepiece does not help.
 
-Model variants (HuggingFace org: NeoQuasar)
-    Kronos-mini  :  4.1 M parameters  (CPU-feasible, low RAM)
-    Kronos-small : 24.7 M parameters  (CPU or light GPU)
-    Kronos-base  :102.3 M parameters  (GPU recommended; ~400 MB weights)
-    Kronos-large :499.2 M parameters  (NOT open-sourced as of 2026-06-02)
+REAL API (verified)
+    from modules.advisor.core.kronos_vendor import Kronos, KronosTokenizer, KronosPredictor
+    tokenizer = KronosTokenizer.from_pretrained("<tokenizer repo/dir>")
+    model     = Kronos.from_pretrained("<model repo/dir>")
+    predictor = KronosPredictor(model, tokenizer, device="cpu", max_context=512)
+    pred_df   = predictor.predict(
+        df=ohlcv_df,                 # columns ['open','high','low','close'] (+'volume','amount')
+        x_timestamp=pd.Series(...),  # datetimes for the history rows
+        y_timestamp=pd.Series(...),  # datetimes for the FUTURE rows to forecast
+        pred_len=N, T=1.0, top_p=0.9, sample_count=1, verbose=False,
+    )                                # -> DataFrame of forecasted OHLCV bars
 
-License
-    MIT — permissive, no usage restriction for commercial/production use.
+TWO downloads are required (model repo AND a separate tokenizer repo):
+    Kronos-mini  -> model NeoQuasar/Kronos-mini  + tokenizer NeoQuasar/Kronos-Tokenizer-2k   (max_context 2048)
+    Kronos-small -> model NeoQuasar/Kronos-small + tokenizer NeoQuasar/Kronos-Tokenizer-base (max_context 512)
+    Kronos-base  -> model NeoQuasar/Kronos-base  + tokenizer NeoQuasar/Kronos-Tokenizer-base (max_context 512)
+Use ``scripts/download_kronos_weights.py`` to fetch both into /app/data/kronos/.
 
-Dependencies
-    python >= 3.10
-    torch >= 2.0 (CPU or CUDA)
-    transformers >= 4.38
-    pyqlib (Microsoft Qlib — financial data preprocessing)
-    pandas, numpy
+License: MIT. Runtime deps: torch>=2.0, numpy, pandas, einops, huggingface_hub,
+safetensors, tqdm (baked into the Docker image, Stage 7b).
 
-GPU / CPU
-    Kronos-mini and Kronos-small run on CPU with ~1-3 s per batch inference.
-    Kronos-base works on CPU but 5-15 s per batch; GPU (8 GB VRAM) recommended.
-    Kronos-large requires GPU and is not publicly available.
-    RECOMMENDATION: start with Kronos-mini; upgrade to Kronos-small if
-    backtesting shows meaningful accuracy improvement.
-
-Weights location
-    HuggingFace Hub: NeoQuasar/Kronos-mini, NeoQuasar/Kronos-small,
-    NeoQuasar/Kronos-base.
-    Download via: python scripts/download_kronos_weights.py
-    Approximate sizes: mini ~50 MB, small ~100 MB, base ~400 MB.
-    NOTE: Do NOT auto-download at startup. Weights must be present in
-    ADVISOR_KRONOS_WEIGHTS_PATH before the forecaster activates.
-    If weights are absent, predict() returns None (fail-soft, MB-19 pattern).
-
-Inference API shape
-    predictor = KronosPredictor(model_path, device="cpu")
-    signal = predictor.predict(df_klines)   # float: positive=bullish
-    signals = predictor.predict_batch(list_of_dfs)
-
-=== END FEASIBILITY SUMMARY ===
+=== FAIL-SOFT CONTRACT (MB-19) ===
+Kronos is OPTIONAL. If anything is missing/unavailable (deps, weights,
+tokenizer, runtime error), ``initialize()`` returns False and ``predict()``
+returns ``None`` — it NEVER raises into the advice loop. The advice cycle
+continues LLM+technicals-only. No forecast is ever fabricated.
 """
 
 from __future__ import annotations
@@ -60,12 +53,37 @@ from typing import Optional
 
 logger = logging.getLogger("advisor.kronos_forecaster")
 
-# Environment variable the operator sets to point at downloaded weights.
-# Example: ADVISOR_KRONOS_WEIGHTS_PATH=/data/kronos/Kronos-mini
+# Environment variable the operator sets to point at the downloaded MODEL weights.
+# Example: ADVISOR_KRONOS_WEIGHTS_PATH=/app/data/kronos/Kronos-mini
 _WEIGHTS_ENV = "ADVISOR_KRONOS_WEIGHTS_PATH"
+# Optional override for the TOKENIZER directory. If unset we look for a sibling
+# folder next to the model dir, then fall back to the matching HF tokenizer repo.
+_TOKENIZER_ENV = "ADVISOR_KRONOS_TOKENIZER_PATH"
 
 # Default model variant name for logging/health surface.
 _DEFAULT_VARIANT = "Kronos-mini"
+
+# Verified model -> (tokenizer repo, max_context) pairing from the upstream
+# README "Model Zoo". mini uses the 2k tokenizer (ctx 2048); small/base use the
+# base tokenizer (ctx 512).
+_VARIANT_TOKENIZER: dict[str, str] = {
+    "Kronos-mini": "NeoQuasar/Kronos-Tokenizer-2k",
+    "Kronos-small": "NeoQuasar/Kronos-Tokenizer-base",
+    "Kronos-base": "NeoQuasar/Kronos-Tokenizer-base",
+}
+_VARIANT_MAX_CONTEXT: dict[str, int] = {
+    "Kronos-mini": 2048,
+    "Kronos-small": 512,
+    "Kronos-base": 512,
+}
+
+# How many future bars to forecast before collapsing to a directional signal.
+_DEFAULT_PRED_LEN = 12
+# Minimum history rows for a meaningful forecast.
+_MIN_HISTORY = 30
+# Cap the history fed to the model so CPU latency stays bounded (and never
+# exceeds the tokenizer context). Trimmed to max_context at predict time too.
+_MAX_HISTORY = 512
 
 # Logged once per process to avoid logspam on every predict() call.
 _IMPORT_WARN_LOGGED = False
@@ -73,28 +91,24 @@ _IMPORT_WARN_LOGGED = False
 
 class KronosForecaster:
     """
-    Thin interface over the Kronos foundation model for K-line forecasting.
+    Thin interface over the REAL Kronos foundation model for K-line forecasting.
 
-    Fail-soft (MB-19 pattern)
-    -------------------------
-    If weights are absent, the model cannot be loaded, or the underlying
-    inference library is not installed, predict() returns None rather than
-    raising. The advice_engine treats a None kronos_signal as "Kronos not
+    Interface preserved for advice_engine: ``initialize()`` then ``predict(df)``
+    returning a directional float (positive = bullish) or ``None``.
+
+    Fail-soft (MB-19)
+    -----------------
+    If weights / tokenizer / deps are absent or inference fails, predict()
+    returns None rather than raising. advice_engine treats None as "Kronos not
     available this cycle" and continues with LLM-only advice.
 
-    The operator must:
-    1. Set ADVISOR_KRONOS_WEIGHTS_PATH in .env to the directory containing
-       downloaded HuggingFace model files.
-    2. Ensure torch + transformers are installed
-       (pip install 'torch>=2.0' 'transformers>=4.38'; optionally pyqlib).
-    3. Set advisor_kronos_enabled=true in advisor_config (DB-backed).
-
-    Usage
-    -----
-        forecaster = KronosForecaster()
-        await forecaster.initialize()
-        signal = await forecaster.predict(df_klines)
-        # signal: float (positive = bullish) or None if unavailable.
+    Operator setup
+    --------------
+    1. ``python scripts/download_kronos_weights.py --variant mini`` downloads
+       BOTH the model repo and its matching tokenizer repo.
+    2. Set ``ADVISOR_KRONOS_WEIGHTS_PATH=/app/data/kronos/Kronos-mini`` in .env.
+       (Optionally ``ADVISOR_KRONOS_TOKENIZER_PATH`` to override tokenizer dir.)
+    3. Set ``advisor_kronos_enabled=true`` in advisor_config (DB-backed).
     """
 
     def __init__(
@@ -102,14 +116,29 @@ class KronosForecaster:
         weights_path: Optional[str] = None,
         variant: str = _DEFAULT_VARIANT,
         device: str = "cpu",
+        tokenizer_path: Optional[str] = None,
+        pred_len: int = _DEFAULT_PRED_LEN,
     ):
         self._weights_path = weights_path or os.getenv(_WEIGHTS_ENV)
-        self._variant = variant
-        self._device = device
-        self._model = None          # loaded lazily in initialize()
-        self._tokenizer = None
+        self._tokenizer_path = tokenizer_path or os.getenv(_TOKENIZER_ENV)
+        # Normalise variant (accept "mini"/"Kronos-mini").
+        self._variant = self._normalise_variant(variant)
+        self._device = device or "cpu"
+        self._pred_len = max(1, int(pred_len))
+        self._predictor = None       # KronosPredictor, loaded in initialize()
         self._loaded = False
         self._load_error: Optional[str] = None
+
+    @staticmethod
+    def _normalise_variant(variant: str) -> str:
+        v = (variant or "").strip()
+        if not v:
+            return _DEFAULT_VARIANT
+        if v in _VARIANT_TOKENIZER:
+            return v
+        short = v.lower().replace("kronos-", "")
+        candidate = f"Kronos-{short}"
+        return candidate if candidate in _VARIANT_TOKENIZER else _DEFAULT_VARIANT
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -117,47 +146,50 @@ class KronosForecaster:
 
     async def initialize(self) -> bool:
         """
-        Attempt to load the Kronos model from weights_path.
-
-        Returns True if model loaded successfully, False otherwise.
-        Never raises — all errors stored in self._load_error.
+        Load the Kronos model + tokenizer + predictor. Returns True on success.
+        Never raises — all errors are stored in self._load_error.
         """
         if not self._weights_path:
             self._load_error = (
-                f"{_WEIGHTS_ENV} not set. "
-                f"Download weights (e.g. NeoQuasar/{self._variant} from HuggingFace) "
-                f"and set {_WEIGHTS_ENV}=/path/to/weights."
+                f"{_WEIGHTS_ENV} not set. Run scripts/download_kronos_weights.py "
+                f"--variant {self._variant.replace('Kronos-', '')} then set "
+                f"{_WEIGHTS_ENV}=/app/data/kronos/{self._variant}."
             )
             logger.warning(
-                "[kronos] WEIGHTS NOT CONFIGURED — %s. "
-                "predict() will return None.",
+                "[kronos] WEIGHTS NOT CONFIGURED — %s predict() returns None.",
                 self._load_error,
             )
             return False
 
-        weights_dir = Path(self._weights_path)
-        if not weights_dir.exists():
+        model_dir = Path(self._weights_path)
+        if not model_dir.exists():
             self._load_error = (
-                f"Weights directory not found: {weights_dir}. "
+                f"Model weights directory not found: {model_dir}. "
                 "Run scripts/download_kronos_weights.py first."
             )
-            logger.warning("[kronos] %s. predict() will return None.", self._load_error)
+            logger.warning("[kronos] %s predict() returns None.", self._load_error)
             return False
 
         try:
-            self._model, self._tokenizer = _load_model(
-                weights_dir, self._variant, self._device
+            self._predictor = _load_predictor(
+                model_dir=model_dir,
+                tokenizer_path=self._tokenizer_path,
+                variant=self._variant,
+                device=self._device,
             )
             self._loaded = True
             logger.info(
-                "[kronos] %s loaded from %s on device=%s",
-                self._variant, weights_dir, self._device,
+                "[kronos] %s loaded (device=%s, max_context=%d) — model=%s",
+                self._variant,
+                self._device,
+                _VARIANT_MAX_CONTEXT.get(self._variant, 512),
+                model_dir,
             )
             return True
         except Exception as exc:
             self._load_error = str(exc)
             logger.warning(
-                "[kronos] Failed to load %s: %s. predict() will return None.",
+                "[kronos] Failed to load %s: %s. predict() returns None.",
                 self._variant, exc,
             )
             logger.debug("[kronos] Load failure traceback:", exc_info=True)
@@ -169,40 +201,37 @@ class KronosForecaster:
 
     async def predict(self, df_klines) -> Optional[float]:
         """
-        Produce a directional forecast from historical K-line data.
+        Forecast future bars and collapse them into a directional signal.
 
         Parameters
         ----------
-        df_klines : pd.DataFrame with columns [open, high, low, close]
-                    and a datetime index (UTC, sorted ascending).
-                    Optional: volume, amount columns.
-                    Minimum length: 30 rows for meaningful prediction.
+        df_klines : pd.DataFrame with columns [open, high, low, close] (+volume,
+                    +amount optional) and an ascending UTC DatetimeIndex.
+                    Minimum length: 30 rows.
 
         Returns
         -------
         float or None
-            Positive value indicates bullish bias; negative = bearish.
-            Magnitude indicates confidence (not normalised — varies by model).
-            None if model not loaded or inference failed (fail-soft).
+            Forecast return: mean(forecast close over pred_len bars) / last close
+            - 1. Positive = Kronos expects price UP (bullish); negative = down.
+            Roughly bounded but NOT normalised. None on any failure (fail-soft).
         """
-        if not self._loaded:
+        if not self._loaded or self._predictor is None:
             return None
 
-        if df_klines is None or len(df_klines) < 30:
+        if df_klines is None or len(df_klines) < _MIN_HISTORY:
             logger.debug("[kronos] Insufficient K-line rows for prediction (<30)")
             return None
 
         try:
-            return _run_inference(self._model, self._tokenizer, df_klines)
+            return _run_inference(self._predictor, df_klines, self._pred_len)
         except Exception as exc:
-            logger.warning("[kronos] Inference error: %s", exc, exc_info=True)
+            logger.warning("[kronos] Inference error: %s", exc)
+            logger.debug("[kronos] Inference traceback:", exc_info=True)
             return None
 
     async def predict_batch(self, dfs: list) -> list:
-        """
-        Run inference on multiple DataFrames.
-        Returns list of float or None, same order as input.
-        """
+        """Run inference on multiple DataFrames; returns list of float|None."""
         results = []
         for df in dfs:
             results.append(await self.predict(df))
@@ -218,146 +247,200 @@ class KronosForecaster:
             "variant": self._variant,
             "device": self._device,
             "weights_path": self._weights_path,
+            "tokenizer_path": self._tokenizer_path,
+            "max_context": _VARIANT_MAX_CONTEXT.get(self._variant),
+            "pred_len": self._pred_len,
             "load_error": self._load_error,
         }
 
 
 # ---------------------------------------------------------------------------
-# Private helpers — Wave-21 implementation
+# Private helpers
 # ---------------------------------------------------------------------------
 
-def _load_model(weights_dir: Path, variant: str, device: str):
+def _resolve_tokenizer_source(model_dir: Path, tokenizer_path: Optional[str],
+                              variant: str) -> str:
     """
-    Load a Kronos model from a HuggingFace weights directory.
+    Decide where to load the tokenizer from, in priority order:
+      1. Explicit ADVISOR_KRONOS_TOKENIZER_PATH (dir).
+      2. A sibling directory next to the model dir whose name contains
+         "Tokenizer" (what download_kronos_weights.py creates).
+      3. The matching HuggingFace tokenizer repo id (requires network at load).
+    Returns a path string or HF repo id suitable for from_pretrained().
+    """
+    if tokenizer_path:
+        return tokenizer_path
 
-    Fallback chain
-    --------------
-    1. Try ``from kronos import KronosPredictor`` (official Kronos pip package
-       or local clone on PYTHONPATH).  Returns (predictor, None) because the
-       tokeniser is baked into the predictor object.
-    2. Try ``transformers.AutoModelForCausalLM`` / ``AutoTokenizer`` as generic
-       HuggingFace causal-LM load — covers checkpoints uploaded with the
-       standard HF config.json + model.safetensors layout.
-    3. If neither path works (torch/transformers absent), raise ImportError
-       so the caller stores the error and predict() returns None (fail-soft).
+    parent = model_dir.parent
+    if parent.exists():
+        # Prefer the exact expected folder name first.
+        repo_id = _VARIANT_TOKENIZER.get(variant, "NeoQuasar/Kronos-Tokenizer-base")
+        expected = parent / repo_id.split("/")[-1]
+        if expected.exists():
+            return str(expected)
+        for child in sorted(parent.iterdir()):
+            if child.is_dir() and "tokenizer" in child.name.lower():
+                return str(child)
 
-    GPU / small upgrade path
-    ------------------------
-    - Default: device='cpu', variant='Kronos-mini' (4.1 M params, ~50 MB).
-    - Kronos-small (24.7 M, ~100 MB): set advisor_kronos_variant=Kronos-small.
-      CPU still fine (2-4 s / call).
-    - Kronos-base (102.3 M, ~400 MB): set advisor_kronos_device=cuda and
-      provision >=8 GB VRAM.  CPU is slow (5-15 s) but functional.
-    - Kronos-large (499.2 M): not open-sourced as of 2026-06-02; skip.
+    # Fall back to the HF repo id (needs egress). Logged by caller on failure.
+    return _VARIANT_TOKENIZER.get(variant, "NeoQuasar/Kronos-Tokenizer-base")
+
+
+def _load_predictor(model_dir: Path, tokenizer_path: Optional[str],
+                    variant: str, device: str):
+    """
+    Load the REAL Kronos model + tokenizer + predictor from local dirs.
+
+    Raises on any failure so initialize() records the error and predict()
+    fail-softs to None.
     """
     global _IMPORT_WARN_LOGGED
 
-    # --- attempt 1: official Kronos package ---
     try:
-        from kronos import KronosPredictor  # type: ignore[import]
-        predictor = KronosPredictor(str(weights_dir), device=device)
-        logger.info(
-            "[kronos] Loaded via KronosPredictor (%s, device=%s)", variant, device
+        from modules.advisor.core.kronos_vendor import (  # type: ignore[import]
+            Kronos,
+            KronosTokenizer,
+            KronosPredictor,
         )
-        return predictor, None          # tokenizer baked into predictor
-    except ImportError:
-        pass   # fall through to attempt 2
-    except Exception as exc:
-        # Weights present but KronosPredictor init failed (corrupt files, etc.)
-        raise RuntimeError(f"KronosPredictor init failed: {exc}") from exc
-
-    # --- attempt 2: HuggingFace AutoModel (generic causal-LM interface) ---
-    try:
-        import torch  # type: ignore[import]  # noqa: F401
-        from transformers import AutoTokenizer, AutoModelForCausalLM  # type: ignore[import]
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            str(weights_dir), trust_remote_code=True
-        )
-        model = AutoModelForCausalLM.from_pretrained(
-            str(weights_dir), trust_remote_code=True
-        )
-        model = model.to(device)
-        model.eval()
-        logger.info(
-            "[kronos] Loaded via AutoModelForCausalLM (%s, device=%s)", variant, device
-        )
-        return model, tokenizer
-    except ImportError as exc:
+    except Exception as exc:  # torch / einops / numpy / pandas missing, etc.
         if not _IMPORT_WARN_LOGGED:
             logger.warning(
-                "[kronos] torch / transformers not installed — "
-                "Kronos inference unavailable. "
-                "Install: pip install 'torch>=2.0' 'transformers>=4.38' "
-                "and optionally: pip install kronos pyqlib. Detail: %s",
+                "[kronos] Vendored Kronos model deps unavailable "
+                "(need torch>=2.0, einops, huggingface_hub, safetensors, "
+                "pandas, numpy): %s",
                 exc,
             )
             _IMPORT_WARN_LOGGED = True
-        raise ImportError(f"Required deps missing: {exc}") from exc
-    except Exception as exc:
-        raise RuntimeError(f"HuggingFace AutoModel load failed: {exc}") from exc
+        raise ImportError(f"Kronos deps missing: {exc}") from exc
 
+    tok_source = _resolve_tokenizer_source(model_dir, tokenizer_path, variant)
 
-def _run_inference(model, tokenizer, df_klines) -> float:
-    """
-    Run a single forward pass through the loaded Kronos model.
-
-    Parameters
-    ----------
-    model     : KronosPredictor (tokenizer=None) OR HuggingFace
-                AutoModelForCausalLM (tokenizer provided).
-    tokenizer : AutoTokenizer or None.
-    df_klines : pd.DataFrame with columns [open, high, low, close] and an
-                ascending UTC datetime index.  Optional: volume, amount.
-
-    Returns
-    -------
-    float
-        Positive = bullish bias; negative = bearish.  Magnitude not normalised.
-
-    KronosPredictor path
-        Calls model.predict(df_klines) which handles tokenisation internally.
-
-    HuggingFace AutoModel path
-        Attempts tokenizer(df_klines) first; falls back to encoding the
-        OHLCV arrays as a raw float tensor (1, T, 4).  Signal is extracted
-        from the last time-step's logit difference (bullish - bearish) or
-        from the mean of the last hidden state.
-    """
-    # --- KronosPredictor path (tokenizer is None) ---
-    if tokenizer is None:
-        result = model.predict(df_klines)
-        if isinstance(result, dict):
-            return float(result.get("signal", result.get("score", 0.0)))
-        return float(result)
-
-    # --- HuggingFace AutoModel path ---
-    import torch  # type: ignore[import]
-
-    # Attempt tokeniser call with the raw DataFrame.
     try:
-        enc = tokenizer(df_klines, return_tensors="pt")
-        input_ids = enc["input_ids"]
-    except Exception:
-        # Fallback: encode OHLCV columns as a raw float tensor.
-        ohlcv = df_klines[["open", "high", "low", "close"]].astype(float).values
-        input_ids = torch.tensor(ohlcv, dtype=torch.float32).unsqueeze(0)
+        tokenizer = KronosTokenizer.from_pretrained(tok_source)
+    except Exception as exc:
+        raise RuntimeError(
+            f"KronosTokenizer.from_pretrained({tok_source!r}) failed: {exc}. "
+            f"Download the tokenizer repo "
+            f"({_VARIANT_TOKENIZER.get(variant)}) or set {_TOKENIZER_ENV}."
+        ) from exc
 
-    with torch.no_grad():
-        output = model(input_ids)
+    try:
+        model = Kronos.from_pretrained(str(model_dir))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Kronos.from_pretrained({model_dir}) failed: {exc}"
+        ) from exc
 
-    # Extract directional signal.
-    # Convention: last token, first two logit dims = [bearish, bullish].
-    if hasattr(output, "logits"):
-        logits = output.logits          # (1, T, vocab)
-        last_step = logits[0, -1, :]
-        if last_step.numel() >= 2:
-            signal = float(last_step[1] - last_step[0])   # bullish - bearish
-        else:
-            signal = float(last_step[0])
-    elif hasattr(output, "last_hidden_state"):
-        signal = float(output.last_hidden_state[0, -1, :].mean())
+    max_context = _VARIANT_MAX_CONTEXT.get(variant, 512)
+    try:
+        predictor = KronosPredictor(
+            model, tokenizer, device=device, max_context=max_context
+        )
+    except Exception as exc:
+        raise RuntimeError(f"KronosPredictor init failed: {exc}") from exc
+
+    return predictor
+
+
+def _prepare_ohlcv(df_klines, max_history: int):
+    """
+    Coerce the analyzer's klines DataFrame into the (df, x_timestamp) pair
+    Kronos.predict expects: lowercase OHLC(V) columns + a datetime Series of
+    the history timestamps. Trims to the most recent `max_history` rows.
+    Returns (x_df, x_timestamp_series). Raises if OHLC columns are absent.
+    """
+    import pandas as pd  # type: ignore[import]
+
+    df = df_klines.copy()
+    # Normalise column names to lowercase so 'Open'/'OPEN' both work.
+    df.columns = [str(c).lower() for c in df.columns]
+
+    required = ["open", "high", "low", "close"]
+    if not all(c in df.columns for c in required):
+        raise ValueError(
+            f"klines missing OHLC columns; have {list(df.columns)}"
+        )
+
+    keep = required + [c for c in ("volume", "amount") if c in df.columns]
+    df = df[keep].astype("float64")
+
+    # Build the history timestamp Series from the index (UTC DatetimeIndex).
+    idx = df.index
+    if not isinstance(idx, pd.DatetimeIndex):
+        idx = pd.to_datetime(idx, utc=True, errors="coerce")
+    # Drop tz so the .dt.* fields Kronos uses (minute/hour/weekday/day/month)
+    # are computed consistently across all rows.
+    try:
+        if idx.tz is not None:
+            idx = idx.tz_convert("UTC").tz_localize(None)
+    except (AttributeError, TypeError):
+        pass
+
+    x_timestamp = pd.Series(idx)
+    df = df.reset_index(drop=True)
+
+    if len(df) > max_history:
+        df = df.iloc[-max_history:].reset_index(drop=True)
+        x_timestamp = x_timestamp.iloc[-max_history:].reset_index(drop=True)
+
+    if df.isnull().values.any():
+        df = df.ffill().bfill()
+    if df.isnull().values.any():
+        raise ValueError("klines contain unfillable NaNs")
+
+    return df, x_timestamp
+
+
+def _future_timestamps(x_timestamp, pred_len: int):
+    """
+    Build `pred_len` future timestamps continuing the bar cadence inferred from
+    the median spacing of the history. Returns a pandas Series of datetimes.
+    """
+    import pandas as pd  # type: ignore[import]
+
+    ts = pd.to_datetime(x_timestamp)
+    if len(ts) >= 2:
+        deltas = ts.diff().dropna()
+        step = deltas.median()
+        if pd.isna(step) or step.total_seconds() <= 0:
+            step = pd.Timedelta(hours=1)
     else:
-        signal = float(output[0].mean())
+        step = pd.Timedelta(hours=1)
 
+    last = ts.iloc[-1]
+    future = [last + step * (i + 1) for i in range(pred_len)]
+    return pd.Series(pd.to_datetime(future))
+
+
+def _run_inference(predictor, df_klines, pred_len: int) -> Optional[float]:
+    """
+    Run the real KronosPredictor.predict and collapse the OHLCV forecast into a
+    single directional float = mean(forecast close)/last close - 1.
+    """
+    x_df, x_timestamp = _prepare_ohlcv(df_klines, _MAX_HISTORY)
+    y_timestamp = _future_timestamps(x_timestamp, pred_len)
+
+    last_close = float(x_df["close"].iloc[-1])
+    if last_close <= 0:
+        return None
+
+    pred_df = predictor.predict(
+        df=x_df,
+        x_timestamp=x_timestamp,
+        y_timestamp=y_timestamp,
+        pred_len=pred_len,
+        T=1.0,
+        top_p=0.9,
+        sample_count=1,
+        verbose=False,
+    )
+
+    if pred_df is None or "close" not in pred_df.columns or len(pred_df) == 0:
+        return None
+
+    mean_future_close = float(pred_df["close"].astype("float64").mean())
+    # Directional signal: expected forward return over the horizon.
+    signal = (mean_future_close / last_close) - 1.0
+    if signal != signal:  # NaN guard
+        return None
     return signal
