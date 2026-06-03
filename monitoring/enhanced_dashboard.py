@@ -1472,6 +1472,7 @@ class DashboardEndpoints:
         # Advisor API endpoints
         self.app.router.add_get('/api/advisor/advice', self.api_get_advisor_advice)
         self.app.router.add_get('/api/advisor/kap/disclosures', self.api_get_advisor_kap_disclosures)
+        self.app.router.add_get('/api/advisor/discovery', self.api_get_advisor_discovery)
         self.app.router.add_get('/api/advisor/simulations', self.api_get_advisor_simulations)
         self.app.router.add_post('/api/advisor/simulations/{sim_id}/close', self.api_close_advisor_sim)
         self.app.router.add_get('/api/advisor/portfolio', self.api_get_advisor_portfolio)
@@ -16098,6 +16099,102 @@ class DashboardEndpoints:
         except Exception as exc:
             logger.error(f'[advisor] api_get_advisor_kap_disclosures error: {exc}')
             return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_get_advisor_discovery(self, request):
+        """
+        Recent DISCOVERY ("New Gems") advice — rows with origin='discovery'.
+
+        These are tickers surfaced BEYOND the operator's watchlists by the free
+        discovery layer (trending / high-volume movers), then run through the
+        normal analyzer. ADVICE-ONLY and explicitly higher-risk (trending != good).
+
+        Query params: ?limit= (default 30, max 100), ?market= (optional).
+        Fail-soft: if discovery is disabled, the origin column is absent
+        (pre-migration-076), or any error occurs, returns success=True rows=[]
+        with enabled flag, so the dashboard section simply hides itself.
+        """
+        try:
+            params = request.rel_url.query
+            market = params.get('market', '').strip()
+            limit = min(int(params.get('limit', 30)), 100)
+
+            enabled = False
+            rows = []
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    # Read the discovery toggle (best-effort).
+                    try:
+                        val = await conn.fetchval(
+                            "SELECT value FROM config_settings "
+                            "WHERE config_type='advisor_config' "
+                            "AND key='advisor_discovery_enabled'"
+                        )
+                        enabled = str(val or 'false').lower() == 'true'
+                    except Exception:
+                        enabled = False
+
+                    conditions = ["origin = 'discovery'"]
+                    args = []
+                    idx = 1
+                    if market:
+                        conditions.append(f"market = ${idx}")
+                        args.append(market)
+                        idx += 1
+                    where = 'WHERE ' + ' AND '.join(conditions)
+                    args.append(limit)
+                    try:
+                        db_rows = await conn.fetch(
+                            f'''SELECT id, market, symbol, horizon, direction,
+                                       entry_low, entry_high, target_price, stop_price,
+                                       confidence, rationale, data_source_status,
+                                       extra, created_at
+                                FROM advisor_advice {where}
+                                ORDER BY created_at DESC
+                                LIMIT ${idx}''',
+                            *args,
+                        )
+                    except Exception as col_exc:
+                        # origin column absent -> discovery not yet migrated.
+                        if 'origin' in str(col_exc).lower():
+                            return web.json_response({
+                                'success': True, 'rows': [], 'enabled': False,
+                                'note': 'origin column absent (run migration 076)',
+                            })
+                        raise
+                    for r in db_rows:
+                        extra = r['extra']
+                        if isinstance(extra, str):
+                            try:
+                                import json as _json
+                                extra = _json.loads(extra)
+                            except Exception:
+                                extra = {}
+                        disc = (extra or {}).get('discovery', {}) if isinstance(extra, dict) else {}
+                        rows.append({
+                            'id': r['id'],
+                            'market': r['market'],
+                            'symbol': r['symbol'],
+                            'horizon': r['horizon'],
+                            'direction': r['direction'],
+                            'entry_low': float(r['entry_low']) if r['entry_low'] else None,
+                            'entry_high': float(r['entry_high']) if r['entry_high'] else None,
+                            'target_price': float(r['target_price']) if r['target_price'] else None,
+                            'stop_price': float(r['stop_price']) if r['stop_price'] else None,
+                            'confidence': float(r['confidence']),
+                            'rationale': r['rationale'],
+                            'data_source_status': r['data_source_status'],
+                            'score': disc.get('score'),
+                            'source': disc.get('source'),
+                            'change_pct_24h': disc.get('change_pct_24h'),
+                            'created_at': r['created_at'].isoformat() if r['created_at'] else None,
+                        })
+            return web.json_response({
+                'success': True, 'rows': rows, 'enabled': enabled, 'limit': limit,
+            })
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_discovery error: {exc}')
+            # Fail-soft: hide the section rather than show an error.
+            return web.json_response({'success': True, 'rows': [], 'enabled': False})
 
     async def api_get_advisor_simulations(self, request):
         """Return open and recent closed sim positions."""

@@ -245,6 +245,36 @@
     </div>
   </div>
 
+  <!-- 🔎 New Gems (Discovery) — tickers surfaced beyond the watchlist -->
+  <div id="discoveryWrap" style="display:none;margin-bottom:1.5rem">
+    <div class="market-header">
+      <span>🔎</span><span>New Gems (Discovery)</span>
+      <span class="market-badge" style="background:rgba(255,69,96,.18);color:#ff7b8c;border:1px solid rgba(255,69,96,.35)">DISCOVERY · HIGHER RISK</span>
+    </div>
+    <div style="font-size:.72rem;color:#ffb3bd;background:rgba(255,69,96,.08);
+                border:1px solid rgba(255,69,96,.28);border-radius:8px;
+                padding:.45rem .8rem;margin-bottom:.6rem">
+      <i class="fas fa-triangle-exclamation me-1"></i>
+      <strong>Discovery candidates — advice-only, higher-risk.</strong>
+      These are trending / high-volume movers surfaced <em>beyond</em> your
+      watchlists by free screeners. Trending is <strong>not</strong> the same as
+      good — do your own review. No trades are executed automatically.
+    </div>
+    <div class="table-responsive">
+      <table class="table table-dark table-hover mb-0" style="font-size:.8rem">
+        <thead>
+          <tr style="font-size:.68rem;text-transform:uppercase;letter-spacing:.05em;color:#888">
+            <th>Ticker</th><th>Market</th><th>Dir</th><th>Horizon</th>
+            <th>Entry</th><th>Target</th><th>Stop</th><th>Conf</th>
+            <th class="d-none d-md-table-cell">24h</th>
+            <th class="d-none d-md-table-cell">Time</th>
+          </tr>
+        </thead>
+        <tbody id="discoveryBody"></tbody>
+      </table>
+    </div>
+  </div>
+
   <!-- Market Advice Cards -->
   <div id="marketSections">
     <!-- Populated by JS -->
@@ -536,12 +566,71 @@ async function loadKapSummary() {
   }
 }
 
+const DISC_MKT_LABEL = {
+  crypto: '₿ Crypto', us_equities: '📈 US', bist: '🇹🇷 BIST',
+  fx: '💱 FX', midas_funds: '🏦 Midas',
+};
+
+function fmtPx(v) {
+  if (v == null) return '—';
+  const n = Number(v);
+  if (!isFinite(n)) return '—';
+  if (n >= 1000) return n.toLocaleString(undefined,{maximumFractionDigits:2});
+  if (n >= 1) return n.toFixed(2);
+  return n.toPrecision(4);
+}
+
+async function loadDiscovery() {
+  const wrap = document.getElementById('discoveryWrap');
+  const body = document.getElementById('discoveryBody');
+  try {
+    const res = await fetch('/api/advisor/discovery?limit=40');
+    const data = await res.json();
+    // Hidden when discovery is disabled or has no rows.
+    if (!data.success || !data.enabled || !Array.isArray(data.rows) || data.rows.length === 0) {
+      wrap.style.display = 'none';
+      return;
+    }
+    body.innerHTML = '';
+    for (const r of data.rows) {
+      const dir = (r.direction || 'neutral').toLowerCase();
+      const dirColor = DIR_COLOR[dir] || '#888';
+      const conf = (r.confidence != null) ? (r.confidence * 100).toFixed(0) + '%' : '—';
+      const ts = r.created_at ? new Date(r.created_at).toLocaleString() : '—';
+      const chg = (r.change_pct_24h != null)
+        ? `<span style="color:${r.change_pct_24h >= 0 ? '#00e396' : '#ff4560'}">`
+          + (r.change_pct_24h >= 0 ? '+' : '') + Number(r.change_pct_24h).toFixed(1) + '%</span>'
+        : '—';
+      const entry = (r.entry_low != null && r.entry_high != null)
+        ? `${fmtPx(r.entry_low)}–${fmtPx(r.entry_high)}` : fmtPx(r.entry_low);
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td><strong>${escHtml(r.symbol || '—')}</strong></td>
+        <td style="font-size:.72rem;color:#aaa;white-space:nowrap">${escHtml(DISC_MKT_LABEL[r.market] || r.market || '—')}</td>
+        <td style="color:${dirColor};font-weight:700;text-transform:uppercase">${escHtml(dir)}</td>
+        <td style="font-size:.72rem;color:#aaa">${escHtml(HORIZON_LABEL[r.horizon] || r.horizon || '—')}</td>
+        <td>${entry}</td>
+        <td>${fmtPx(r.target_price)}</td>
+        <td>${fmtPx(r.stop_price)}</td>
+        <td>${conf}</td>
+        <td class="d-none d-md-table-cell">${chg}</td>
+        <td class="d-none d-md-table-cell" style="font-size:.72rem;color:#888;white-space:nowrap">${ts}</td>`;
+      body.appendChild(tr);
+    }
+    wrap.style.display = 'block';
+  } catch(e) {
+    console.warn('discovery load error', e);
+    wrap.style.display = 'none';
+  }
+}
+
 // Init
 loadSummary();
 loadAdvice();
 loadKapSummary();
+loadDiscovery();
 
 // Auto-refresh every 5 minutes
-setInterval(() => { loadSummary(); loadAdvice(); loadKapSummary(); }, 300000);
+setInterval(() => { loadSummary(); loadAdvice(); loadKapSummary(); loadDiscovery(); }, 300000);
 </script>
 {% endblock %}
