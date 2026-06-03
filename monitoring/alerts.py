@@ -1460,9 +1460,11 @@ class AlertManager:
     def __init__(self, config: Dict = None, module: str = 'system'):
         """Initialize with optional config and module name."""
         self.config = config or {}
-        self.alerts_system = AlertsSystem(config)
         # Module name used for notification_engine routing (e.g. 'dex')
         self.module: str = module.lower()
+        # Propagate the module label into AlertsSystem so its _send_telegram
+        # routes through the engine with the correct header + topic.
+        self.alerts_system = AlertsSystem(config, module=self.module)
 
     def set_notification_engine_module(self, module: str):
         """Override the module name used for topic routing."""

@@ -570,7 +570,7 @@ class TradingBotApplication:
             self.risk_manager = RiskManager(nested_config,
                                             config_manager=self.config_manager,
                                             chain_rpc_urls=chain_rpc_urls)
-            self.alerts_system = AlertsSystem(nested_config)
+            self.alerts_system = AlertsSystem(nested_config, module='dex')
 
             self.logger.info("Initializing security manager...")
             security_manager = EncryptionManager({})
