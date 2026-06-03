@@ -1157,6 +1157,8 @@ class PoolEngine:
         if self._health_check_task is None or self._health_check_task.done():
             self._health_check_task = asyncio.create_task(self._health_check_loop())
             logger.info("Started health check background task")
+        # FEATURE 4 — also start the slow keep-alive rotation alongside.
+        self._start_keepalive_task()
 
     async def _health_check_loop(self) -> None:
         """Background loop for periodic health checks"""
@@ -1170,6 +1172,99 @@ class PoolEngine:
             except Exception as e:
                 logger.error(f"Error in health check loop: {e}")
                 await asyncio.sleep(60)  # Wait before retry
+
+    def _start_keepalive_task(self) -> None:
+        """Start the slow keep-alive liveness rotation (FEATURE 4)."""
+        if self._keepalive_interval <= 0:
+            return
+        if self._keepalive_task is None or self._keepalive_task.done():
+            self._keepalive_task = asyncio.create_task(self._keepalive_loop())
+            logger.info(
+                f"Started keep-alive rotation (every {self._keepalive_interval}s, "
+                "1 endpoint per tick)"
+            )
+
+    async def _keepalive_loop(self) -> None:
+        """
+        FEATURE 4 — keep provider keys warm.
+
+        Providers like Ankr DISABLE keys idle for ~30 days. The full health
+        check only probes RPC endpoints and runs hourly; low-priority/poor-ping
+        fallbacks that selection never picks could still go cold. This loop
+        rotates a SINGLE cheap liveness ping (Solana getHealth / EVM
+        eth_blockNumber) through EVERY enabled endpoint — one per tick on a
+        deliberately slow schedule — so each endpoint is touched several times
+        per week regardless of selection. Adds negligible load and does not
+        influence selection (we report success only; a failure here does not
+        penalise an otherwise-unused fallback into the unhealthy state).
+        """
+        while True:
+            try:
+                await asyncio.sleep(self._keepalive_interval)
+                endpoint = self._next_keepalive_endpoint()
+                if endpoint is None:
+                    continue
+                await self._keepalive_ping(endpoint)
+            except asyncio.CancelledError:
+                logger.info("Keep-alive task cancelled")
+                break
+            except Exception as e:
+                logger.debug(f"Keep-alive loop error: {e}")
+                await asyncio.sleep(60)
+
+    def _flatten_endpoints(self) -> List[Endpoint]:
+        """Flatten all endpoints across providers into one ordered list."""
+        flat: List[Endpoint] = []
+        for provider in self.providers.values():
+            flat.extend(provider.endpoints)
+        return flat
+
+    def _next_keepalive_endpoint(self) -> Optional[Endpoint]:
+        """Pick the next endpoint to keep warm, walking the flattened list."""
+        flat = [e for e in self._flatten_endpoints() if e.is_enabled]
+        if not flat:
+            return None
+        idx = self._keepalive_cursor % len(flat)
+        self._keepalive_cursor = (self._keepalive_cursor + 1) % len(flat)
+        return flat[idx]
+
+    async def _keepalive_ping(self, endpoint: Endpoint) -> None:
+        """
+        Cheap liveness ping for keep-alive. RPC endpoints get a real
+        getHealth/eth_blockNumber; non-RPC (API) endpoints are skipped (no
+        universal cheap probe). Success is reported (keeps last_success fresh,
+        which is what providers watch for idle-disable); failure is logged at
+        DEBUG only and does NOT mark the endpoint unhealthy — this is a warmth
+        ping for fallbacks, not a selection-affecting health verdict.
+        """
+        try:
+            if 'RPC' not in endpoint.provider_type and not endpoint.chain:
+                return
+            if endpoint.chain == 'solana' or 'solana' in endpoint.provider_type.lower():
+                payload = {"jsonrpc": "2.0", "id": 1, "method": "getHealth"}
+            else:
+                payload = {"jsonrpc": "2.0", "id": 1, "method": "eth_blockNumber", "params": []}
+            start = time.time()
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    endpoint.get_effective_url(),
+                    json=payload,
+                    timeout=aiohttp.ClientTimeout(total=8),
+                ) as response:
+                    latency = int((time.time() - start) * 1000)
+                    if response.status == 200:
+                        await self.report_success(
+                            endpoint.provider_type, endpoint.url, latency
+                        )
+                        health_logger.info(
+                            f"Keep-alive OK: {endpoint.name} ({latency}ms)"
+                        )
+                        return
+                    health_logger.debug(
+                        f"Keep-alive non-200 for {endpoint.name}: {response.status}"
+                    )
+        except Exception as e:
+            health_logger.debug(f"Keep-alive ping failed for {endpoint.name}: {e}")
 
     async def run_health_checks(self) -> Dict[str, Any]:
         """
@@ -1545,6 +1640,13 @@ class PoolEngine:
             self._health_check_task.cancel()
             try:
                 await self._health_check_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._keepalive_task:
+            self._keepalive_task.cancel()
+            try:
+                await self._keepalive_task
             except asyncio.CancelledError:
                 pass
 
