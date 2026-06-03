@@ -96,13 +96,25 @@ _NOT_CONFIGURED_NOTE = (
     "Look up FONKODU at https://www.tefas.gov.tr."
 )
 
-# Tefas legacy scrape endpoint (fallback only)
+# Tefas legacy scrape endpoint (LAST-resort fallback only).
+# The /api/DB/BindHistoryInfo POST is undocumented and has been observed to 404
+# / be WAF-rejected; the maintained tefas-crawler/tefasfon libraries are the
+# robust paths. We keep this path only for the rare case both libs are absent.
 _TEFAS_BASE = "https://www.tefas.gov.tr"
 _TEFAS_HISTORY_API = f"{_TEFAS_BASE}/api/DB/BindHistoryInfo"
+# Historically-correct legacy form fields are lowercase: fontip/fonkod/
+# bastarih/bittarih with dd.mm.yyyy dates (NOT the FONKODU/BASTARIH the code
+# used before). Headers need Origin + a realistic UA to pass the WAF.
 _TEFAS_HEADERS = {
     "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+    "Accept": "application/json, text/javascript, */*; q=0.01",
     "X-Requested-With": "XMLHttpRequest",
+    "Origin": _TEFAS_BASE,
     "Referer": f"{_TEFAS_BASE}/TarihselVeriler.aspx",
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+    ),
 }
 
 
@@ -349,47 +361,13 @@ class MidasFundsAnalyzer(BaseAnalyzer):
             )
             return None
 
-        if df is None or df.empty or len(df) < 10:
-            logger.debug(
-                "[midas_funds] tefas-crawler insufficient data for %r (rows=%d).",
-                symbol, 0 if df is None else len(df),
-            )
-            return None
-
-        # Normalise columns. tefas-crawler returns lowercase 'price'/'date';
-        # raw-JSON variants may surface 'fiyat'/'tarih'/'borsabultenfiyat'.
-        df = df.copy()
-        df.columns = [str(c).lower() for c in df.columns]
-        col_map = {}
-        for c in df.columns:
-            if c in ("price", "fiyat", "nav", "borsabultenfiyat"):
-                col_map[c] = "close"
-            elif c in ("date", "tarih"):
-                col_map[c] = "date"
-        df = df.rename(columns=col_map)
-        # If the rename produced duplicate 'close' columns (e.g. both price and
-        # borsabultenfiyat present), keep the first.
-        df = df.loc[:, ~df.columns.duplicated()]
-
-        # If date is a column (not index), set as index
-        if "date" in df.columns:
-            df["date"] = pd.to_datetime(df["date"], errors="coerce")
-            df = df.dropna(subset=["date"])
-            df = df.set_index("date")
-
-        if "close" not in df.columns:
+        df = _normalize_nav_df(df)
+        if df is None or len(df) < 10:
             logger.warning(
-                "[midas_funds] tefas-crawler response missing price column "
-                "for %r. Columns: %s",
-                symbol, list(df.columns),
+                "[midas_funds] tefas-crawler returned no usable NAV series "
+                "for %r (after normalize).",
+                symbol,
             )
-            return None
-
-        df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df = df.dropna(subset=["close"])
-        df = df.sort_index()
-
-        if len(df) < 10:
             return None
 
         return _compute_fund_signals(df, lookback)
@@ -526,35 +504,13 @@ class MidasFundsAnalyzer(BaseAnalyzer):
                 )
             return None
 
-        df = df.copy()
-        df.columns = [str(c).lower() for c in df.columns]
-
-        # Map price-like columns to 'close' (tefasfon: fiyat / borsabultenfiyat).
-        for candidate in ("price", "fiyat", "nav", "borsabultenfiyat", "close"):
-            if candidate in df.columns and candidate != "close":
-                df = df.rename(columns={candidate: "close"})
-                break
-
-        if "close" not in df.columns:
+        df = _normalize_nav_df(df)
+        if df is None or len(df) < 10:
             logger.warning(
-                "[midas_funds] tefasfon response missing price column for %r. "
-                "Columns: %s",
-                symbol, list(df.columns),
+                "[midas_funds] tefasfon returned no usable NAV series for %r "
+                "(after normalize).",
+                symbol,
             )
-            return None
-
-        # Ensure date index
-        for candidate in ("date", "tarih"):
-            if candidate in df.columns:
-                df[candidate] = pd.to_datetime(df[candidate], errors="coerce")
-                df = df.dropna(subset=[candidate])
-                df = df.set_index(candidate)
-                break
-
-        df["close"] = pd.to_numeric(df["close"], errors="coerce")
-        df = df.dropna(subset=["close"]).sort_index()
-
-        if len(df) < 10:
             return None
 
         return _compute_fund_signals(df, lookback)
@@ -608,8 +564,13 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         Runs in executor (sync). Legacy fallback.
 
         Endpoint: POST /api/DB/BindHistoryInfo
-        Form: FONKODU=<code>&BASTARIH=<DD.MM.YYYY>&BITTARIH=<DD.MM.YYYY>
-        CSRF: extracted from homepage cookie on initial GET.
+        Legacy form (lowercase): fontip=YAT&fonkod=<CODE>&bastarih=<dd.mm.yyyy>
+            &bittarih=<dd.mm.yyyy>  (the prior FONKODU/BASTARIH casing was wrong)
+        Response: {"data": [{"TARIH": <epoch_ms str>, "FONKODU": ..., "FIYAT": ...}]}
+        Cookies/anti-CSRF primed via a homepage GET first.
+
+        This endpoint is undocumented and frequently 404s / is WAF-blocked; it is
+        the LAST resort behind tefas-crawler and tefasfon.
         """
         try:
             import requests
@@ -626,7 +587,7 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         end_str = end_dt.strftime(date_fmt)
 
         session = requests.Session()
-        session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; advisor)"})
+        session.headers.update(_TEFAS_HEADERS)
 
         try:
             home_resp = session.get(
@@ -639,10 +600,13 @@ class MidasFundsAnalyzer(BaseAnalyzer):
 
         csrf_token = _extract_tefas_csrf(home_resp.text)
 
+        # Legacy BindHistoryInfo expects lowercase fontip/fonkod/bastarih/bittarih
+        # (fontip=YAT for securities funds). The fonkod is the 3-letter FONKODU.
         form_data = {
-            "FONKODU": symbol.upper(),
-            "BASTARIH": start_str,
-            "BITTARIH": end_str,
+            "fontip": "YAT",
+            "fonkod": symbol.upper(),
+            "bastarih": start_str,
+            "bittarih": end_str,
         }
         if csrf_token:
             form_data["__RequestVerificationToken"] = csrf_token
@@ -687,19 +651,29 @@ class MidasFundsAnalyzer(BaseAnalyzer):
             df = pd.DataFrame(records)
             col_map = {}
             for c in df.columns:
-                cu = c.upper()
+                cu = str(c).upper()
                 if cu in ("TARIH", "DATE"):
                     col_map[c] = "date"
-                elif cu in ("FIYAT", "PRICE", "NAV"):
+                elif cu in ("FIYAT", "PRICE", "NAV", "BORSABULTENFIYAT"):
                     col_map[c] = "close"
             df = df.rename(columns=col_map)
+            df = df.loc[:, ~df.columns.duplicated()]
             if "date" not in df.columns or "close" not in df.columns:
                 self.logger.warning(
                     "[midas_funds] Unexpected Tefas scrape columns: %s",
                     list(df.columns),
                 )
                 return None
-            df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
+            # BindHistoryInfo TARIH is epoch-milliseconds (numeric/str). Older
+            # variants return dd.mm.yyyy strings. Try ms first, then dd.mm.yyyy.
+            raw_date = df["date"]
+            num_date = pd.to_numeric(raw_date, errors="coerce")
+            if num_date.notna().mean() > 0.5:
+                df["date"] = pd.to_datetime(num_date, unit="ms", errors="coerce")
+            else:
+                df["date"] = pd.to_datetime(
+                    raw_date, dayfirst=True, errors="coerce"
+                )
             df["close"] = pd.to_numeric(df["close"], errors="coerce")
             df = df.dropna(subset=["date", "close"])
             df = df.set_index("date").sort_index()
@@ -936,6 +910,61 @@ def _signals_to_direction_fund(signals: dict) -> Direction:
     return Direction.NEUTRAL
 
 
+def _normalize_nav_df(df):
+    """
+    Normalise any TEFAS-source DataFrame to a DatetimeIndex + numeric 'close'.
+
+    Accepts the column names every supported source emits:
+      tefas-crawler : date, price
+      tefasfon      : tarih, fiyat, borsaBultenFiyat
+      raw scrape    : TARIH (epoch-ms), FIYAT, BORSABULTENFIYAT
+    Returns a cleaned DataFrame with a single 'close' column indexed by date,
+    or None if no usable price/date columns are present. Pure + offline-testable.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+    if df is None or getattr(df, "empty", True):
+        return None
+
+    df = df.copy()
+    df.columns = [str(c).lower() for c in df.columns]
+
+    col_map = {}
+    for c in df.columns:
+        if c in ("price", "fiyat", "nav", "borsabultenfiyat"):
+            col_map[c] = "close"
+        elif c in ("date", "tarih"):
+            col_map[c] = "date"
+    df = df.rename(columns=col_map)
+    df = df.loc[:, ~df.columns.duplicated()]
+
+    if "close" not in df.columns:
+        return None
+
+    # date may be a column or already the index
+    if "date" in df.columns:
+        raw = df["date"]
+        num = pd.to_numeric(raw, errors="coerce")
+        # Treat large numerics as epoch-ms (TEFAS BindHistoryInfo TARIH).
+        if num.notna().mean() > 0.5 and float(num.dropna().abs().max() or 0) > 1e11:
+            df["date"] = pd.to_datetime(num, unit="ms", errors="coerce")
+        else:
+            # ISO (YYYY-MM-DD, from tefas-crawler/tefasfon) must NOT use
+            # dayfirst; only the dotted dd.mm.yyyy TEFAS form does.
+            sample = raw.astype(str).str.strip()
+            is_iso = sample.str.match(r"^\d{4}-\d{2}-\d{2}").mean() > 0.5
+            df["date"] = pd.to_datetime(
+                raw, dayfirst=not is_iso, errors="coerce"
+            )
+        df = df.dropna(subset=["date"]).set_index("date")
+
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+    df = df.dropna(subset=["close"]).sort_index()
+    return df if not df.empty else None
+
+
 def _extract_tefas_csrf(html: str) -> Optional[str]:
     """
     Extract __RequestVerificationToken from Tefas HTML.
@@ -951,3 +980,75 @@ def _extract_tefas_csrf(html: str) -> Optional[str]:
     if match:
         return match.group(1)
     return None
+
+
+# ---------------------------------------------------------------------------
+# Guarded offline self-test (mock payloads through the parse/rename path).
+# Run: python -m modules.advisor.core.analyzers.midas_funds
+# Does NOT hit tefas.gov.tr -- only validates the column mapping + signal math.
+# ---------------------------------------------------------------------------
+
+def _self_test() -> int:
+    try:
+        import pandas as pd
+    except ImportError:
+        print("SKIP: pandas not installed")
+        return 0
+
+    import datetime as _dt
+
+    dates = [
+        (_dt.date(2026, 1, 1) + _dt.timedelta(days=i)).isoformat()
+        for i in range(40)
+    ]
+    prices = [10.0 + 0.05 * i for i in range(40)]  # gently rising NAV
+    epoch_ms = [
+        int(_dt.datetime(2026, 1, 1).timestamp() * 1000) + i * 86400000
+        for i in range(40)
+    ]
+
+    cases = {
+        "tefas-crawler": pd.DataFrame({"date": dates, "price": prices}),
+        "tefasfon": pd.DataFrame(
+            {"tarih": dates, "fiyat": prices, "borsaBultenFiyat": prices}
+        ),
+        "raw-scrape-epoch": pd.DataFrame(
+            {"TARIH": epoch_ms, "FIYAT": prices, "FONKODU": ["TPP"] * 40}
+        ),
+    }
+
+    failures = 0
+    for name, raw in cases.items():
+        norm = _normalize_nav_df(raw)
+        if norm is None or "close" not in norm.columns or len(norm) < 10:
+            print(f"FAIL[{name}]: normalize produced no usable close series")
+            failures += 1
+            continue
+        sig = _compute_fund_signals(norm, lookback=180)
+        ok = (
+            sig is not None
+            and abs(sig["close"] - prices[-1]) < 1e-6
+            and sig["sma_signal"] in (-1, 1)
+            and "df" in sig
+        )
+        print(
+            f"{'OK' if ok else 'FAIL'}[{name}]: rows={len(norm)} "
+            f"close={sig['close'] if sig else None} "
+            f"sma={sig['sma_signal'] if sig else None} "
+            f"rsi={round(sig['rsi'], 1) if sig else None}"
+        )
+        failures += 0 if ok else 1
+
+    # Empty / garbage inputs must fail-soft to None.
+    for bad in (None, pd.DataFrame(), pd.DataFrame({"foo": [1, 2]})):
+        if _normalize_nav_df(bad) is not None:
+            print(f"FAIL: bad input {type(bad)} did not return None")
+            failures += 1
+
+    print("SELF-TEST", "PASS" if failures == 0 else f"FAIL ({failures})")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_self_test())
