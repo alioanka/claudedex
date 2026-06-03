@@ -65,10 +65,16 @@ class KapClassifierWorker:
     telegram : AdvisorTelegramBot instance or None (alerts skipped if None).
     """
 
-    def __init__(self, config: dict, db_pool=None, telegram=None):
+    def __init__(self, config: dict, db_pool=None, telegram=None,
+                 portfolio=None, bist_analyzer=None):
         self.config = config
         self.db_pool = db_pool
         self.telegram = telegram
+        # Optional: enable KAP-driven BIST sims (strong polarity -> dry-run sim
+        # in the 'kap' channel). Both must be provided AND advisor_kap_sim_enabled
+        # must be true; otherwise the hook is a no-op. Fail-soft throughout.
+        self.portfolio = portfolio
+        self.bist_analyzer = bist_analyzer
         self._running = False
         # Disclosures already CLASSIFY-attempted in this process run. Guards
         # against a runaway re-classification loop: if store_classification()
@@ -108,6 +114,17 @@ class KapClassifierWorker:
             return int(self.config.get("advisor_kap_alert_max_per_cycle", _DEFAULT_ALERT_MAX_PER_CYCLE))
         except (ValueError, TypeError):
             return _DEFAULT_ALERT_MAX_PER_CYCLE
+
+    @property
+    def kap_sim_enabled(self) -> bool:
+        """
+        Whether strong-polarity disclosures open a KAP-driven BIST sim ('kap'
+        channel). Requires a portfolio engine + BIST analyzer to be wired AND
+        advisor_kap_sim_enabled='true' (default true). Fail-soft if the hook errors.
+        """
+        if self.portfolio is None or self.bist_analyzer is None:
+            return False
+        return str(self.config.get("advisor_kap_sim_enabled", "true")).lower() == "true"
 
     # ------------------------------------------------------------------
     # Main loop
@@ -220,12 +237,41 @@ class KapClassifierWorker:
                 else:
                     alerts_suppressed += 1
 
+            # KAP-driven BIST sim (strong polarity only). Fully fail-soft: any
+            # error here is swallowed and NEVER affects classification/alerts.
+            if self.kap_sim_enabled:
+                await self._maybe_open_kap_sim(row, result)
+
         if classified:
             logger.info(
                 "[kap.classifier_worker] Cycle complete: %d classified, "
                 "%d alert(s) sent%s.",
                 classified, alerts_sent,
                 f", {alerts_suppressed} suppressed (per-cycle cap)" if alerts_suppressed else "",
+            )
+
+    async def _maybe_open_kap_sim(self, row: dict, result) -> None:
+        """
+        Open a KAP-driven BIST sim for a strong-polarity disclosure (delegates to
+        kap_sim.maybe_open_kap_sim). Resolves the BIST ticker from the disclosure
+        row. Fully fail-soft: never raises into the classify cycle.
+        """
+        try:
+            ticker = (row.get("ticker") or "").strip()
+            if not ticker:
+                return
+            from modules.advisor.core.kap.kap_sim import maybe_open_kap_sim
+            await maybe_open_kap_sim(
+                ticker=ticker,
+                base_polarity=result.base_polarity.value,
+                confidence=result.confidence,
+                config=self.config,
+                portfolio=self.portfolio,
+                bist_analyzer=self.bist_analyzer,
+            )
+        except Exception as exc:
+            logger.warning(
+                "[kap.classifier_worker] KAP-driven sim hook error (fail-soft): %s", exc
             )
 
     async def _fire_alert(self, row: dict, result) -> bool:

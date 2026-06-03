@@ -59,6 +59,15 @@ VALUES
      'capped at this value — e.g. 15 crypto + 15 gems + 15 kap simultaneously. '
      'Replaces the per-market max_sim_positions cap (kept as a fallback alias). '
      'Sim positions are dry-run bookkeeping only; no orders are placed.',
+     NOW(), NOW()),
+
+    ('advisor_config', 'advisor_kap_sim_enabled', 'true', 'bool',
+     'When true (and advisor_kap_enabled is on), a KAP disclosure classified with '
+     'a STRONG polarity (STRONG_POSITIVE -> LONG, VERY_NEGATIVE -> SHORT) AND '
+     'confidence >= advisor_kap_alert_min_confidence opens a dry-run BIST sim for '
+     'that ticker in the dedicated "kap" channel (15-slot cap, deduped per '
+     'ticker). ADVICE-ONLY: no orders are placed. Fail-soft: never breaks the KAP '
+     'classifier worker.',
      NOW(), NOW())
 ON CONFLICT (config_type, key) DO NOTHING;
 

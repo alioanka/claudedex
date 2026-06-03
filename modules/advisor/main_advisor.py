@@ -301,7 +301,12 @@ class AdvisorApplication:
                 _kap_listener = KapListener(config=config, db_pool=self.db_pool)
                 _kap_accumulator = ReturnAccumulator(config=config, db_pool=self.db_pool)
                 _kap_classifier = KapClassifierWorker(
-                    config=config, db_pool=self.db_pool, telegram=telegram
+                    config=config, db_pool=self.db_pool, telegram=telegram,
+                    # KAP-driven sims (strong polarity -> dry-run BIST sim in the
+                    # 'kap' channel). Reuses the SAME portfolio engine + BIST
+                    # analyzer; fully fail-soft (never breaks the worker).
+                    portfolio=portfolio,
+                    bist_analyzer=analyzers.get(Market.BIST),
                 )
                 _kap_tasks.append(asyncio.create_task(_kap_listener.run(), name="kap_listener"))
                 _kap_tasks.append(asyncio.create_task(_kap_accumulator.run_daily(), name="kap_accumulator"))
