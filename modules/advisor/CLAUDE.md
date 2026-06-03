@@ -165,6 +165,66 @@ dir; tokenizer auto-discovered as the sibling dir, or override with
 `ADVISOR_KRONOS_TOKENIZER_PATH`) in `.env`, and `advisor_kronos_enabled=true` in
 advisor_config. Full runbook: `docs/ADVISOR_SETUP_AND_USAGE.md` §5.
 
+## Discovery — "New Gems" layer (migration 076, DEFAULT OFF)
+Surfaces promising tickers BEYOND the operator's watchlists for CRYPTO, US
+EQUITIES, and BIST. Per market it pulls a free candidate universe, screens it
+locally (free, NO LLM), dedupes against watchlist + open sims + blocklist, ranks
+by a transparent momentum+volume score, and hands the top-N NEW symbols to the
+SAME analyzer pipeline so they get normal advice — flagged `origin='discovery'`
+(vs `'watchlist'`). ADVICE-ONLY. Everything FAIL-SOFT: any source error → that
+market yields `[]` and the watchlist advice is untouched.
+
+- **Package**: `core/discovery/` — `base.py` (DiscoveryCandidate + screen/dedupe/
+  rank helpers, self-test: `python -m modules.advisor.core.discovery.base`),
+  `crypto_discovery.py`, `us_equities_discovery.py`, `bist_discovery.py`,
+  `__init__.py` exposing `discover(market, config, watchlist, exclude) -> list[str]`
+  and `discover_candidates(...) -> list[DiscoveryCandidate]`.
+- **Sources (all free, no key, rate-limited, fail-soft)**:
+  - crypto: ccxt `fetch_tickers()` 24h %-movers + quote-volume on
+    `advisor_crypto_exchange` (PRIMARY, ccxt-native pairs), CoinGecko
+    `/search/trending` as a soft bias. Screen: min 24h quote-vol USD, optional
+    market-cap band, exclude stablecoins/wrapped pegs.
+  - us_equities: Yahoo Finance public predefined-screener JSON
+    (`day_gainers`, `most_actives`, `undervalued_growth_stocks`; configurable).
+    Screen: min price floor (anti-penny), min dollar-volume, min abs %move.
+    CAVEAT: Yahoo endpoint is undocumented/rate-limited — 401/429 → `[]`.
+  - bist: borsapy listing-method probe (version-dependent, defensive) + optional
+    operator JSON `advisor_discovery_bist_scrape_url`. DEGRADED/fragile by design;
+    commonly returns `[]`, which is acceptable.
+- **Integration** (`advice_engine._run_discovery_pass`): runs AFTER the watchlist
+  pass, GATED by `advisor_discovery_enabled=true` AND a slow cadence
+  (`advisor_discovery_refresh_hours`, default 12 — NOT every cycle; last-run is
+  in-memory + persisted to `advisor_discovery_last_run_at` so restarts respect it).
+- **COST DISCIPLINE (critical)**: discovery defaults to FREE rule-based rationale.
+  The discovery pass passes a config clone with `_advisor_force_rule_based=true`
+  which `rationale_helper.build_rationale` honours (returns rule-based, makes NO
+  paid call). Only the top `advisor_discovery_llm_max` (default **0 = none**) get
+  LLM narration, and that path STILL flows through the global daily budget
+  (`core/llm_budget.try_consume`, cap `advisor_llm_daily_max_calls`). Discovery
+  cannot blow the budget. Local screening + signals are free.
+- **Schema**: `advisor_advice.origin VARCHAR(16) DEFAULT 'watchlist'`
+  (migration 076; existing rows backfilled; discovered rows write `'discovery'`).
+  Persist is fail-soft to a pre-076 DB (retries without the column).
+- **Config keys** (migration `076_advisor_discovery.sql`, all DEFAULT OFF/safe;
+  surface in Advisor Settings): `advisor_discovery_enabled` (bool, false),
+  `advisor_discovery_markets` (`crypto,us_equities,bist`),
+  `advisor_discovery_max_per_market` (5), `advisor_discovery_refresh_hours` (12),
+  `advisor_discovery_llm_max` (0), plus per-market screen thresholds
+  (`advisor_discovery_{crypto,us,bist}_*`) and internal
+  `advisor_discovery_last_run_at`.
+- **Dashboard**: 🔎 "New Gems (Discovery)" section on the advisor Overview
+  (`advisor_dashboard.html`), API `/api/advisor/discovery` in
+  `enhanced_dashboard.py` (returns `origin='discovery'` rows + score/source/
+  24h-change; hidden when disabled or empty). Visually distinct + advice-only /
+  higher-risk disclaimer.
+- **How to enable**: set `advisor_discovery_enabled='true'` in advisor_config
+  (Advisor Settings). Optionally raise `advisor_discovery_llm_max` if you want a
+  few LLM-narrated gems (still capped by the daily budget).
+- **HONESTY**: trending != good. This only chooses WHICH new symbols to analyze;
+  the analyzer still produces the actual directional advice. BIST discovery is
+  best-effort and may return nothing in most environments. The Yahoo screener
+  endpoint is unofficial and can change/break without notice.
+
 ## KAP engine (Borsa İstanbul disclosures) — Phase 1 (wired end-to-end)
 KAP disclosure ingestion + classification + alerts + advice-overlay + dashboard, all gated by
 `advisor_kap_enabled` (advisor_config, default `false`). ADVICE-ONLY; emits a documented
