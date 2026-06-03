@@ -84,7 +84,8 @@ class KapEventType(str, Enum):
 
     # Business wins / commercial
     NEW_CONTRACT      = "NEW_CONTRACT"       # yeni iş / sözleşme / sipariş
-    TENDER_WIN        = "TENDER_WIN"         # ihale kazanımı
+    TENDER_BID        = "TENDER_BID"         # ihaleye katılım / teklif verme (outcome unknown)
+    TENDER_WIN        = "TENDER_WIN"         # ihale kazanımı (AWARD confirmed)
     EXPORT_AGREEMENT  = "EXPORT_AGREEMENT"   # ihracat anlaşması / uluslararası sözleşme
 
     # Capacity / operations
@@ -334,24 +335,81 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
     ),
 
     # ------------------------------------------------------------------
-    # TENDER_WIN — public tender / government contract award
+    # TENDER_BID — tender participation / bid submitted (OUTCOME UNKNOWN)
+    # Priority 4 so participation language is NOT mislabelled as a win.
+    # ------------------------------------------------------------------
+    #
+    # KAP tender disclosures (Bildirim Tipi ÖDA, "İhale Süreci / Sonucu") cover
+    # the WHOLE lifecycle: bid submitted -> result pending -> won/lost. The
+    # operator's real disclosure said the company "ihalesinin 1. oturumuna
+    # katılmıştır" (participated in the tender's 1st session) with "İhaleye
+    # Teklif Verme Tarihi" set and all outcome fields empty/"-". That is a BID,
+    # NOT a win. We classify it TENDER_BID (NEUTRAL — outcome unknown) and only
+    # promote to TENDER_WIN when an actual AWARD is evidenced.
+    KapEventType.TENDER_BID: TaxonomyEntry(
+        event_type=KapEventType.TENDER_BID,
+        turkish_triggers=[
+            r"ihale[a-zçğıöşü]*\s+kat[ıi]l",          # ihaleye katılım / katılmıştır
+            r"ihale[a-zçğıöşü]*\s+teklif\s+ver",      # ihaleye teklif verilmesi/verme
+            r"teklif\s+ver(?:il|me|ildi|di)",          # teklif verilmesi / verildi
+            r"ihale[a-zçğıöşü]*\s+\d+\.?\s*oturum",   # ihalenin 1. oturumu
+            r"ihaleye\s+teklif\s+verme\s+tarihi",      # İhaleye Teklif Verme Tarihi
+            r"ihale\s+sürecine\s+kat[ıi]l",
+            r"ihaleye\s+i[şs]tirak",
+        ],
+        exclude_patterns=[
+            # If the disclosure clearly states an AWARD, this is TENDER_WIN, not a bid.
+            r"ihale[a-zçğıöşü]*\s+kazan",
+            r"ihaleyi\s+kazan",
+            r"[üu]zerinde\s+kal(?:d[ıi]|m[ıi][şs])",
+            r"ihale\s+(uhdemize|[şs]irketimiz\s+[üu]zerinde)",
+        ],
+        base_polarity=BasePolarity.NEUTRAL,
+        notes=(
+            "Tender PARTICIPATION / bid submitted — the company entered a public "
+            "or private tender (katılım, teklif verilmesi, 1. oturum) but the "
+            "OUTCOME IS UNKNOWN at disclosure time (İhale Sonucu / İhale Bedeli "
+            "fields empty). NEUTRAL prior: entering a tender is not winning one. "
+            "Promote to TENDER_WIN only when an award is explicitly stated "
+            "(kazanılmıştır / üzerinde kalmıştır / ihaleyi kazandı + ihale bedeli)."
+        ),
+        param_keys=["contract_value"],
+        priority=4,
+    ),
+
+    # ------------------------------------------------------------------
+    # TENDER_WIN — public tender / government contract AWARD (confirmed)
+    # Priority 4 (same tier as TENDER_BID); selection then prefers the entry
+    # with more trigger hits, and the AWARD triggers below only fire on
+    # explicit award language. Pure participation excludes a win.
     # ------------------------------------------------------------------
     KapEventType.TENDER_WIN: TaxonomyEntry(
         event_type=KapEventType.TENDER_WIN,
         turkish_triggers=[
-            r"ihale\s+kazan[ıi]ld[ıi]",
-            r"ihale\s+sonucu",
-            r"kamu\s+ihale",
-            r"teklif\s+kabul",
+            r"ihale[a-zçğıöşü]*\s+kazan[ıi]l",        # ihale kazanıldı / kazanılmıştır
+            r"ihaleyi\s+kazan",                        # ihaleyi kazandı
+            r"ihale\s+[üu]zer|[üu]zerinde\s+kal(?:d[ıi]|m[ıi][şs])",  # üzerinde kalmıştır
+            r"ihale\s+(uhdemize|[şs]irketimiz\s+[üu]zerinde)",        # uhdemizde kaldı
+            r"ihale\s+sonucu(?:nda)?\s+.*kazan",
+            r"en\s+iyi\s+teklif\s+(?:olarak\s+)?kabul",  # bid accepted as best -> awarded
+        ],
+        exclude_patterns=[
+            # Pure participation / pending wording must NOT be read as a win.
+            r"teklif\s+verme\s+tarihi",
+            r"\d+\.?\s*oturum[a-zçğıöşü]*\s+kat[ıi]l",
         ],
         base_polarity=BasePolarity.STRONG_POSITIVE,
         notes=(
-            "Government or public tender win. Strong positive prior: government "
-            "contracts have lower counterparty risk and provide multi-year revenue "
-            "visibility.  BIST construction, defence, and infrastructure sectors "
-            "see especially strong reactions."
+            "Government or public tender WIN — an AWARD is confirmed "
+            "(ihale kazanıldı / üzerinde kalmıştır / uhdemizde kaldı). Strong "
+            "positive prior: government contracts have lower counterparty risk "
+            "and multi-year revenue visibility; BIST construction, defence, and "
+            "infrastructure sectors react strongly. Distinct from TENDER_BID "
+            "(mere participation, outcome unknown). Requires explicit award "
+            "language — see classifier LLM prompt which demands award evidence."
         ),
         param_keys=["contract_value"],
+        priority=4,
     ),
 
     # ------------------------------------------------------------------
