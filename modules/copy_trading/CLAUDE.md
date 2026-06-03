@@ -189,6 +189,19 @@ Pre-existing related knobs still apply: `copy_max_concurrent_wallets` (default 5
 
 **Honest sustainability assessment (33 wallets).** The PRIMARY load is the Helius **enhanced-tx REST** path (one `GET /v0/addresses/{w}/transactions` per wallet per cycle), NOT JSON-RPC `getSignaturesForAddress` — the fallback poll only runs when Helius REST fails. At the default 15 s cadence, 33 wallets = ~2.2 REST calls/s sustained (bursty up to `copy_max_concurrent_wallets=5` concurrent). Helius free/developer tier (~10 req/s, 100k credits/day) makes this borderline: 33 wallets × 5760 cycles/day ≈ 190k calls/day, which EXCEEDS a 100k/day free credit budget. Recommendation: on the free tier either raise `copy_poll_interval_s` to ~30 s (halves daily calls to ~95k) or trim the watchlist to ~17 wallets; a paid Helius plan (Developer 10M credits/mo) sustains 33 wallets comfortably at 15 s. This change FIXES the routing (Helius is now actually used) but does not raise the operator's Helius quota — if the free tier is exhausted, the symptom shifts from "always 429 on public RPC" to "429 on Helius once daily credits run out," which the per-endpoint WARNING now makes visible.
 
+## Telegram alerts (wave-24)
+The copy engine emitted nothing to Telegram beyond the startup/shutdown banner.
+`modules/copy_trading/copy_alerts.py:CopyTelegramAlerts` is an engine-routed
+helper (mirrors `futures_alerts`/`solana_alerts`): every send goes through
+`TelegramNotificationEngine.notify('copy', category, ...)` so it carries the
+`[COPY]` header and lands in topic 18. Fail-soft + DRY_RUN-safe. **Wire-in
+(owning web3 agent):** construct `CopyTelegramAlerts()` in `CopyTradingEngine`
+and call `send_copy_alert(CopyTradeAlert(action='buy'|'sell', token=..., chain=...,
+leader=..., amount_usd=..., is_simulated=self.dry_run))` at the
+`_execute_evm_copy_trade` / `_execute_solana_copy_trade` success points and at
+close. Until wired, COPY still appears in the periodic summary/dashboard topics
+built from `copy_trades`. See `docs/TELEGRAM_SETUP.md`.
+
 ## See also
 ## Wave-9 honest-scoring audit (2026-05-26)
 Audited `leader_scorer.py` + the `copy_engine.py` entry path for the two

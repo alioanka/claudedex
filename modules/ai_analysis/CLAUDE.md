@@ -40,6 +40,18 @@ LLM-driven sentiment + news analysis pipeline. Produces directional signals from
 
 ## Live-trade readiness
 AMBER → GREEN candidate (pending production verification). MB-19 (load-or-refuse scaler + `ai_feature_store` + training scripts for scaler/rug/pump + 27-feature canonical layout + outcome-backfill on close) end-to-end closed; MB-20 (executor delegation through canonical futures path) and MB-21 (headline sanitisation) closed; secrets_manager already wired. Latch-at-open refinement (`60a3235`) makes re-entry feature-row backfill correct. **A6 wave-2:** multi-provider quorum gate (E1), confidence-calibration table + `/api/ai/calibration` (E2), pinned-template Q-learning bandit + `ai_feature_store` exploration logs (E3) — all disabled-by-default, see `docs/agents/reports/AI_CAMPAIGN.md`. **A6 wave-4:** AI-Q-05 inference-side calibrated booster wrap (`EnsemblePredictor.fit_and_persist_calibration` + `calibrated_predict_proba` + `_load_calibrated_models`, flag `ai_calibrated_predictions_enabled` default FALSE) — commits `16b7dab` + `68b20fb` + `a6c3a89`; quorum observability (`_record_quorum_outcome`/`_persist_quorum_outcome` -> `ai_feature_store.metadata.quorum_outcome` + `GET /api/ai/quorum-metrics?hours=24` + dashboard agreement-rate chart on `dashboard_ai.html`) — commits `c7e4a27` + `50bd9c3`. **A6 wave-5:** "Why no trades?" signal-to-trade diagnostic — `SentimentEngine._record_skip()` emits `[ai-skip] reason=<gate> conf=<n> sentiment=<n>` lines for every rejected signal (`direct_trading_off` / `confidence_below_threshold` / `zero_sentiment` / `position_exists` / `cooldown_active` / `risk_rejected` / `exchange_unavailable` / `execution_failed`); `GET /api/ai/diagnostics?hours=24` joins sentiment_logs + ai_trades + the [ai-skip] log tail (bounded 512KB read) and returns `signals_generated` / `trades_opened` / `action_rate` / buy-sell-hold split / `signals_rejected_by_reason` Counter / `recent_skips` (last 20) / `effective_config` (REDACTED — no API keys) / operator-facing `hint` string; dashboard `/ai/dashboard` "Why no trades?" collapsible panel with color-coded status pill (green firing / red no-trades / amber action-needed / grey idle). Quorum auto-pass (`_quorum_singleprov_logged`): when `quorum_required=true` but only one provider key is loaded, 1/1 agreement is trivially satisfied — single-provider score passes through unchanged with one-time startup log line. Commits `28efc1a` (skip ledger) + `71988d2` (diagnostics endpoint) + `c64890c` (dashboard panel) + `e271ad1` (quorum auto-pass).
+## Telegram alerts (wave-24)
+The AI engine emitted nothing to Telegram beyond the startup/shutdown banner.
+`modules/ai_analysis/ai_alerts.py:AITelegramAlerts` is an engine-routed helper
+(mirrors `futures_alerts`/`solana_alerts`): every send goes through
+`TelegramNotificationEngine.notify('ai', category, ...)` so it carries the
+`[AI]` header and lands in topic 15. Fail-soft + DRY_RUN-safe. **Wire-in (owning
+agent):** construct `AITelegramAlerts()` in the engine and call
+`send_entry_alert(AITradeAlert(...))` / `send_exit_alert(...)` at the open/close
+points in `core/sentiment_engine.py` (or `_execute_dry_run`/`_close_position`
+in `core/ai_trading_engine.py`). Until wired, AI still appears in the periodic
+summary/dashboard topics built from `ai_trades`. See `docs/TELEGRAM_SETUP.md`.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/AI_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.

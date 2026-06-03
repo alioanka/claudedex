@@ -91,6 +91,13 @@ ADVICE-ONLY: no orders are placed. Self-check: `python -m modules.advisor.core.a
 
 ## Logs
 `logs/advisor/` — `advisor.log` (all), `advisor_errors.log` (WARNING+).
+Wave-24: the orchestrator's subprocess stdout/stderr capture is now ALSO pinned
+to `logs/advisor/` (`main.py` previously derived it from the module display name
+"Financial Advisor" → a separate `logs/financial_advisor/` folder). One folder
+now. Telegram: `core/telegram_notifier.py` runs a `getMe` self-test at startup
+and logs send failures (401/403/404 + body) to `advisor_errors.log`; the most
+common silent-bot cause is the 403 "bot can't initiate conversation" — the
+operator must press **Start** on the advisor bot DM once.
 
 ## Data source matrix
 
