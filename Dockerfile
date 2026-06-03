@@ -111,14 +111,19 @@ RUN pip install --no-cache-dir --timeout=300 torch || \
     echo "✅ PyTorch installation attempted"
 
 # Stage 7b: Kronos K-line forecaster deps (advisor module, optional/fail-soft).
-# transformers + huggingface_hub are needed for the advisor Kronos forecaster
-# (download + AutoModel inference). sentencepiece is required to convert the
-# Kronos slow tokenizer to a fast one (without it: "You need to have
-# sentencepiece or tiktoken installed"). Baked into the image so they survive
-# rebuilds — an ephemeral in-container `pip install` would be lost on --build.
-RUN pip install --no-cache-dir --timeout=300 transformers huggingface_hub sentencepiece || \
-    pip install --no-cache-dir --timeout=300 transformers huggingface_hub sentencepiece || \
-    echo "⚠️ transformers/huggingface_hub/sentencepiece install failed (Kronos optional)" && \
+# Kronos is NOT a HuggingFace causal-LM — transformers/sentencepiece CANNOT load
+# it (that path failed with "Couldn't instantiate the backend tokenizer ... need
+# sentencepiece or tiktoken"). The real Kronos model code is VENDORED in
+# modules/advisor/core/kronos_vendor/ (MIT, no network needed). Its actual
+# runtime deps are: torch (Stage 7, above) + einops + huggingface_hub +
+# safetensors (.from_pretrained weight loading) + numpy/pandas/tqdm (from the ML
+# stage). Pretrained weights (model + tokenizer repos) are fetched separately by
+# scripts/download_kronos_weights.py into the persistent /app/data volume.
+# Baked into the image so they survive rebuilds; fail-soft so the build never
+# breaks on a transient PyPI hiccup (Kronos predict() returns None if unusable).
+RUN pip install --no-cache-dir --timeout=300 einops huggingface_hub safetensors tqdm || \
+    pip install --no-cache-dir --timeout=300 einops huggingface_hub safetensors tqdm || \
+    echo "⚠️ einops/huggingface_hub/safetensors install failed (Kronos optional)" && \
     echo "✅ Kronos deps install attempted"
 
 # Stage 7c: Advisor module data + advice deps.
