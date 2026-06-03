@@ -26,70 +26,71 @@
   .pnl-neg { color:#ff4560; }
   .pnl-zero{ color:#888; }
 
-  .sim-table td, .sim-table th { vertical-align:middle; font-size:.82rem; }
-  .sim-table th { text-transform:uppercase; font-size:.7rem; color:#888; letter-spacing:.05em; }
-
   .close-btn { font-size:.72rem; padding:.18rem .5rem; }
 
-  .tab-filter { display:flex; gap:.4rem; margin-bottom:1rem; flex-wrap:wrap; }
-  .tab-filter .btn { font-size:.8rem; }
+  /* One panel per channel */
+  .chan-panel {
+    background:rgba(255,255,255,.02); border:1px solid rgba(255,255,255,.08);
+    border-radius:12px; margin-bottom:1.4rem; overflow:hidden;
+  }
+  .chan-head {
+    display:flex; align-items:center; justify-content:space-between;
+    padding:.7rem 1rem; background:rgba(255,255,255,.04);
+    border-bottom:1px solid rgba(255,255,255,.08);
+  }
+  .chan-name { font-size:.92rem; font-weight:700; letter-spacing:.04em; text-transform:uppercase; }
+  .chan-cap { font-size:.78rem; font-weight:700; padding:.2rem .6rem; border-radius:20px;
+              background:rgba(0,227,150,.12); color:#00e396; }
+  .chan-cap.full { background:rgba(255,69,96,.15); color:#ff4560; }
+  .chan-cap.warn { background:rgba(254,176,25,.15); color:#feb019; }
+
+  /* Sticky table header so column captions stay visible while scrolling */
+  .chan-scroll { max-height:420px; overflow:auto; }
+  .sim-table { margin-bottom:0; }
+  .sim-table td, .sim-table th { vertical-align:middle; font-size:.82rem; white-space:nowrap; }
+  .sim-table thead th {
+    position:sticky; top:0; z-index:2;
+    background:#1c1f26; /* opaque so rows don't bleed through on scroll */
+    text-transform:uppercase; font-size:.68rem; color:#9aa0aa; letter-spacing:.05em;
+  }
+  .sim-table tfoot td {
+    position:sticky; bottom:0; background:#15171d; font-weight:700;
+    border-top:2px solid rgba(255,255,255,.12);
+  }
+  .empty-row td { color:#777; font-style:italic; text-align:center; padding:1.1rem 0; }
 
   @media (max-width:640px) {
     .sim-summary-bar { grid-template-columns: repeat(2,1fr); }
-    .d-sm-none { display:none !important; }
   }
 </style>
 
 <div class="container-fluid py-3">
   <div class="d-flex justify-content-between align-items-center mb-3">
-    <h5 class="mb-0"><i class="fas fa-flask me-2 text-info"></i>Dry-Run Simulations</h5>
+    <h5 class="mb-0"><i class="fas fa-flask me-2 text-info"></i>Dry-Run Simulations — by Channel</h5>
     <a href="/advisor/dashboard" class="btn btn-sm btn-outline-secondary">
       <i class="fas fa-arrow-left me-1"></i>Overview
     </a>
   </div>
 
-  <!-- Summary -->
+  <!-- Global summary -->
   <div class="sim-summary-bar" id="simSummary">
     <div class="sim-stat"><div class="sv text-info" id="ssOpen">—</div><div class="sl">Open Sims</div></div>
     <div class="sim-stat"><div class="sv" id="ssPnl">—</div><div class="sl">Closed P&amp;L</div></div>
     <div class="sim-stat"><div class="sv text-warning" id="ssWin">—</div><div class="sl">Win Rate</div></div>
-    <div class="sim-stat"><div class="sv text-primary" id="ssTotal">—</div><div class="sl">Total Sims</div></div>
+    <div class="sim-stat"><div class="sv text-primary" id="ssCap">—</div><div class="sl">Cap / Channel</div></div>
   </div>
 
-  <!-- Filter tabs -->
-  <div class="tab-filter">
-    <button class="btn btn-sm btn-primary active" id="tabAll" onclick="setFilter('all', this)">All</button>
-    <button class="btn btn-sm btn-outline-success" id="tabOpen" onclick="setFilter('open', this)">Open</button>
-    <button class="btn btn-sm btn-outline-secondary" id="tabClosed" onclick="setFilter('closed', this)">Closed</button>
+  <div class="text-muted mb-3" style="font-size:.78rem">
+    <i class="fas fa-info-circle me-1"></i>
+    ADVICE-ONLY — these are dry-run positions, no orders are placed. Each channel is an
+    independent bucket capped at the per-channel limit (gems = discovered "New Gems";
+    kap = KAP strong-polarity disclosures). Channel totals sum open (unrealized) +
+    closed (realized) P&amp;L.
   </div>
 
-  <!-- Table -->
-  <div class="table-responsive">
-    <table class="table table-dark table-hover sim-table mb-0">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Symbol</th>
-          <th>Market</th>
-          <th>Direction</th>
-          <th>Horizon</th>
-          <th>Entry</th>
-          <th>Current / Exit</th>
-          <th>Target</th>
-          <th>Stop</th>
-          <th>Notional</th>
-          <th>P&amp;L %</th>
-          <th>P&amp;L $</th>
-          <th>Status</th>
-          <th>Opened</th>
-          <th class="d-sm-none">Close Reason</th>
-          <th>Action</th>
-        </tr>
-      </thead>
-      <tbody id="simBody">
-        <tr><td colspan="16" class="text-center text-muted py-4">Loading…</td></tr>
-      </tbody>
-    </table>
+  <!-- One panel per channel rendered here -->
+  <div id="channelPanels">
+    <div class="text-center text-muted py-5">Loading…</div>
   </div>
 </div>
 
@@ -119,18 +120,14 @@
 </div>
 
 <script>
-let activeFilter = 'all';
+// Canonical channel order — all seven always render, even when empty.
+const CHANNELS = ['crypto','us_equities','bist','fx','midas_funds','gems','kap'];
+const CHANNEL_ICONS = {
+  crypto:'₿', us_equities:'📈', bist:'🇹🇷', fx:'💱', midas_funds:'🏦',
+  gems:'💎', kap:'📰'
+};
 let simRows = [];
-
-function setFilter(f, btn) {
-  activeFilter = f;
-  document.querySelectorAll('.tab-filter .btn').forEach(b => {
-    b.className = b.id === btn.id
-      ? (f==='open' ? 'btn btn-sm btn-success active' : f==='closed' ? 'btn btn-sm btn-secondary active' : 'btn btn-sm btn-primary active')
-      : 'btn btn-sm btn-outline-' + (b.id==='tabOpen'?'success': b.id==='tabClosed'?'secondary':'primary');
-  });
-  renderTable();
-}
+let capPerChannel = 15;
 
 async function loadSims() {
   try {
@@ -138,69 +135,128 @@ async function loadSims() {
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
 
-    simRows = data.rows;
-    const s = data.summary;
+    simRows = data.rows || [];
+    const s = data.summary || {};
+    capPerChannel = s.cap_per_channel || 15;
 
-    const pnl = s.total_pnl_usd;
-    document.getElementById('ssOpen').textContent = s.total_open;
+    const pnl = s.total_pnl_usd || 0;
+    document.getElementById('ssOpen').textContent = s.total_open != null ? s.total_open : '—';
     const pnlEl = document.getElementById('ssPnl');
     pnlEl.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toFixed(2);
     pnlEl.className = 'sv ' + (pnl > 0 ? 'text-success' : pnl < 0 ? 'text-danger' : 'text-muted');
-    document.getElementById('ssWin').textContent = s.win_rate + '%';
-    document.getElementById('ssTotal').textContent = simRows.length;
+    document.getElementById('ssWin').textContent = (s.win_rate != null ? s.win_rate : 0) + '%';
+    document.getElementById('ssCap').textContent = capPerChannel;
 
-    renderTable();
+    renderPanels();
   } catch(e) {
-    document.getElementById('simBody').innerHTML =
-      `<tr><td colspan="16" class="text-center text-danger py-4">Error: ${escHtml(e.message)}</td></tr>`;
+    document.getElementById('channelPanels').innerHTML =
+      `<div class="text-center text-danger py-5">Error: ${escHtml(e.message)}</div>`;
   }
 }
 
-function renderTable() {
-  const tbody = document.getElementById('simBody');
-  const rows = activeFilter === 'all' ? simRows : simRows.filter(r => r.status === activeFilter);
-  tbody.innerHTML = '';
-
-  if (rows.length === 0) {
-    tbody.innerHTML = '<tr><td colspan="16" class="text-center text-muted py-4">No simulations found.</td></tr>';
-    return;
+function renderPanels() {
+  const container = document.getElementById('channelPanels');
+  // Bucket rows by channel (fallback to market when channel missing).
+  const byChannel = {};
+  for (const ch of CHANNELS) byChannel[ch] = [];
+  for (const r of simRows) {
+    const ch = r.channel || r.market || 'crypto';
+    if (!byChannel[ch]) byChannel[ch] = [];   // tolerate any stray channel
+    byChannel[ch].push(r);
   }
 
-  for (const r of rows) {
-    const tr = document.createElement('tr');
-    const pnlPct = r.pnl_pct;
-    const pnlUsd = r.pnl_usd;
-    const pnlCls = pnlPct == null ? 'pnl-zero' : pnlPct > 0 ? 'pnl-pos' : pnlPct < 0 ? 'pnl-neg' : 'pnl-zero';
-    const currentOrExit = r.status === 'closed'
-      ? (r.exit_price != null ? fmtN(r.exit_price) : '—')
-      : (r.current_price != null ? fmtN(r.current_price) : '—');
-    const ts = r.opened_at ? new Date(r.opened_at).toLocaleDateString() : '—';
-    const actionBtn = r.status === 'open'
-      ? `<button class="btn btn-danger close-btn" onclick="openCloseModal(${r.id})">
-           <i class="fas fa-times-circle me-1"></i>Close
-         </button>`
-      : '<span class="text-muted" style="font-size:.72rem">' + (r.close_reason || 'closed') + '</span>';
+  let html = '';
+  // Render canonical seven first, then any stray channels not in the list.
+  const allChannels = CHANNELS.concat(
+    Object.keys(byChannel).filter(c => !CHANNELS.includes(c))
+  );
+  for (const ch of allChannels) {
+    html += renderChannelPanel(ch, byChannel[ch] || []);
+  }
+  container.innerHTML = html;
+}
 
-    tr.innerHTML = `
+function renderChannelPanel(channel, rows) {
+  const openRows = rows.filter(r => r.status === 'open');
+  const openCount = openRows.length;
+  let capCls = 'chan-cap';
+  if (openCount >= capPerChannel) capCls += ' full';
+  else if (openCount >= capPerChannel * 0.8) capCls += ' warn';
+
+  // Per-channel total P&L = open unrealized + closed realized.
+  let totalPnl = 0;
+  for (const r of rows) {
+    if (r.pnl_usd != null) totalPnl += r.pnl_usd;
+  }
+  const pnlCls = totalPnl > 0 ? 'pnl-pos' : totalPnl < 0 ? 'pnl-neg' : 'pnl-zero';
+  const pnlStr = (totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toFixed(2);
+
+  let bodyRows = '';
+  if (rows.length === 0) {
+    bodyRows = `<tr class="empty-row"><td colspan="12">No open sims in this channel.</td></tr>`;
+  } else {
+    for (const r of rows) {
+      bodyRows += renderSimRow(r);
+    }
+  }
+
+  return `
+    <div class="chan-panel">
+      <div class="chan-head">
+        <span class="chan-name">${CHANNEL_ICONS[channel]||''} ${fmtChannel(channel)}</span>
+        <span class="${capCls}">${openCount}/${capPerChannel}</span>
+      </div>
+      <div class="chan-scroll">
+        <table class="table table-dark table-hover sim-table">
+          <thead>
+            <tr>
+              <th>#</th><th>Symbol</th><th>Dir</th><th>Entry</th>
+              <th>Current/Exit</th><th>Target</th><th>Stop</th>
+              <th>P&amp;L %</th><th>P&amp;L $</th><th>Opened</th>
+              <th>Horizon</th><th>Action</th>
+            </tr>
+          </thead>
+          <tbody>${bodyRows}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="8" class="text-end">Channel total P&amp;L (open + closed)</td>
+              <td class="${pnlCls}">${pnlStr}</td>
+              <td colspan="3"></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    </div>`;
+}
+
+function renderSimRow(r) {
+  const pnlPct = r.pnl_pct;
+  const pnlUsd = r.pnl_usd;
+  const pnlCls = pnlPct == null ? 'pnl-zero' : pnlPct > 0 ? 'pnl-pos' : pnlPct < 0 ? 'pnl-neg' : 'pnl-zero';
+  const currentOrExit = r.status === 'closed'
+    ? (r.exit_price != null ? fmtN(r.exit_price) : '—')
+    : (r.current_price != null ? fmtN(r.current_price) : '—');
+  const ts = r.opened_at ? new Date(r.opened_at).toLocaleDateString() : '—';
+  const actionCell = r.status === 'open'
+    ? `<button class="btn btn-danger close-btn" onclick="openCloseModal(${r.id})">
+         <i class="fas fa-times-circle me-1"></i>Close</button>`
+    : `<span class="status-${r.status}" style="font-size:.72rem">${escHtml(r.close_reason||r.status)}</span>`;
+
+  return `
+    <tr>
       <td class="text-muted">${r.id}</td>
       <td><strong>${escHtml(r.symbol)}</strong></td>
-      <td style="font-size:.75rem">${fmtMarket(r.market)}</td>
       <td><span class="dir-badge dir-${r.direction}">${dirLabel(r.direction)}</span></td>
-      <td><span class="badge bg-secondary">${r.horizon}</span></td>
       <td>${fmtN(r.entry_price)}</td>
       <td>${currentOrExit}</td>
       <td style="color:#00e396">${fmtN(r.target_price)}</td>
       <td style="color:#ff4560">${fmtN(r.stop_price)}</td>
-      <td>$${fmtUsd(r.notional_usd)}</td>
       <td class="${pnlCls}">${pnlPct != null ? (pnlPct >= 0 ? '+':'') + pnlPct.toFixed(2) + '%' : '—'}</td>
       <td class="${pnlCls}">${pnlUsd != null ? (pnlUsd >= 0 ? '+$':'-$') + Math.abs(pnlUsd).toFixed(2) : '—'}</td>
-      <td class="status-${r.status}">${r.status.toUpperCase()}</td>
-      <td style="font-size:.75rem;white-space:nowrap">${ts}</td>
-      <td class="d-sm-none" style="font-size:.72rem;color:#888">${escHtml(r.close_reason||'')}</td>
-      <td>${actionBtn}</td>
-    `;
-    tbody.appendChild(tr);
-  }
+      <td style="font-size:.75rem">${ts}</td>
+      <td><span class="badge bg-secondary">${r.horizon}</span></td>
+      <td>${actionCell}</td>
+    </tr>`;
 }
 
 function openCloseModal(simId) {
@@ -214,7 +270,6 @@ async function confirmClose() {
   const exitPrice = document.getElementById('exitPriceInput').value.trim();
   const body = {};
   if (exitPrice) body.exit_price = parseFloat(exitPrice);
-
   try {
     const res = await fetch(`/api/advisor/simulations/${simId}/close`, {
       method: 'POST',
@@ -231,8 +286,7 @@ async function confirmClose() {
   } catch(e) { alert('Request failed: ' + e.message); }
 }
 
-const MARKET_ICONS = { crypto:'₿', us_equities:'📈', bist:'🇹🇷', fx:'💱', midas_funds:'🏦' };
-function fmtMarket(m) { return (MARKET_ICONS[m]||'') + ' ' + (m||'').replace('_',' '); }
+function fmtChannel(c) { return (c||'').replace(/_/g,' '); }
 function dirLabel(d) { return d==='long'?'LONG ▲': d==='short'?'SHORT ▼':'HOLD ~'; }
 function fmtN(n) {
   if (n == null) return '—';
@@ -240,9 +294,6 @@ function fmtN(n) {
   if (f >= 1000) return f.toLocaleString(undefined,{maximumFractionDigits:2});
   if (f >= 1) return f.toFixed(4);
   return f.toFixed(6);
-}
-function fmtUsd(n) {
-  return n != null ? parseFloat(n).toLocaleString(undefined,{maximumFractionDigits:2}) : '—';
 }
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
