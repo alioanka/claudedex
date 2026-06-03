@@ -134,10 +134,14 @@ RUN pip install --no-cache-dir --timeout=300 einops huggingface_hub safetensors 
 #   AND 0.2.60 both crash with "No module named websockets.asyncio". The old
 #   <0.2.61 bound still let 0.2.60 in -> the boundary must be <0.2.59.
 # anthropic + openai: advice rationale + dual-advice second opinion.
+# tefas-crawler + tefasfon: Midas/TEFAS Turkish-fund NAV history (the analyzer
+#   imports `tefas`/`tefasfon`; without these it falls to the dead BindHistoryInfo
+#   scrape and 404s). requirements.txt is NOT pip-installed by this Dockerfile,
+#   so they MUST be listed here to reach the image.
 # Baked into the image (requirements.txt is NOT pip-installed by this Dockerfile).
 # Retried once, then fail-soft so the build never breaks on a transient PyPI hiccup.
-RUN pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai || \
-    pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai || \
+RUN pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai tefas-crawler tefasfon || \
+    pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai tefas-crawler tefasfon || \
     echo "⚠️ advisor data/LLM deps failed (US-equities/FX/rationale degraded)" && \
     echo "✅ Advisor data/LLM deps install attempted"
 

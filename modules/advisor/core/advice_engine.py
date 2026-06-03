@@ -227,6 +227,14 @@ class AdviceEngine:
         # Provenance marker (watchlist vs discovery) — for persistence + dashboard.
         result.extra["origin"] = origin
 
+        # Discovery "New Gems" are surfaced for REVIEW, not auto-simmed. If left
+        # sim-enabled they hit the per-market sim cap (usually already full of
+        # watchlist sims) and get rejected -> the New Gems section stays empty.
+        # Publish them without consuming a sim slot; operator can manually sim a
+        # gem they like.
+        if origin == "discovery":
+            result.sim_enabled = False
+
         # Risk gate. Discovery ("New Gems") uses a lower confidence floor
         # (advisor_discovery_min_confidence, default 0.0) so trending candidates
         # are SHOWN even at low confidence — otherwise the min_confidence gate
