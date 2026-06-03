@@ -291,4 +291,82 @@ care about first, and leave the rest blank.
 
 ---
 
-*Last updated: wave-19 (2026-06-02). Owned by the docs/dashboard engineer.*
+## Per-module emitter map (which modules post to Telegram)
+
+All trade/error notifications should route through the shared
+`monitoring/notification_engine.py:TelegramNotificationEngine.notify(module,
+category, text, level)` so each message gets the `[MODULE]` header
+(`format_header` + `MODULE_EMOJI`) and lands in the correct forum topic.
+
+| Module | Emitter | Topic | Status |
+|--------|---------|-------|--------|
+| DEX | `monitoring/alerts.py:AlertsSystem._send_telegram` | `dex` (12) | Engine-routed with `[DEX]` header (HIGH/CRITICAL → error topic 22) |
+| FUTURES | `modules/futures_trading/core/futures_alerts.py:FuturesTelegramAlerts` | `futures` (13) | Engine-routed |
+| SOLANA | `modules/solana_trading/core/solana_alerts.py:SolanaTelegramAlerts` | `solana` (14) | Engine-routed |
+| AI | `modules/ai_analysis/ai_alerts.py:AITelegramAlerts` | `ai` (15) | Helper engine-routed; engine wires it at trade-execution points |
+| SNIPER | (budget=0 / disabled) | `sniper` (16) | No live emission expected |
+| ARBITRAGE | `modules/arbitrage/arbitrage_alerts.py` (budget=0 / disabled) | `arbitrage` (17) | No live emission expected |
+| COPY | `modules/copy_trading/copy_alerts.py:CopyTelegramAlerts` | `copy` (18) | Helper engine-routed; engine wires it at trade-execution points |
+| DASHBOARD | periodic dashboard/summary jobs in `notification_engine.py` | `dashboard` (20) / `summary` (21) | Engine-routed |
+
+Startup/shutdown banners for every module go through
+`monitoring/telegram_bot.py:TelegramBotController.notify*`, which also routes
+through the engine (with the module's caption) when a group is configured and
+falls back to single-DM otherwise.
+
+### Wiring the AI / Copy alert helpers
+
+`ai_alerts.py` and `copy_alerts.py` are engine-routed helper classes (header +
+topic + fail-soft). The owning engine attaches one instance and calls it at the
+trade-execution point, e.g. in `core/sentiment_engine.py` / `copy_engine.py`:
+
+```python
+# AI engine (one line in __init__, one at each entry/exit)
+from modules.ai_analysis.ai_alerts import AITelegramAlerts, AITradeAlert
+self.telegram_alerts = AITelegramAlerts()
+await self.telegram_alerts.send_entry_alert(AITradeAlert(symbol=..., direction=..., ...))
+
+# Copy engine
+from modules.copy_trading.copy_alerts import CopyTelegramAlerts, CopyTradeAlert
+self.telegram_alerts = CopyTelegramAlerts()
+await self.telegram_alerts.send_copy_alert(CopyTradeAlert(action='buy', token=..., chain=..., ...))
+```
+
+Until those one-line hooks land, AI/Copy still appear in the periodic
+dashboard (3h) and summary (6h) rollups, which the engine builds from
+`ai_trades` / `copy_trades`.
+
+---
+
+## Advisor Telegram bot (separate bot)
+
+The advisor module uses its OWN bot (`modules/advisor/core/telegram_notifier.py`),
+NOT the shared trading bot. Keys: `ADVISOR_TELEGRAM_BOT_TOKEN` +
+`ADVISOR_TELEGRAM_CHAT_ID` (Secure Credentials).
+
+**If the advisor bot sends nothing**, the most common cause is NOT a config
+error — it is that **a Telegram bot cannot initiate a conversation with a user
+who has never messaged it**. The operator must open a DM with the advisor bot
+and press **Start** (or send any message) once. Until then every `sendMessage`
+returns `403 "bot can't initiate conversation with a user"`.
+
+On startup the advisor now runs a `getMe` self-test and logs the bot username +
+this exact remedy to `logs/advisor/advisor_errors.log`. Send failures
+(401/403/404 and other HTTP errors) are logged there too with the response
+body, so a silent bot is always explained in that file. Note the advisor logs
+live in `logs/advisor/` only — the orchestrator no longer creates a separate
+`logs/financial_advisor/` folder (stdout/stderr capture was unified to
+`logs/advisor/`).
+
+| Symptom | Check |
+|---------|-------|
+| Advisor bot silent, modules fine | Press Start on the advisor bot DM; grep `logs/advisor/advisor_errors.log` for `advisor_tg` |
+| `getMe failed HTTP 401` in advisor logs | `ADVISOR_TELEGRAM_BOT_TOKEN` invalid — re-enter in Secure Credentials |
+| AI/Copy never post trades | Confirm the engine wires `AITelegramAlerts`/`CopyTelegramAlerts` (see above); rollups still appear in summary/dashboard topics |
+| DEX posts without a `[DEX]` caption | Old build — now routed via the engine with `format_header`; confirm `telegram_group_id` is set in `telegram_config` |
+
+---
+
+*Last updated: wave-24 (2026-06-03) — per-module emitter audit, AI/Copy alert
+helpers, advisor 403 visibility, unified advisor log dir. Owned by the
+docs/dashboard engineer + alerts owner.*
