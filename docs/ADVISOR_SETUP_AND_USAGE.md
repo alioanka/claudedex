@@ -52,7 +52,8 @@ Add only the ones for features you want. All resolve: Secure-Credentials/DB firs
 |---|---|---|
 | `ADVISOR_MODULE_ENABLED` | `false` | Master on/off for the whole module. Set `true` to run it. |
 | `ADVISOR_HEALTH_PORT` | `8086` | Advisor health server port. |
-| `ADVISOR_KRONOS_WEIGHTS_PATH` | (unset) | Path to downloaded Kronos weights (see §5). |
+| `ADVISOR_KRONOS_WEIGHTS_PATH` | (unset) | Path to the downloaded Kronos MODEL dir (see §5). |
+| `ADVISOR_KRONOS_TOKENIZER_PATH` | (unset) | Optional override for the Kronos TOKENIZER dir; auto-discovered as the model dir's sibling if unset (see §5). |
 
 ---
 
@@ -124,35 +125,55 @@ analyzer fails **soft** to DEGRADED/manual — the module never crashes; the bad
 ---
 
 ## 5. Kronos K-line forecaster (optional, operator step)
-Kronos needs model weights (not auto-downloaded — they're large). The Python
-deps (`torch`, `transformers`, `huggingface_hub`) are **baked into the image**,
-so after a `docker compose up --build` you do NOT pip-install anything — you
-only download the weights once.
+Kronos is a real time-series foundation model (NeoQuasar / shiyu-coder, MIT). It
+is **NOT** a HuggingFace causal-LM — it ships its own custom K-line tokenizer +
+two-stage transformer. That model code is **vendored** in the repo
+(`modules/advisor/core/kronos_vendor/`, MIT) so nothing is pip-installed from
+git. The Python runtime deps (`torch`, `einops`, `huggingface_hub`,
+`safetensors`, `numpy`, `pandas`, `tqdm`) are **baked into the image** (Stage 7b).
+After a `docker compose up --build` you do NOT install anything — you only
+download the pretrained **weights** once.
+
+### Kronos needs TWO downloads (model + tokenizer)
+Kronos is two-stage: a **tokenizer** repo AND a **model** repo, in separate
+HuggingFace repos. `scripts/download_kronos_weights.py` fetches BOTH. Verified
+pairing (upstream README "Model Zoo"):
+
+| variant | model repo | tokenizer repo | max_context |
+|---|---|---|---|
+| mini  | `NeoQuasar/Kronos-mini`  | `NeoQuasar/Kronos-Tokenizer-2k`   | 2048 |
+| small | `NeoQuasar/Kronos-small` | `NeoQuasar/Kronos-Tokenizer-base` | 512  |
+| base  | `NeoQuasar/Kronos-base`  | `NeoQuasar/Kronos-Tokenizer-base` | 512  |
 
 ### Why the path matters (read this first)
 The weights MUST live under a **mounted volume** or they vanish on the next
 `--build`. The `trading-bot` container mounts `./data → /app/data`, so the only
 rebuild-safe location is **`/app/data/kronos`** (host: `~/claudedex/data/kronos`).
 Do NOT use `/data/kronos` — that is ephemeral container disk and is wiped on
-every rebuild. The download script now defaults to `/app/data/kronos`.
+every rebuild. The download script defaults to `/app/data/kronos`.
 
 ### Step-by-step (run from your VPS, bot already built & running)
 ```bash
 cd ~/claudedex
 
-# 1. Download the weights INTO the running container (writes to the mounted
-#    ./data volume → persists). 'mini' is CPU-feasible (~50MB).
+# 1. Download model + tokenizer INTO the running container (writes to the
+#    mounted ./data volume → persists). 'mini' is CPU-feasible (~50MB model).
 docker exec -it trading-bot python scripts/download_kronos_weights.py --variant mini
-#    ^ on success it prints, verbatim, the exact line to copy, e.g.:
-#         Download complete: /app/data/kronos/Kronos-mini
+#    ^ on success it prints, verbatim, BOTH paths and the env line to copy, e.g.:
+#         MODEL     : /app/data/kronos/Kronos-mini
+#         TOKENIZER : /app/data/kronos/Kronos-Tokenizer-2k
 #         ADVISOR_KRONOS_WEIGHTS_PATH=/app/data/kronos/Kronos-mini
 
-# 2. Confirm the files actually landed on the HOST (proves they'll survive a rebuild):
-ls -la ~/claudedex/data/kronos/Kronos-mini      # should list config.json, *.safetensors, etc.
+# 2. Confirm both dirs landed on the HOST (proves they survive a rebuild):
+ls -la ~/claudedex/data/kronos/Kronos-mini            # config.json, *.safetensors
+ls -la ~/claudedex/data/kronos/Kronos-Tokenizer-2k    # tokenizer weights
 
-# 3. Put that path in .env (it's read at module start):
+# 3. Put the MODEL path in .env (it's read at module start). The tokenizer dir
+#    is auto-discovered as the sibling folder; only set the override if you
+#    moved it elsewhere:
 #      ADVISOR_KRONOS_WEIGHTS_PATH=/app/data/kronos/Kronos-mini
-nano .env        # add/edit the line, save
+#      ADVISOR_KRONOS_TOKENIZER_PATH=/app/data/kronos/Kronos-Tokenizer-2k   # optional
+nano .env        # add/edit the line(s), save
 
 # 4. Turn Kronos on in the DB (PG helper from the runbook):
 PG -c "UPDATE config_settings SET value='true'  WHERE config_type='advisor_config' AND key='advisor_kronos_enabled';"
@@ -165,14 +186,21 @@ docker compose up -d         # or: docker compose restart trading-bot
 ### Verify it loaded
 ```bash
 docker exec trading-bot sh -c 'grep -iE "kronos" logs/advisor/*.log | tail -10'
-#  expect: "[kronos] Loaded via ... (Kronos-mini, device=cpu)"  (NOT "weights path not set")
-curl -s localhost:8086/health | grep -i kronos   # health surface reports weights_path + loaded state
+#  expect: "[kronos] Kronos-mini loaded (device=cpu, max_context=2048) ..."
+#  (NOT "WEIGHTS NOT CONFIGURED" and NOT "Failed to load")
+curl -s localhost:8086/health | grep -i kronos   # health: loaded + weights_path + tokenizer_path
 ```
 
 **Notes.** `--variant small` (~100MB) / `base` (~400MB, GPU recommended) work the
-same way. To use a different host folder, mount it and pass `--dir /app/data/<your-dir>`.
-Until Kronos is enabled, advice still flows normally — the AI-forecast layer
-just reports "unavailable" and the other six signal layers carry the decision.
+same way (each pulls its own model+tokenizer pair). To use a different host
+folder, mount it and pass `--dir /app/data/<your-dir>`. CPU latency: mini is a
+few seconds per symbol per cycle; small/base are slower (set
+`advisor_kronos_device=cuda` if you have a GPU). The forecaster outputs a single
+directional number per symbol = `mean(forecast close over the horizon)/last
+close − 1` (positive = Kronos expects price up). It is one input layer, not a
+guarantee. Until Kronos is enabled — or if anything is missing — advice still
+flows normally: the AI-forecast layer reports "unavailable" (fail-soft, returns
+`None`) and the other signal layers carry the decision.
 
 ---
 

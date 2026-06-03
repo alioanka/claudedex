@@ -132,12 +132,38 @@ path (not a secret) read via `os.getenv` only, so set it in `.env` (see
 `docs/ADVISOR_SETUP_AND_USAGE.md` §5), not the credentials panel.
 
 ## Kronos integration (MB-19 fail-soft pattern)
-Kronos is the NeoQuasar foundation model for K-line forecasting (MIT license). Three variants: Kronos-mini (4.1M, CPU-OK), Kronos-small (24.7M), Kronos-base (102.3M, GPU recommended). If `ADVISOR_KRONOS_WEIGHTS_PATH` is not set or the directory is missing, `predict()` returns `None` and the advice cycle continues without Kronos signal. Operator downloads weights separately:
+Kronos is the NeoQuasar foundation model for K-line forecasting (MIT license,
+repo github.com/shiyu-coder/Kronos). It is **NOT** a HuggingFace causal-LM — the
+old `transformers.AutoModelForCausalLM`/`AutoTokenizer` path was fundamentally
+wrong and failed ("Couldn't instantiate the backend tokenizer ... need
+sentencepiece"). Kronos ships its own custom `KronosTokenizer` + `Kronos` model +
+`KronosPredictor`, which are **vendored** in `modules/advisor/core/kronos_vendor/`
+(MIT, verbatim except the relative-import fix) so they load fully offline.
+
+**Real load path** (`kronos_forecaster.py`):
 ```
-pip install huggingface_hub
-python -c "from huggingface_hub import snapshot_download; snapshot_download('NeoQuasar/Kronos-mini', local_dir='/data/kronos/Kronos-mini')"
+from modules.advisor.core.kronos_vendor import Kronos, KronosTokenizer, KronosPredictor
+tokenizer = KronosTokenizer.from_pretrained(<tokenizer dir>)
+model     = Kronos.from_pretrained(<model dir>)
+predictor = KronosPredictor(model, tokenizer, device=<cpu|cuda>, max_context=<512|2048>)
+pred_df   = predictor.predict(df, x_timestamp, y_timestamp, pred_len, T, top_p, sample_count)
 ```
-Then set `ADVISOR_KRONOS_WEIGHTS_PATH=/data/kronos/Kronos-mini` in env and `advisor_kronos_enabled=true` in advisor_config.
+`predict(df_klines)` collapses the OHLCV forecast to a directional float
+= `mean(forecast close)/last close − 1` (positive = bullish). Fail-soft: missing
+deps/weights/tokenizer or any runtime error → `predict()` returns `None` and the
+advice cycle continues. Never raises into the loop. Runtime deps (image Stage 7b):
+`torch`, `einops`, `huggingface_hub`, `safetensors`, `numpy`, `pandas`, `tqdm`.
+
+**TWO downloads required** (model repo AND a separate tokenizer repo). Verified
+Model Zoo pairing: mini→`Kronos-Tokenizer-2k` (ctx 2048); small/base→
+`Kronos-Tokenizer-base` (ctx 512). One command fetches both:
+```
+python scripts/download_kronos_weights.py --variant mini   # downloads model + tokenizer
+```
+Then set `ADVISOR_KRONOS_WEIGHTS_PATH=/app/data/kronos/Kronos-mini` (the MODEL
+dir; tokenizer auto-discovered as the sibling dir, or override with
+`ADVISOR_KRONOS_TOKENIZER_PATH`) in `.env`, and `advisor_kronos_enabled=true` in
+advisor_config. Full runbook: `docs/ADVISOR_SETUP_AND_USAGE.md` §5.
 
 ## KAP engine (Borsa İstanbul disclosures) — Phase 1 (wired end-to-end)
 KAP disclosure ingestion + classification + alerts + advice-overlay + dashboard, all gated by
