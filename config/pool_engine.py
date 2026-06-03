@@ -30,7 +30,6 @@ import asyncio
 import logging
 from logging.handlers import RotatingFileHandler
 import time
-import random
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
@@ -227,26 +226,29 @@ class ProviderEndpoints:
             # rate-limit expiry rather than returning None and starving callers.
             return self._get_least_penalized_fallback()
 
-        # Use weighted random selection among top priority endpoints
+        # BUG 3 — spread load across all equal-priority healthy endpoints
+        # instead of hammering one. Weighted-RANDOM selection (the previous
+        # behaviour) can return the SAME endpoint many times in a row, which
+        # under a 33-wallet burst meant one Helius key got every call and
+        # starved while sibling keys sat idle. We now ROUND-ROBIN through the
+        # top tier so consecutive get_endpoint() calls rotate to the next
+        # sibling first, only repeating a key after every sibling was handed
+        # out once. Weight is preserved as a tie/ordering influence (higher
+        # weight sorts earlier) but no longer lets one endpoint monopolise.
         top_priority = available[0].priority
         top_tier = [e for e in available if e.priority == top_priority]
 
         if len(top_tier) == 1:
             return top_tier[0]
 
-        # Weighted selection
-        total_weight = sum(e.weight for e in top_tier)
-        if total_weight == 0:
-            return random.choice(top_tier)
+        # Stable order within the tier: higher weight first, then by id so the
+        # rotation is deterministic across calls.
+        top_tier.sort(key=lambda e: (-e.weight, e.id))
 
-        r = random.uniform(0, total_weight)
-        cumulative = 0
-        for endpoint in top_tier:
-            cumulative += endpoint.weight
-            if r <= cumulative:
-                return endpoint
-
-        return top_tier[-1]
+        # Round-robin cursor advances every call; modulo the live tier size.
+        idx = self.last_selected_index % len(top_tier)
+        self.last_selected_index = (self.last_selected_index + 1) % max(1, len(top_tier))
+        return top_tier[idx]
 
     def _get_least_penalized_fallback(self) -> Optional[Endpoint]:
         """
