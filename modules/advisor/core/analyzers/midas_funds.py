@@ -9,31 +9,22 @@ Target funds (examples):
 Data source priority (2026-06-04):
 
   0. Fonoloji API (OPTIONAL, PREFERRED when a key is present) -- AVAILABLE
-     https://fonoloji.com — a Turkish TEFAS analytics service that exposes a
-     REST API (https://fonoloji.com/api-docs) covering fund NAV history (and,
-     per operator research, BIST equities + FX/metals — only Midas/NAV is
-     wired here; BIST/FX capability is noted in the report for follow-up).
-     Auth: ADVISOR_FONOLOJI_API_KEY (resolved via Secure Credentials / env,
-     like the other advisor keys).
+     https://fonoloji.com/v1 — a Turkish TEFAS analytics service. VERIFIED
+     contract (operator's official api-docs): NAV history at
+       GET /funds/{code}/history?period=1w|1m|3m|6m|1y|5y|all
+       -> {code, period, points:[{date, price, total_value, investor_count}]}
+     where `price` = NAV and `date` = ISO-8601 (last point may have null
+     total_value). Auth via the shared FonolojiClient (X-API-Key header). Key:
+     ADVISOR_FONOLOJI_API_KEY (resolved via Secure Credentials / env, like the
+     other advisor keys).
      Enable: set advisor_midas_data_source='fonoloji' OR simply provide the
      key — when a key is present and the source is unset/'', Fonoloji is
      auto-preferred over the tefas-crawler chain.
      OFF by default: no key => behaviour is UNCHANGED (tefas-crawler chain).
      FAIL-SOFT: no key / HTTP error / unexpected shape => falls through to the
-     existing tefas-crawler -> tefasfon -> scrape -> manual chain (keeps the
-     throttled warning).
-
-     CONTRACT CAVEAT: the EXACT Fonoloji endpoint path + response field names
-     could not be verified from this build host (the api-docs page is
-     WAF-protected and returns 403 to automated fetchers). The client below is
-     therefore DEFENSIVE: it tries several documented-looking endpoint shapes
-     and maps any of the common NAV field names (date/tarih/Tarih,
-     price/fiyat/nav/value/Fiyat) through the shared `_normalize_nav_df`. The
-     base URL, NAV path template, and auth header NAME are all operator-
-     overridable via config keys (advisor_fonoloji_base_url,
-     advisor_fonoloji_nav_path, advisor_fonoloji_auth_header,
-     advisor_fonoloji_auth_scheme) so the operator can correct them against the
-     real docs WITHOUT a code change.
+     existing tefas-crawler -> tefasfon -> scrape -> manual chain.
+     RATE-LIMIT: the shared client TTL-caches NAV (6h default) so repeated
+     advice cycles do not re-hit the 15k/month free tier — NAV is daily data.
 
   1. tefas-crawler (PRIMARY) -- AVAILABLE
      Python library adapted to the 2026 tefas.gov.tr/api/funds/ JSON API.
@@ -151,39 +142,27 @@ _TEFAS_HEADERS = {
 # ---------------------------------------------------------------------------
 # Fonoloji API (optional, preferred when ADVISOR_FONOLOJI_API_KEY is present)
 # ---------------------------------------------------------------------------
-# Defaults are a BEST-GUESS contract (the docs page is WAF-403 to automated
-# fetchers, so the exact path/fields are operator-confirmable). Every piece is
-# config-overridable so the operator can correct it without a code change:
-#   advisor_fonoloji_base_url   : API origin (default https://fonoloji.com)
-#   advisor_fonoloji_nav_path   : NAV history path template. {code} {start}
-#                                 {end} are substituted. Default is a REST-ish
-#                                 guess; override against the real docs.
-#   advisor_fonoloji_auth_header: header NAME carrying the key (default
-#                                 'Authorization'; some APIs use 'X-API-Key' or
-#                                 'apikey').
-#   advisor_fonoloji_auth_scheme: prefix for the header value (default 'Bearer';
-#                                 set '' for a bare key, e.g. for X-API-Key).
-_FONOLOJI_DEFAULT_BASE = "https://fonoloji.com"
-# Candidate NAV path templates tried in order (first that yields a usable NAV
-# series wins). Operator override (advisor_fonoloji_nav_path) is tried FIRST.
-_FONOLOJI_NAV_PATH_CANDIDATES = (
-    "/api/v1/funds/{code}/history?start={start}&end={end}",
-    "/api/funds/{code}/history?start={start}&end={end}",
-    "/api/v1/fund/{code}/nav?start={start}&end={end}",
-    "/api/fon/{code}/gecmis?start={start}&end={end}",
-    "/api/funds/history?code={code}&start={start}&end={end}",
+# Uses the shared FonolojiClient (verified contract: base https://fonoloji.com/v1,
+# X-API-Key header, GET /funds/{code}/history?period=...). The client owns the
+# TTL cache, retry-after backoff and monthly-quota awareness.
+from modules.advisor.core.data.fonoloji_client import (
+    FonolojiClient,
+    resolve_api_key as _fonoloji_api_key,
 )
-_FONOLOJI_TIMEOUT_S = 15
 
-
-def _fonoloji_api_key(config: dict) -> str:
-    """Resolve the Fonoloji API key from config (Secure Credentials injection)
-    then env. Empty string if unset (=> Fonoloji disabled, fail-soft)."""
-    import os
-    return (
-        str(config.get("advisor_fonoloji_api_key", "") or "").strip()
-        or os.getenv("ADVISOR_FONOLOJI_API_KEY", "").strip()
-    )
+# Map the advisor lookback (days) to the closest Fonoloji NAV `period` token.
+def _fonoloji_period_for_lookback(lookback_days: int) -> str:
+    if lookback_days <= 7:
+        return "1w"
+    if lookback_days <= 31:
+        return "1m"
+    if lookback_days <= 95:
+        return "3m"
+    if lookback_days <= 190:
+        return "6m"
+    if lookback_days <= 380:
+        return "1y"
+    return "5y"
 
 
 def _tefas_crawler_available() -> bool:
@@ -350,10 +329,8 @@ class MidasFundsAnalyzer(BaseAnalyzer):
                 symbol, horizon,
                 (
                     f"Fonoloji returned no NAV data for fund '{symbol}'. "
-                    "Verify ADVISOR_FONOLOJI_API_KEY, and (if the API contract "
-                    "differs from the defaults) set advisor_fonoloji_base_url / "
-                    "advisor_fonoloji_nav_path / advisor_fonoloji_auth_header / "
-                    "advisor_fonoloji_auth_scheme per https://fonoloji.com/api-docs. "
+                    "Verify ADVISOR_FONOLOJI_API_KEY (X-API-Key) and that the "
+                    "FONKODU is a valid TEFAS fund code. "
                     "Falling through to the tefas-crawler chain."
                 ),
             )
@@ -374,102 +351,31 @@ class MidasFundsAnalyzer(BaseAnalyzer):
         self, symbol: str, horizon: Horizon
     ) -> Optional[dict]:
         """
-        Sync fetch via the Fonoloji REST API. Runs in executor.
+        Sync fetch via the shared FonolojiClient. Runs in executor.
         Returns a signals dict or None on any failure (fail-soft).
 
-        Defensive contract handling (the docs page is WAF-403 to automated
-        fetchers, so the exact shape is operator-confirmable):
-          - Tries the operator-configured nav_path FIRST, then a small set of
-            documented-looking candidates.
-          - Accepts either a top-level JSON list, or a dict wrapping the list
-            under data/result/history/items/prices/navs.
-          - Maps any of date/tarih/Tarih/datetime + price/fiyat/nav/value/Fiyat
-            via the shared `_normalize_nav_df`.
+        Verified contract: GET /funds/{code}/history?period=... ->
+          {code, period, points:[{date, price, total_value, investor_count}]}
+        The `points` list maps date->date, price->close through the shared
+        `_normalize_nav_df`. The client owns caching/backoff/quota; this method
+        just selects the period token and shapes the payload.
         """
-        try:
-            import requests
-        except ImportError:
+        client = FonolojiClient(self.config)
+        if not client.enabled:
             return None
-
-        key = _fonoloji_api_key(self.config)
-        if not key:
-            return None
-
-        base = str(
-            self.config.get("advisor_fonoloji_base_url", _FONOLOJI_DEFAULT_BASE)
-            or _FONOLOJI_DEFAULT_BASE
-        ).rstrip("/")
-        auth_header = str(
-            self.config.get("advisor_fonoloji_auth_header", "Authorization")
-            or "Authorization"
-        ).strip()
-        auth_scheme = str(
-            self.config.get("advisor_fonoloji_auth_scheme", "Bearer")
-        ).strip()
-        header_value = f"{auth_scheme} {key}".strip() if auth_scheme else key
 
         lookback = _LOOKBACK[horizon]
-        end_dt = datetime.utcnow()
-        start_dt = end_dt - timedelta(days=lookback + 60)
+        period = _fonoloji_period_for_lookback(lookback + 60)
         code = symbol.upper()
-        start_s = start_dt.strftime("%Y-%m-%d")
-        end_s = end_dt.strftime("%Y-%m-%d")
 
-        # Operator override first, then the built-in candidates.
-        op_path = str(self.config.get("advisor_fonoloji_nav_path", "") or "").strip()
-        candidates = ([op_path] if op_path else []) + list(_FONOLOJI_NAV_PATH_CANDIDATES)
+        payload = client.fund_history(code, period=period)
+        df = _fonoloji_payload_to_df(payload)
+        if df is not None and len(df) >= 10:
+            return _compute_fund_signals(df, lookback)
 
-        headers = {
-            auth_header: header_value,
-            "Accept": "application/json",
-            "User-Agent": "claudedex-advisor/1.0",
-        }
-        # Some APIs key auth via a query param instead of a header; include a
-        # harmless apikey/api_key param too (ignored by header-auth APIs).
-        common_params = {"apikey": key, "api_key": key}
-
-        session = requests.Session()
-        last_exc: Optional[Exception] = None
-        for tmpl in candidates:
-            try:
-                path = tmpl.format(code=code, start=start_s, end=end_s)
-            except (KeyError, IndexError):
-                # Template uses an unknown placeholder — skip it.
-                continue
-            url = path if path.startswith("http") else f"{base}{path if path.startswith('/') else '/' + path}"
-            try:
-                resp = session.get(
-                    url, headers=headers, params=common_params,
-                    timeout=_FONOLOJI_TIMEOUT_S,
-                )
-            except Exception as exc:
-                last_exc = exc
-                continue
-            if resp.status_code == 401 or resp.status_code == 403:
-                logger.warning(
-                    "[midas_funds] Fonoloji auth rejected (HTTP %d) — check "
-                    "ADVISOR_FONOLOJI_API_KEY and advisor_fonoloji_auth_header/"
-                    "scheme.", resp.status_code,
-                )
-                return None
-            if resp.status_code != 200:
-                last_exc = RuntimeError(f"HTTP {resp.status_code}")
-                continue
-            try:
-                payload = resp.json()
-            except Exception as exc:
-                last_exc = exc
-                continue
-            df = _fonoloji_payload_to_df(payload)
-            if df is not None and len(df) >= 10:
-                return _compute_fund_signals(df, lookback)
-            last_exc = RuntimeError("empty/unparseable NAV payload")
-
-        logger.warning(
-            "[midas_funds] Fonoloji NAV fetch for %r yielded no usable series "
-            "across %d path candidate(s)%s.",
-            code, len(candidates),
-            f" (last error: {last_exc})" if last_exc else "",
+        logger.debug(
+            "[midas_funds] Fonoloji NAV fetch for %r (period=%s) yielded no "
+            "usable series.", code, period,
         )
         return None
 
@@ -1170,8 +1076,9 @@ def _fonoloji_payload_to_df(payload):
     if isinstance(payload, list):
         records = payload
     elif isinstance(payload, dict):
-        # Common wrapper keys across TEFAS-ish APIs.
-        for k in ("data", "result", "results", "history", "items",
+        # Verified Fonoloji NAV shape wraps the series under "points"; keep the
+        # other common TEFAS-ish wrapper keys for defensive tolerance.
+        for k in ("points", "data", "result", "results", "history", "items",
                   "prices", "navs", "nav", "rows", "list"):
             v = payload.get(k)
             if isinstance(v, list) and v:
@@ -1339,10 +1246,17 @@ def _self_test() -> int:
 
     # Fonoloji payload shapes: bare list + dict wrappers + nested wrapper.
     list_payload = [{"date": d, "value": p} for d, p in zip(dates, prices)]
+    # Verified Fonoloji shape: {code, period, points:[{date, price, ...}]}.
+    points_payload = {
+        "code": "TPP", "period": "1y",
+        "points": [{"date": d, "price": p, "total_value": None,
+                    "investor_count": 100} for d, p in zip(dates, prices)],
+    }
     fono_cases = {
         "fono-list": list_payload,
         "fono-data": {"data": list_payload},
         "fono-history": {"result": {"history": list_payload}},
+        "fono-points": points_payload,
     }
     for name, payload in fono_cases.items():
         df = _fonoloji_payload_to_df(payload)
