@@ -154,6 +154,38 @@ class FonolojiClient:
         return self._get("/market/live", {})
 
     # ------------------------------------------------------------------
+    # AI / analyst endpoints (verified contract). FREE within the 15k/month
+    # quota — NO per-token cost. ai-summary + market/digest are a READONLY DB
+    # cache that 404s until warmed by a fonoloji.com page visit; 404 => None
+    # (handled in _get as a non-error), so callers fail-soft. The
+    # recommendations / analyst-consensus JSON shapes are mapped DEFENSIVELY by
+    # the callers (bist.py) — confirm exact keys on the first live call.
+    # ------------------------------------------------------------------
+
+    def fund_ai_summary(self, code: str) -> Optional[dict]:
+        """GET /funds/{code}/ai-summary
+        -> {code, summary, cached, model, generated_at}. Turkish 3-5 sentence
+        AI fund summary. Used to REPLACE the paid Anthropic rationale for
+        Turkish funds (a saving, not a swap). 404 (not yet warmed) => None."""
+        return self._get(f"/funds/{code.upper()}/ai-summary", {})
+
+    def market_digest(self) -> Optional[dict]:
+        """GET /market/digest -> AI daily market digest (DB cache, readonly).
+        404 (not yet warmed) => None."""
+        return self._get("/market/digest", {})
+
+    def stock_recommendations(self, ticker: str) -> Optional[Any]:
+        """GET /stocks/{ticker}/recommendations -> broker recommendations
+        (Turkish: AL=buy / TUT=hold / SAT=sell + target price). Shape mapped
+        defensively by the caller; confirm on first live call. 404 => None."""
+        return self._get(f"/stocks/{_bare_ticker(ticker)}/recommendations", {})
+
+    def fund_analyst_consensus(self, code: str) -> Optional[Any]:
+        """GET /funds/{code}/analyst-consensus -> broker target prices for the
+        fund's holdings. 404 => None."""
+        return self._get(f"/funds/{code.upper()}/analyst-consensus", {})
+
+    # ------------------------------------------------------------------
     # Core GET with TTL cache + 429/503 retry-after + quota awareness
     # ------------------------------------------------------------------
 
@@ -437,6 +469,54 @@ def _self_test() -> int:
     second = cflaky.market_live()      # fetch fails -> serve stale cache
     if first != {"v": 1} or second != {"v": 1}:
         print(f"FAIL: stale-cache fallback {first} {second}")
+        failures += 1
+
+    # AI/analyst endpoints: 200 payload returns, correct path, 404 => None.
+    seen_paths = {"p": []}
+
+    def ai_transport(url, headers, params, timeout):
+        seen_paths["p"].append(url)
+        if url.endswith("/ai-summary"):
+            return _MockResponse(
+                200,
+                {"code": "TPP", "summary": "Fon istikrarli getiri sagliyor.",
+                 "cached": True, "model": "gpt", "generated_at": "2026-06-04"},
+                {"x-ratelimit-remaining-monthly": "9000"},
+            )
+        if url.endswith("/recommendations"):
+            return _MockResponse(
+                200,
+                {"ticker": "THYAO",
+                 "recommendations": [{"broker": "X", "rating": "AL",
+                                      "target_price": 350.0}]},
+                {"x-ratelimit-remaining-monthly": "9000"},
+            )
+        if url.endswith("/digest"):
+            return _MockResponse(404, headers={})  # not yet warmed
+        return _MockResponse(200, {"ok": True}, {})
+
+    c_ai = FonolojiClient(cfg, transport=ai_transport)
+    clear_cache()
+    s = c_ai.fund_ai_summary("tpp")
+    if not (s and s.get("summary")):
+        print("FAIL: fund_ai_summary should return payload")
+        failures += 1
+    if not any(u.endswith("/funds/TPP/ai-summary") for u in seen_paths["p"]):
+        print(f"FAIL: ai-summary path wrong: {seen_paths['p']}")
+        failures += 1
+    rec = c_ai.stock_recommendations("THYAO.IS")
+    if not (rec and rec.get("recommendations")):
+        print("FAIL: stock_recommendations should return payload")
+        failures += 1
+    if not any(u.endswith("/stocks/THYAO/recommendations") for u in seen_paths["p"]):
+        print(f"FAIL: recommendations path wrong (suffix strip): {seen_paths['p']}")
+        failures += 1
+    if c_ai.market_digest() is not None:
+        print("FAIL: market_digest 404 must return None (fail-soft)")
+        failures += 1
+    cons = c_ai.fund_analyst_consensus("TPP")
+    if cons != {"ok": True}:
+        print("FAIL: fund_analyst_consensus should return payload")
         failures += 1
 
     print("SELF-TEST", "PASS" if failures == 0 else f"FAIL ({failures})")
