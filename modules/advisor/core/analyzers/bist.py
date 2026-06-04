@@ -103,6 +103,14 @@ from modules.advisor.core.data.fonoloji_client import (
 )
 
 
+def _flag(config: dict, key: str, default: bool) -> bool:
+    """Read a boolean advisor_config flag tolerating bool or string values."""
+    val = (config or {}).get(key, default)
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().lower() in ("true", "1", "yes", "on")
+
+
 def _fonoloji_period_for_lookback(lookback_days: int) -> str:
     """Map advisor lookback (days) to a Fonoloji /stocks chart period token
     (1d|5d|1mo|3mo|6mo|1y|5y)."""
@@ -291,7 +299,23 @@ class BISTAnalyzer(BaseAnalyzer):
                 )
             )
 
-        direction = _signals_to_direction(signals)
+        # --- Broker analyst-consensus vote (Fonoloji, FREE within quota) ---
+        # A genuine directional signal not available from yfinance. Folded in as
+        # ONE additional vote alongside the technical SMA/RSI/BB votes — it does
+        # NOT dominate. FAIL-SOFT: no key / disabled / 404 / bad shape => the
+        # technical signal is unchanged (vote=0). The raw summary is stashed in
+        # extra['analyst_consensus'] for the dashboard.
+        analyst_vote = 0
+        analyst_summary = None
+        if (
+            _fonoloji_api_key(self.config)
+            and _flag(self.config, "advisor_bist_use_analyst_recommendations", True)
+        ):
+            analyst_vote, analyst_summary = await self._fetch_analyst_consensus(
+                symbol, signals.get("close")
+            )
+
+        direction = _signals_to_direction(signals, analyst_vote)
         confidence = signal_confidence(signals, horizon, config=self.config)
         entry_low, entry_high, target, stop = horizon_levels(
             signals, direction, horizon, config=self.config, price_decimals=2
@@ -311,6 +335,8 @@ class BISTAnalyzer(BaseAnalyzer):
 
         model_id = self.config.get("advisor_anthropic_model", "claude-opus-4-5")
         extra = {"klines_df": signals.get("df"), "data_source": data_source_tag}
+        if analyst_summary is not None:
+            extra["analyst_consensus"] = analyst_summary
 
         return AdviceResult(
             market=self.market,
@@ -363,6 +389,45 @@ class BISTAnalyzer(BaseAnalyzer):
             )
             return None
         return _compute_technicals_ohlcv(df, lookback)
+
+    # ------------------------------------------------------------------
+    # Broker analyst-consensus (Fonoloji /stocks/{ticker}/recommendations)
+    # ------------------------------------------------------------------
+
+    async def _fetch_analyst_consensus(self, symbol: str, current_price):
+        """
+        Fetch broker recommendations (AL/TUT/SAT + target price) and reduce them
+        to ONE directional vote in {-1, 0, +1} plus a raw summary dict for the
+        dashboard. Runs the sync client call in an executor. FAIL-SOFT: returns
+        (0, None) on no key / 404 / error / unrecognised shape so the BIST
+        technical signal is unchanged.
+        """
+        import asyncio
+
+        def _call():
+            try:
+                client = FonolojiClient(self.config)
+                if not client.enabled:
+                    return None
+                return client.stock_recommendations(symbol)
+            except Exception as exc:  # never break the advice loop
+                logger.debug(
+                    "[bist] Fonoloji recommendations fetch failed for %s: %s",
+                    symbol, exc,
+                )
+                return None
+
+        loop = asyncio.get_event_loop()
+        payload = await loop.run_in_executor(None, _call)
+        if payload is None:
+            return 0, None
+        try:
+            return _consensus_vote(payload, current_price)
+        except Exception as exc:
+            logger.debug(
+                "[bist] consensus-vote parse failed for %s: %s", symbol, exc
+            )
+            return 0, None
 
     # ------------------------------------------------------------------
     # borsapy primary path (AVAILABLE, ~15min delayed, TradingView-backed)
@@ -625,18 +690,148 @@ def _atr_pct(high, low, close, period: int = 14) -> Optional[float]:
         return None
 
 
-def _signals_to_direction(signals: dict) -> Direction:
-    """Majority vote across SMA, RSI, BB signals."""
+def _signals_to_direction(signals: dict, analyst_vote: int = 0) -> Direction:
+    """Majority vote across SMA, RSI, BB signals + an optional broker
+    analyst-consensus vote (AL/TUT/SAT). The analyst vote is ONE additional
+    input (weight 1, same as each technical vote) so it cannot dominate the
+    three technical votes; on a 0 vote (no data / TUT) behaviour is unchanged."""
     votes = (
         signals["sma_signal"]
         + signals["rsi_signal"]
         + signals["bb_signal"]
+        + int(analyst_vote)
     )
     if votes > 0:
         return Direction.LONG
     elif votes < 0:
         return Direction.SHORT
     return Direction.NEUTRAL
+
+
+# Turkish broker-rating tokens -> signed vote. AL=buy, TUT=hold, SAT=sell.
+# English aliases tolerated defensively (the live JSON shape is operator-
+# confirmable). Anything unrecognised => no vote (skipped from the tally).
+_RATING_MAP = {
+    "AL": 1, "GUCLU AL": 1, "GÜÇLÜ AL": 1, "TOPLA": 1, "EKLE": 1, "ENDEKS USTU": 1,
+    "BUY": 1, "STRONG BUY": 1, "OUTPERFORM": 1, "OVERWEIGHT": 1, "ACCUMULATE": 1,
+    "TUT": 0, "NOTR": 0, "NÖTR": 0, "HOLD": 0, "NEUTRAL": 0, "MARKET PERFORM": 0,
+    "SAT": -1, "GUCLU SAT": -1, "GÜÇLÜ SAT": -1, "AZALT": -1, "ENDEKS ALTI": -1,
+    "SELL": -1, "STRONG SELL": -1, "UNDERPERFORM": -1, "UNDERWEIGHT": -1, "REDUCE": -1,
+}
+
+
+def _consensus_vote(payload, current_price):
+    """
+    Reduce a Fonoloji /stocks/{ticker}/recommendations payload to ONE directional
+    vote in {-1, 0, +1} and a raw summary dict for the dashboard.
+
+    DEFENSIVE shape handling (confirm exact keys on the first live call):
+      - payload may be a top-level list of recs, or a dict wrapping the list
+        under recommendations/data/results/items/brokers/analysts.
+      - each rec's rating is read from rating/recommendation/oneri/tavsiye/
+        rec/signal/grade; its target from target_price/target/hedef/
+        price_target/target_value.
+
+    Vote rule (count-weighted, target-upside as a tie/confirmation influence):
+      net = sum(AL=+1, TUT=0, SAT=-1) over recognised recs.
+      If net != 0  -> sign(net).
+      If net == 0 (or no ratings) but a mean target price exists and
+        current_price is usable, vote on target upside:
+          upside >= +5%  -> +1 ;  <= -5% -> -1 ; else 0.
+    Returns (vote:int, summary:dict). summary always includes the AL/TUT/SAT
+    counts + n + (optional) mean_target + implied_upside_pct + vote.
+    """
+    records = None
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        for k in ("recommendations", "data", "results", "items",
+                  "brokers", "analysts", "list", "rows"):
+            v = payload.get(k)
+            if isinstance(v, list) and v:
+                records = v
+                break
+        if records is None:
+            # A single flattened summary dict (e.g. {al:3, tut:1, sat:0}).
+            counts = {}
+            for token, field in (("AL", "al"), ("TUT", "tut"), ("SAT", "sat"),
+                                  ("AL", "buy"), ("TUT", "hold"), ("SAT", "sell")):
+                if field in payload:
+                    try:
+                        counts[token] = counts.get(token, 0) + int(payload[field] or 0)
+                    except (TypeError, ValueError):
+                        pass
+            if counts:
+                records = (
+                    [{"rating": "AL"}] * counts.get("AL", 0)
+                    + [{"rating": "TUT"}] * counts.get("TUT", 0)
+                    + [{"rating": "SAT"}] * counts.get("SAT", 0)
+                )
+    if not records or not isinstance(records, list):
+        return 0, None
+
+    n_al = n_tut = n_sat = 0
+    targets = []
+    for r in records:
+        if not isinstance(r, dict):
+            continue
+        rating = None
+        for rk in ("rating", "recommendation", "oneri", "öneri", "tavsiye",
+                   "rec", "signal", "grade", "action"):
+            if r.get(rk) is not None:
+                rating = str(r.get(rk)).strip().upper()
+                break
+        if rating is not None and rating in _RATING_MAP:
+            v = _RATING_MAP[rating]
+            if v > 0:
+                n_al += 1
+            elif v < 0:
+                n_sat += 1
+            else:
+                n_tut += 1
+        for tk in ("target_price", "target", "hedef", "hedef_fiyat",
+                   "price_target", "target_value", "fiyat_hedefi"):
+            if r.get(tk) is not None:
+                try:
+                    tv = float(r.get(tk))
+                    if tv > 0:
+                        targets.append(tv)
+                    break
+                except (TypeError, ValueError):
+                    continue
+
+    n = n_al + n_tut + n_sat
+    net = n_al - n_sat
+
+    mean_target = sum(targets) / len(targets) if targets else None
+    upside_pct = None
+    try:
+        cp = float(current_price) if current_price is not None else None
+        if mean_target and cp and cp > 0:
+            upside_pct = (mean_target / cp - 1.0) * 100.0
+    except (TypeError, ValueError):
+        upside_pct = None
+
+    if net > 0:
+        vote = 1
+    elif net < 0:
+        vote = -1
+    elif upside_pct is not None:
+        vote = 1 if upside_pct >= 5.0 else (-1 if upside_pct <= -5.0 else 0)
+    else:
+        vote = 0
+
+    summary = {
+        "al": n_al, "tut": n_tut, "sat": n_sat, "n": n,
+        "net": net, "vote": vote,
+        "mean_target": round(mean_target, 4) if mean_target is not None else None,
+        "implied_upside_pct": round(upside_pct, 2) if upside_pct is not None else None,
+        "source": "fonoloji_recommendations",
+        "disclaimer": "Broker consensus — one input, ADVICE-ONLY.",
+    }
+    if n == 0 and mean_target is None:
+        return 0, None
+    return vote, summary
 
 
 def _fonoloji_chart_to_df(payload):
@@ -779,6 +974,34 @@ def _self_test() -> int:
     for bad in (None, {}, [], {"data": []}, [1, 2], {"x": 1}):
         if _fonoloji_chart_to_df(bad) is not None:
             print(f"FAIL: bad chart payload {bad!r} did not return None")
+            failures += 1
+
+    # --- analyst-consensus vote mapping (AL/TUT/SAT -> +1/0/-1) ---
+    cons_cases = [
+        # (payload, current_price, expected_vote)
+        ([{"rating": "AL"}, {"rating": "AL"}, {"rating": "SAT"}], 100.0, 1),
+        ([{"recommendation": "SAT"}, {"recommendation": "SAT"}], 100.0, -1),
+        ([{"rating": "TUT"}, {"rating": "TUT"}], 100.0, 0),
+        # net==0 -> fall back to target upside (+10% => +1)
+        ([{"rating": "AL", "target_price": 110.0},
+          {"rating": "SAT", "target": 110.0}], 100.0, 1),
+        # wrapped + Turkish keys
+        ({"recommendations": [{"oneri": "GUCLU AL"}, {"oneri": "AL"}]}, None, 1),
+        # flattened counts dict
+        ({"al": 1, "tut": 0, "sat": 3}, 100.0, -1),
+    ]
+    for payload, cp, expected in cons_cases:
+        vote, summ = _consensus_vote(payload, cp)
+        ok = vote == expected and summ is not None
+        print(f"{'OK' if ok else 'FAIL'}[consensus {expected:+d}]: vote={vote} "
+              f"summary={summ}")
+        failures += 0 if ok else 1
+    # No usable data => (0, None), fail-soft.
+    for bad in (None, {}, [], {"data": []}, [1, 2], {"foo": "bar"},
+                [{"broker": "X"}]):
+        v, s = _consensus_vote(bad, 100.0)
+        if v != 0 or s is not None:
+            print(f"FAIL: bad consensus payload {bad!r} -> ({v}, {s})")
             failures += 1
 
     print("SELF-TEST", "PASS" if failures == 0 else f"FAIL ({failures})")
