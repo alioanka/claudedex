@@ -217,51 +217,105 @@ def _fetch_universe_candidates(config: dict, universe_cap: int) -> List[Discover
 
 async def _fetch_fonoloji_movers(config: dict, universe_cap: int) -> List[DiscoveryCandidate]:
     """
-    Optional Fonoloji BIST movers/gainers source. Only attempted when
-    ADVISOR_FONOLOJI_API_KEY is present AND advisor_fonoloji_bist_movers_path is
-    configured (the exact endpoint is operator-confirmable; not hardcoded since
-    the docs page is WAF-403 to automated fetchers). Fail-soft -> [].
+    Fonoloji BIST gems candidate source via the shared client (verified
+    contract). Tried when ADVISOR_FONOLOJI_API_KEY is present:
+      1. GET /market/stock-movers  -> intraday BIST gainers/losers
+      2. GET /screener/bist?roe_min=&pe_max=&...  -> fundamental screen
+         (e.g. high-ROE / low-PE) as a SECOND candidate batch.
+    Runs the (sync, TTL-cached) client in an executor. Fail-soft -> [].
     """
-    import os
-    key = (
-        str(config.get("advisor_fonoloji_api_key", "") or "").strip()
-        or os.getenv("ADVISOR_FONOLOJI_API_KEY", "").strip()
-    )
-    movers_path = str(config.get("advisor_fonoloji_bist_movers_path", "") or "").strip()
-    if not key or not movers_path:
+    try:
+        from modules.advisor.core.data.fonoloji_client import (
+            FonolojiClient, resolve_api_key,
+        )
+    except Exception:
         return []
-    base = str(
-        config.get("advisor_fonoloji_base_url", "https://fonoloji.com") or
-        "https://fonoloji.com"
-    ).rstrip("/")
-    auth_header = str(config.get("advisor_fonoloji_auth_header", "Authorization") or "Authorization").strip()
-    auth_scheme = str(config.get("advisor_fonoloji_auth_scheme", "Bearer")).strip()
-    header_value = f"{auth_scheme} {key}".strip() if auth_scheme else key
-    url = movers_path if movers_path.startswith("http") else f"{base}{movers_path if movers_path.startswith('/') else '/' + movers_path}"
+    if not resolve_api_key(config):
+        return []
+
+    def _pull() -> List[DiscoveryCandidate]:
+        try:
+            client = FonolojiClient(config)
+        except Exception:
+            return []
+        out: List[DiscoveryCandidate] = []
+
+        # 1) Intraday movers.
+        for batch in _movers_batches(client.stock_movers()):
+            out.extend(_coerce_listing(batch, universe_cap))
+
+        # 2) Optional screener batch (high-ROE / low-PE value tilt). Enabled by
+        #    default so gems are not empty; AND-combined optional filters.
+        if str(config.get("advisor_discovery_bist_screener_enabled", "true")).lower() == "true":
+            screened = client.screener_bist(**_screener_filters(config))
+            if isinstance(screened, dict):
+                screened = (screened.get("stocks") or screened.get("data")
+                            or screened.get("results") or screened.get("rows")
+                            or screened.get("items") or [])
+            if isinstance(screened, list):
+                out.extend(_coerce_listing(screened, universe_cap))
+        return out
 
     try:
-        import aiohttp
-    except ImportError:
-        return []
-    try:
-        timeout = aiohttp.ClientTimeout(total=10.0)
-        headers = {auth_header: header_value, "Accept": "application/json"}
-        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
-            async with session.get(url, params={"apikey": key}) as resp:
-                if resp.status != 200:
-                    logger.info("[discovery.bist] Fonoloji movers HTTP %d (soft).", resp.status)
-                    return []
-                data = await resp.json(content_type=None)
-        if isinstance(data, dict):
-            data = (data.get("data") or data.get("result") or data.get("rows")
-                    or data.get("items") or [])
-        cands = _coerce_listing(data, universe_cap)
-        if cands:
-            logger.info("[discovery.bist] Fonoloji movers: %d rows.", len(cands))
-        return cands
+        loop = asyncio.get_event_loop()
+        cands = await loop.run_in_executor(None, _pull)
     except Exception as exc:
-        logger.debug("[discovery.bist] Fonoloji movers failed (soft): %s", exc)
+        logger.debug("[discovery.bist] Fonoloji gems failed (soft): %s", exc)
         return []
+
+    if cands:
+        logger.info("[discovery.bist] Fonoloji gems: %d candidate rows.", len(cands))
+    if universe_cap > 0:
+        cands = cands[:universe_cap]
+    return cands
+
+
+def _movers_batches(payload):
+    """Yield list-of-dict batches from a /market/stock-movers payload. Shape is
+    operator-confirmable; tolerate a gainers/losers split or a flat list."""
+    if payload is None:
+        return
+    if isinstance(payload, list):
+        yield payload
+        return
+    if isinstance(payload, dict):
+        emitted = False
+        for k in ("gainers", "losers", "top_gainers", "top_losers",
+                  "movers", "data", "result", "results", "rows", "items"):
+            v = payload.get(k)
+            if isinstance(v, list) and v:
+                yield v
+                emitted = True
+        if not emitted:
+            for k in ("data", "result"):
+                v = payload.get(k)
+                if isinstance(v, dict):
+                    for k2 in ("gainers", "losers", "movers"):
+                        v2 = v.get(k2)
+                        if isinstance(v2, list) and v2:
+                            yield v2
+
+
+def _screener_filters(config: dict) -> dict:
+    """Build the /screener/bist query from optional operator knobs. All optional
+    and AND-combined per the verified contract; empties are dropped by the
+    client. Defaults to a mild high-ROE / low-PE value tilt + a result limit."""
+    def _f(key, default):
+        raw = config.get(key, default)
+        try:
+            return None if raw in ("", None) else float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    return {
+        "pe_max": _f("advisor_discovery_bist_pe_max", 25),
+        "roe_min": _f("advisor_discovery_bist_roe_min", 15),
+        "pb_max": _f("advisor_discovery_bist_pb_max", ""),
+        "dividend_yield_min": _f("advisor_discovery_bist_div_min", ""),
+        "sort_by": str(config.get("advisor_discovery_bist_sort_by", "roe") or "") or None,
+        "sort_order": str(config.get("advisor_discovery_bist_sort_order", "desc") or "") or None,
+        "limit": int(_f("advisor_discovery_bist_screener_limit", 30) or 30),
+    }
 
 
 async def _fetch_scrape(url: str, universe_cap: int) -> List[DiscoveryCandidate]:
@@ -333,6 +387,20 @@ def _selftest() -> None:
     assert "THYAO.IS" not in syms, "watchlist not excluded"
     assert "FLAT.IS" not in syms, "low-move not screened"
     assert "EREGL.IS" in syms
+
+    # _movers_batches: flat list, gainers/losers split, nested.
+    assert list(_movers_batches([{"a": 1}])) == [[{"a": 1}]]
+    split = list(_movers_batches({"gainers": [{"symbol": "A"}],
+                                  "losers": [{"symbol": "B"}]}))
+    assert len(split) == 2, split
+    assert list(_movers_batches(None)) == []
+    nested = list(_movers_batches({"data": {"gainers": [{"symbol": "C"}]}}))
+    assert nested == [[{"symbol": "C"}]], nested
+
+    # _screener_filters: defaults present, empties dropped to None.
+    f = _screener_filters({})
+    assert f["roe_min"] == 15 and f["pe_max"] == 25 and f["limit"] == 30
+    assert f["pb_max"] is None and f["dividend_yield_min"] is None
     print("bist_discovery._selftest OK:", syms)
 
 
