@@ -42,28 +42,42 @@ logger = logging.getLogger("advisor.kap.kap_sim")
 # KAP strong polarities that justify a directional sim.
 _STRONG_LONG = "STRONG_POSITIVE"
 _STRONG_SHORT = "VERY_NEGATIVE"
+# Moderate polarities — only acted on when advisor_kap_sim_include_moderate=true.
+_MOD_LONG = "POSITIVE"
+_MOD_SHORT = "NEGATIVE"
 
 _DEFAULT_MIN_CONF = 0.5
 # Horizon used for KAP-driven sims: disclosures are near-term catalysts -> short.
 _KAP_HORIZON = Horizon.SHORT
 
 
-def kap_polarity_to_direction(base_polarity: str) -> Optional[Direction]:
+def kap_polarity_to_direction(
+    base_polarity: str, include_moderate: bool = False
+) -> Optional[Direction]:
     """
     Map a KAP base_polarity string to a sim direction, or None if the polarity
     is not strong enough to act on.
 
       STRONG_POSITIVE -> LONG
       VERY_NEGATIVE   -> SHORT
-      (everything else / POSITIVE / NEGATIVE / NEUTRAL) -> None
+      POSITIVE        -> LONG   (only if include_moderate)
+      NEGATIVE        -> SHORT  (only if include_moderate)
+      (NEUTRAL / UNCLASSIFIED / anything else) -> None
 
-    Pure function — safe to unit-test without a DB.
+    `include_moderate` widens the firing set to POSITIVE/NEGATIVE — useful when
+    strong-polarity disclosures are too rare to ever open a sim. Pure function —
+    safe to unit-test without a DB.
     """
     p = str(base_polarity).upper()
     if p == _STRONG_LONG:
         return Direction.LONG
     if p == _STRONG_SHORT:
         return Direction.SHORT
+    if include_moderate:
+        if p == _MOD_LONG:
+            return Direction.LONG
+        if p == _MOD_SHORT:
+            return Direction.SHORT
     return None
 
 
@@ -148,6 +162,45 @@ def _rebuild_levels_for_direction(
     )
 
 
+def _synthetic_from_last_price(
+    bist_analyzer, ticker: str, base_result
+) -> Optional[AdviceResult]:
+    """
+    Build a minimal AdviceResult from the BIST analyzer's last-known price for
+    `ticker` (analyzer.last_price[ticker]) so a KAP sim can still open when live
+    BIST data is momentarily unavailable. Returns None if no last_price exists
+    (we never fabricate a price). Pure-ish: reads analyzer.last_price only.
+    """
+    last = None
+    try:
+        lp = getattr(bist_analyzer, "last_price", None)
+        if isinstance(lp, dict):
+            last = lp.get(ticker) or lp.get(str(ticker).upper())
+    except Exception:
+        last = None
+    if last is None:
+        return None
+    try:
+        last = float(last)
+    except (TypeError, ValueError):
+        return None
+    if last <= 0:
+        return None
+
+    band = round(last * 0.002, 2)
+    return AdviceResult(
+        market=Market.BIST,
+        symbol=ticker,
+        horizon=_KAP_HORIZON,
+        direction=Direction.NEUTRAL,
+        entry_low=round(last - band, 2),
+        entry_high=round(last + band, 2),
+        confidence=getattr(base_result, "confidence", 0.5) if base_result else 0.5,
+        data_source_status=DataSourceStatus.DEGRADED,
+        data_source_note="KAP sim using analyzer last-known price (BIST live data unavailable).",
+    )
+
+
 async def maybe_open_kap_sim(
     *,
     ticker: str,
@@ -175,7 +228,12 @@ async def maybe_open_kap_sim(
         if not ticker:
             return None
 
-        direction = kap_polarity_to_direction(base_polarity)
+        include_moderate = str(
+            config.get("advisor_kap_sim_include_moderate", "false")
+        ).lower() == "true"
+        direction = kap_polarity_to_direction(
+            base_polarity, include_moderate=include_moderate
+        )
         if direction is None:
             return None
 
@@ -219,12 +277,21 @@ async def maybe_open_kap_sim(
             DataSourceStatus.NOT_CONFIGURED,
             DataSourceStatus.ERROR,
         ):
-            logger.debug(
-                "[kap.sim] BIST data unavailable for %s (status=%s); skip.",
-                ticker,
-                getattr(base_result, "data_source_status", "n/a"),
-            )
-            return None
+            # BIST live data is unavailable. Rather than always skip (which left
+            # the kap channel permanently empty on hosts without BIST data), try
+            # the analyzer's last-known price for this ticker as a synthetic
+            # reference. We NEVER fabricate a price — if no last_price exists, we
+            # still skip.
+            synth = _synthetic_from_last_price(bist_analyzer, ticker, base_result)
+            if synth is None:
+                logger.debug(
+                    "[kap.sim] BIST data unavailable for %s (status=%s) and no "
+                    "last_price; skip.",
+                    ticker,
+                    getattr(base_result, "data_source_status", "n/a"),
+                )
+                return None
+            base_result = synth
 
         sim_result = _rebuild_levels_for_direction(base_result, direction, config)
         if sim_result is None:
@@ -255,6 +322,18 @@ def _selftest() -> None:
     assert kap_polarity_to_direction("POSITIVE") is None
     assert kap_polarity_to_direction("NEGATIVE") is None
     assert kap_polarity_to_direction("NEUTRAL") is None
+    # include_moderate widens the firing set to POSITIVE/NEGATIVE.
+    assert kap_polarity_to_direction("POSITIVE", include_moderate=True) == Direction.LONG
+    assert kap_polarity_to_direction("NEGATIVE", include_moderate=True) == Direction.SHORT
+    assert kap_polarity_to_direction("NEUTRAL", include_moderate=True) is None
+
+    # Synthetic fallback: uses analyzer.last_price when no live BIST result.
+    class _FakeAnalyzer:
+        last_price = {"THYAO": 50.0}
+    synth = _synthetic_from_last_price(_FakeAnalyzer(), "THYAO", None)
+    assert synth is not None and synth.entry_low and synth.entry_high
+    assert _synthetic_from_last_price(_FakeAnalyzer(), "MISSING", None) is None
+    assert _synthetic_from_last_price(object(), "THYAO", None) is None
 
     base = AdviceResult(
         market=Market.BIST, symbol="THYAO", horizon=Horizon.SHORT,

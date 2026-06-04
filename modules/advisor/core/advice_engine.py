@@ -896,12 +896,47 @@ class AdviceEngine:
         return [Market(m.strip()) for m in raw.split(",") if m.strip()]
 
     def _load_watchlist(self) -> Dict[Market, List[str]]:
-        """Load per-market symbol watchlists from config."""
+        """Load per-market symbol watchlists from config.
+
+        For BIST and FX, optionally EXPAND the watchlist into a maintained
+        universe (BIST-30/50, FX majors/extended) when advisor_bist_universe /
+        advisor_fx_universe selects a preset. Watchlist tickers are ALWAYS
+        included. Analysis is free local math; only LLM rationale costs and it
+        is already budget-capped + min_confidence-gated, so a large universe is
+        cost-safe. Default ('watchlist') leaves behaviour unchanged. Fail-soft:
+        any expansion error falls back to the bare watchlist.
+        """
         out: Dict[Market, List[str]] = {}
         for market in Market:
             key = f"watchlist_{market.value}"
             raw = self.config.get(key, "")
             symbols = [s.strip() for s in raw.split(",") if s.strip()]
+
+            if market in (Market.BIST, Market.FX):
+                try:
+                    from modules.advisor.core.analyzers.universes import (
+                        expand_bist_universe, expand_fx_universe,
+                    )
+                    expander = (
+                        expand_bist_universe if market == Market.BIST
+                        else expand_fx_universe
+                    )
+                    expanded = expander(self.config, symbols)
+                    if expanded:
+                        if len(expanded) > len(symbols):
+                            logger.info(
+                                "[advice] %s universe scan: %d watchlist -> %d "
+                                "symbols.", market.value, len(symbols),
+                                len(expanded),
+                            )
+                        out[market] = expanded
+                        continue
+                except Exception as exc:
+                    logger.warning(
+                        "[advice] %s universe expansion failed (fail-soft to "
+                        "watchlist): %s", market.value, exc,
+                    )
+
             if symbols:
                 out[market] = symbols
         return out

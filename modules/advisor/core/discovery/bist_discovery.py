@@ -60,19 +60,40 @@ async def discover(
             None, _fetch_borsapy_movers, universe_cap
         )
 
+        # Fonoloji movers fallback (when a key + base URL are present).
+        if not candidates:
+            candidates = await _fetch_fonoloji_movers(config, universe_cap)
+
+        # Operator-configured JSON movers source.
         if not candidates:
             scrape_url = str(config.get("advisor_discovery_bist_scrape_url", "")).strip()
             if scrape_url:
                 candidates = await _fetch_scrape(scrape_url, universe_cap)
 
+        # LAST-RESORT: surface the maintained BIST universe itself so BIST gems
+        # are NEVER empty just because no movers feed exists. The analyzer still
+        # produces the real directional advice; dedupe drops watchlist/open-sim
+        # names. Gated by advisor_discovery_bist_use_universe (default true).
+        used_universe_fallback = False
+        if not candidates and str(
+            config.get("advisor_discovery_bist_use_universe", "true")
+        ).lower() == "true":
+            candidates = _fetch_universe_candidates(config, universe_cap)
+            used_universe_fallback = bool(candidates)
+
         if not candidates:
             logger.info("[discovery.bist] no candidates (fail-soft / degraded).")
             return []
 
+        # The universe fallback has no %-move data, so a min-abs-change screen
+        # would NOT reject it (missing metric => kept) — but be explicit: when we
+        # are surfacing the universe, do not apply the movers change floor.
+        eff_min_abs_chg = 0.0 if used_universe_fallback else min_abs_chg
+
         ranked = screen_dedupe_rank(
             candidates,
             exclude,
-            min_abs_change_pct=min_abs_chg,
+            min_abs_change_pct=eff_min_abs_chg,
             exclude_stablecoins=False,
             top_n=top_n,
         )
@@ -170,6 +191,77 @@ def _coerce_listing(raw, universe_cap: int) -> List[DiscoveryCandidate]:
     if universe_cap > 0:
         out = out[:universe_cap]
     return out
+
+
+def _fetch_universe_candidates(config: dict, universe_cap: int) -> List[DiscoveryCandidate]:
+    """
+    Build candidates from the maintained BIST-50 universe (analyzers/universes).
+    No %-move/volume metrics — these surface low-ranked but ensure BIST gems are
+    never empty. Fail-soft -> [].
+    """
+    try:
+        from modules.advisor.core.analyzers.universes import BIST_50
+    except Exception as exc:
+        logger.debug("[discovery.bist] universe import failed: %s", exc)
+        return []
+    out: List[DiscoveryCandidate] = []
+    for sym in BIST_50:
+        out.append(DiscoveryCandidate(
+            symbol=_is_suffix(sym), market="bist", source="universe:bist50",
+        ))
+    if universe_cap > 0:
+        out = out[:universe_cap]
+    logger.info("[discovery.bist] universe fallback: %d BIST-50 candidates.", len(out))
+    return out
+
+
+async def _fetch_fonoloji_movers(config: dict, universe_cap: int) -> List[DiscoveryCandidate]:
+    """
+    Optional Fonoloji BIST movers/gainers source. Only attempted when
+    ADVISOR_FONOLOJI_API_KEY is present AND advisor_fonoloji_bist_movers_path is
+    configured (the exact endpoint is operator-confirmable; not hardcoded since
+    the docs page is WAF-403 to automated fetchers). Fail-soft -> [].
+    """
+    import os
+    key = (
+        str(config.get("advisor_fonoloji_api_key", "") or "").strip()
+        or os.getenv("ADVISOR_FONOLOJI_API_KEY", "").strip()
+    )
+    movers_path = str(config.get("advisor_fonoloji_bist_movers_path", "") or "").strip()
+    if not key or not movers_path:
+        return []
+    base = str(
+        config.get("advisor_fonoloji_base_url", "https://fonoloji.com") or
+        "https://fonoloji.com"
+    ).rstrip("/")
+    auth_header = str(config.get("advisor_fonoloji_auth_header", "Authorization") or "Authorization").strip()
+    auth_scheme = str(config.get("advisor_fonoloji_auth_scheme", "Bearer")).strip()
+    header_value = f"{auth_scheme} {key}".strip() if auth_scheme else key
+    url = movers_path if movers_path.startswith("http") else f"{base}{movers_path if movers_path.startswith('/') else '/' + movers_path}"
+
+    try:
+        import aiohttp
+    except ImportError:
+        return []
+    try:
+        timeout = aiohttp.ClientTimeout(total=10.0)
+        headers = {auth_header: header_value, "Accept": "application/json"}
+        async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
+            async with session.get(url, params={"apikey": key}) as resp:
+                if resp.status != 200:
+                    logger.info("[discovery.bist] Fonoloji movers HTTP %d (soft).", resp.status)
+                    return []
+                data = await resp.json(content_type=None)
+        if isinstance(data, dict):
+            data = (data.get("data") or data.get("result") or data.get("rows")
+                    or data.get("items") or [])
+        cands = _coerce_listing(data, universe_cap)
+        if cands:
+            logger.info("[discovery.bist] Fonoloji movers: %d rows.", len(cands))
+        return cands
+    except Exception as exc:
+        logger.debug("[discovery.bist] Fonoloji movers failed (soft): %s", exc)
+        return []
 
 
 async def _fetch_scrape(url: str, universe_cap: int) -> List[DiscoveryCandidate]:

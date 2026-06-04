@@ -219,6 +219,7 @@ class AdvisorApplication:
                 ("ADVISOR_OPENAI_API_KEY", "advisor_openai_api_key"),
                 ("ADVISOR_FX_ALPHAVANTAGE_KEY", "advisor_fx_alphavantage_key"),
                 ("ADVISOR_BIST_API_KEY", "advisor_bist_api_key"),
+                ("ADVISOR_FONOLOJI_API_KEY", "advisor_fonoloji_api_key"),
             ):
                 if config.get(_config_key):
                     continue

@@ -82,6 +82,24 @@ DEFAULTS: Dict[str, Any] = {
     "advisor_bist_data_source": "",
     "advisor_fx_data_source": "yfinance",
     "advisor_midas_data_source": "",
+    # Fonoloji optional data source (migration 078) — OFF unless a key is set.
+    "advisor_fonoloji_api_key": "",
+    "advisor_fonoloji_base_url": "https://fonoloji.com",
+    "advisor_fonoloji_nav_path": "",
+    "advisor_fonoloji_auth_header": "Authorization",
+    "advisor_fonoloji_auth_scheme": "Bearer",
+    "advisor_fonoloji_bist_movers_path": "",
+    # BIST / FX universe scan (migration 078) — default 'watchlist' = unchanged.
+    "advisor_bist_universe": "watchlist",
+    "advisor_bist_universe_custom": "",
+    "advisor_fx_universe": "watchlist",
+    "advisor_fx_universe_custom": "",
+    "advisor_universe_max": "60",
+    # Discovery robustness (migration 078).
+    "advisor_discovery_us_fallback_universe": "",
+    "advisor_discovery_bist_use_universe": "true",
+    # KAP-driven sim moderate polarity (migration 078).
+    "advisor_kap_sim_include_moderate": "false",
     "advisor_telegram_enabled": "true",
     "advisor_telegram_bot_token": "",
     "advisor_telegram_chat_id": "",

@@ -70,6 +70,17 @@ async def discover(
             rows = await _fetch_screen(scr, count)
             candidates.extend(rows)
 
+        # FALLBACK: the Yahoo predefined-screener JSON is undocumented and often
+        # 401/429s, leaving US gems empty. When it yields nothing, compute movers
+        # LOCALLY from a maintained liquid universe via yfinance (already an
+        # advisor dep, not rate-gated like the screener JSON). Free, fail-soft.
+        if not candidates:
+            logger.info(
+                "[discovery.us_equities] Yahoo screener empty — trying yfinance "
+                "local-movers fallback."
+            )
+            candidates = await _fetch_yfinance_movers(config)
+
         if not candidates:
             logger.info("[discovery.us_equities] no candidates (fail-soft).")
             return []
@@ -117,6 +128,87 @@ async def _fetch_screen(scr_id: str, count: int) -> List[DiscoveryCandidate]:
     except Exception as exc:
         logger.debug("[discovery.us_equities] screen '%s' failed (soft): %s", scr_id, exc)
         return []
+
+
+# A maintained liquid US large/mid-cap universe used ONLY as the local-movers
+# fallback set (snapshot 2026-06). Kept modest to bound the yfinance batch. The
+# operator can override via advisor_discovery_us_fallback_universe (comma-sep).
+_US_FALLBACK_UNIVERSE = [
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA", "AMD", "NFLX",
+    "AVGO", "CRM", "ADBE", "INTC", "QCOM", "MU", "PYPL", "SHOP", "UBER",
+    "COIN", "PLTR", "SMCI", "MSTR", "BABA", "DIS", "BA", "GE", "F", "GM",
+    "JPM", "BAC", "GS", "WMT", "COST", "PEP", "KO", "XOM", "CVX", "PFE",
+    "MRNA", "LLY", "UNH", "T", "VZ", "ORCL", "CSCO", "TXN", "IBM", "NKE",
+    "SOFI", "RIVN", "LCID", "MARA", "RIOT", "DKNG", "SNAP", "PINS", "ROKU",
+]
+
+
+async def _fetch_yfinance_movers(config: dict) -> List[DiscoveryCandidate]:
+    """
+    Local-movers fallback: fetch recent daily bars for a liquid universe via
+    yfinance and compute 24h %move + dollar volume LOCALLY. Free, not rate-gated
+    like the Yahoo screener JSON. Runs the (sync) yfinance call in an executor.
+    Fail-soft -> [].
+    """
+    import asyncio
+
+    universe = [
+        s.strip().upper() for s in
+        str(config.get("advisor_discovery_us_fallback_universe", "")).split(",")
+        if s.strip()
+    ] or list(_US_FALLBACK_UNIVERSE)
+
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _yf_movers_sync, universe)
+    except Exception as exc:
+        logger.debug("[discovery.us_equities] yfinance fallback failed: %s", exc)
+        return []
+
+
+def _yf_movers_sync(universe: List[str]) -> List[DiscoveryCandidate]:
+    """Sync yfinance batch download -> candidates. Fail-soft -> []."""
+    try:
+        import yfinance as yf
+    except ImportError:
+        logger.debug("[discovery.us_equities] yfinance not installed; no fallback.")
+        return []
+    try:
+        data = yf.download(
+            tickers=" ".join(universe), period="5d", interval="1d",
+            group_by="ticker", auto_adjust=True, threads=True, progress=False,
+        )
+    except Exception as exc:
+        logger.debug("[discovery.us_equities] yf.download failed: %s", exc)
+        return []
+    if data is None or getattr(data, "empty", True):
+        return []
+
+    out: List[DiscoveryCandidate] = []
+    for sym in universe:
+        try:
+            sub = data[sym] if sym in getattr(data, "columns", []) else None
+            if sub is None:
+                # Single-ticker frames aren't grouped; skip gracefully.
+                continue
+            sub = sub.dropna()
+            if len(sub) < 2:
+                continue
+            last = float(sub["Close"].iloc[-1])
+            prev = float(sub["Close"].iloc[-2])
+            if prev <= 0:
+                continue
+            pct = (last / prev - 1.0) * 100.0
+            vol = float(sub["Volume"].iloc[-1]) if "Volume" in sub.columns else 0.0
+            dollar_vol = last * vol if vol else None
+            out.append(DiscoveryCandidate(
+                symbol=sym, market="us_equities", source="yfinance:local_movers",
+                price=last, change_pct_24h=pct, quote_volume=dollar_vol,
+            ))
+        except Exception:
+            continue
+    logger.info("[discovery.us_equities] yfinance fallback: %d movers.", len(out))
+    return out
 
 
 def _parse_screen(data: dict, scr_id: str) -> List[DiscoveryCandidate]:
