@@ -44,14 +44,14 @@ VALUES
      'price upside) into the BIST directional signal as ONE input alongside the '
      'SMA/RSI/BB technical votes (it does NOT dominate). A genuine signal not '
      'available from yfinance. The raw summary is stored in '
-     "extra['analyst_consensus'] for the dashboard. FAIL-SOFT: no data => BIST "
+     'extra[''analyst_consensus''] for the dashboard. FAIL-SOFT: no data => BIST '
      'signal unchanged. ADVICE-ONLY.',
      NOW(), NOW()),
 
     ('advisor_config', 'advisor_fonoloji_market_digest_enabled', 'false', 'boolean',
      'Optional/light: when a Fonoloji key is present, fetch the AI daily market '
      'digest (/market/digest, cached 6h) once per cycle and stash it in the BIST '
-     "advice extra['market_digest'] for a dashboard hook. Default OFF. 404 (not "
+     'advice extra[''market_digest''] for a dashboard hook. Default OFF. 404 (not '
      'yet warmed) / no key => omitted. ADVICE-ONLY.',
      NOW(), NOW())
 ON CONFLICT (config_type, key) DO NOTHING;
