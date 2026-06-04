@@ -82,13 +82,21 @@ DEFAULTS: Dict[str, Any] = {
     "advisor_bist_data_source": "",
     "advisor_fx_data_source": "yfinance",
     "advisor_midas_data_source": "",
-    # Fonoloji optional data source (migration 078) — OFF unless a key is set.
+    # Fonoloji optional data source (migrations 078/080) — OFF unless a key is
+    # set. VERIFIED contract (migration 080): base /v1, X-API-Key (bare key).
     "advisor_fonoloji_api_key": "",
-    "advisor_fonoloji_base_url": "https://fonoloji.com",
-    "advisor_fonoloji_nav_path": "",
-    "advisor_fonoloji_auth_header": "Authorization",
-    "advisor_fonoloji_auth_scheme": "Bearer",
-    "advisor_fonoloji_bist_movers_path": "",
+    "advisor_fonoloji_base_url": "https://fonoloji.com/v1",
+    "advisor_fonoloji_auth_header": "X-API-Key",
+    "advisor_fonoloji_cache_ttl_s": "21600",
+    # GEMS BIST screener batch knobs (migration 080).
+    "advisor_discovery_bist_screener_enabled": "true",
+    "advisor_discovery_bist_pe_max": "25",
+    "advisor_discovery_bist_roe_min": "15",
+    "advisor_discovery_bist_pb_max": "",
+    "advisor_discovery_bist_div_min": "",
+    "advisor_discovery_bist_sort_by": "roe",
+    "advisor_discovery_bist_sort_order": "desc",
+    "advisor_discovery_bist_screener_limit": "30",
     # BIST / FX universe scan (migration 078) — default 'watchlist' = unchanged.
     "advisor_bist_universe": "watchlist",
     "advisor_bist_universe_custom": "",
