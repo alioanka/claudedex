@@ -95,11 +95,65 @@ def _dedupe_preserve(items: List[str]) -> List[str]:
     return out
 
 
+def _fonoloji_bist_list(config: dict) -> List[str]:
+    """
+    Pull the LIVE BIST ticker list from Fonoloji (GET /stocks/list) when a key
+    is present. Returns bare tickers (no .IS). Fail-soft -> [] (caller falls
+    back to the hardcoded BIST-50 snapshot). The shared client TTL-caches this
+    (one call per refresh), so it is rate-limit cheap.
+    """
+    try:
+        from modules.advisor.core.data.fonoloji_client import (
+            FonolojiClient, resolve_api_key,
+        )
+    except Exception:
+        return []
+    if not resolve_api_key(config):
+        return []
+    try:
+        client = FonolojiClient(config)
+        payload = client.stock_list()
+    except Exception as exc:
+        logger.debug("[universes] Fonoloji /stocks/list failed (soft): %s", exc)
+        return []
+
+    rows = payload
+    if isinstance(payload, dict):
+        for k in ("stocks", "data", "result", "results", "rows", "items", "list"):
+            v = payload.get(k)
+            if isinstance(v, list) and v:
+                rows = v
+                break
+    if not isinstance(rows, list):
+        return []
+
+    out: List[str] = []
+    for r in rows:
+        if isinstance(r, str) and r.strip():
+            out.append(r.strip().upper().removesuffix(".IS"))
+            continue
+        if not isinstance(r, dict):
+            continue
+        sym = (r.get("ticker") or r.get("code") or r.get("symbol")
+               or r.get("Ticker") or r.get("Code"))
+        if sym:
+            s = str(sym).strip().upper()
+            if s.endswith(".IS"):
+                s = s[:-3]
+            if s:
+                out.append(s)
+    return out
+
+
 def expand_bist_universe(config: dict, watchlist: List[str]) -> List[str]:
     """
     Build the BIST scan universe: preset + custom + watchlist (always included).
     Returns bare tickers; the BIST analyzer handles .IS normalisation.
     Default ('watchlist'/'') => returns the watchlist unchanged.
+
+    Mode 'fonoloji' / 'bist_all' / 'all' pulls the LIVE BIST list from the
+    Fonoloji API when a key is present (fail-soft to the hardcoded BIST-50
+    snapshot). The universe cap still applies.
     """
     mode = str(config.get("advisor_bist_universe", "watchlist") or "watchlist").lower()
     custom = _split_csv(config.get("advisor_bist_universe_custom", ""))
@@ -109,6 +163,16 @@ def expand_bist_universe(config: dict, watchlist: List[str]) -> List[str]:
         preset = list(BIST_30)
     elif mode in ("bist50", "bist_50", "50"):
         preset = list(BIST_50)
+    elif mode in ("fonoloji", "bist_all", "bistall", "all", "live"):
+        live = _fonoloji_bist_list(config)
+        if live:
+            logger.info("[universes] BIST universe from Fonoloji /stocks/list: "
+                        "%d tickers.", len(live))
+            preset = live
+        else:
+            logger.info("[universes] Fonoloji BIST list unavailable; falling "
+                        "back to hardcoded BIST-50 snapshot.")
+            preset = list(BIST_50)
     elif mode in ("custom",):
         preset = []  # custom-only; rely on the custom list
     # 'watchlist' / '' / unknown -> no preset (watchlist-only behaviour)
@@ -185,6 +249,10 @@ def _selftest() -> None:
     # FX extended.
     fx = expand_fx_universe({"advisor_fx_universe": "extended"}, [])
     assert "EURUSD=X" in fx and "USDTRY=X" in fx and "GC=F" in fx
+
+    # Fonoloji mode with NO key => fail-soft to the BIST-50 snapshot.
+    flive = expand_bist_universe({"advisor_bist_universe": "fonoloji"}, ["XYZ"])
+    assert "THYAO" in flive and "XYZ" in flive, "fonoloji no-key must fall back to BIST-50"
 
     print("universes._selftest OK: bist30=%d bist50=%d fx_majors=%d fx_ext=%d"
           % (len(BIST_30), len(BIST_50), len(FX_MAJORS), len(FX_EXTENDED)))
