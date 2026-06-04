@@ -606,6 +606,7 @@ class SolanaTradingApplication:
             tasks = [
                 asyncio.create_task(self.engine.run()),
                 asyncio.create_task(self._status_reporter()),
+                asyncio.create_task(self._periodic_summary_reporter()),
                 asyncio.create_task(self._shutdown_monitor())
             ]
 
@@ -640,6 +641,86 @@ class SolanaTradingApplication:
             except Exception as e:
                 self.logger.error(f"Error in status reporter: {e}")
                 await asyncio.sleep(120)
+
+    async def _periodic_summary_reporter(self):
+        """Emit a PERIODIC SUMMARY digest to Telegram on an interval.
+
+        Task 9 fix: the Solana engine already fires per-trade entry/exit
+        alerts via `telegram_alerts.send_*_alert(category='trade')`, but when
+        the operator sets `notify_solana_mode='summary'` the notification
+        engine intentionally suppresses every 'trade'-category message. Until
+        now NOTHING ever emitted a 'summary'-category message for Solana, so
+        a 'summary'-mode operator received ONLY the startup banner.
+
+        This loop builds a digest from `engine.get_stats()` (open positions,
+        daily/total PnL, win-rate, trade counts) and routes it via
+        `send_stats_summary()` which calls the notification engine with
+        category='summary' — the one category that passes through in
+        'summary' verbosity. In 'all' mode it is delivered too; in 'off'
+        mode the engine drops it. Interval is `SOLANA_SUMMARY_INTERVAL_S`
+        (default 3600s). Fail-soft: any error is logged, never fatal.
+        """
+        # Stagger the first digest so it does not collide with startup noise.
+        interval_s = 3600
+        try:
+            interval_s = max(300, int(os.getenv('SOLANA_SUMMARY_INTERVAL_S', '3600')))
+        except (ValueError, TypeError):
+            interval_s = 3600
+
+        # Initial delay: send the first digest one interval in (avoids an
+        # empty digest the instant the bot starts with zero trades).
+        try:
+            await asyncio.wait_for(self.shutdown_event.wait(), timeout=interval_s)
+            return  # shutdown requested during the initial wait
+        except asyncio.TimeoutError:
+            pass
+
+        while not self.shutdown_event.is_set():
+            try:
+                alerts = getattr(self.engine, 'telegram_alerts', None) if self.engine else None
+                if alerts and getattr(alerts, 'enabled', False):
+                    stats = await self.engine.get_stats()
+                    digest = self._build_summary_payload(stats)
+                    await alerts.send_stats_summary(digest)
+                    self.logger.info(
+                        "📨 Solana periodic summary emitted (category=summary): "
+                        f"trades={digest.get('total_trades')} "
+                        f"positions={digest.get('active_positions')} "
+                        f"daily_pnl={digest.get('daily_pnl')}"
+                    )
+            except Exception as e:
+                self.logger.error(f"Error in periodic summary reporter: {e}")
+
+            try:
+                await asyncio.wait_for(self.shutdown_event.wait(), timeout=interval_s)
+            except asyncio.TimeoutError:
+                continue
+
+    def _build_summary_payload(self, stats: dict) -> dict:
+        """Map engine.get_stats() output onto the keys SolanaTelegramAlerts
+        ._format_stats_alert expects. Per-strategy trade counts are derived
+        from the open-positions list (the engine keeps no per-strategy
+        lifetime counter); they reflect CURRENT open positions per strategy.
+        """
+        stats = stats or {}
+        positions = stats.get('positions', []) or []
+        strat_counts: dict = {}
+        for p in positions:
+            s = str(p.get('strategy', '')).lower()
+            strat_counts[s] = strat_counts.get(s, 0) + 1
+
+        return {
+            'total_trades':   stats.get('total_trades', 0),
+            'winning_trades': stats.get('winning_trades', 0),
+            'losing_trades':  stats.get('losing_trades', 0),
+            'win_rate':       stats.get('win_rate', '0%'),
+            'total_pnl':      stats.get('total_pnl', '0.0000 SOL'),
+            'daily_pnl':      stats.get('daily_pnl', '0.0000 SOL'),
+            'jupiter_trades': strat_counts.get('jupiter', 0),
+            'pumpfun_trades': strat_counts.get('pumpfun', 0),
+            'drift_trades':   strat_counts.get('drift', 0),
+            'active_positions': stats.get('active_positions', len(positions)),
+        }
 
     async def _shutdown_monitor(self):
         """Monitor for shutdown signal"""
