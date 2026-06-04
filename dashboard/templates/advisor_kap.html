@@ -136,8 +136,10 @@ async function loadKap() {
         : '<span style="color:#555">—</span>';
       const evt = r.event_type ? escHtml(r.event_type.replace(/_/g, ' ')) : '<span style="color:#555">—</span>';
       const tickerHtml = r.ticker ? escHtml(r.ticker) : '—';
-      const linkSubject = r.url
-        ? `<a href="${escHtml(r.url)}" target="_blank" rel="noopener" style="color:inherit;text-decoration:none">${escHtml(r.subject || '')}</a>`
+      // Only allow http(s) links; escape for attribute context (quotes too).
+      const safeUrl = (r.url && /^https?:\/\//i.test(r.url)) ? escAttr(r.url) : '';
+      const linkSubject = safeUrl
+        ? `<a href="${safeUrl}" target="_blank" rel="noopener noreferrer" style="color:inherit;text-decoration:none">${escHtml(r.subject || '')}</a>`
         : escHtml(r.subject || '');
 
       tr.innerHTML = `
@@ -148,7 +150,7 @@ async function loadKap() {
         <td><span class="pol-badge ${polClass(r.base_polarity)}">${polLabel(r.base_polarity)}</span></td>
         <td class="${stageClass(r.classifier_stage)}" style="font-size:.75rem">${escHtml(r.classifier_stage || '—')}</td>
         <td>${confHtml}</td>
-        <td class="kap-subject d-none d-md-table-cell" title="${escHtml(r.subject || '')}">${linkSubject}</td>
+        <td class="kap-subject d-none d-md-table-cell" title="${escAttr(r.subject || '')}">${linkSubject}</td>
       `;
       tbody.appendChild(tr);
     }
@@ -158,6 +160,8 @@ async function loadKap() {
 }
 
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+// Attribute context also needs quotes escaped.
+function escAttr(s) { return escHtml(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 document.getElementById('fTicker').addEventListener('keydown', e => {
   if (e.key === 'Enter') loadKap();

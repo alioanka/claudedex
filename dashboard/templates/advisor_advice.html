@@ -165,7 +165,9 @@ async function loadPage(offset) {
     for (const r of data.rows) {
       const tr = document.createElement('tr');
       const conf = r.confidence;
-      const confColor = conf >= .7 ? '#00e396' : conf >= .45 ? '#feb019' : '#ff4560';
+      const hasConf = conf != null && !isNaN(conf);
+      const confColor = !hasConf ? '#555' : conf >= .7 ? '#00e396' : conf >= .45 ? '#feb019' : '#ff4560';
+      const dir = r.direction || 'neutral';
       const ts = r.created_at ? new Date(r.created_at).toLocaleString() : '—';
       const entryRange = r.entry_low && r.entry_high
         ? `${fmtN(r.entry_low)} – ${fmtN(r.entry_high)}` : '—';
@@ -183,23 +185,24 @@ async function loadPage(offset) {
         <td>${fmtMarket(r.market)}</td>
         <td><strong>${escHtml(r.symbol)}</strong></td>
         <td><span class="badge bg-secondary">${r.horizon}</span></td>
-        <td><span class="dir-badge dir-${r.direction}">${dirLabel(r.direction)}</span></td>
+        <td><span class="dir-badge dir-${dir}">${dirLabel(dir)}</span></td>
         <td style="white-space:nowrap">${entryRange}</td>
         <td style="color:#00e396">${fmtN(r.target_price)}</td>
         <td style="color:#ff4560">${fmtN(r.stop_price)}</td>
         <td>
           <span class="conf-chip" style="background:${confColor};opacity:.7"></span>
-          ${(conf*100).toFixed(0)}%
+          ${hasConf ? (conf*100).toFixed(0) + '%' : '—'}
         </td>
         <td class="${dsClass}">${(r.data_source_status||'').replace('_',' ')}</td>
         <td>${kronosHtml}</td>
         <td class="rationale-cell d-none d-md-table-cell" title="Click to expand"
-            onclick="showRationale(${r.id},'${escHtml(r.symbol)} ${r.direction.toUpperCase()} ${r.horizon}', this)">
+            onclick="showRationale(${r.id}, this)">
           ${shortRat}
         </td>
         <td style="font-size:.7rem;color:#777">${escHtml(r.model_id||'')}</td>
       `;
       tr.dataset.rationale = r.rationale || '';
+      tr.dataset.title = `${r.symbol || ''} ${dir.toUpperCase()} ${r.horizon || ''}`.trim();
       tbody.appendChild(tr);
     }
     renderPagination();
@@ -236,10 +239,10 @@ function renderPagination() {
   pg.appendChild(nextBtn);
 }
 
-function showRationale(id, title, cell) {
+function showRationale(id, cell) {
   const row = cell.closest('tr');
   const full = row.dataset.rationale || 'No rationale';
-  document.getElementById('rTitle').textContent = title;
+  document.getElementById('rTitle').textContent = row.dataset.title || 'Rationale';
   document.getElementById('rBody').textContent = full;
   new bootstrap.Modal(document.getElementById('rationaleModal')).show();
 }

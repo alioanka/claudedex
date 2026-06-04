@@ -128,6 +128,7 @@ const CHANNEL_ICONS = {
 };
 let simRows = [];
 let capPerChannel = 15;
+let wrByChannel = {};   // {channel: {wins, decided, win_rate}}
 
 async function loadSims() {
   try {
@@ -138,6 +139,7 @@ async function loadSims() {
     simRows = data.rows || [];
     const s = data.summary || {};
     capPerChannel = s.cap_per_channel || 15;
+    wrByChannel = s.win_rate_by_channel || {};
 
     const pnl = s.total_pnl_usd || 0;
     document.getElementById('ssOpen').textContent = s.total_open != null ? s.total_open : '—';
@@ -203,6 +205,22 @@ function renderChannelPanel(channel, rows) {
   const pnlCls = totalPnl > 0 ? 'pnl-pos' : totalPnl < 0 ? 'pnl-neg' : 'pnl-zero';
   const pnlStr = (totalPnl >= 0 ? '+$' : '-$') + Math.abs(totalPnl).toFixed(2);
 
+  // Per-channel realized win rate (wins / decided terminal sims for this channel).
+  const wr = wrByChannel[channel];
+  let wrBadge = '';
+  if (wr && wr.decided > 0 && wr.win_rate != null) {
+    const wrColor = wr.win_rate >= 50 ? '#00e396' : wr.win_rate > 0 ? '#feb019' : '#ff4560';
+    wrBadge = `<span title="Realized win rate: ${wr.wins}/${wr.decided} decided sims profitable"
+                     style="font-size:.72rem;font-weight:700;padding:.2rem .55rem;border-radius:20px;
+                            background:rgba(255,255,255,.05);color:${wrColor};">
+                 WR ${wr.win_rate}% <span style="color:#9aa0aa;font-weight:500;">(${wr.wins}/${wr.decided})</span>
+               </span>`;
+  } else {
+    wrBadge = `<span title="No decided (closed/expired) sims yet for this channel"
+                     style="font-size:.72rem;font-weight:600;padding:.2rem .55rem;border-radius:20px;
+                            background:rgba(255,255,255,.04);color:#777;">WR —</span>`;
+  }
+
   let bodyRows = '';
   if (rows.length === 0) {
     bodyRows = `<tr class="empty-row"><td colspan="12">No open sims in this channel.</td></tr>`;
@@ -217,6 +235,7 @@ function renderChannelPanel(channel, rows) {
       <div class="chan-head">
         <span class="chan-name">${CHANNEL_ICONS[channel]||''} ${fmtChannel(channel)}</span>
         <span style="display:flex;align-items:center;gap:8px;">
+          ${wrBadge}
           <span class="${capCls}">${openCount}/${capPerChannel}</span>
           ${openCount > 0 ? `<button onclick="closeAllInChannel('${channel}')" title="Close every open sim in this channel (dry-run)" style="font-size:11px;padding:2px 8px;background:#3a1f24;color:#ff6b6b;border:1px solid #5a2a30;border-radius:4px;cursor:pointer;">Close all</button>` : ''}
         </span>

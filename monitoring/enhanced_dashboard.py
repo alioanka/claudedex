@@ -52,6 +52,57 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 
+class _HttpParseNoiseFilter(logging.Filter):
+    """
+    Drop the ERROR-level tracebacks aiohttp emits when a NON-HTTP client
+    hits the plain-HTTP dashboard port: TLS/HTTPS handshakes (the bytes
+    ``\\x16\\x03\\x01...``) and port scanners produce ``BadStatusLine`` /
+    ``BadHttpMessage`` ("Pause on PRI/Upgrade") parse failures BEFORE any
+    request handler runs. These are not application errors — they are
+    unsolicited junk traffic — but aiohttp logs a full ERROR traceback for
+    each one, flooding ``dashboard_errors.log``.
+
+    This filter suppresses ONLY those two specific low-level parse errors on
+    the ``aiohttp.server`` logger, emitting a single throttled DEBUG line so
+    the operator still knows scans are happening. Every other aiohttp error
+    (including real 500s from handlers) passes through untouched.
+    """
+
+    _NEEDLES = (
+        'BadStatusLine',
+        'BadHttpMessage',
+        'Invalid method encountered',
+        'Pause on PRI/Upgrade',
+        'Can not read request line',
+    )
+
+    def __init__(self):
+        super().__init__()
+        self._seen = 0
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            text = record.getMessage()
+            exc = record.exc_info
+            if exc and exc[0] is not None:
+                text = f"{text} {exc[0].__name__}: {exc[1]}"
+        except Exception:
+            return True  # never let the filter itself swallow a log on error
+
+        if any(n in text for n in self._NEEDLES):
+            self._seen += 1
+            # Emit one DEBUG breadcrumb on the first hit and then every 500th,
+            # so the noise is bounded but not invisible.
+            if self._seen == 1 or self._seen % 500 == 0:
+                logger.debug(
+                    "Suppressed %d non-HTTP/TLS-handshake parse error(s) on the "
+                    "dashboard HTTP port (port scans / HTTPS-to-HTTP). Latest: %s",
+                    self._seen, text[:160],
+                )
+            return False  # drop the noisy ERROR record
+        return True
+
+
 def _iso_utc(dt) -> str:
     """
     Serialise a datetime as an ISO 8601 string with explicit UTC marker.
@@ -15877,6 +15928,22 @@ class DashboardEndpoints:
 
     async def start(self):
         """Start the dashboard server"""
+        # Suppress the BadStatusLine / BadHttpMessage ERROR-traceback flood
+        # produced by TLS handshakes and port scanners hitting the plain-HTTP
+        # port. aiohttp emits these from the low-level protocol loggers before
+        # any handler runs; a logging.Filter on those loggers drops just the
+        # junk-traffic parse errors while leaving real errors intact.
+        try:
+            _noise_filter = _HttpParseNoiseFilter()
+            for _ln in ('aiohttp.server', 'aiohttp.web', 'aiohttp.web_protocol',
+                        'aiohttp.http', 'aiohttp.access'):
+                _alog = logging.getLogger(_ln)
+                # Avoid stacking duplicate filters on dashboard restart.
+                if not any(isinstance(f, _HttpParseNoiseFilter) for f in _alog.filters):
+                    _alog.addFilter(_noise_filter)
+        except Exception as _ferr:
+            logger.debug(f"could not install HTTP-noise log filter: {_ferr}")
+
         self._runner = web.AppRunner(self.app)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, self.host, self.port)
@@ -16020,13 +16087,13 @@ class DashboardEndpoints:
                             'entry_high': float(r['entry_high']) if r['entry_high'] else None,
                             'target_price': float(r['target_price']) if r['target_price'] else None,
                             'stop_price': float(r['stop_price']) if r['stop_price'] else None,
-                            'confidence': float(r['confidence']),
+                            'confidence': float(r['confidence']) if r['confidence'] is not None else None,
                             'rationale': r['rationale'],
                             'model_id': r['model_id'],
                             'kronos_signal': float(r['kronos_signal']) if r['kronos_signal'] is not None else None,
                             'data_source_status': r['data_source_status'],
                             'sim_enabled': r['sim_enabled'],
-                            'sim_amount_usd': float(r['sim_amount_usd']),
+                            'sim_amount_usd': float(r['sim_amount_usd']) if r['sim_amount_usd'] is not None else None,
                             'operator_notes': r['operator_notes'],
                             'created_at': r['created_at'].isoformat() if r['created_at'] else None,
                         })
@@ -16290,21 +16357,53 @@ class DashboardEndpoints:
                             'opened_at': r['opened_at'].isoformat() if r['opened_at'] else None,
                             'closed_at': r['closed_at'].isoformat() if r['closed_at'] else None,
                         })
-                    # Summary stats
+                    # Summary stats.
+                    # A sim is TERMINAL if status is 'closed' OR 'expired'. The
+                    # row query above already treats both as resolved, but the
+                    # win-rate previously counted only status='closed'. In live
+                    # data some terminal sims carry status='expired' (auto-expiry
+                    # path), so a closed-only WR showed 0% even with many
+                    # resolved, profitable sims. We also require a non-NULL
+                    # pnl_usd in the WR denominator so sims closed at entry with
+                    # no marked price (pnl_usd NULL) don't drag WR toward zero.
+                    terminal = "status IN ('closed','expired')"
                     stats = await conn.fetchrow(
-                        """SELECT
+                        f"""SELECT
                                COUNT(*) FILTER (WHERE status='open') AS open_count,
-                               COALESCE(SUM(pnl_usd) FILTER (WHERE status='closed'), 0) AS total_pnl,
-                               COUNT(*) FILTER (WHERE status='closed' AND pnl_usd > 0) AS wins,
-                               COUNT(*) FILTER (WHERE status='closed') AS total_closed
+                               COALESCE(SUM(pnl_usd) FILTER (WHERE {terminal}), 0) AS total_pnl,
+                               COUNT(*) FILTER (WHERE {terminal} AND pnl_usd > 0) AS wins,
+                               COUNT(*) FILTER (WHERE {terminal} AND pnl_usd IS NOT NULL) AS total_decided
                            FROM advisor_sim_positions"""
                     )
                     if stats:
                         summary['total_open'] = int(stats['open_count'] or 0)
                         summary['total_pnl_usd'] = float(stats['total_pnl'] or 0)
-                        total_closed = int(stats['total_closed'] or 0)
+                        total_decided = int(stats['total_decided'] or 0)
                         wins = int(stats['wins'] or 0)
-                        summary['win_rate'] = round(wins / total_closed * 100, 1) if total_closed else 0.0
+                        summary['wins'] = wins
+                        summary['total_closed'] = total_decided
+                        summary['win_rate'] = round(wins / total_decided * 100, 1) if total_decided else 0.0
+                    # Per-channel realized win-rate + decided-count (migration 077):
+                    # same terminal definition, grouped by channel. The page shows
+                    # each channel's own WR in its panel header.
+                    chan_stats = await conn.fetch(
+                        f"""SELECT {chan_expr} AS channel,
+                                   COUNT(*) FILTER (WHERE {terminal} AND pnl_usd > 0) AS wins,
+                                   COUNT(*) FILTER (WHERE {terminal} AND pnl_usd IS NOT NULL) AS decided
+                            FROM advisor_sim_positions
+                            GROUP BY {chan_expr}"""
+                    )
+                    wr_by_channel = {}
+                    for cr in chan_stats:
+                        ch = str(cr['channel'])
+                        dec = int(cr['decided'] or 0)
+                        w = int(cr['wins'] or 0)
+                        wr_by_channel[ch] = {
+                            'wins': w,
+                            'decided': dec,
+                            'win_rate': round(w / dec * 100, 1) if dec else None,
+                        }
+                    summary['win_rate_by_channel'] = wr_by_channel
                     # Per-channel open counts (migration 077: cap is per-channel).
                     by_chan = await conn.fetch(
                         f"""SELECT {chan_expr} AS channel, COUNT(*) AS n
