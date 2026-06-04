@@ -2520,16 +2520,84 @@ class SolanaTradingEngine:
             return
 
         try:
-            # Sanity-cap pnl_pct: values outside [-100, 2000]% indicate a price
-            # feed bug (e.g. pre-Wave-7 DexScreener wrong-token price that produced
-            # +495424% rows). Clamp before writing so analytics are not poisoned.
-            raw_pnl_pct = trade.pnl_pct
-            pnl_pct_clamped = max(-100.0, min(2000.0, float(raw_pnl_pct or 0)))
-            if pnl_pct_clamped != raw_pnl_pct:
+            # ---- Exit-price denomination / sanity guard (PYTH $153.52 bug) ----
+            # An exit price that implies an implausible move vs entry is almost
+            # always a price-UNIT mixup at the source: a SOL-denominated or
+            # wrong-token quote leaking into position.current_price and getting
+            # written as exit_price (e.g. PYTH entry $0.0352 -> exit $153.52,
+            # ~4360x, which is roughly the SOL price in USD). The blown-up move
+            # then trips the +2000% pnl clamp ceiling and the row poisons win-
+            # rate / total-PnL analytics. Here we detect the implausible ratio,
+            # rebuild a CONSISTENT record (exit_price pinned to the ratio bound,
+            # pnl_pct/pnl_sol/pnl_usd recomputed) and tag metadata so dashboards
+            # and stats can EXCLUDE the row. This NEVER touches live trade
+            # execution -- it only sanitizes what is persisted for analytics.
+            max_ratio = 50.0
+            if self.config_manager:
+                try:
+                    max_ratio = float(self.config_manager.get(
+                        'solana_max_exit_entry_ratio', 50.0))
+                except Exception:
+                    max_ratio = 50.0
+            if max_ratio < 2.0:
+                max_ratio = 2.0  # never allow a guard tighter than 2x
+
+            entry_price = float(trade.entry_price or 0)
+            exit_price_out = float(trade.exit_price or 0)
+            pnl_pct_out = float(trade.pnl_pct or 0)
+            pnl_sol_out = float(trade.pnl_sol or 0)
+            pnl_usd_out = float(
+                trade.pnl_usd if getattr(trade, 'pnl_usd', None) is not None
+                else (trade.pnl_sol * self.sol_price_usd)
+            )
+            trade_metadata = None
+
+            implausible_exit = False
+            if entry_price > 0 and exit_price_out > 0:
+                ratio = exit_price_out / entry_price
+                if ratio > max_ratio or ratio < (1.0 / max_ratio):
+                    implausible_exit = True
+                    orig_exit = exit_price_out
+                    if ratio > max_ratio:
+                        exit_price_out = entry_price * max_ratio
+                    else:
+                        exit_price_out = entry_price / max_ratio
+                    # Long-only on Solana: recompute pct from pinned exit, then
+                    # rebuild pnl_sol/pnl_usd from notional so the row is self-
+                    # consistent rather than carrying the blown-up pnl.
+                    pnl_pct_out = ((exit_price_out - entry_price) / entry_price) * 100
+                    notional_sol = float(getattr(trade, 'amount', 0) or 0)
+                    pnl_sol_out = notional_sol * (pnl_pct_out / 100.0)
+                    pnl_usd_out = pnl_sol_out * self.sol_price_usd
+                    logger.warning(
+                        f"🛑 Implausible exit_price for {trade.token_symbol}: "
+                        f"entry=${entry_price:.8f} exit=${orig_exit:.8f} "
+                        f"(ratio {ratio:.1f}x vs guard {max_ratio:.0f}x) -> "
+                        f"pinned exit=${exit_price_out:.8f}, pnl recomputed to "
+                        f"{pnl_sol_out:.4f} SOL ({pnl_pct_out:+.2f}%). Likely a "
+                        f"SOL/USD or wrong-token price-unit mixup; row tagged "
+                        f"excluded."
+                    )
+                    trade_metadata = json.dumps({
+                        'excluded': True,
+                        'exclude_reason': 'implausible_exit_price',
+                        'original_exit_price': orig_exit,
+                        'original_pnl_sol': float(trade.pnl_sol or 0),
+                        'original_pnl_pct': float(trade.pnl_pct or 0),
+                        'exit_entry_ratio': ratio,
+                        'guard_max_ratio': max_ratio,
+                        'sanitized_at': datetime.utcnow().isoformat(),
+                    })
+
+            # Secondary clamp: cap pnl_pct to [-100, 2000]% in case some other
+            # path (entry_price <= 0, etc.) still produced an out-of-range pct.
+            pnl_pct_clamped = max(-100.0, min(2000.0, float(pnl_pct_out or 0)))
+            if pnl_pct_clamped != pnl_pct_out:
                 logger.warning(
                     f"pnl_pct out of range for {trade.token_symbol}: "
-                    f"{raw_pnl_pct:.2f}% -> clamped to {pnl_pct_clamped:.2f}%"
+                    f"{pnl_pct_out:.2f}% -> clamped to {pnl_pct_clamped:.2f}%"
                 )
+            pnl_pct_out = pnl_pct_clamped
 
             async with self.db_pool.acquire() as conn:
                 await conn.execute("""
@@ -2547,12 +2615,12 @@ class SolanaTradingEngine:
                     trade.strategy.value if hasattr(trade.strategy, 'value') else str(trade.strategy),
                     'long',  # Solana trades are always long
                     trade.entry_price,
-                    trade.exit_price,
-                    trade.amount,
-                    getattr(trade, 'amount_tokens', None),
-                    trade.pnl_sol,
-                    trade.pnl_usd if hasattr(trade, 'pnl_usd') else (trade.pnl_sol * self.sol_price_usd),
-                    pnl_pct_clamped,
+                    exit_price_out,
+                    trade.amount,  # This is now value_sol (SOL amount used for trade)
+                    getattr(trade, 'amount_tokens', None),  # Token amount if available
+                    pnl_sol_out,
+                    pnl_usd_out,
+                    pnl_pct_out,
                     trade.fees if hasattr(trade, 'fees') else 0,
                     trade.close_reason,
                     _as_utc(trade.opened_at),
@@ -2560,9 +2628,9 @@ class SolanaTradingEngine:
                     int((_as_utc(trade.closed_at) - _as_utc(trade.opened_at)).total_seconds()),
                     trade.is_simulated,
                     self.sol_price_usd,
-                    None  # metadata - can be extended later
+                    trade_metadata
                 )
-                logger.info(f"💾 Trade saved to DB: {trade.token_symbol} P&L: {trade.pnl_sol:.4f} SOL")
+                logger.info(f"💾 Trade saved to DB: {trade.token_symbol} P&L: {pnl_sol_out:.4f} SOL")
         except Exception as e:
             logger.error(f"Failed to save trade to DB: {e}")
             import traceback
