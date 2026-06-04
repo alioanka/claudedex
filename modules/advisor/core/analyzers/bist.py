@@ -338,6 +338,18 @@ class BISTAnalyzer(BaseAnalyzer):
         if analyst_summary is not None:
             extra["analyst_consensus"] = analyst_summary
 
+        # Light/optional AI market digest (default off). The shared client caches
+        # it 6h so the per-symbol call is effectively one real fetch per cycle.
+        # Stashed in extra['market_digest'] for a later dashboard hook. FAIL-SOFT:
+        # 404 (not warmed) / disabled / no key => omitted.
+        if (
+            _fonoloji_api_key(self.config)
+            and _flag(self.config, "advisor_fonoloji_market_digest_enabled", False)
+        ):
+            digest = await self._fetch_market_digest()
+            if digest is not None:
+                extra["market_digest"] = digest
+
         return AdviceResult(
             market=self.market,
             symbol=symbol,
@@ -428,6 +440,28 @@ class BISTAnalyzer(BaseAnalyzer):
                 "[bist] consensus-vote parse failed for %s: %s", symbol, exc
             )
             return 0, None
+
+    async def _fetch_market_digest(self) -> Optional[dict]:
+        """
+        Fetch the FREE Fonoloji AI daily market digest (GET /market/digest).
+        Runs the sync client call in an executor; the client owns the 6h TTL
+        cache so this is one real fetch per cycle. FAIL-SOFT: None on no key /
+        404 (not yet warmed) / error — never blocks the cycle.
+        """
+        import asyncio
+
+        def _call():
+            try:
+                client = FonolojiClient(self.config)
+                if not client.enabled:
+                    return None
+                return client.market_digest()
+            except Exception as exc:
+                logger.debug("[bist] Fonoloji market-digest fetch failed: %s", exc)
+                return None
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _call)
 
     # ------------------------------------------------------------------
     # borsapy primary path (AVAILABLE, ~15min delayed, TradingView-backed)
