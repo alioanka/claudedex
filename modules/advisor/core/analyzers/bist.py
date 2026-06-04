@@ -1,7 +1,16 @@
 """
 BISTAnalyzer — Borsa Istanbul equities analyzer.
 
-Data source priority (2026-06-02):
+Data source priority (2026-06-04):
+
+  0. Fonoloji API (OPTIONAL, PREFERRED when ADVISOR_FONOLOJI_API_KEY present) —
+     AVAILABLE. https://fonoloji.com/v1 via the shared FonolojiClient
+     (X-API-Key). GET /stocks/{ticker}/chart?period=1d|5d|1mo|3mo|6mo|1y|5y
+     returns a TRY-denominated price series; OHLC synthesised from close where
+     only close is provided. Preferred over the DEGRADED yfinance .IS path when
+     a key is present. Enable: advisor_bist_data_source='fonoloji' OR just set
+     the key (auto-preferred when the source is unset/''). FAIL-SOFT: no key /
+     error => unchanged (borsapy/yfinance). Cached daily by the client.
 
   1. borsapy (PRIMARY) — AVAILABLE
      TradingView-backed library providing BIST stocks/indices with
@@ -88,6 +97,28 @@ _MATRIKS_STUB_NOTE = (
 )
 
 
+from modules.advisor.core.data.fonoloji_client import (
+    FonolojiClient,
+    resolve_api_key as _fonoloji_api_key,
+)
+
+
+def _fonoloji_period_for_lookback(lookback_days: int) -> str:
+    """Map advisor lookback (days) to a Fonoloji /stocks chart period token
+    (1d|5d|1mo|3mo|6mo|1y|5y)."""
+    if lookback_days <= 5:
+        return "5d"
+    if lookback_days <= 31:
+        return "1mo"
+    if lookback_days <= 95:
+        return "3mo"
+    if lookback_days <= 190:
+        return "6mo"
+    if lookback_days <= 380:
+        return "1y"
+    return "5y"
+
+
 def _borsapy_available() -> bool:
     """Return True if borsapy can be imported (does NOT test connectivity)."""
     try:
@@ -128,6 +159,12 @@ class BISTAnalyzer(BaseAnalyzer):
 
     def data_source_status(self) -> DataSourceStatus:
         source = self.config.get("advisor_bist_data_source", "")
+
+        # Fonoloji (AVAILABLE) — explicit 'fonoloji' OR auto-preferred when a key
+        # is present and the source is unset/''. No key => treated as not
+        # selected (fail-through to borsapy/yfinance).
+        if source in ("fonoloji", "") and _fonoloji_api_key(self.config):
+            return DataSourceStatus.AVAILABLE
 
         # Paid path: key required
         if source == "matriks":
@@ -183,8 +220,29 @@ class BISTAnalyzer(BaseAnalyzer):
         note = ""
         data_source_tag = ""
 
+        # --- Fonoloji (AVAILABLE) — explicit 'fonoloji' OR auto-preferred when a
+        # key is present (source unset/''). FAIL-SOFT: no data => fall through to
+        # borsapy/yfinance below. Preferred over the DEGRADED yfinance .IS path.
+        if _fonoloji_api_key(self.config) and configured_source in ("fonoloji", ""):
+            loop = asyncio.get_event_loop()
+            signals = await loop.run_in_executor(
+                None, self._fetch_fonoloji, symbol, horizon
+            )
+            if signals is not None:
+                actual_status = DataSourceStatus.AVAILABLE
+                data_source_tag = "fonoloji"
+                note = (
+                    "BIST data via Fonoloji API (fonoloji.com/v1). "
+                    "TRY-denominated; cached daily."
+                )
+            elif configured_source == "fonoloji":
+                self.logger.warning(
+                    "[bist] Fonoloji returned no data for %s; falling back to "
+                    "borsapy/yfinance.", symbol,
+                )
+
         # --- borsapy (AVAILABLE) ---
-        if _borsapy_available() and configured_source in ("borsapy", ""):
+        if signals is None and _borsapy_available() and configured_source in ("borsapy", ""):
             loop = asyncio.get_event_loop()
             signals = await loop.run_in_executor(
                 None, self._fetch_borsapy, symbol, horizon
@@ -272,6 +330,39 @@ class BISTAnalyzer(BaseAnalyzer):
             sim_amount_usd=float(self.config.get("sim_default_amount_usd", 1000)),
             extra=extra,
         )
+
+    # ------------------------------------------------------------------
+    # Fonoloji path (AVAILABLE, optional — preferred when a key is present)
+    # ------------------------------------------------------------------
+
+    def _fetch_fonoloji(self, symbol: str, horizon: Horizon) -> Optional[dict]:
+        """
+        Fetch a BIST price series via the shared FonolojiClient. Runs in executor.
+
+        Verified contract: GET /stocks/{ticker}/chart?period=... -> a price
+        series (points with date + price/close; mapped defensively). Fonoloji
+        gives close/price only, so OHLC is synthesised from close (same approach
+        as the NAV path), which is sufficient for the SMA/RSI/BB suite. Volume,
+        if present, is used; otherwise vol_ratio is neutral.
+
+        FAIL-SOFT: returns None on missing key / HTTP error / unusable shape so
+        the caller falls through to borsapy/yfinance.
+        """
+        client = FonolojiClient(self.config)
+        if not client.enabled:
+            return None
+
+        lookback = _LOOKBACK[horizon]
+        period = _fonoloji_period_for_lookback(lookback + 60)
+        payload = client.stock_chart(symbol, period=period)
+        df = _fonoloji_chart_to_df(payload)
+        if df is None or len(df) < 20:
+            logger.debug(
+                "[bist] Fonoloji chart for %r (period=%s) yielded no usable "
+                "series.", symbol, period,
+            )
+            return None
+        return _compute_technicals_ohlcv(df, lookback)
 
     # ------------------------------------------------------------------
     # borsapy primary path (AVAILABLE, ~15min delayed, TradingView-backed)
@@ -546,3 +637,154 @@ def _signals_to_direction(signals: dict) -> Direction:
     elif votes < 0:
         return Direction.SHORT
     return Direction.NEUTRAL
+
+
+def _fonoloji_chart_to_df(payload):
+    """
+    Turn a Fonoloji /stocks/{ticker}/chart payload into an OHLCV DataFrame.
+
+    The exact JSON shape is operator-confirmable at runtime, so this is
+    DEFENSIVE: accepts a top-level list, or a dict wrapping the series under
+    points/data/prices/chart/series/result. Each row maps:
+      date|tarih|timestamp        -> date (ISO or epoch-ms)
+      close|price|fiyat|last      -> close
+      open|high|low (if present)  -> OHLC; else synthesised from close
+      volume|hacim (if present)   -> volume; else 0
+    Returns a sorted OHLCV DataFrame indexed by date, or None. Pure + offline.
+    """
+    try:
+        import pandas as pd
+    except ImportError:
+        return None
+    if payload is None:
+        return None
+
+    records = None
+    if isinstance(payload, list):
+        records = payload
+    elif isinstance(payload, dict):
+        for k in ("points", "data", "prices", "chart", "series",
+                  "result", "results", "candles", "rows", "items"):
+            v = payload.get(k)
+            if isinstance(v, list) and v:
+                records = v
+                break
+            if isinstance(v, dict):
+                for k2 in ("points", "data", "prices", "series", "candles"):
+                    v2 = v.get(k2)
+                    if isinstance(v2, list) and v2:
+                        records = v2
+                        break
+            if records:
+                break
+    if not records or not isinstance(records, list):
+        return None
+    records = [r for r in records if isinstance(r, dict)]
+    if not records:
+        return None
+
+    try:
+        df = pd.DataFrame(records)
+    except Exception:
+        return None
+    df.columns = [str(c).lower() for c in df.columns]
+
+    col_map = {}
+    for c in df.columns:
+        if c in ("close", "price", "fiyat", "last", "kapanis"):
+            col_map.setdefault("close", c)
+        elif c in ("open", "acilis"):
+            col_map.setdefault("open", c)
+        elif c in ("high", "yuksek", "max"):
+            col_map.setdefault("high", c)
+        elif c in ("low", "dusuk", "min"):
+            col_map.setdefault("low", c)
+        elif c in ("volume", "hacim", "vol"):
+            col_map.setdefault("volume", c)
+        elif c in ("date", "tarih", "datetime", "timestamp", "time"):
+            col_map.setdefault("date", c)
+
+    if "close" not in col_map or "date" not in col_map:
+        return None
+
+    out = pd.DataFrame()
+    raw_date = df[col_map["date"]]
+    num = pd.to_numeric(raw_date, errors="coerce")
+    if num.notna().mean() > 0.5 and float(num.dropna().abs().max() or 0) > 1e11:
+        out["date"] = pd.to_datetime(num, unit="ms", errors="coerce")
+    else:
+        sample = raw_date.astype(str).str.strip()
+        is_iso = sample.str.match(r"^\d{4}-\d{2}-\d{2}").mean() > 0.5
+        out["date"] = pd.to_datetime(raw_date, dayfirst=not is_iso, errors="coerce")
+
+    out["close"] = pd.to_numeric(df[col_map["close"]], errors="coerce")
+    for ohlc in ("open", "high", "low"):
+        if ohlc in col_map:
+            out[ohlc] = pd.to_numeric(df[col_map[ohlc]], errors="coerce")
+    out["volume"] = (
+        pd.to_numeric(df[col_map["volume"]], errors="coerce")
+        if "volume" in col_map else 0.0
+    )
+
+    out = out.dropna(subset=["date", "close"]).set_index("date").sort_index()
+    if out.empty:
+        return None
+    # Synthesise any missing OHLC from close (workable for SMA/RSI/BB).
+    for ohlc in ("open", "high", "low"):
+        if ohlc not in out.columns:
+            out[ohlc] = out["close"]
+        else:
+            out[ohlc] = out[ohlc].fillna(out["close"])
+    return out[["open", "high", "low", "close", "volume"]]
+
+
+# ---------------------------------------------------------------------------
+# Guarded self-test (no network) — Fonoloji chart mapping + technicals.
+# Run: python -m modules.advisor.core.analyzers.bist
+# ---------------------------------------------------------------------------
+
+def _self_test() -> int:
+    try:
+        import pandas as pd  # noqa: F401
+    except ImportError:
+        print("SKIP: pandas not installed")
+        return 0
+    import datetime as _dt
+
+    dates = [(_dt.date(2026, 1, 1) + _dt.timedelta(days=i)).isoformat()
+             for i in range(40)]
+    prices = [100.0 + 0.5 * i for i in range(40)]
+    failures = 0
+
+    cases = {
+        "close-only": [{"date": d, "close": p} for d, p in zip(dates, prices)],
+        "price-tr": {"points": [{"tarih": d, "fiyat": p, "hacim": 1000 + i}
+                                for i, (d, p) in enumerate(zip(dates, prices))]},
+        "full-ohlcv": {"data": [{"date": d, "open": p, "high": p + 1,
+                                 "low": p - 1, "close": p, "volume": 5000}
+                                for d, p in zip(dates, prices)]},
+    }
+    for name, payload in cases.items():
+        df = _fonoloji_chart_to_df(payload)
+        if df is None or len(df) < 20 or "close" not in df.columns:
+            print(f"FAIL[{name}]: chart->df produced no usable series")
+            failures += 1
+            continue
+        sig = _compute_technicals_ohlcv(df, 30)
+        ok = sig is not None and abs(sig["close"] - prices[-1]) < 1e-6
+        print(f"{'OK' if ok else 'FAIL'}[{name}]: rows={len(df)} "
+              f"close={sig['close'] if sig else None}")
+        failures += 0 if ok else 1
+
+    for bad in (None, {}, [], {"data": []}, [1, 2], {"x": 1}):
+        if _fonoloji_chart_to_df(bad) is not None:
+            print(f"FAIL: bad chart payload {bad!r} did not return None")
+            failures += 1
+
+    print("SELF-TEST", "PASS" if failures == 0 else f"FAIL ({failures})")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_self_test())
