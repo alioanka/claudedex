@@ -88,6 +88,14 @@ DEFAULTS: Dict[str, Any] = {
     "advisor_fonoloji_base_url": "https://fonoloji.com/v1",
     "advisor_fonoloji_auth_header": "X-API-Key",
     "advisor_fonoloji_cache_ttl_s": "21600",
+    # Fonoloji AI-advisor layer (migration 081) — all gated on the Fonoloji
+    # key. No key => behaviour UNCHANGED. ai_summary REPLACES the paid
+    # Anthropic rationale for Turkish funds (a saving, not a swap). analyst
+    # recommendations add a broker-consensus VOTE to the BIST directional
+    # signal. market_digest is light/optional (default off).
+    "advisor_fonoloji_ai_summary_enabled": "true",
+    "advisor_bist_use_analyst_recommendations": "true",
+    "advisor_fonoloji_market_digest_enabled": "false",
     # GEMS BIST screener batch knobs (migration 080).
     "advisor_discovery_bist_screener_enabled": "true",
     "advisor_discovery_bist_pe_max": "25",

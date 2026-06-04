@@ -150,6 +150,14 @@ from modules.advisor.core.data.fonoloji_client import (
     resolve_api_key as _fonoloji_api_key,
 )
 
+def _flag(config: dict, key: str, default: bool) -> bool:
+    """Read a boolean advisor_config flag tolerating bool or string values."""
+    val = (config or {}).get(key, default)
+    if isinstance(val, bool):
+        return val
+    return str(val).strip().lower() in ("true", "1", "yes", "on")
+
+
 # Map the advisor lookback (days) to the closest Fonoloji NAV `period` token.
 def _fonoloji_period_for_lookback(lookback_days: int) -> str:
     if lookback_days <= 7:
@@ -378,6 +386,31 @@ class MidasFundsAnalyzer(BaseAnalyzer):
             "usable series.", code, period,
         )
         return None
+
+    async def _fetch_fonoloji_ai_summary(self, symbol: str) -> Optional[dict]:
+        """
+        Fetch the FREE Fonoloji AI fund summary (GET /funds/{code}/ai-summary).
+        Runs the sync client call in an executor. FAIL-SOFT: None on no key /
+        404 (summary not yet warmed) / error, so the caller falls back to the
+        paid build_rationale() path. The client owns the 6h TTL cache + quota.
+        """
+        import asyncio
+
+        def _call():
+            try:
+                client = FonolojiClient(self.config)
+                if not client.enabled:
+                    return None
+                return client.fund_ai_summary(symbol.upper())
+            except Exception as exc:  # never break the advice loop
+                logger.debug(
+                    "[midas_funds] Fonoloji ai-summary fetch failed for %s: %s",
+                    symbol, exc,
+                )
+                return None
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _call)
 
     # ------------------------------------------------------------------
     # tefas-crawler path (AVAILABLE, primary)
@@ -928,18 +961,49 @@ class MidasFundsAnalyzer(BaseAnalyzer):
 
         self.last_price[symbol] = last_nav
 
-        rationale = await build_rationale(
-            symbol=symbol,
-            market=self.market,
-            horizon=horizon,
-            signals=signals,
-            direction=direction,
-            config=self.config,
-            caller_logger=self.logger,
-        )
-
+        # Rationale source selection. When a Fonoloji key is present AND
+        # advisor_fonoloji_ai_summary_enabled (default true), use the FREE
+        # Fonoloji AI fund summary as the rationale INSTEAD of build_rationale()
+        # — which would spend the paid Anthropic budget. This makes Turkish-fund
+        # narration cost ZERO paid LLM. FAIL-SOFT: 404 (summary not yet warmed) /
+        # disabled / no key => fall back to the existing build_rationale() path.
+        rationale = None
         model_id = self.config.get("advisor_anthropic_model", "claude-opus-4-5")
-        extra = {"klines_df": signals.get("df"), "data_source": data_source_tag}
+        ai_summary_used = False
+        if (
+            _fonoloji_api_key(self.config)
+            and _flag(self.config, "advisor_fonoloji_ai_summary_enabled", True)
+        ):
+            ai = await self._fetch_fonoloji_ai_summary(symbol)
+            summary_text = (ai or {}).get("summary") if isinstance(ai, dict) else None
+            if summary_text and str(summary_text).strip():
+                rationale = (
+                    "[Fonoloji AI ozeti — yatirim tavsiyesi DEGILDIR / ADVICE-ONLY] "
+                    + str(summary_text).strip()
+                )
+                model_id = "fonoloji:" + str((ai or {}).get("model", "ai-summary"))
+                ai_summary_used = True
+                self.logger.debug(
+                    "[midas_funds] Using Fonoloji AI summary for %s "
+                    "(paid LLM skipped).", symbol,
+                )
+
+        if rationale is None:
+            rationale = await build_rationale(
+                symbol=symbol,
+                market=self.market,
+                horizon=horizon,
+                signals=signals,
+                direction=direction,
+                config=self.config,
+                caller_logger=self.logger,
+            )
+
+        extra = {
+            "klines_df": signals.get("df"),
+            "data_source": data_source_tag,
+            "rationale_source": "fonoloji_ai_summary" if ai_summary_used else "llm",
+        }
 
         entry_low, entry_high, target, stop = horizon_levels(
             signals, direction, horizon, config=self.config, price_decimals=4
