@@ -368,7 +368,14 @@ class SolanaTelegramAlerts:
         return await self.send_message(message.strip(), category='error')
 
     async def send_risk_alert(self, risk_type: str, details: str) -> bool:
-        """Send risk management alert"""
+        """Send risk management alert.
+
+        Routed with category='error' so it lands in the dedicated error
+        topic and is NOT suppressed when notify_solana_mode='summary'
+        (the default). Previously it used the default 'trade' category,
+        which meant risk alerts were silently dropped in summary mode —
+        the same class of gap that left the error topic empty.
+        """
         message = f"""
 🚨 *SOLANA RISK ALERT* \\| {self._escape_markdown(risk_type)}
 
@@ -376,4 +383,4 @@ class SolanaTelegramAlerts:
 
 ⏰ {self._escape_markdown(datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC'))}
 """
-        return await self.send_message(message.strip())
+        return await self.send_message(message.strip(), category='error')
