@@ -135,8 +135,8 @@ async def upsert_return_row(pool, disclosure_id: str, ticker: str,
             return_1d, return_3d, return_5d, return_10d, return_30d,
             price_source, last_computed, windows_complete
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW(),
-            ($5 IS NOT NULL AND $6 IS NOT NULL AND $7 IS NOT NULL
-             AND $8 IS NOT NULL AND $9 IS NOT NULL)
+            ($5::numeric IS NOT NULL AND $6::numeric IS NOT NULL AND $7::numeric IS NOT NULL
+             AND $8::numeric IS NOT NULL AND $9::numeric IS NOT NULL)
         )
         ON CONFLICT (disclosure_id, ticker) DO UPDATE SET
             anchor_price    = COALESCE(EXCLUDED.anchor_price, kap_returns.anchor_price),
