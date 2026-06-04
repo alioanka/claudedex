@@ -16438,14 +16438,17 @@ class DashboardEndpoints:
             if self.db:
                 async with self.db.pool.acquire() as conn:
                     row = await conn.fetchrow(
-                        "SELECT entry_price, notional_usd FROM advisor_sim_positions WHERE id=$1 AND status='open'",
+                        "SELECT entry_price, notional_usd, direction FROM advisor_sim_positions WHERE id=$1 AND status='open'",
                         sim_id,
                     )
                     if not row:
                         return web.json_response({'success': False, 'error': 'Sim not found or already closed'}, status=404)
                     entry = float(row['entry_price'])
                     notional = float(row['notional_usd'])
-                    pnl_pct = round((exit_price - entry) / entry * 100, 4) if exit_price and entry else None
+                    # Direction-aware PnL: SHORT profits when price FALLS. The
+                    # LONG-only formula gave SHORT sims the wrong sign on close.
+                    sign = -1.0 if str(row['direction'] or 'long').lower() == 'short' else 1.0
+                    pnl_pct = round(sign * (exit_price - entry) / entry * 100, 4) if exit_price and entry else None
                     pnl_usd = round(notional * pnl_pct / 100, 2) if pnl_pct is not None else None
                     await conn.execute(
                         """UPDATE advisor_sim_positions
@@ -16477,16 +16480,22 @@ class DashboardEndpoints:
             closed = 0
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    # Direction-aware PnL: SHORT profits when price falls, so the
+                    # raw (exit-entry)/entry return is negated for shorts.
                     rows = await conn.fetch(
                         """UPDATE advisor_sim_positions
                               SET status='closed', close_reason='operator_bulk',
                                   exit_price = COALESCE(current_price, entry_price),
                                   pnl_pct = CASE WHEN entry_price > 0
-                                      THEN ROUND((((COALESCE(current_price, entry_price) - entry_price)
-                                                   / entry_price) * 100)::numeric, 4) ELSE 0 END,
+                                      THEN ROUND((
+                                          (CASE WHEN lower(direction)='short' THEN -1 ELSE 1 END)
+                                          * ((COALESCE(current_price, entry_price) - entry_price)
+                                             / entry_price) * 100)::numeric, 4) ELSE 0 END,
                                   pnl_usd = CASE WHEN entry_price > 0
-                                      THEN ROUND((notional_usd * ((COALESCE(current_price, entry_price)
-                                                   - entry_price) / entry_price))::numeric, 2) ELSE 0 END,
+                                      THEN ROUND((notional_usd
+                                          * (CASE WHEN lower(direction)='short' THEN -1 ELSE 1 END)
+                                          * ((COALESCE(current_price, entry_price) - entry_price)
+                                             / entry_price))::numeric, 2) ELSE 0 END,
                                   closed_at = NOW(), updated_at = NOW()
                             WHERE status='open' AND COALESCE(channel, market) = $1
                             RETURNING id""",
