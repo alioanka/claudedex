@@ -663,18 +663,36 @@ class TelegramNotificationEngine:
         if not self.db_pool:
             return stats
 
-        # Module->table/pnl_col mapping
+        # Module -> (table, pnl_col, ts_col, closed_filter).
+        #
+        # IMPORTANT: column/table names below are the SCHEMA-VERIFIED names
+        # taken from each module's INSERT statements and the dashboard's own
+        # summary queries (monitoring/enhanced_dashboard.py:api_dashboard_summary).
+        # The previous mapping guessed `entry_timestamp` + `pnl_usd`/`profit_usd`
+        # for every table, but the real columns differ per module:
+        #   - solana_trades : pnl_sol  / entry_time      (no status col)
+        #   - futures_trades: pnl      / entry_time
+        #   - sniper_trades : profit_loss / entry_timestamp (status='closed')
+        #   - arbitrage_trades  : profit_loss / entry_timestamp
+        #   - copytrading_trades: profit_loss / entry_timestamp (status='closed')
+        #   - ai_trades     : profit_loss / entry_timestamp (status='closed')
+        # `dex_trades` does not exist, so DEX is intentionally omitted.
+        # The old mapping made EVERY query raise (caught at debug) -> empty
+        # stats -> the periodic summary/dashboard builders returned early and
+        # NOTHING was ever posted to the summary/dashboard topics.
+        #
+        # closed_filter is an optional extra WHERE clause (already prefixed
+        # with AND) restricting to settled trades so PnL is meaningful.
         module_tables = {
-            'futures':   ('futures_trades',    'pnl',         'entry_timestamp'),
-            'solana':    ('solana_trades',      'pnl_sol',     'entry_timestamp'),
-            'ai':        ('ai_trades',          'pnl_usd',     'entry_timestamp'),
-            'sniper':    ('sniper_trades',      'pnl_usd',     'entry_timestamp'),
-            'arbitrage': ('arbitrage_trades',   'profit_usd',  'entry_timestamp'),
-            'copy':      ('copy_trades',        'pnl_usd',     'entry_timestamp'),
-            'dex':       ('dex_trades',         'pnl_usd',     'entry_timestamp'),
+            'futures':   ('futures_trades',     'pnl',         'entry_time',      ''),
+            'solana':    ('solana_trades',      'pnl_sol',     'entry_time',      " AND exit_time IS NOT NULL"),
+            'ai':        ('ai_trades',          'profit_loss', 'entry_timestamp', " AND status = 'closed'"),
+            'sniper':    ('sniper_trades',      'profit_loss', 'entry_timestamp', " AND status = 'closed'"),
+            'arbitrage': ('arbitrage_trades',   'profit_loss', 'entry_timestamp', ''),
+            'copy':      ('copytrading_trades', 'profit_loss', 'entry_timestamp', " AND status = 'closed'"),
         }
 
-        for mod, (tbl, pnl_col, ts_col) in module_tables.items():
+        for mod, (tbl, pnl_col, ts_col, closed) in module_tables.items():
             try:
                 async with self.db_pool.acquire() as conn:
                     row = await conn.fetchrow(f"""
@@ -685,12 +703,12 @@ class TelegramNotificationEngine:
                             COALESCE(SUM(CASE WHEN {ts_col} > NOW() - INTERVAL '24 hours'
                                          THEN {pnl_col} ELSE 0 END), 0)::float AS pnl_24h
                         FROM {tbl}
-                        WHERE {ts_col} IS NOT NULL
+                        WHERE {ts_col} IS NOT NULL{closed}
                     """)
                     recent = await conn.fetch(f"""
                         SELECT {pnl_col} AS pnl
                         FROM {tbl}
-                        WHERE {ts_col} IS NOT NULL
+                        WHERE {ts_col} IS NOT NULL{closed}
                         ORDER BY {ts_col} DESC LIMIT 5
                     """)
 
@@ -709,7 +727,10 @@ class TelegramNotificationEngine:
                         'streak':        streak,
                     }
             except Exception as e:
-                logger.debug(f"Stats query failed for {mod}: {e}")
+                # Surface at WARNING (not debug): a failed query here means a
+                # module silently drops out of the summary/dashboard digest,
+                # which is exactly the class of bug that hid the empty topics.
+                logger.warning(f"Stats query failed for {mod} ({tbl}): {e}")
 
         return stats
 
