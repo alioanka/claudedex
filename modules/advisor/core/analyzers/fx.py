@@ -9,6 +9,12 @@ Optional upgrade: Alpha Vantage (free tier 25 req/day). Set
   advisor_fx_data_source='alphavantage' in advisor_config DB AND
   ADVISOR_FX_ALPHAVANTAGE_KEY in Secure Credentials (alphavantage.co).
 
+Optional Turkish spot source: Fonoloji (advisor_fx_data_source='fonoloji' +
+  ADVISOR_FONOLOJI_API_KEY). Exposes CURRENT TRY-denominated spot for gold
+  (gram/çeyrek/ons via /gold/live), silver, USD/TRY and EUR/TRY (via
+  /market/live). This is current-price-only (no daily history) => NEUTRAL,
+  informational advice with no technicals. Keep 'yfinance' for FX technicals.
+
 Watchlist format (watchlist_fx config key):
   yfinance    : "EURUSD=X,GBPUSD=X,XAUUSD=X,XAGUSD=X,GC=F,SI=F"
   alphavantage: "EUR/USD,GBP/USD,XAU/USD,XAG/USD"
@@ -109,6 +115,12 @@ class FXAnalyzer(BaseAnalyzer):
                 or os.getenv("ADVISOR_FX_ALPHAVANTAGE_KEY", "")
             )
             return DataSourceStatus.AVAILABLE if key else DataSourceStatus.NOT_CONFIGURED
+        if source == "fonoloji":
+            # Spot TRY prices via Fonoloji /gold/live + /market/live. Current
+            # price ONLY (no daily history) => current-price/NEUTRAL advice.
+            from modules.advisor.core.data.fonoloji_client import resolve_api_key
+            return (DataSourceStatus.AVAILABLE if resolve_api_key(self.config)
+                    else DataSourceStatus.NOT_CONFIGURED)
         return DataSourceStatus.NOT_CONFIGURED
 
     async def analyze(self, symbol: str, horizon: Horizon) -> AdviceResult:
@@ -120,9 +132,119 @@ class FXAnalyzer(BaseAnalyzer):
         if status == DataSourceStatus.NOT_CONFIGURED:
             return self._not_configured(symbol, horizon, _NOT_CONFIGURED_NOTE)
         try:
+            if self.config.get("advisor_fx_data_source", "yfinance") == "fonoloji":
+                return await self._analyze_fonoloji(symbol, horizon)
             return await self._analyze_internal(symbol, horizon, status)
         except Exception as exc:
             return self._error_result(symbol, horizon, exc)
+
+    # ------------------------------------------------------------------
+    # Fonoloji spot path (current TRY price only — NEUTRAL, no technicals)
+    # ------------------------------------------------------------------
+
+    async def _analyze_fonoloji(self, symbol: str, horizon: Horizon) -> AdviceResult:
+        """
+        Current TRY-denominated spot price via Fonoloji /gold/live + /market/live.
+        These are LIVE-PRICE endpoints (no daily history), so there are no
+        SMA/RSI/BB technicals — this path emits a NEUTRAL, current-price-only
+        AdviceResult (informational). Use yfinance (default) for FX technicals.
+
+        Recognised symbols (case-insensitive, flexible):
+          gold      : XAU, XAUUSD=X, GC=F, GRAM_ALTIN, GRAMALTIN, ALTIN, ONS
+          silver    : XAG, XAGUSD=X, SI=F, GUMUS, SILVER
+          USD/TRY   : USDTRY=X, USDTRY, USD
+          EUR/TRY   : EURTRY=X, EURTRY, EUR
+        FAIL-SOFT: unknown symbol / no data => _error_result (advice cycle ok).
+        """
+        import asyncio
+
+        loop = asyncio.get_event_loop()
+        price, label = await loop.run_in_executor(
+            None, self._fetch_fonoloji_spot, symbol
+        )
+        if price is None:
+            return self._error_result(
+                symbol, horizon,
+                Exception(
+                    f"Fonoloji spot has no current price for '{symbol}'. "
+                    "Recognised: gold (XAU/GC=F/GRAM_ALTIN/ONS), silver "
+                    "(XAG/SI=F/GUMUS), USDTRY, EURTRY. For FX technicals use "
+                    "advisor_fx_data_source='yfinance'."
+                ),
+            )
+
+        self.last_price[symbol] = price
+        note = (
+            f"{label} current spot via Fonoloji /gold/live + /market/live "
+            "(TRY-denominated). CURRENT PRICE ONLY — no daily history, so no "
+            "SMA/RSI/BB technicals and direction is NEUTRAL. For FX technicals "
+            "set advisor_fx_data_source='yfinance'."
+        )
+        return AdviceResult(
+            market=self.market,
+            symbol=symbol,
+            horizon=horizon,
+            direction=Direction.NEUTRAL,
+            entry_low=round(price * 0.999, 6),
+            entry_high=round(price * 1.001, 6),
+            target_price=None,
+            stop_price=None,
+            confidence=0.0,
+            rationale=(
+                f"{label}: current Fonoloji spot {price} TRY. Informational "
+                "current-price reference only (no technical history)."
+            ),
+            model_id="",
+            data_source_status=DataSourceStatus.AVAILABLE,
+            data_source_note=note,
+            sim_enabled=False,  # no history => cannot mark-to-market a sim safely
+            sim_amount_usd=float(self.config.get("sim_default_amount_usd", 1000)),
+            extra={"data_source": "fonoloji", "current_price_try": price,
+                   "instrument": label},
+        )
+
+    def _fetch_fonoloji_spot(self, symbol: str):
+        """Resolve a current TRY spot price for `symbol` from Fonoloji live
+        endpoints. Returns (price, human_label) or (None, '') on no data."""
+        from modules.advisor.core.data.fonoloji_client import FonolojiClient
+        client = FonolojiClient(self.config)
+        if not client.enabled:
+            return None, ""
+
+        s = str(symbol or "").strip().upper().replace("=X", "").replace("=F", "")
+        s = s.replace("/", "").replace("-", "_")
+
+        gold_aliases = {"XAU", "XAUUSD", "GC", "ALTIN", "GRAM_ALTIN", "GRAMALTIN",
+                        "GRAM", "ONS", "CEYREK", "GOLD"}
+        silver_aliases = {"XAG", "XAGUSD", "SI", "GUMUS", "SILVER", "GUMUSH"}
+
+        if s in gold_aliases:
+            gold = client.gold_live() or {}
+            # /gold/live -> gram/çeyrek/ons; pick the requested cut, default gram.
+            key = ("ons" if "ONS" in s else
+                   "ceyrek" if "CEYREK" in s else "gram")
+            price = _pick_price(gold, [key, "gram", "gram_altin", "price",
+                                       "value", "buying", "selling", "ask"])
+            return (price, f"Gold ({key})") if price is not None else (None, "")
+
+        if s in silver_aliases:
+            live = client.market_live() or {}
+            price = _pick_price(live, ["silver", "gumus", "xag", "price", "value"])
+            if price is None:
+                gold = client.gold_live() or {}
+                price = _pick_price(gold, ["silver", "gumus"])
+            return (price, "Silver") if price is not None else (None, "")
+
+        # FX pairs against TRY from /market/live.
+        live = client.market_live() or {}
+        if s in ("USDTRY", "USD"):
+            price = _pick_price(live, ["usdtry", "usd_try", "usd", "dollar", "dolar"])
+            return (price, "USD/TRY") if price is not None else (None, "")
+        if s in ("EURTRY", "EUR"):
+            price = _pick_price(live, ["eurtry", "eur_try", "eur", "euro"])
+            return (price, "EUR/TRY") if price is not None else (None, "")
+
+        return None, ""
 
     # ------------------------------------------------------------------
     # Internal implementation
@@ -419,3 +541,87 @@ def _signals_to_direction(signals: dict) -> Direction:
     elif votes < 0:
         return Direction.SHORT
     return Direction.NEUTRAL
+
+
+def _pick_price(payload, keys) -> Optional[float]:
+    """
+    Pull the first usable numeric price from a Fonoloji live payload.
+
+    Tolerates: flat {key: number}, flat {key: {selling/buying/price/value: ...}},
+    and a top-level {data/result: {...}} wrapper. Keys are matched
+    case-insensitively. Returns None if nothing parses (fail-soft).
+    """
+    if not isinstance(payload, dict):
+        return None
+    # Descend one wrapper level if present.
+    for w in ("data", "result", "results"):
+        inner = payload.get(w)
+        if isinstance(inner, dict):
+            got = _pick_price(inner, keys)
+            if got is not None:
+                return got
+    lower = {str(k).lower(): v for k, v in payload.items()}
+    for k in keys:
+        v = lower.get(str(k).lower())
+        if v is None:
+            continue
+        if isinstance(v, dict):
+            for sub in ("selling", "buying", "price", "value", "last", "ask",
+                        "satis", "alis"):
+                got = _coerce_num(v.get(sub))
+                if got is not None:
+                    return got
+            continue
+        got = _coerce_num(v)
+        if got is not None:
+            return got
+    return None
+
+
+def _coerce_num(v) -> Optional[float]:
+    try:
+        if v is None or isinstance(v, bool):
+            return None
+        # Handle "1.234,56" (TR) and "1,234.56" and plain numbers.
+        if isinstance(v, str):
+            s = v.strip().replace(" ", "")
+            if "," in s and "." in s:
+                s = s.replace(".", "").replace(",", ".")  # TR thousand+decimal
+            elif "," in s:
+                s = s.replace(",", ".")
+            f = float(s)
+        else:
+            f = float(v)
+        return f if f > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Guarded self-test (no network) — Fonoloji live-price picker.
+# Run: python -m modules.advisor.core.analyzers.fx
+# ---------------------------------------------------------------------------
+
+def _self_test() -> int:
+    failures = 0
+
+    def chk(name, cond):
+        nonlocal failures
+        print(f"{'OK' if cond else 'FAIL'}[{name}]")
+        failures += 0 if cond else 1
+
+    chk("flat-gram", _pick_price({"gram": 2500.0}, ["gram"]) == 2500.0)
+    chk("nested-sell", _pick_price({"gram": {"selling": "2.510,00"}}, ["gram"]) == 2510.0)
+    chk("wrapper", _pick_price({"data": {"usdtry": 38.5}}, ["usdtry"]) == 38.5)
+    chk("us-decimal", _pick_price({"eur": "41.2"}, ["eur"]) == 41.2)
+    chk("none", _pick_price({"foo": "bar"}, ["gram"]) is None)
+    chk("nonzero", _pick_price({"gram": 0}, ["gram"]) is None)
+    chk("not-dict", _pick_price([1, 2], ["gram"]) is None)
+
+    print("SELF-TEST", "PASS" if failures == 0 else f"FAIL ({failures})")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(_self_test())
