@@ -452,6 +452,16 @@ class FuturesTradingEngine:
                     funding_config, 'carry_max_positions', 2))
                 self.carry_max_hold_minutes = int(getattr(
                     funding_config, 'carry_max_hold_minutes', 960))
+                # FUT-QC-01 (carry v2): bidirectional stability-gated carry.
+                # Separate flag — when false, ZERO behavior change.
+                self.funding_carry_v2_enabled = bool(getattr(
+                    funding_config, 'futures_funding_carry_enabled', False))
+                self.carry_min_abs_funding_bps = float(getattr(
+                    funding_config, 'carry_min_abs_funding_bps', 10.0))
+                self.carry_funding_stability_window = int(getattr(
+                    funding_config, 'carry_funding_stability_window', 3))
+                self.carry_max_carry_positions = int(getattr(
+                    funding_config, 'carry_max_carry_positions', 3))
             except Exception:
                 # FuturesFundingConfig absent in very old DB seeds; disable carry.
                 self.funding_carry_enabled = False
@@ -459,6 +469,10 @@ class FuturesTradingEngine:
                 self.carry_exit_funding_bps = 3.0
                 self.carry_max_positions = 2
                 self.carry_max_hold_minutes = 960
+                self.funding_carry_v2_enabled = False
+                self.carry_min_abs_funding_bps = 10.0
+                self.carry_funding_stability_window = 3
+                self.carry_max_carry_positions = 3
 
         else:
             # Fallback to defaults if no config manager (should not happen in production)
@@ -517,6 +531,11 @@ class FuturesTradingEngine:
             self.carry_exit_funding_bps = 3.0
             self.carry_max_positions = 2
             self.carry_max_hold_minutes = 960
+            # FUT-QC-01 (carry v2) fallback defaults — OFF
+            self.funding_carry_v2_enabled = False
+            self.carry_min_abs_funding_bps = 10.0
+            self.carry_funding_stability_window = 3
+            self.carry_max_carry_positions = 3
 
         # DRY_RUN already resolved at top of __init__ via core.dry_run.resolve_dry_run_env
 
@@ -527,6 +546,23 @@ class FuturesTradingEngine:
         # FUT-RM-25: track which symbols currently hold a carry-strategy position
         # so the carry scan can exit when funding falls and not double-enter.
         self._carry_position_symbols: set = set()
+
+        # FUT-QC-01 (carry v2): rolling-window planner + per-symbol tracking.
+        # Planner state is in-memory only; after a restart the stability
+        # window must refill before a new v2 entry can arm (fail-safe: no
+        # evidence -> no trade). Exits never depend on the window.
+        from modules.futures_trading.strategies.funding_carry import (
+            FundingCarryPlanner,
+        )
+        self._carry_v2_symbols: set = set()
+        self._carry_planner = FundingCarryPlanner(
+            min_abs_funding_bps=float(getattr(
+                self, 'carry_min_abs_funding_bps', 10.0)),
+            min_samples=max(2, int(getattr(
+                self, 'carry_funding_stability_window', 3))),
+            exit_abs_funding_bps=float(getattr(
+                self, 'carry_exit_funding_bps', 3.0)),
+        )
 
         # Reconcile observability (set by _sync_positions on startup)
         self.last_reconcile_at: Optional[datetime] = None
@@ -1321,6 +1357,12 @@ class FuturesTradingEngine:
                 if getattr(self, 'funding_carry_enabled', False):
                     await self._scan_funding_carry_opportunities()
 
+                # 4b. FUT-QC-01: carry v2 — bidirectional, stability-gated.
+                # Separate DB flag (futures_funding_carry_enabled); when off
+                # this branch never runs and behavior is unchanged.
+                if getattr(self, 'funding_carry_v2_enabled', False):
+                    await self._scan_funding_carry_v2()
+
             # 5. Execute pending orders
             await self._process_orders()
 
@@ -1460,7 +1502,23 @@ class FuturesTradingEngine:
                 rate = await self._get_funding_rate_cached(position.symbol)
                 if rate is not None:
                     rate_bps = float(rate) * 10000.0
-                    if rate_bps < float(carry_exit_bps):
+                    # FUT-QC-01: v2 carry is bidirectional. A LONG carry
+                    # collects NEGATIVE funding, so its edge is gone when the
+                    # rate rises above -exit_bps (the v1 `< exit_bps` test
+                    # would close a LONG carry instantly). SHORT carry keeps
+                    # the original v1 semantics.
+                    if (
+                        position.metadata.get('carry_v2')
+                        and position.side == TradeSide.LONG
+                    ):
+                        if rate_bps > -float(carry_exit_bps):
+                            logger.info(
+                                f"[carry-v2] funding-decay exit: "
+                                f"{position.symbol} LONG carry, funding "
+                                f"{rate_bps:+.2f} bps > -{float(carry_exit_bps):.2f} bps"
+                            )
+                            return "carry_funding_dropped"
+                    elif rate_bps < float(carry_exit_bps):
                         logger.info(
                             f"FUT-RM-25 carry funding-drop exit: {position.symbol} "
                             f"funding {rate_bps:.2f} bps < exit threshold "
@@ -1936,6 +1994,126 @@ class FuturesTradingEngine:
 
         except Exception as e:
             logger.error(f"FUT-RM-25 _scan_funding_carry_opportunities error: {e}")
+
+    async def _scan_funding_carry_v2(self) -> None:
+        """FUT-QC-01 (carry v2): bidirectional, stability-gated funding carry.
+
+        Delegates ALL entry/exit math to the pure-logic FundingCarryPlanner
+        (modules/futures_trading/strategies/funding_carry.py — edge thesis,
+        cost model, and self-test live there). This method only does I/O:
+
+        1. Record one funding sample per symbol per cycle (the planner's
+           300s spacing gate dedupes the 300s-TTL cached rate, so a sample
+           is only appended when the cache has actually refreshed).
+        2. Exit: when a v2-held position's live rate no longer pays our side
+           by exit_abs_funding_bps (bidirectional — unlike the v1 metadata
+           check which is SHORT-only).
+        3. Entry: when the planner's stability gate arms (>= min_samples
+           samples, >= 80% window span, same sign, EVERY sample beyond
+           carry_min_abs_funding_bps), enter the collecting side via
+           _open_position — which runs every existing risk gate unchanged:
+           FUT-RM-27 symbol tiering + rolling gate, FUT-RM-19 edge gate,
+           FUT-RM-17 cool-off, FUT-RM-05 funding gate (which always favors
+           the carry direction), FuturesRiskManager.validate_new_position,
+           and should_skip_live (DRY_RUN / killswitch / pause).
+
+        Caps + holds: carry_max_carry_positions bounds the v2 book
+        (independent of v1 + momentum caps); carry_max_hold_minutes is
+        stamped into position metadata and honored by FUT-RM-23/25 in
+        _check_exit_conditions. DRY_RUN measurability: every entry logs a
+        `[carry-v2]` line with the expected net carry at 1 and 2 intervals.
+        """
+        try:
+            carry_max = int(getattr(self, 'carry_max_carry_positions', 3))
+            carry_max_hold = int(getattr(self, 'carry_max_hold_minutes', 960))
+            planner = self._carry_planner
+            now = datetime.utcnow()
+
+            current_count = len(
+                self._carry_v2_symbols & set(self.active_positions.keys()))
+
+            for symbol in self.symbols:
+                try:
+                    rate = await self._get_funding_rate_cached(symbol)
+                    rate_bps = float(rate) * 10000.0 if rate is not None else None
+
+                    # 1. Always feed the window (even at cap / while holding)
+                    # so the stability evidence stays warm.
+                    if rate_bps is not None:
+                        planner.record(symbol, rate_bps, now)
+
+                    # 2. Exit check for v2-held positions (bidirectional).
+                    if symbol in self._carry_v2_symbols and symbol in self.active_positions:
+                        pos = self.active_positions[symbol]
+                        side_name = pos.side.value.upper() if hasattr(
+                            pos.side, 'value') else str(pos.side).upper()
+                        do_exit, why = planner.should_exit(side_name, rate_bps)
+                        if do_exit:
+                            logger.info(
+                                f"[carry-v2] exit {symbol} ({side_name}): {why}")
+                            await self._close_position(
+                                symbol, "carry_v2_funding_decayed")
+                            self._carry_v2_symbols.discard(symbol)
+                            current_count = max(0, current_count - 1)
+                        continue
+
+                    # 3. Skip symbols already held by momentum or v1 carry.
+                    if symbol in self.active_positions:
+                        continue
+                    if symbol in self._carry_position_symbols:
+                        continue
+
+                    # 4. v2 book cap.
+                    if current_count >= carry_max:
+                        continue
+
+                    # 5. Stability-gated entry decision (pure logic).
+                    decision = planner.evaluate_entry(symbol, now)
+                    if not decision.enter:
+                        if self.verbose_signals and decision.samples > 0:
+                            logger.debug(
+                                f"[carry-v2] {symbol} not armed: {decision.reason}")
+                        continue
+
+                    side = TradeSide.SHORT if decision.side == 'SHORT' else TradeSide.LONG
+                    net_1 = planner.expected_net_carry_bps(decision.min_abs_bps, 1.0)
+                    net_2 = planner.expected_net_carry_bps(decision.min_abs_bps, 2.0)
+                    logger.info(
+                        f"[carry-v2] ENTRY signal {symbol} {decision.side}: "
+                        f"{decision.reason} (mean {decision.mean_bps:+.2f} bps, "
+                        f"{decision.samples} samples / "
+                        f"{decision.span_minutes:.0f} min span; expected net "
+                        f"carry {net_1:+.1f} bps @1 interval, "
+                        f"{net_2:+.1f} bps @2 intervals)"
+                    )
+
+                    # Neutral indicator object — the edge is funding, not
+                    # price direction. _open_position runs all risk gates.
+                    carry_signals = TechnicalSignals()
+                    await self._open_position(symbol, side, carry_signals)
+
+                    if symbol in self.active_positions:
+                        pos = self.active_positions[symbol]
+                        pos.metadata['carry_trade'] = True
+                        pos.metadata['carry_v2'] = True
+                        pos.metadata['carry_side'] = decision.side
+                        pos.metadata['entry_funding_bps'] = decision.mean_bps
+                        pos.metadata['carry_exit_bps'] = float(
+                            planner.exit_abs_funding_bps)
+                        if carry_max_hold > 0:
+                            pos.metadata['carry_max_hold_minutes'] = carry_max_hold
+                        self._carry_v2_symbols.add(symbol)
+                        current_count += 1
+                        logger.info(
+                            f"[carry-v2] position opened {symbol} {decision.side} "
+                            f"({current_count}/{carry_max} v2 carry positions)"
+                        )
+
+                except Exception as sym_err:
+                    logger.error(f"[carry-v2] error scanning {symbol}: {sym_err}")
+
+        except Exception as e:
+            logger.error(f"[carry-v2] _scan_funding_carry_v2 error: {e}")
 
     async def _get_technical_signals(self, symbol: str) -> Optional[TechnicalSignals]:
         """Calculate technical indicators for a symbol using configurable timeframe"""
@@ -2955,6 +3133,8 @@ class FuturesTradingEngine:
             del self.active_positions[symbol]
             # FUT-RM-25: clean up carry tracking on any close path.
             self._carry_position_symbols.discard(symbol)
+            # FUT-QC-01: same for the carry-v2 book.
+            self._carry_v2_symbols.discard(symbol)
 
             # Set cooldown
             self.symbol_cooldowns[symbol] = datetime.now() + self.cooldown_duration

@@ -377,6 +377,28 @@ class FuturesFundingConfig(BaseModel):
     # 0 = use the engine's global max_hold_minutes.
     carry_max_hold_minutes: int = 960
 
+    # FUT-QC-01 (carry v2, Wave-26): bidirectional, STABILITY-GATED funding
+    # carry — see modules/futures_trading/strategies/funding_carry.py for the
+    # full edge/cost model. Differences from FUT-RM-25 above:
+    #   - bidirectional (negative funding -> LONG perp, shorts pay longs)
+    #   - entry requires PERSISTENT funding (every sample in a rolling window
+    #     beyond the threshold, same sign) instead of a single snapshot
+    # Default OFF; when off, ZERO behavior change. Both carry generations can
+    # run independently; v2 skips symbols already held by v1 and vice versa.
+    futures_funding_carry_enabled: bool = False
+    # Entry threshold on |funding| in bps per interval, applied to the WEAKEST
+    # sample in the stability window (10 bps ~ breakeven in <2 intervals vs
+    # 17 bps round-trip taker+slippage cost).
+    carry_min_abs_funding_bps: float = 10.0
+    # Minimum number of spaced samples (engine records at most one per 300s
+    # funding-cache TTL) required inside the planner's stability window
+    # before an entry can arm. Window-span coverage is additionally enforced
+    # by the planner itself (min_span_fraction).
+    carry_funding_stability_window: int = 3
+    # Cap on simultaneous carry-v2 positions (independent of the v1
+    # carry_max_positions cap and the momentum max_positions cap).
+    carry_max_carry_positions: int = 3
+
 
 class FuturesConfigManager:
     """
@@ -897,14 +919,36 @@ class FuturesConfigManager:
             'skip_long_funding_bps': FuturesConfigType.FUNDING,
             'skip_short_funding_bps': FuturesConfigType.FUNDING,
             'max_funding_age_seconds': FuturesConfigType.FUNDING,
+            # FUT-RM-25 (v1 carry) settings
+            'funding_carry_enabled': FuturesConfigType.FUNDING,
+            'carry_min_funding_bps': FuturesConfigType.FUNDING,
+            'carry_exit_funding_bps': FuturesConfigType.FUNDING,
+            'carry_max_positions': FuturesConfigType.FUNDING,
+            'carry_max_hold_minutes': FuturesConfigType.FUNDING,
+            # FUT-QC-01 (carry v2) settings. NOTE: the master-flag FIELD name
+            # deliberately matches the DB key `futures_funding_carry_enabled`;
+            # the settings page round-trips it as
+            # `futures_futures_funding_carry_enabled` and the single-leading-
+            # prefix strip below resolves it back. Do NOT post the bare key
+            # `futures_funding_carry_enabled` from a form — after the strip it
+            # collides with the v1 `funding_carry_enabled` field.
+            'futures_funding_carry_enabled': FuturesConfigType.FUNDING,
+            'carry_min_abs_funding_bps': FuturesConfigType.FUNDING,
+            'carry_funding_stability_window': FuturesConfigType.FUNDING,
+            'carry_max_carry_positions': FuturesConfigType.FUNDING,
         }
 
         # Group settings by config type
         grouped: Dict[FuturesConfigType, Dict[str, Any]] = {}
 
         for key, value in settings.items():
-            # Remove futures_ prefix if present
-            clean_key = key.replace('futures_', '') if key.startswith('futures_') else key
+            # Remove ONE leading futures_ prefix if present. Must be a single
+            # leading strip (not str.replace, which removes every occurrence):
+            # FUT-QC-01's `futures_funding_carry_enabled` field round-trips
+            # from get_all_settings as `futures_futures_funding_carry_enabled`
+            # and a global replace would collapse it onto the unrelated v1
+            # `funding_carry_enabled` field.
+            clean_key = key[len('futures_'):] if key.startswith('futures_') else key
 
             config_type = config_map.get(clean_key)
             if config_type:
