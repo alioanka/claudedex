@@ -497,6 +497,7 @@
             <h1 class="dashboard-title">
                 <i class="fas fa-coins"></i>
                 Solana Strategies Dashboard
+                <span id="module-runtime-badge" style="display:none; margin-left:10px; vertical-align:middle; font-size:0.7rem; font-weight:600; padding:4px 10px; border-radius:12px; letter-spacing:0.5px;"></span>
             </h1>
             <p class="dashboard-subtitle">Solana DeFi strategies: Pump.fun, Jupiter, Drift</p>
         </div>
@@ -1309,11 +1310,38 @@ function initPnlChart() {
     });
 }
 
+// Honest module runtime badge (disabled/killswitch/paused/offline/dry-run/live).
+async function loadRuntimeBadge() {
+    try {
+        const resp = await fetch('/api/modules/solana/runtime-status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success) return;
+        const el = document.getElementById('module-runtime-badge');
+        if (!el || !data.status) return;
+        const styles = {
+            live:       { bg: '#10b981', label: 'LIVE' },
+            dry_run:    { bg: '#f59e0b', label: 'DRY RUN' },
+            paused:     { bg: '#f97316', label: 'PAUSED' },
+            offline:    { bg: '#6b7280', label: 'OFFLINE' },
+            disabled:   { bg: '#374151', label: 'DISABLED' },
+            killswitch: { bg: '#dc2626', label: 'KILLSWITCH' },
+        };
+        const s = styles[data.status] || { bg: '#6b7280', label: String(data.status).toUpperCase() };
+        el.style.background = s.bg;
+        el.style.color = '#fff';
+        el.textContent = s.label;
+        el.style.display = 'inline-block';
+    } catch (e) { /* badge stays hidden */ }
+}
+
 // Initialize chart when page loads
 document.addEventListener('DOMContentLoaded', function() {
     initPnlChart();
     loadDashboardData();
     loadTradingStatus();
+    loadRuntimeBadge();
+    setInterval(loadRuntimeBadge, 30000);
 });
 </script>
 {% endblock %}

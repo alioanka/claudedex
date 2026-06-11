@@ -4,7 +4,9 @@
 
 {% block content %}
 <div class="page-header">
-    <h1>Dashboard Overview</h1>
+    <h1>Dashboard Overview
+        <span id="module-runtime-badge" style="display:none; margin-left:10px; vertical-align:middle; font-size:0.7rem; font-weight:600; padding:4px 10px; border-radius:12px; letter-spacing:0.5px;"></span>
+    </h1>
     <div class="page-actions">
         <button class="btn btn-secondary" onclick="refreshDashboard()">
             <i class="fas fa-sync"></i> Refresh
@@ -2079,6 +2081,34 @@ document.addEventListener('DOMContentLoaded', function() {
     }, 60000);  // 60 seconds
 
     // ✅ DON'T refresh summary stats - they should only be loaded once
+
+    // Honest DEX runtime badge (disabled/killswitch/paused/offline/dry-run/live)
+    loadRuntimeBadge();
+    setInterval(loadRuntimeBadge, 30000);
 });
+
+async function loadRuntimeBadge() {
+    try {
+        const resp = await fetch('/api/modules/dex/runtime-status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success) return;
+        const el = document.getElementById('module-runtime-badge');
+        if (!el || !data.status) return;
+        const styles = {
+            live:       { bg: '#10b981', label: 'LIVE' },
+            dry_run:    { bg: '#f59e0b', label: 'DRY RUN' },
+            paused:     { bg: '#f97316', label: 'PAUSED' },
+            offline:    { bg: '#6b7280', label: 'OFFLINE' },
+            disabled:   { bg: '#374151', label: 'DISABLED' },
+            killswitch: { bg: '#dc2626', label: 'KILLSWITCH' },
+        };
+        const s = styles[data.status] || { bg: '#6b7280', label: String(data.status).toUpperCase() };
+        el.style.background = s.bg;
+        el.style.color = '#fff';
+        el.textContent = s.label;
+        el.style.display = 'inline-block';
+    } catch (e) { /* badge stays hidden */ }
+}
 </script>
 {% endblock %}

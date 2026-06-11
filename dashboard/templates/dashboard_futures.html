@@ -579,6 +579,7 @@
             <h1 class="dashboard-title">
                 <i class="fas fa-chart-line"></i>
                 Futures Trading Dashboard
+                <span id="module-runtime-badge" style="display:none; margin-left:10px; vertical-align:middle; font-size:0.7rem; font-weight:600; padding:4px 10px; border-radius:12px; letter-spacing:0.5px;"></span>
             </h1>
             <p class="dashboard-subtitle">Perpetual futures trading module performance</p>
         </div>
@@ -1429,6 +1430,17 @@ async function loadTradingStatus() {
         const data = await response.json();
         if (data.success) {
             renderTradingStatus(data);
+        } else if (data.module_offline) {
+            // Honest offline card: the subprocess is down, but persisted
+            // reconcile observability (if any) is still worth showing.
+            document.getElementById('tradingStatusContent').innerHTML = `
+                <div class="text-center text-muted" style="padding:8px 0;">
+                    <i class="fas fa-power-off"></i>
+                    Futures module offline — live trading status unavailable.
+                    Trade history below is served from the database.
+                </div>
+                ${renderReconcileExtras(data)}
+            `;
         } else {
             document.getElementById('tradingStatusContent').innerHTML = `
                 <div class="text-center text-danger">
@@ -1534,6 +1546,10 @@ function renderTradingStatus(data) {
         </div>
     `;
 
+    // Restart-reconcile observability + OVER-CAP alert (additive keys
+    // merged by the dashboard backend; absent on older deployments).
+    html += renderReconcileExtras(data);
+
     // Block duration if applicable
     if (data.block_duration_hours && data.block_duration_hours > 0) {
         html += `
@@ -1559,6 +1575,68 @@ function refreshTradingStatus() {
     content.innerHTML = '<div class="text-center text-muted"><i class="fas fa-spinner fa-spin"></i> Refreshing...</div>';
     loadTradingStatus();
 }
+
+// Render reconcile state + RESTART OVER-CAP/AT-CAP alert when the
+// backend supplied them (log-tail scrape; all-null when unavailable).
+function renderReconcileExtras(data) {
+    let html = '';
+    const alert = data.restart_alert;
+    if (alert && alert.message) {
+        const isError = alert.level === 'error';
+        const color = isError ? '#dc2626' : '#f59e0b';
+        html += `
+            <div style="margin-top:12px; padding:10px 14px; border-left:4px solid ${color};
+                        background:${isError ? 'rgba(220,38,38,0.08)' : 'rgba(245,158,11,0.08)'};
+                        border-radius:6px;">
+                <div style="font-weight:600; color:${color}; margin-bottom:4px;">
+                    <i class="fas fa-${isError ? 'exclamation-triangle' : 'exclamation-circle'}"></i>
+                    ${isError ? 'RESTART OVER-CAP' : 'RESTART AT-CAP'}
+                </div>
+                <div style="font-size:0.85rem;">${alert.message}</div>
+                ${alert.timestamp ? `<div style="font-size:0.75rem; opacity:0.7; margin-top:4px;">at ${alert.timestamp}</div>` : ''}
+            </div>
+        `;
+    }
+    if (data.last_reconcile_at !== null && data.last_reconcile_at !== undefined) {
+        html += `
+            <div style="margin-top:10px; font-size:0.8rem; opacity:0.75;">
+                <i class="fas fa-rotate"></i>
+                Last position reconcile: ${data.last_reconcile_count ?? '?'} position(s)
+                seeded at ${data.last_reconcile_at}
+            </div>
+        `;
+    }
+    return html;
+}
+
+// Honest module runtime badge (disabled/killswitch/paused/offline/dry-run/live).
+async function loadRuntimeBadge() {
+    try {
+        const resp = await fetch('/api/modules/futures/runtime-status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success) return;
+        renderRuntimeBadge(document.getElementById('module-runtime-badge'), data.status);
+    } catch (e) { /* badge stays hidden */ }
+}
+function renderRuntimeBadge(el, status) {
+    if (!el || !status) return;
+    const styles = {
+        live:       { bg: '#10b981', label: 'LIVE' },
+        dry_run:    { bg: '#f59e0b', label: 'DRY RUN' },
+        paused:     { bg: '#f97316', label: 'PAUSED' },
+        offline:    { bg: '#6b7280', label: 'OFFLINE' },
+        disabled:   { bg: '#374151', label: 'DISABLED' },
+        killswitch: { bg: '#dc2626', label: 'KILLSWITCH' },
+    };
+    const s = styles[status] || { bg: '#6b7280', label: String(status).toUpperCase() };
+    el.style.background = s.bg;
+    el.style.color = '#fff';
+    el.textContent = s.label;
+    el.style.display = 'inline-block';
+}
+loadRuntimeBadge();
+setInterval(loadRuntimeBadge, 30000);
 
 async function resetFuturesTradingBlock() {
     if (!confirm('Reset trading block and allow new trades?')) {
