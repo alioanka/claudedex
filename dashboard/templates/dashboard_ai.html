@@ -359,6 +359,7 @@
             <p class="page-subtitle">Real-time market sentiment analysis and AI-driven trading signals</p>
         </div>
         <div style="display: flex; align-items: center; gap: 12px;">
+            <span id="module-runtime-badge" style="display:none; font-size:0.7rem; font-weight:600; padding:4px 10px; border-radius:12px; letter-spacing:0.5px;"></span>
             <div class="status-badge status-offline" id="aiStatus">
                 <span class="dot"></span>
                 <span id="statusText">Checking...</span>
@@ -810,7 +811,10 @@ function updateDiagPanel(payload) {
 }
 
 function updateStats(data) {
-    // Status
+    // Status — show the backend's HONEST label ('Running', 'Disabled',
+    // 'Stale (Ns)', 'Offline') instead of collapsing everything that
+    // isn't Running into 'Offline'. status_reason goes in the tooltip
+    // so the operator sees WHY without grepping logs.
     const statusEl = document.getElementById('aiStatus');
     const statusText = document.getElementById('statusText');
     if (data.status === 'Running') {
@@ -818,8 +822,9 @@ function updateStats(data) {
         statusText.textContent = 'Active';
     } else {
         statusEl.className = 'status-badge status-offline';
-        statusText.textContent = 'Offline';
+        statusText.textContent = data.status || 'Offline';
     }
+    if (data.status_reason) statusEl.title = data.status_reason;
 
     // Sentiment Score
     const score = data.sentiment_score || 0;
@@ -1175,5 +1180,32 @@ function updateSettings(settings) {
     document.getElementById('tpValue').textContent = (settings.take_profit_pct || 5) + '%';
     document.getElementById('slValue').textContent = (settings.stop_loss_pct || 3) + '%';
 }
+
+// Honest module runtime badge (disabled/killswitch/paused/offline/dry-run/live).
+async function loadRuntimeBadge() {
+    try {
+        const resp = await fetch('/api/modules/ai/runtime-status');
+        if (!resp.ok) return;
+        const data = await resp.json();
+        if (!data.success) return;
+        const el = document.getElementById('module-runtime-badge');
+        if (!el || !data.status) return;
+        const styles = {
+            live:       { bg: '#10b981', label: 'LIVE' },
+            dry_run:    { bg: '#f59e0b', label: 'DRY RUN' },
+            paused:     { bg: '#f97316', label: 'PAUSED' },
+            offline:    { bg: '#6b7280', label: 'OFFLINE' },
+            disabled:   { bg: '#374151', label: 'DISABLED' },
+            killswitch: { bg: '#dc2626', label: 'KILLSWITCH' },
+        };
+        const s = styles[data.status] || { bg: '#6b7280', label: String(data.status).toUpperCase() };
+        el.style.background = s.bg;
+        el.style.color = '#fff';
+        el.textContent = s.label;
+        el.style.display = 'inline-block';
+    } catch (e) { /* badge stays hidden */ }
+}
+loadRuntimeBadge();
+setInterval(loadRuntimeBadge, 30000);
 </script>
 {% endblock %}
