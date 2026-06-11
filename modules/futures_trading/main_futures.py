@@ -436,14 +436,17 @@ class HealthServer:
 
         risk = self.app.engine.risk_metrics
 
+        # Wave-25: surface the TRUE block reason (daily-loss vs consecutive-
+        # loss breaker) and the configured streak cap instead of hardcoded 5.
+        _pause_reason = getattr(risk, 'pause_reason', None)
         return web.json_response({
             'success': True,
             'trading_blocked': not risk.can_trade,
-            'block_reasons': [],
+            'block_reasons': [_pause_reason] if _pause_reason else [],
             'daily_pnl': risk.daily_pnl,
             'daily_loss_limit': risk.daily_loss_limit,
             'consecutive_losses': risk.consecutive_losses,
-            'max_consecutive_losses': 5,
+            'max_consecutive_losses': getattr(risk, 'max_consecutive_losses', 5),
             'risk_level': risk.risk_level,
             'daily_trades': risk.daily_trades,
             'can_trade': risk.can_trade
@@ -678,6 +681,17 @@ class FuturesTradingApplication:
                             self.logger.debug(f"funding config not available: {e}")
                 self.risk_manager = FuturesRiskManager(risk_cfg)
                 self.engine.set_risk_manager(self.risk_manager)
+
+                # FUT-RM-27 (Wave 25): warm the rolling per-symbol
+                # performance gate from persisted trades so a symbol that
+                # was bleeding before the restart is benched immediately.
+                try:
+                    if hasattr(self.engine, 'warm_symbol_gate_from_db'):
+                        await self.engine.warm_symbol_gate_from_db()
+                except Exception as e:
+                    self.logger.warning(
+                        f"FUT-RM-27 warm-up failed (non-fatal): {e}"
+                    )
 
                 # FUT-RM-02: startup assertion — runtime risk manager must
                 # reflect the DB-configured caps. Surfaces silent regressions.

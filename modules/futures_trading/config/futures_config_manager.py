@@ -202,6 +202,31 @@ class FuturesRiskConfig(BaseModel):
     # symbols in 21h. 0 = disabled. Default 240 min = 16 × the 15m signal bar.
     max_hold_minutes: int = 240
 
+    # FUT-RM-27 (Wave 25): per-symbol tiering + rolling performance gate.
+    # Driven by a week of live data (442 trades, +$31.05, 55.7% WR overall):
+    # the winner tier (BCH/AAVE/ETH/ADA/DOGE) earned ~+$74 while the loser
+    # tier (SUI/NEAR/ZEC/DOT/AVAX/FIL) burned ~-$83 — cutting the loser tier
+    # roughly triples PnL. Two layers:
+    #   1. symbol_size_weights: operator-curated per-symbol size multiplier
+    #      (0 = disabled, 0<w<1 = reduced, missing = 1.0). Migration 088
+    #      seeds the loser tier at 0.
+    #   2. Rolling gate: auto-BENCH a symbol when its trailing
+    #      rolling_gate_window trades have net PnL < rolling_gate_max_net_pnl_usd
+    #      AND win rate < rolling_gate_max_win_rate; auto-UNBENCH after
+    #      rolling_gate_bench_minutes into a probation window at
+    #      rolling_gate_probation_weight × size for rolling_gate_min_trades
+    #      trades. Keeps the tiering current without manual curation (ZEC
+    #      re-entered 42×/week through the expiring 4h cool-off).
+    symbol_tiering_enabled: bool = True
+    symbol_size_weights: Dict[str, float] = Field(default_factory=dict)
+    rolling_gate_enabled: bool = True
+    rolling_gate_window: int = 20          # trailing-N trades per symbol
+    rolling_gate_min_trades: int = 10      # min closes before gate can fire
+    rolling_gate_max_net_pnl_usd: float = -5.0   # bench when net < this...
+    rolling_gate_max_win_rate: float = 0.45      # ...AND win rate < this
+    rolling_gate_bench_minutes: int = 1440       # 24h bench
+    rolling_gate_probation_weight: float = 0.5   # post-unbench size factor
+
     # FUT-RM-24 (Wave 14): signal-reversal threshold for early exit.
     # Pre-Wave-14 code required reversal_score <= -6 (all 5 indicators
     # strongly reversed) which is practically impossible — max score is
@@ -854,6 +879,16 @@ class FuturesConfigManager:
             'min_volume_multiplier': FuturesConfigType.RISK,
             # FUT-RM-21 (Wave 7): regime / counter-trend gate
             'block_counter_trend_entries': FuturesConfigType.RISK,
+            # FUT-RM-27 (Wave 25): per-symbol tiering + rolling gate
+            'symbol_tiering_enabled': FuturesConfigType.RISK,
+            'symbol_size_weights': FuturesConfigType.RISK,
+            'rolling_gate_enabled': FuturesConfigType.RISK,
+            'rolling_gate_window': FuturesConfigType.RISK,
+            'rolling_gate_min_trades': FuturesConfigType.RISK,
+            'rolling_gate_max_net_pnl_usd': FuturesConfigType.RISK,
+            'rolling_gate_max_win_rate': FuturesConfigType.RISK,
+            'rolling_gate_bench_minutes': FuturesConfigType.RISK,
+            'rolling_gate_probation_weight': FuturesConfigType.RISK,
             # Funding settings
             'funding_arb': FuturesConfigType.FUNDING,  # alias
             'funding_arbitrage_enabled': FuturesConfigType.FUNDING,
