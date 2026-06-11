@@ -2083,7 +2083,12 @@ class DashboardEndpoints:
 
         # Check Copy Trading module health
         try:
-            copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8085'))
+            # Default 8088 (NOT 8085): 8085 is DEX_HEALTH_PORT's default, so
+            # when only DEX was deployed this probe hit the DEX health server
+            # and labeled copy_trading as running. 8088 is unclaimed
+            # (8081 futures, 8082 solana, 8083 sniper, 8084 arbitrage,
+            # 8085 dex, 8086 ai/advisor). DEX stays on 8085 — no redeploy.
+            copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8088'))
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'http://localhost:{copy_port}/health', timeout=3) as resp:
                     if resp.status == 200:
@@ -3478,23 +3483,89 @@ class DashboardEndpoints:
         else:
             return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
+    # Display-name -> SHORT engine pause key. The engines gate live writes
+    # via should_skip_live(module=<SHORT>), which polls logs/.pause_<SHORT>
+    # (e.g. 'futures' -> logs/.pause_futures). Templates and routes pass the
+    # LONG display names ('futures_trading'), so the pause button used to
+    # write logs/.pause_futures_trading — a flag no engine ever read. Pause
+    # silently never reached the engines. Every pause WRITE must resolve
+    # through this map; we also write the legacy long spelling for any
+    # straggler reader, but the short key is the canonical one.
+    _MODULE_PAUSE_KEY_MAP = {
+        'dex': 'dex', 'dex_trading': 'dex',
+        'futures': 'futures', 'futures_trading': 'futures',
+        'solana': 'solana', 'solana_strategies': 'solana',
+        'solana_trading': 'solana',
+        'sniper': 'sniper',
+        'arbitrage': 'arbitrage',
+        # copy engine passes module='copy_trading' — that IS its short key.
+        'copy': 'copy_trading', 'copy_trading': 'copy_trading',
+        'copytrading': 'copy_trading',
+        'ai': 'ai', 'ai_analysis': 'ai',
+        'advisor': 'advisor', 'financial_advisor': 'advisor',
+    }
+
+    @classmethod
+    def _resolve_pause_key(cls, module: str) -> str:
+        """Map any module spelling to the SHORT key the engines poll.
+        Returns '' for unknown modules (caller decides how to fail)."""
+        return cls._MODULE_PAUSE_KEY_MAP.get(
+            (module or '').lower().strip(), ''
+        )
+
     async def _api_module_pause(self, request):
         """Pause a module — MB-30: writes the cross-process flag file so
         subprocess loops actually halt new live writes via should_skip_live().
+
+        Writes the SHORT canonical key (logs/.pause_futures, not
+        .pause_futures_trading) — the only spelling the engines poll —
+        plus the legacy long spelling as a best-effort alias.
         """
         module = request.match_info.get('module', '')
+        short = self._resolve_pause_key(module)
+        if not short:
+            return web.json_response(
+                {'success': False, 'error': f'Unknown module: {module}'},
+                status=400,
+            )
         from core.dry_run import set_module_pause
-        ok = set_module_pause(module, True)
-        logger.info(f"Module {module} paused via API (flag_file={ok})")
+        ok = set_module_pause(short, True)  # canonical — engines poll this
+        raw = (module or '').lower().strip()
+        if raw != short:
+            try:
+                set_module_pause(raw, True)  # legacy alias, best-effort
+            except Exception:
+                pass
+        logger.info(
+            f"Module {module} paused via API (pause_key={short}, flag_file={ok})"
+        )
         return web.json_response({
             'success': bool(ok),
             'message': f'{module} paused' if ok else f'failed to pause {module}',
+            'pause_key': short,
             'cross_process': ok,
         }, status=200 if ok else 500)
 
     async def _api_module_start(self, request):
-        """Start/resume a module"""
+        """Start/resume a module.
+
+        Also clears the pause flag files (short canonical key + legacy long
+        alias) — the inverse of _api_module_pause. Without this, a pause
+        written under the short key the engines poll had no resume path in
+        the standalone dashboard."""
         module = request.match_info.get('module', '')
+
+        resumed = False
+        short = self._resolve_pause_key(module)
+        if short:
+            try:
+                from core.dry_run import set_module_pause
+                resumed = set_module_pause(short, False)
+                raw = (module or '').lower().strip()
+                if raw != short:
+                    set_module_pause(raw, False)  # legacy alias, best-effort
+            except Exception:
+                pass
 
         module_env_map = {
             'dex_trading': 'DEX_MODULE_ENABLED',
@@ -3503,6 +3574,19 @@ class DashboardEndpoints:
         }
 
         if module not in module_env_map:
+            if short:
+                # Known module without an env-flag mapping (sniper/arb/
+                # copy/ai/advisor): the pause-flag clear above IS the
+                # resume. Don't 400 — that stranded paused modules.
+                logger.info(
+                    f"Module {module} resumed via API "
+                    f"(pause_key={short}, flag_cleared={resumed})"
+                )
+                return web.json_response({
+                    'success': True,
+                    'message': f'{module} resumed (pause flag cleared)',
+                    'pause_key': short,
+                })
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
@@ -4200,7 +4284,9 @@ class DashboardEndpoints:
                 'trades': []
             }
             try:
-                copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8085'))
+                # 8088 default — 8085 belongs to DEX (see health-check
+                # comment in _fallback_api_modules).
+                copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8088'))
                 async with aiohttp.ClientSession() as session:
                     async with session.get(f'http://localhost:{copy_port}/stats', timeout=3) as resp:
                         if resp.status == 200:
@@ -4324,7 +4410,9 @@ class DashboardEndpoints:
                 ('solana', 'SOLANA_HEALTH_PORT', '8082'),
                 ('sniper', 'SNIPER_HEALTH_PORT', '8083'),
                 ('arbitrage', 'ARBITRAGE_HEALTH_PORT', '8084'),
-                ('copytrading', 'COPYTRADING_HEALTH_PORT', '8085'),
+                # 8088, not 8085 — 8085 is DEX's port (collision mislabeled
+                # DEX health as copy_trading when only one was deployed).
+                ('copytrading', 'COPYTRADING_HEALTH_PORT', '8088'),
                 ('ai', 'AI_HEALTH_PORT', '8086')
             ]
 
@@ -5026,33 +5114,77 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_trade_history(self, request):
-        """Get trade history with filters"""
+        """Get DEX trade history with filters.
+
+        Queries the legacy `trades` table directly, scoped to DEX rows
+        only — the same exclusion clause as the Wave-12 dashboard-summary
+        fix. Other modules (sniper/copy/ai/arbitrage/solana) historically
+        wrote rows into `trades` too, so the unscoped get_recent_trades()
+        path mixed their trades into the DEX history view. (That call
+        also passed status= to a method whose signature is
+        get_recent_trades(limit) — every request raised TypeError and
+        500'd.) Fail-soft: no DB / missing table => empty list, never 500.
+        """
         try:
-            # Parse query parameters
             start_date = request.query.get('start_date')
             end_date = request.query.get('end_date')
             status = request.query.get('status')
+            try:
+                limit = min(int(request.query.get('limit', '1000')), 5000)
+            except (TypeError, ValueError):
+                limit = 1000
 
-            # ✅ FIX: Add await
-            trades = await self.db.get_recent_trades(limit=1000, status=status)
+            if not (self.db and getattr(self.db, 'pool', None)):
+                return web.json_response(
+                    {'success': True, 'data': [], 'count': 0}
+                )
 
-            # Apply date filters if provided
+            conditions = [
+                "UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')",
+                "COALESCE(strategy,'') NOT IN "
+                "('sniper','copy_trading','copytrading',"
+                "'ai','ai_analysis','arbitrage')",
+            ]
+            params = []
+            if status:
+                params.append(status)
+                conditions.append(f"status = ${len(params)}")
+            params.append(limit)
+            query = (
+                "SELECT * FROM trades WHERE " + " AND ".join(conditions)
+                + f" ORDER BY entry_timestamp DESC LIMIT ${len(params)}"
+            )
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+            trades = [dict(r) for r in rows]
+
+            # Date filters in Python (old endpoint semantics: applied to
+            # the latest-N window). Normalize tz-awareness so aware DB
+            # rows vs naive query params never raise.
+            def _norm(dt):
+                return dt.replace(tzinfo=None) \
+                    if getattr(dt, 'tzinfo', None) else dt
+
             if start_date:
-                start = datetime.fromisoformat(start_date)
-                trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) >= start]
-
+                start = _norm(datetime.fromisoformat(start_date))
+                trades = [t for t in trades if t.get('entry_timestamp')
+                          and _norm(t['entry_timestamp']) >= start]
             if end_date:
-                end = datetime.fromisoformat(end_date)
-                trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) <= end]
+                end = _norm(datetime.fromisoformat(end_date))
+                trades = [t for t in trades if t.get('entry_timestamp')
+                          and _norm(t['entry_timestamp']) <= end]
 
             return web.json_response({
                 'success': True,
-                'data': trades,
+                'data': self._serialize_decimals(trades),
                 'count': len(trades)
             })
         except Exception as e:
             logger.error(f"Error getting trade history: {e}")
-            return web.json_response({'error': str(e)}, status=500)
+            # Fail-soft: empty panel beats a 500 on the trades page.
+            return web.json_response(
+                {'success': True, 'data': [], 'count': 0, 'error': str(e)}
+            )
 
     async def api_export_trades(self, request):
         """Export all trades in CSV or Excel format with comprehensive data"""
