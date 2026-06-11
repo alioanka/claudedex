@@ -178,6 +178,41 @@ loosened — every change can only make a gate stricter or more honest.
   ensemble stays in honest `heuristic_fallback` until trained artifacts exist —
   see `ml/CLAUDE.md` for the activation runbook + the retrain-pipeline gap.
 
+## Wave-15: week-1 tuning seeds + DB-first exit watchdog (migration 095)
+Week-1 DRY_RUN data (1638 trades, $1041 PnL, 42.1% WR) showed realized
+stop-losses averaging **-14.51% vs the 12% configured stop** (polling latency
++ restart-orphaned rows nothing exits). Commit `254cf11` added the tunables as
+ConfigManager fields but the seeding migration ("086") was never created and
+NO code consumed them — they were dead. Wave-15 closes the loop:
+- **Migration `095_dex_week1_tuning_seeds.sql`** seeds (a) the week-1 tunables
+  (`risk_management.sl_trigger_buffer_pct=0.02`, `sl_fast_poll_band_pct=0.04`,
+  `trading.max_trades_per_day=100`, `trading.chain_weights` json,
+  `ml_models.ml_quality_auc_floor=0.6`), (b) the entry/exit rows the shared
+  engine already reads but no migration ever seeded (`trading.min_opportunity_score`,
+  `risk_management.stop_loss_pct/take_profit_pct/risk_per_trade_pct`,
+  `position_management.max_hold_time_minutes/trailing_*`, `portfolio.max_positions`
+  + size bounds — defaults mirror code, behavior unchanged, dashboard-editable),
+  and (c) three new `dex_module` keys: `db_exit_watchdog_enabled=true`,
+  `watchdog_fast_poll_seconds=5`, `watchdog_max_hold_grace_pct=25`.
+- **`position_service.py` exit watchdog**: the 30s price-refresh loop now also
+  enforces, DB-first and **DRY_RUN-only** (simulated closes; live exits stay
+  engine-owned; kill-switch/pause suppress enforcement): stop-loss firing early
+  at `-(stop_loss_pct - sl_trigger_buffer_pct)` so realized losses land near
+  the configured stop; take-profit at `risk_management.take_profit_pct` (the DB
+  row is now the authoritative operator surface — the in-engine monitor still
+  hardcodes 0.30); the in-engine ratchet trailing tiers (6/5/3/2% at
+  10/15/30/50% peak) with the peak persisted in `metadata.max_profit_pct`;
+  max-hold at `max_hold_time_minutes × (1+grace)` — this also fires on
+  UNPRICEABLE rows (the 5-day GRAIL zombie case) at last-known price with
+  `metadata.exit_price_stale=true`. While any position is within
+  `sl_fast_poll_band_pct` above its stop trigger the loop drops to
+  `watchdog_fast_poll_seconds` (skipped above 25 open positions for API-rate
+  safety). Watchdog closes carry `metadata.close_reason='*_db_watchdog'` and
+  purge the row from `engine.active_positions` (under `positions_lock`) so the
+  in-engine monitor never double-closes. Engine-owner follow-ups still open:
+  `trading.max_trades_per_day` + `trading.chain_weights` entry-side consumption
+  and the engine's hardcoded position-dict TP/SL (0.3/0.1) ignoring config.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
 - Wave-2 campaign report: `docs/agents/reports/DEX_CAMPAIGN.md`.

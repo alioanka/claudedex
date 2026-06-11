@@ -782,9 +782,18 @@ class TradingBotApplication:
                 ps_collector = DexScreenerCollector({})
                 await ps_collector.initialize()
                 self.position_service = DexPositionService(
-                    self.db_manager, ps_collector, dry_run=self.is_dry_run
+                    self.db_manager, ps_collector, dry_run=self.is_dry_run,
+                    # Wave-15: exit-policy thresholds come from the DB-backed
+                    # ConfigManager (migration 095 seeds); the engine ref lets
+                    # the watchdog purge a closed row from active_positions so
+                    # the in-engine monitor never double-closes it.
+                    config_manager=self.config_manager,
+                    engine=self.engine,
                 )
-                self.logger.info("✅ DEX position service initialized (price-refresh + close-flag)")
+                self.logger.info(
+                    "✅ DEX position service initialized "
+                    "(price-refresh + close-flag + DB-first exit watchdog)"
+                )
             except Exception as e:
                 self.logger.warning(f"Could not initialize DEX position service: {e}")
 
