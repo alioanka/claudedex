@@ -260,6 +260,8 @@
       watchlists by free screeners. Trending is <strong>not</strong> the same as
       good — do your own review. No trades are executed automatically.
     </div>
+    <!-- Market filter chips (newest first within the selection) -->
+    <div id="discoveryFilter" style="display:flex;gap:.35rem;flex-wrap:wrap;margin-bottom:.6rem"></div>
     <div class="table-responsive">
       <table class="table table-dark table-hover mb-0" style="font-size:.8rem">
         <thead>
@@ -300,37 +302,84 @@ const DIR_COLOR = { long: '#00e396', short: '#ff4560', neutral: '#feb019' };
 
 // advice by [market][symbol][horizon]
 let adviceData = {};
+// /api/advisor/market-status payload: real per-market source status + WHY.
+let marketStatus = {};
+let fonolojiKeyPresent = false;
 
+async function loadMarketStatus() {
+  try {
+    const res = await fetch('/api/advisor/market-status');
+    const data = await res.json();
+    if (data.success && data.markets) {
+      marketStatus = data.markets;
+      fonolojiKeyPresent = !!data.fonoloji_key_present;
+      renderMarkets();   // re-render with the authoritative statuses
+    }
+  } catch(e) { console.warn('market status load error', e); }
+}
+
+// Fonoloji PNG embed helper — hides itself cleanly on 404/503/no-key.
+function fonoImg(kind, code, label) {
+  const q = 'kind=' + encodeURIComponent(kind)
+          + (code ? '&code=' + encodeURIComponent(code) : '');
+  return `<div class="fono-img-wrap" style="margin-top:.6rem">
+    <img src="/api/advisor/fonoloji-image?${q}" alt="${escHtml(label)}"
+         loading="lazy"
+         style="max-width:100%;border-radius:8px;border:1px solid rgba(255,255,255,.08)"
+         onerror="this.closest('.fono-img-wrap').style.display='none'">
+    <div style="font-size:.6rem;color:#555;margin-top:.15rem">${escHtml(label)} — Fonoloji</div>
+  </div>`;
+}
+
+// The sim tiles and the portfolio tile load INDEPENDENTLY: the old
+// Promise.all coupling meant one failing endpoint blanked all four tiles
+// (operator saw em-dashes here while /advisor/simulations showed live data).
 async function loadSummary() {
   try {
-    const [portRes, simRes] = await Promise.all([
-      fetch('/api/advisor/portfolio').then(r=>r.json()),
-      fetch('/api/advisor/simulations?status=all&limit=500').then(r=>r.json()),
-    ]);
-    if (portRes.success) {
-      document.getElementById('statPortfolioValue').textContent =
-        portRes.total_value > 0 ? '$' + portRes.total_value.toLocaleString(undefined,{maximumFractionDigits:0}) : '—';
-    }
-    if (simRes.success) {
+    const r = await fetch('/api/advisor/simulations?status=all&limit=500');
+    const simRes = await r.json();
+    if (simRes.success && simRes.summary) {
       const s = simRes.summary;
       const openEl = document.getElementById('statOpenSims');
-      openEl.textContent = s.total_open;
-      // Per-market breakdown (issue #13: sim cap is enforced per market).
-      const byMkt = s.open_by_market || {};
-      const parts = Object.keys(byMkt).map(k => `${k}: ${byMkt[k]}`);
+      openEl.textContent = (s.total_open != null) ? s.total_open : '—';
+      // Per-channel breakdown (migration 077: sim cap is enforced per channel).
+      const byCh = s.open_by_channel || s.open_by_market || {};
+      const parts = Object.keys(byCh).map(k => `${k}: ${byCh[k]}`);
       if (parts.length) {
-        openEl.title = 'Open sims per market — ' + parts.join(', ');
+        openEl.title = 'Open sims per channel — ' + parts.join(', ');
         const lbl = openEl.parentElement.querySelector('.adv-label');
         if (lbl) lbl.innerHTML = 'Open Sims <span style="opacity:.7;font-size:.62rem">('
           + parts.join(' · ') + ')</span>';
       }
-      const pnl = s.total_pnl_usd;
+      const pnl = Number(s.total_pnl_usd || 0);
       const el = document.getElementById('statSimPnl');
-      el.textContent = (pnl >= 0 ? '+' : '') + '$' + Math.abs(pnl).toLocaleString(undefined,{maximumFractionDigits:0});
+      el.textContent = (pnl >= 0 ? '+' : '-') + '$' + Math.abs(pnl).toLocaleString(undefined,{maximumFractionDigits:0});
       el.className = 'adv-value ' + (pnl >= 0 ? 'text-success' : 'text-danger');
-      document.getElementById('statWinRate').textContent = s.win_rate + '%';
+      document.getElementById('statWinRate').textContent =
+        (s.win_rate != null ? s.win_rate : 0) + '%';
+    } else {
+      console.warn('sim summary failed', simRes && simRes.error);
     }
-  } catch(e) { console.warn('summary load error', e); }
+  } catch(e) { console.warn('sim summary load error', e); }
+
+  try {
+    const r = await fetch('/api/advisor/portfolio');
+    const portRes = await r.json();
+    if (portRes.success) {
+      const el = document.getElementById('statPortfolioValue');
+      const n = (portRes.rows || []).length;
+      if (portRes.total_value > 0) {
+        el.textContent = '$' + portRes.total_value.toLocaleString(undefined,{maximumFractionDigits:0});
+        el.title = n + ' holding(s)';
+      } else {
+        // Honest empty state instead of an ambiguous em-dash.
+        el.textContent = '$0';
+        el.title = n === 0
+          ? 'No holdings entered yet — add them on the Portfolio page'
+          : 'Holdings have no current price yet';
+      }
+    }
+  } catch(e) { console.warn('portfolio summary load error', e); }
 }
 
 async function loadAdvice() {
@@ -378,17 +427,21 @@ function renderMarkets() {
   for (const mkt of MARKETS) {
     const symbols = adviceData[mkt.id] || {};
     const symbolKeys = Object.keys(symbols);
+    const ms = marketStatus[mkt.id] || null;
 
-    // Determine data source status from the latest advice in this market
-    let dsStatus = 'not_configured';
-    for (const sym of symbolKeys) {
-      for (const h of ['short','mid','long']) {
-        if (symbols[sym] && symbols[sym][h]) {
-          dsStatus = symbols[sym][h].data_source_status || 'available';
-          break;
+    // Status: prefer the analyzer's REAL latest data_source_status from
+    // /api/advisor/market-status; fall back to the latest advice row.
+    let dsStatus = (ms && ms.latest_status) ? ms.latest_status : 'not_configured';
+    if ((!ms || !ms.latest_status)) {
+      for (const sym of symbolKeys) {
+        for (const h of ['short','mid','long']) {
+          if (symbols[sym] && symbols[sym][h]) {
+            dsStatus = symbols[sym][h].data_source_status || 'available';
+            break;
+          }
         }
+        if (dsStatus !== 'not_configured') break;
       }
-      if (dsStatus !== 'not_configured') break;
     }
 
     const section = document.createElement('div');
@@ -396,16 +449,30 @@ function renderMarkets() {
 
     const header = document.createElement('div');
     header.className = 'market-header';
+    const badgeTitle = ms ? escHtml(ms.reason || '') : '';
     header.innerHTML = `<span>${mkt.icon}</span><span>${mkt.label}</span>
-      <span class="market-badge badge-${dsStatus}">${dsStatus.replace('_',' ').toUpperCase()}</span>`;
+      <span class="market-badge badge-${dsStatus}" title="${badgeTitle}">${dsStatus.replace('_',' ').toUpperCase()}</span>
+      ${ms && ms.source ? `<span style="font-size:.62rem;color:#888;font-weight:500;text-transform:none">src: ${escHtml(ms.source)}</span>` : ''}`;
     section.appendChild(header);
+
+    // BIST market heatmap (Fonoloji) — only attempted when a key is present.
+    if (mkt.id === 'bist' && fonolojiKeyPresent) {
+      const hm = document.createElement('div');
+      hm.style.maxWidth = '520px';
+      hm.innerHTML = fonoImg('heatmap', '', 'BIST market heatmap');
+      section.appendChild(hm);
+    }
 
     if (symbolKeys.length === 0) {
       const empty = document.createElement('div');
-      empty.style.cssText = 'color:#666;font-size:.85rem;padding:.5rem 0';
-      empty.textContent = dsStatus === 'not_configured'
-        ? 'No data source configured for this market. Configure via Advisor Settings.'
-        : 'No advice generated yet.';
+      empty.style.cssText = 'color:#888;font-size:.8rem;padding:.5rem 0;max-width:760px';
+      // Show the REAL reason (e.g. "fonoloji key missing ...") instead of a
+      // generic 'not configured' hint.
+      empty.textContent = (ms && ms.reason)
+        ? ms.reason + (ms.advice_rows_7d === 0 ? ' (0 advice rows in the last 7 days)' : '')
+        : (dsStatus === 'not_configured'
+            ? 'No data source configured for this market. Configure via Advisor Settings.'
+            : 'No advice generated yet.');
       section.appendChild(empty);
       container.appendChild(section);
       continue;
@@ -418,7 +485,7 @@ function renderMarkets() {
       const horizons = symbols[sym];
       // default show: first available horizon
       const defaultH = ['short','mid','long'].find(h => horizons[h]) || 'short';
-      const card = buildCard(sym, horizons, defaultH);
+      const card = buildCard(sym, horizons, defaultH, mkt.id);
       grid.appendChild(card);
     }
     section.appendChild(grid);
@@ -426,7 +493,7 @@ function renderMarkets() {
   }
 }
 
-function buildCard(symbol, horizons, activeH) {
+function buildCard(symbol, horizons, activeH, marketId) {
   const card = document.createElement('div');
   const row = horizons[activeH] || {};
   const dir = row.direction || 'neutral';
@@ -482,6 +549,8 @@ function buildCard(symbol, horizons, activeH) {
     <div style="font-size:.68rem;color:#555;margin-top:.5rem;overflow:hidden;text-overflow:ellipsis;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical">
       ${row.rationale ? escHtml(row.rationale.substring(0,120)) + (row.rationale.length > 120 ? '…' : '') : 'No rationale available'}
     </div>
+    ${marketId === 'midas_funds' && fonolojiKeyPresent
+        ? fonoImg('fund_holdings', symbol, symbol + ' holdings') : ''}
     <div style="font-size:.65rem;color:#444;margin-top:.5rem">${ts}</div>
   `;
 
@@ -491,7 +560,7 @@ function buildCard(symbol, horizons, activeH) {
       e.stopPropagation();
       const h = tab.dataset.h;
       if (!horizons[h]) return;
-      const newCard = buildCard(symbol, horizons, h);
+      const newCard = buildCard(symbol, horizons, h, marketId);
       card.replaceWith(newCard);
     });
   });
@@ -580,9 +649,11 @@ function fmtPx(v) {
   return n.toPrecision(4);
 }
 
+let discoveryRows = [];
+let discoveryMarketFilter = 'all';
+
 async function loadDiscovery() {
   const wrap = document.getElementById('discoveryWrap');
-  const body = document.getElementById('discoveryBody');
   try {
     const res = await fetch('/api/advisor/discovery?limit=40');
     const data = await res.json();
@@ -591,8 +662,51 @@ async function loadDiscovery() {
       wrap.style.display = 'none';
       return;
     }
-    body.innerHTML = '';
-    for (const r of data.rows) {
+    // Newest first (explicit — do not rely on server ordering).
+    discoveryRows = data.rows.slice().sort((a, b) =>
+      new Date(b.created_at || 0) - new Date(a.created_at || 0));
+    renderDiscoveryFilter();
+    renderDiscovery();
+    wrap.style.display = 'block';
+  } catch(e) {
+    console.warn('discovery load error', e);
+    wrap.style.display = 'none';
+  }
+}
+
+function renderDiscoveryFilter() {
+  const bar = document.getElementById('discoveryFilter');
+  if (!bar) return;
+  const present = [...new Set(discoveryRows.map(r => r.market).filter(Boolean))];
+  const opts = [['all', 'All (' + discoveryRows.length + ')']].concat(
+    present.map(m => [m, (DISC_MKT_LABEL[m] || m) + ' ('
+      + discoveryRows.filter(r => r.market === m).length + ')']));
+  bar.innerHTML = opts.map(([id, label]) => {
+    const active = id === discoveryMarketFilter;
+    return `<span class="htab${active ? ' active' : ''}" data-mkt="${escHtml(id)}"
+                  style="user-select:none">${escHtml(label)}</span>`;
+  }).join('');
+  bar.querySelectorAll('[data-mkt]').forEach(chip => {
+    chip.addEventListener('click', () => {
+      discoveryMarketFilter = chip.dataset.mkt;
+      renderDiscoveryFilter();
+      renderDiscovery();
+    });
+  });
+}
+
+function renderDiscovery() {
+  const body = document.getElementById('discoveryBody');
+  if (!body) return;
+  const rows = discoveryMarketFilter === 'all'
+    ? discoveryRows
+    : discoveryRows.filter(r => r.market === discoveryMarketFilter);
+  body.innerHTML = '';
+  if (rows.length === 0) {
+    body.innerHTML = '<tr><td colspan="10" style="color:#777;font-style:italic;text-align:center;padding:.8rem 0">No gems for this market filter.</td></tr>';
+    return;
+  }
+  for (const r of rows) {
       const dir = (r.direction || 'neutral').toLowerCase();
       const dirColor = DIR_COLOR[dir] || '#888';
       const conf = (r.confidence != null) ? (r.confidence * 100).toFixed(0) + '%' : '—';
@@ -616,21 +730,17 @@ async function loadDiscovery() {
         <td class="d-none d-md-table-cell">${chg}</td>
         <td class="d-none d-md-table-cell" style="font-size:.72rem;color:#888;white-space:nowrap">${ts}</td>`;
       body.appendChild(tr);
-    }
-    wrap.style.display = 'block';
-  } catch(e) {
-    console.warn('discovery load error', e);
-    wrap.style.display = 'none';
   }
 }
 
 // Init
 loadSummary();
+loadMarketStatus();
 loadAdvice();
 loadKapSummary();
 loadDiscovery();
 
 // Auto-refresh every 5 minutes
-setInterval(() => { loadSummary(); loadAdvice(); loadKapSummary(); loadDiscovery(); }, 300000);
+setInterval(() => { loadSummary(); loadMarketStatus(); loadAdvice(); loadKapSummary(); loadDiscovery(); }, 300000);
 </script>
 {% endblock %}
