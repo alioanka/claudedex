@@ -335,6 +335,20 @@ class SentimentEngine:
         # Per-symbol scale-in counter so we don't exceed ai_max_scale_ins.
         self._scale_in_counts: Dict[str, int] = {}
 
+        # AI-QC-01: cross-source confirmation gate (default OFF — zero
+        # behavior change while disabled). When enabled, each symbol entry
+        # must additionally be confirmed by FREE per-symbol tape evidence
+        # (price momentum + volume vs baseline from Binance public klines,
+        # CLOSED candles only) agreeing with the LLM sentiment direction.
+        # Pure scoring logic + self-test live in core/confirmation_signal.py.
+        # Refusals surface as `[ai-skip] reason=confirmation_not_met` so the
+        # existing diagnostics endpoint/panel measures the gate in DRY_RUN.
+        # No new paid API calls (reuses the cycle's sentiment score).
+        self.ai_confirmation_enabled: bool = False
+        self.ai_confirmation_min_confidence: float = 0.45
+        self.ai_confirmation_momentum_weight: float = 0.5
+        self.ai_confirmation_max_opposing_momentum: float = 0.3
+
         # Multi-provider quorum (A6 E1). When both openai+anthropic keys are
         # configured AND quorum_required=true, _quorum_sentiment() requires
         # both providers to agree (sign + magnitude). Saves the bot from a
@@ -577,6 +591,24 @@ class SentimentEngine:
                         # Wave-18: max same-direction scale-ins per symbol. 0 = off.
                         try:
                             self.ai_max_scale_ins = max(0, int(val))
+                        except (ValueError, TypeError):
+                            pass
+                    elif key == 'ai_confirmation_signal_enabled':
+                        # AI-QC-01: cross-source confirmation gate toggle.
+                        self.ai_confirmation_enabled = (val or '').lower() in ('true', '1', 'yes')
+                    elif key == 'ai_confirmation_min_confidence':
+                        try:
+                            self.ai_confirmation_min_confidence = max(0.0, min(1.0, float(val)))
+                        except (ValueError, TypeError):
+                            pass
+                    elif key == 'ai_confirmation_momentum_weight':
+                        try:
+                            self.ai_confirmation_momentum_weight = max(0.0, min(1.0, float(val)))
+                        except (ValueError, TypeError):
+                            pass
+                    elif key == 'ai_confirmation_max_opposing_momentum':
+                        try:
+                            self.ai_confirmation_max_opposing_momentum = max(0.0, min(1.0, float(val)))
                         except (ValueError, TypeError):
                             pass
 
@@ -1613,6 +1645,71 @@ class SentimentEngine:
             except Exception as e:
                 logger.error(f"Failed to store sentiment: {e}")
 
+    async def _fetch_closed_klines(self, symbol: str, interval: str = '15m',
+                                   limit: int = 40):
+        """AI-QC-01: fetch (closes, volumes) of CLOSED candles from the free
+        Binance public klines endpoint (same keyless API family the executor
+        already uses for prices). The LAST kline returned by Binance is the
+        in-progress candle — it is dropped so the confirmation gate never
+        reads an unfinished bar (no look-ahead). Returns (None, None) on any
+        failure; the caller decides the failure policy."""
+        try:
+            pair = symbol if symbol.upper().endswith('USDT') else f"{symbol.upper()}USDT"
+            url = (
+                "https://api.binance.com/api/v3/klines"
+                f"?symbol={pair}&interval={interval}&limit={limit}"
+            )
+            session = self.executor.session if self.executor else None
+            if session is None:
+                return None, None
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    logger.debug(f"[ai-confirm] klines HTTP {resp.status} for {pair}")
+                    return None, None
+                data = await resp.json()
+            if not isinstance(data, list) or len(data) < 3:
+                return None, None
+            closed = data[:-1]  # drop the in-progress candle
+            closes = [float(k[4]) for k in closed]
+            volumes = [float(k[5]) for k in closed]
+            return closes, volumes
+        except Exception as e:
+            logger.debug(f"[ai-confirm] klines fetch failed for {symbol}: {e}")
+            return None, None
+
+    async def _confirmation_gate(self, symbol: str, score: float) -> bool:
+        """AI-QC-01: per-symbol cross-source confirmation. Returns True when
+        the entry may proceed. FAILS CLOSED on missing tape data — a
+        precision gate that silently passes everything during a data outage
+        would corrupt its own DRY_RUN measurement. Every decision logs a
+        single `[ai-confirm]` line with the component breakdown."""
+        try:
+            from modules.ai_analysis.core.confirmation_signal import (
+                ConfirmationParams, evaluate_confirmation,
+            )
+            params = ConfirmationParams(
+                min_confidence=self.ai_confirmation_min_confidence,
+                momentum_weight=self.ai_confirmation_momentum_weight,
+                max_opposing_momentum=self.ai_confirmation_max_opposing_momentum,
+            )
+            closes, volumes = await self._fetch_closed_klines(symbol)
+            if not closes or not volumes:
+                logger.info(
+                    f"[ai-confirm] {symbol}: tape unavailable — refusing "
+                    f"(gate fails closed)"
+                )
+                return False
+            result = evaluate_confirmation(score, closes, volumes, params)
+            logger.info(
+                f"[ai-confirm] {symbol}: agree={result.agree} "
+                f"combined={result.score:+.2f} conf={result.confidence:.2f} "
+                f"reason='{result.reason}' components={result.components}"
+            )
+            return result.agree
+        except Exception as e:
+            logger.warning(f"[ai-confirm] {symbol}: gate error {e} — refusing")
+            return False
+
     async def _execute_trade(self, score: float):
         """Execute or simulate trades based on sentiment score.
 
@@ -1743,6 +1840,24 @@ class SentimentEngine:
                     continue
                 else:
                     del self._symbol_cooldowns[symbol]
+
+            # -- AI-QC-01: CROSS-SOURCE CONFIRMATION GATE (default OFF) --
+            # When enabled, the market-wide sentiment must be confirmed by
+            # this symbol's own tape (price momentum + volume) before any
+            # order is attempted. Skips are measurable via the existing
+            # diagnostics: `[ai-skip] reason=confirmation_not_met`.
+            # RiskManager.validate_trade downstream (inside
+            # executor.execute_trade) is untouched.
+            if self.ai_confirmation_enabled:
+                if not await self._confirmation_gate(symbol, score):
+                    self._record_skip(
+                        'confirmation_not_met', score=score, sentiment=score,
+                        symbol=symbol,
+                        extra={
+                            'min_conf': f"{self.ai_confirmation_min_confidence:.2f}",
+                        },
+                    )
+                    continue
 
             # -- OPEN NEW POSITION (or scale-in) --
             is_scale_in = symbol in self.active_positions  # still present → scale-in path
