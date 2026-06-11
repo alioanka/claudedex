@@ -79,6 +79,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from core.pnl_tracker import PnLTracker, TradeRecord
 from core.units import get_spl_decimals
 from modules.solana_trading.core.price_buffer import TokenPriceBuffer
+from modules.solana_trading.core.price_validator import PriceValidator
 
 # Import JupiterHelper for live swap execution
 try:
@@ -1224,6 +1225,11 @@ class SolanaTradingEngine:
         # consumed when `solana_pump_predictor_enabled=True`.
         self.price_buffer = TokenPriceBuffer(maxlen=60, max_age_s=1800.0)
         self._pump_predictor_singleton = None  # lazy-loaded on first use
+
+        # Fetch-time price denomination/jump guard (the +2000% bug). Anchored
+        # per mint on entry/reconcile; thresholds refreshed from DB config on
+        # every _get_token_price call so dashboard edits apply live.
+        self.price_validator = PriceValidator()
 
         # Solana client and wallet
         self.client = None
@@ -3863,11 +3869,51 @@ class SolanaTradingEngine:
         except Exception as e:
             logger.error(f"Error scanning Pump.fun: {e}")
 
+    def _refresh_price_validator_params(self) -> None:
+        """Pull validator thresholds from DB config (cheap dict lookups)."""
+        if not self.config_manager:
+            return
+        try:
+            cm = self.config_manager
+            self.price_validator.configure(
+                soft_jump_ratio=float(cm.get('solana_price_soft_jump_ratio', 2.0)),
+                hard_jump_ratio=float(cm.get('solana_price_hard_jump_ratio', 5.0)),
+                jump_confirmations=int(cm.get('solana_price_jump_confirmations', 2)),
+                hard_jump_confirmations=int(cm.get('solana_price_hard_jump_confirmations', 3)),
+                lastgood_ttl_s=float(cm.get('solana_price_lastgood_ttl_s', 600)),
+                pending_window_s=float(cm.get('solana_price_pending_window_s', 120)),
+            )
+        except Exception as exc:
+            logger.debug(f"price-validator config refresh failed: {exc}")
+
     async def _get_token_price(self, token_mint: str) -> Optional[float]:
-        """Get current price for token via Jupiter"""
-        if self.jupiter_client:
-            return await self.jupiter_client.get_price(token_mint)
-        return None
+        """Get current VALIDATED price for a token.
+
+        The raw multi-source quote (DexScreener -> CoinGecko -> Jupiter v3)
+        is passed through PriceValidator: an unconfirmed >2x jump vs the
+        last known-good price returns the last-good price instead, so the
+        monitor can NEVER fire TP/SL/partial exits on a wrong-denomination
+        quote (the +2000% bug). The offending source is logged by the
+        validator. When a quote is held/rejected we also evict it from the
+        JupiterClient price cache — its 5s TTL matches the poll cadence, so
+        without eviction the cache would echo the same poisoned value back
+        and self-confirm the jump.
+        """
+        if not self.jupiter_client:
+            return None
+        raw = await self.jupiter_client.get_price(token_mint)
+        if raw is None or raw <= 0:
+            return None
+        cache_entry = self.jupiter_client._price_cache.get(token_mint) or {}
+        source = cache_entry.get('source', 'unknown')
+        self._refresh_price_validator_params()
+        validated, accepted = self.price_validator.validate(
+            token_mint, float(raw), source
+        )
+        if not accepted:
+            self.jupiter_client._price_cache.pop(token_mint, None)
+            self.jupiter_client._price_cache_time.pop(token_mint, None)
+        return validated
 
     async def _execute_swap_via_jito(
         self,
