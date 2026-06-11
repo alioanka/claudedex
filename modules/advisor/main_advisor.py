@@ -275,8 +275,10 @@ class AdvisorApplication:
                 f"  Kronos: {'loaded' if loaded else 'weights not available (fail-soft)'}"
             )
 
-        # Build engines
-        portfolio = AdvisorPortfolioEngine(self.db_pool)
+        # Build engines. Config MUST be passed: without it the portfolio engine
+        # silently ignored sim_horizon_days_* and sim_target_fill_policy keys
+        # and always used hard-coded defaults.
+        portfolio = AdvisorPortfolioEngine(self.db_pool, config)
         risk = AdvisorRiskEngine(config)
         telegram = AdvisorTelegramBot(config)
         await telegram.initialize(self.db_pool)

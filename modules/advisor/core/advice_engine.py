@@ -609,23 +609,42 @@ class AdviceEngine:
             logger.debug("[advice] list_open_sims error: %s", exc)
             return
 
+        # Fetch each distinct symbol's price ONCE per cycle (several sims —
+        # short/mid/long horizons — usually share a symbol).
+        price_cache: Dict[tuple, Optional[float]] = {}
+        marked = 0
         for sim in open_sims:
             analyzer = self.analyzers.get(sim.market)
             if analyzer is None:
                 continue
             try:
-                current_price = await _fetch_current_price(analyzer, sim.symbol)
-                if current_price is not None:
-                    # Use sim.advice_id as the sim row key (portfolio_engine
-                    # stores sims by DB id; use _sim_cache key = sim_id).
-                    # We look up via in-memory cache or re-load from DB.
-                    sim_id = _find_sim_id(self.portfolio, sim)
+                pkey = (sim.market, sim.symbol)
+                if pkey not in price_cache:
+                    price_cache[pkey] = await _fetch_current_price(
+                        analyzer, sim.symbol
+                    )
+                current_price = price_cache[pkey]
+                if current_price is not None and current_price > 0:
+                    # Address the row by its DB primary key (sim.id). The old
+                    # _find_sim_id cache scan matched by (symbol, entry_price),
+                    # which (a) returned None for every DB-loaded sim after a
+                    # restart — so open sims were NEVER marked — and (b) could
+                    # mis-bucket same-symbol sims across horizons/channels.
+                    sim_id = sim.id if sim.id is not None else _find_sim_id(
+                        self.portfolio, sim
+                    )
                     if sim_id is not None:
                         await self.portfolio.mark_to_market(sim_id, current_price)
+                        marked += 1
             except Exception as exc:
                 logger.debug(
                     "[advice] mark_to_market failed for %s: %s", sim.symbol, exc
                 )
+        if open_sims:
+            logger.info(
+                "[advice] mark-to-market: %d/%d open sims marked.",
+                marked, len(open_sims),
+            )
 
     async def _auto_close_sims(self) -> None:
         """Delegate to portfolio engine to close expired/hit sims."""
@@ -978,10 +997,19 @@ async def _fetch_current_price(analyzer: BaseAnalyzer, symbol: str) -> Optional[
     try:
         if hasattr(analyzer, "last_price") and analyzer.last_price:
             price = analyzer.last_price.get(symbol)
-            if price is not None:
+            # Analyzers cache last_price as signals.get("close", 0) — a stored
+            # 0.0 must NOT be served as a price (it would mark a LONG -100%).
+            if price is not None and float(price) > 0:
                 return float(price)
         result = await analyzer.analyze(symbol, Horizon.SHORT)
-        return result.entry_low or result.entry_high
+        # Entry band is symmetric around close, so the MIDPOINT is the real
+        # current price. entry_low alone was biased LOW by the half band-width
+        # (vol_unit * entry_mult), skewing every mark/auto-close price.
+        if result.entry_low is not None and result.entry_high is not None:
+            mid = (result.entry_low + result.entry_high) / 2
+        else:
+            mid = result.entry_low if result.entry_low is not None else result.entry_high
+        return mid if (mid is not None and mid > 0) else None
     except Exception:
         return None
 

@@ -189,6 +189,11 @@ class SimPosition:
     stop_price: Optional[float]
     notional_usd: float
 
+    # DB primary key (advisor_sim_positions.id). None until persisted. Having
+    # the PK ON the object lets mark-to-market address the exact row instead of
+    # guessing by (symbol, entry_price) — which mis-bucketed same-price sims
+    # across horizons/channels and left DB-loaded sims unmarked after restart.
+    id: Optional[int] = None
     advice_id: Optional[int] = None   # FK to advisor_advice.id
     # Sim channel (independent capped bucket). For watchlist sims this equals
     # the market value; for discovered sims it is 'gems'; for KAP-driven sims
@@ -196,6 +201,10 @@ class SimPosition:
     channel: Optional[str] = None
     opened_at: datetime = field(default_factory=datetime.utcnow)
     closed_at: Optional[datetime] = None
+    # Last marked-to-market price for an OPEN sim (mirrors DB current_price).
+    # exit_price is reserved for the FINAL close price only.
+    current_price: Optional[float] = None
+    horizon_end_date: Optional[datetime] = None
     exit_price: Optional[float] = None
     pnl_pct: Optional[float] = None
     pnl_usd: Optional[float] = None

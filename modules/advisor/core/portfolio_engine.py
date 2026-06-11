@@ -121,11 +121,20 @@ class AdvisorPortfolioEngine:
             )
             return None
 
-        entry_price = (
-            ((result.entry_low or 0) + (result.entry_high or 0)) / 2
-            if result.entry_low and result.entry_high
-            else result.entry_low or result.entry_high
-        )
+        # NULL-safe (is not None, not truthiness): a legitimate 0.0 bound must
+        # not silently flip the midpoint logic.
+        if result.entry_low is not None and result.entry_high is not None:
+            entry_price = (result.entry_low + result.entry_high) / 2
+        else:
+            entry_price = (
+                result.entry_low if result.entry_low is not None else result.entry_high
+            )
+        if entry_price is None or entry_price <= 0:
+            logger.warning(
+                "[portfolio] Cannot open sim for %s: non-positive entry price %s",
+                result.symbol, entry_price,
+            )
+            return None
 
         days = self._horizon_days(result.horizon)
         horizon_end = datetime.now(timezone.utc) + timedelta(days=days)
@@ -151,11 +160,13 @@ class AdvisorPortfolioEngine:
             notional_usd=result.sim_amount_usd,
             advice_id=result.extra.get("advice_id"),
             channel=channel,
+            horizon_end_date=horizon_end,
         )
 
         if self.db_pool is None:
             # In-memory fallback (test mode)
             sim_id = len(self._sim_cache) + 1
+            sim.id = sim_id
             self._sim_cache[sim_id] = sim
             return sim_id
 
@@ -213,6 +224,7 @@ class AdvisorPortfolioEngine:
                         horizon_end,
                     )
                 sim_id = row["id"]
+                sim.id = sim_id
                 self._sim_cache[sim_id] = sim
                 logger.info(
                     "[portfolio] Opened sim #%d: %s %s @ %.4f notional=$%.2f "
@@ -239,6 +251,15 @@ class AdvisorPortfolioEngine:
             if sim is None:
                 return None
 
+        # Guard against poisoned marks: analyzers cache last_price as
+        # signals.get("close", 0) — a 0.0 mark would show -100% PnL on a LONG.
+        if current_price is None or current_price <= 0 or sim.entry_price <= 0:
+            logger.debug(
+                "[portfolio] mark_to_market skipped sim#%d: bad price "
+                "(current=%s entry=%s)", sim_id, current_price, sim.entry_price,
+            )
+            return sim
+
         if sim.direction == Direction.LONG:
             pnl_pct = (current_price - sim.entry_price) / sim.entry_price * 100
         elif sim.direction == Direction.SHORT:
@@ -250,7 +271,7 @@ class AdvisorPortfolioEngine:
 
         sim.pnl_pct = pnl_pct
         sim.pnl_usd = pnl_usd
-        sim.exit_price = current_price  # current price, not final exit
+        sim.current_price = current_price  # mark only; exit_price stays final-close-only
 
         if self.db_pool:
             try:
@@ -287,6 +308,16 @@ class AdvisorPortfolioEngine:
             if sim is None:
                 return None
 
+        if exit_price is None or exit_price <= 0 or sim.entry_price <= 0:
+            # Never book a -100%/absurd PnL off a missing/zero price: close
+            # flat at entry instead (zero PnL) and tag the reason.
+            logger.warning(
+                "[portfolio] close_sim sim#%d got bad exit price %s; "
+                "closing flat at entry.", sim_id, exit_price,
+            )
+            exit_price = sim.entry_price
+            reason = f"{reason}_no_price" if "no_price" not in reason else reason
+
         if sim.direction == Direction.LONG:
             pnl_pct = (exit_price - sim.entry_price) / sim.entry_price * 100
         elif sim.direction == Direction.SHORT:
@@ -297,6 +328,7 @@ class AdvisorPortfolioEngine:
         pnl_usd = sim.notional_usd * (pnl_pct / 100)
 
         sim.exit_price = exit_price
+        sim.current_price = exit_price
         sim.pnl_pct = pnl_pct
         sim.pnl_usd = pnl_usd
         sim.status = "closed"
@@ -308,10 +340,10 @@ class AdvisorPortfolioEngine:
                     await conn.execute(
                         """
                         UPDATE advisor_sim_positions
-                        SET exit_price=$1, pnl_pct=$2, pnl_usd=$3,
-                            status='closed', closed_at=NOW(),
+                        SET exit_price=$1, current_price=$1, pnl_pct=$2,
+                            pnl_usd=$3, status='closed', closed_at=NOW(),
                             close_reason=$4, updated_at=NOW()
-                        WHERE id=$5
+                        WHERE id=$5 AND status='open'
                         """,
                         exit_price, pnl_pct, pnl_usd, reason, sim_id,
                     )
@@ -396,19 +428,38 @@ class AdvisorPortfolioEngine:
                 current_price = (
                     float(row["current_price"]) if row.get("current_price") else None
                 )
+            # Poisoned-mark guard: a 0/negative price must never trigger a
+            # stop_hit (-100% on a LONG) — treat it as "no price available".
+            if current_price is not None and current_price <= 0:
+                current_price = None
 
             close_reason: Optional[str] = None
+            exit_at: Optional[float] = current_price
+
+            # Target fill policy (sim_target_fill_policy config key):
+            #   'target' (default) — a hit target fills AT the target price,
+            #     like a resting limit order. Conservative: a price that gapped
+            #     PAST the target does not inflate sim PnL.
+            #   'market' — fill at the observed current price.
+            # Stops always fill at the observed price (stop-market semantics:
+            # gapping past the stop books the worse, realistic fill).
+            fill_at_target = (
+                str(self.config.get("sim_target_fill_policy", "target")).lower()
+                != "market"
+            )
 
             # Check target/stop (requires a current price).
             if current_price is not None:
                 if direction == Direction.LONG.value or direction == "long":
                     if target and current_price >= target:
                         close_reason = "target_hit"
+                        exit_at = target if fill_at_target else current_price
                     elif stop and current_price <= stop:
                         close_reason = "stop_hit"
                 elif direction == Direction.SHORT.value or direction == "short":
                     if target and current_price <= target:
                         close_reason = "target_hit"
+                        exit_at = target if fill_at_target else current_price
                     elif stop and current_price >= stop:
                         close_reason = "stop_hit"
 
@@ -419,8 +470,8 @@ class AdvisorPortfolioEngine:
                     if now >= he:
                         close_reason = "expired"
 
-            if close_reason and current_price is not None:
-                await self.close_sim_position(sim_id, current_price, close_reason)
+            if close_reason and exit_at is not None:
+                await self.close_sim_position(sim_id, exit_at, close_reason)
                 closed_count += 1
             elif close_reason == "expired" and current_price is None:
                 # No price available; close at entry as zero-PnL fallback.
@@ -684,22 +735,31 @@ class AdvisorPortfolioEngine:
 # ---------------------------------------------------------------------------
 
 def _row_to_sim(row) -> SimPosition:
+    def _f(key):
+        # NULL-safe float: 0.0 is a legitimate value (e.g. pnl_pct exactly 0
+        # must not display as missing), only SQL NULL maps to None.
+        v = row.get(key) if hasattr(row, "get") else row[key]
+        return float(v) if v is not None else None
+
     return SimPosition(
+        id=row.get("id"),
         symbol=row["symbol"],
         market=Market(row["market"]),
         direction=Direction(row["direction"]),
         horizon=Horizon(row["horizon"]),
         entry_price=float(row["entry_price"]),
-        target_price=float(row["target_price"]) if row.get("target_price") else None,
-        stop_price=float(row["stop_price"]) if row.get("stop_price") else None,
+        target_price=_f("target_price"),
+        stop_price=_f("stop_price"),
         notional_usd=float(row["notional_usd"]),
         advice_id=row.get("advice_id"),
         channel=row.get("channel"),
         opened_at=row["opened_at"],
         closed_at=row.get("closed_at"),
-        exit_price=float(row["exit_price"]) if row.get("exit_price") else None,
-        pnl_pct=float(row["pnl_pct"]) if row.get("pnl_pct") else None,
-        pnl_usd=float(row["pnl_usd"]) if row.get("pnl_usd") else None,
+        current_price=_f("current_price"),
+        horizon_end_date=row.get("horizon_end_date"),
+        exit_price=_f("exit_price"),
+        pnl_pct=_f("pnl_pct"),
+        pnl_usd=_f("pnl_usd"),
         status=row.get("status", "open"),
     )
 
@@ -726,8 +786,8 @@ def _sim_to_row(sim_id: int, sim: SimPosition) -> dict:
         "target_price": sim.target_price,
         "stop_price": sim.stop_price,
         "notional_usd": sim.notional_usd,
-        "horizon_end_date": sim.closed_at,   # None for in-memory test sims
-        "current_price": sim.exit_price,
+        "horizon_end_date": sim.horizon_end_date,
+        "current_price": sim.current_price,
     }
 
 
