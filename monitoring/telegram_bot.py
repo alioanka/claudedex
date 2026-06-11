@@ -229,7 +229,12 @@ class TelegramBotController:
             me = await self._api_call('getMe')
             if me:
                 logger.info(f"Telegram bot connected: @{me.get('username', 'unknown')}")
-                await self._send_message("Bot controller started. Send /help for commands.")
+                # Demoted to log-only: every module subprocess calls
+                # initialize(), so the old raw "Bot controller started"
+                # Telegram message produced one redundant double per module
+                # on every restart, on top of the per-module lifecycle
+                # banner that already announces startup.
+                logger.info("Bot controller started (startup Telegram message suppressed; per-module lifecycle banner covers it)")
                 return True
         except Exception as e:
             logger.error(f"Failed to connect to Telegram: {e}")
