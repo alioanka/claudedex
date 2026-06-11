@@ -5114,33 +5114,77 @@ class DashboardEndpoints:
             return web.json_response({'error': str(e)}, status=500)
     
     async def api_trade_history(self, request):
-        """Get trade history with filters"""
+        """Get DEX trade history with filters.
+
+        Queries the legacy `trades` table directly, scoped to DEX rows
+        only — the same exclusion clause as the Wave-12 dashboard-summary
+        fix. Other modules (sniper/copy/ai/arbitrage/solana) historically
+        wrote rows into `trades` too, so the unscoped get_recent_trades()
+        path mixed their trades into the DEX history view. (That call
+        also passed status= to a method whose signature is
+        get_recent_trades(limit) — every request raised TypeError and
+        500'd.) Fail-soft: no DB / missing table => empty list, never 500.
+        """
         try:
-            # Parse query parameters
             start_date = request.query.get('start_date')
             end_date = request.query.get('end_date')
             status = request.query.get('status')
+            try:
+                limit = min(int(request.query.get('limit', '1000')), 5000)
+            except (TypeError, ValueError):
+                limit = 1000
 
-            # ✅ FIX: Add await
-            trades = await self.db.get_recent_trades(limit=1000, status=status)
+            if not (self.db and getattr(self.db, 'pool', None)):
+                return web.json_response(
+                    {'success': True, 'data': [], 'count': 0}
+                )
 
-            # Apply date filters if provided
+            conditions = [
+                "UPPER(COALESCE(chain,'')) NOT IN ('SOLANA','SOL')",
+                "COALESCE(strategy,'') NOT IN "
+                "('sniper','copy_trading','copytrading',"
+                "'ai','ai_analysis','arbitrage')",
+            ]
+            params = []
+            if status:
+                params.append(status)
+                conditions.append(f"status = ${len(params)}")
+            params.append(limit)
+            query = (
+                "SELECT * FROM trades WHERE " + " AND ".join(conditions)
+                + f" ORDER BY entry_timestamp DESC LIMIT ${len(params)}"
+            )
+            async with self.db.pool.acquire() as conn:
+                rows = await conn.fetch(query, *params)
+            trades = [dict(r) for r in rows]
+
+            # Date filters in Python (old endpoint semantics: applied to
+            # the latest-N window). Normalize tz-awareness so aware DB
+            # rows vs naive query params never raise.
+            def _norm(dt):
+                return dt.replace(tzinfo=None) \
+                    if getattr(dt, 'tzinfo', None) else dt
+
             if start_date:
-                start = datetime.fromisoformat(start_date)
-                trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) >= start]
-
+                start = _norm(datetime.fromisoformat(start_date))
+                trades = [t for t in trades if t.get('entry_timestamp')
+                          and _norm(t['entry_timestamp']) >= start]
             if end_date:
-                end = datetime.fromisoformat(end_date)
-                trades = [t for t in trades if datetime.fromisoformat(t['timestamp']) <= end]
+                end = _norm(datetime.fromisoformat(end_date))
+                trades = [t for t in trades if t.get('entry_timestamp')
+                          and _norm(t['entry_timestamp']) <= end]
 
             return web.json_response({
                 'success': True,
-                'data': trades,
+                'data': self._serialize_decimals(trades),
                 'count': len(trades)
             })
         except Exception as e:
             logger.error(f"Error getting trade history: {e}")
-            return web.json_response({'error': str(e)}, status=500)
+            # Fail-soft: empty panel beats a 500 on the trades page.
+            return web.json_response(
+                {'success': True, 'data': [], 'count': 0, 'error': str(e)}
+            )
 
     async def api_export_trades(self, request):
         """Export all trades in CSV or Excel format with comprehensive data"""
