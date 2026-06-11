@@ -106,7 +106,7 @@ class RiskManagementConfig(BaseModel):
     max_position_size_percent: int = 10
     max_daily_loss_percent: int = 10
     max_drawdown_percent: int = 25
-    # Week-1 live tuning (migration 086): realized stop-loss avg was -14.5%
+    # Week-1 live tuning (migration 095): realized stop-loss avg was -14.5%
     # against a 12% stop (polling latency + gap/slippage on thin pairs). The
     # buffer makes the stop FIRE early by the measured overshoot so the
     # REALIZED loss lands near stop_loss_pct (trigger at -(stop-buffer)).
@@ -122,11 +122,11 @@ class TradingConfig(BaseModel):
     dex_fee_bps: int = 30
     min_opportunity_score: float = 0.25
     solana_min_opportunity_score: float = 0.20
-    # Week-1 live tuning (migration 086): daily entry budget across all DEX
+    # Week-1 live tuning (migration 095): daily entry budget across all DEX
     # chains. 0 = unlimited. The engine processes opportunities sorted by
     # score, so the budget keeps the highest-conviction entries.
     max_trades_per_day: int = 100
-    # Per-chain capital weights (migration 086). 0 disables the chain in
+    # Per-chain capital weights (migration 095). 0 disables the chain in
     # discovery AND execution; (0,1] scales position size. Chains absent
     # from the map default to 1.0. Week-1 live data: solana avg -2.24/trade
     # (n=388), monad avg -16.64 (n=2) -> default 0.
@@ -245,7 +245,7 @@ class ChainConfig(BaseModel):
     base_enabled: bool = True
     arbitrum_enabled: bool = False  # Low activity
     polygon_enabled: bool = False
-    # Week-1 live data (migration 086): solana avg -2.24/trade over n=388,
+    # Week-1 live data (migration 095): solana avg -2.24/trade over n=388,
     # monad avg -16.64 over n=2 — both default OFF. Operator can re-enable
     # via config_settings chain.{solana,monad}_enabled.
     solana_enabled: bool = False
@@ -358,7 +358,7 @@ class MLModelsConfig(BaseModel):
     ml_retrain_enabled: bool = False
     ml_retrain_days: int = 90
     ml_retrain_min_trades: int = 50
-    # Week-1 live tuning (migration 086): per-head quality auto-gate. An
+    # Week-1 live tuning (migration 095): per-head quality auto-gate. An
     # ensemble head (pump/rug) may only VOTE on entries when its persisted
     # cross-validated AUC (config_settings ml_models/ensemble_version, written
     # by scripts/train_ensemble.py) clears this floor. Below the floor the
