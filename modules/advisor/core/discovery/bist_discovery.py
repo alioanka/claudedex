@@ -56,12 +56,29 @@ async def discover(
         universe_cap = cfg_int(config, "advisor_discovery_bist_universe_cap", 100)
 
         loop = asyncio.get_event_loop()
-        candidates = await loop.run_in_executor(
-            None, _fetch_borsapy_movers, universe_cap
-        )
 
-        # Fonoloji movers fallback (when a key + base URL are present).
+        # Fonoloji movers FIRST when activation auto-prefer is on (key present
+        # + advisor_fonoloji_auto_prefer, default true) — same doctrine as the
+        # BIST analyzer/universe (migration 083). The shared client TTL-caches
+        # /market/stock-movers, so this is one real call per refresh. Fail-soft:
+        # empty/no key => the borsapy probe below, behaviour unchanged.
+        candidates: List[DiscoveryCandidate] = []
+        _fono_first = False
+        try:
+            from modules.advisor.core.data.activation import fonoloji_active
+            _fono_first = fonoloji_active(config)
+        except Exception:
+            _fono_first = False
+        if _fono_first:
+            candidates = await _fetch_fonoloji_movers(config, universe_cap)
+
         if not candidates:
+            candidates = await loop.run_in_executor(
+                None, _fetch_borsapy_movers, universe_cap
+            )
+
+        # Fonoloji movers fallback (key present but auto-prefer OFF).
+        if not candidates and not _fono_first:
             candidates = await _fetch_fonoloji_movers(config, universe_cap)
 
         # Operator-configured JSON movers source.

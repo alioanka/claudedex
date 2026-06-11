@@ -234,6 +234,26 @@ class AdvisorApplication:
                 f"  Could not resolve advisor API keys from Secure Credentials: {exc}"
             )
 
+        # Turkish-stack source ACTIVATION diagnostics + yfinance noise filter.
+        # install_yfinance_noise_filter demotes the EXPECTED yfinance
+        # "$TICKER: possibly delisted; no price data found" ERROR flood (non-
+        # equity KAP tickers) to DEBUG so advisor_errors.log stays signal.
+        # resolve_sources logs which source each Turkish path resolves to RIGHT
+        # NOW (Fonoloji auto-prefer rule, migration 083). Fail-soft.
+        try:
+            from modules.advisor.core.data import activation as _activation
+            _activation.install_yfinance_noise_filter()
+            _sources = _activation.resolve_sources(config)
+            logger.info(
+                "  Turkish-stack sources: bist=%s midas=%s universe=%s kap_prices=%s",
+                _sources.get("bist"), _sources.get("midas"),
+                _sources.get("universe"), _sources.get("kap_prices"),
+            )
+        except Exception as exc:
+            logger.warning(
+                f"  Source-activation diagnostics failed (fail-soft): {exc}"
+            )
+
         # Build analyzers
         analyzers = {
             Market.CRYPTO: CryptoAnalyzer(config, self.db_pool),
