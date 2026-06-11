@@ -2087,7 +2087,8 @@ class DashboardEndpoints:
             # when only DEX was deployed this probe hit the DEX health server
             # and labeled copy_trading as running. 8088 is unclaimed
             # (8081 futures, 8082 solana, 8083 sniper, 8084 arbitrage,
-            # 8085 dex, 8086 ai/advisor). DEX stays on 8085 — no redeploy.
+            # 8085 dex, 8086 advisor, 8087 ai probe-only, 8089 polymarket).
+            # DEX stays on 8085 — no redeploy.
             copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8088'))
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'http://localhost:{copy_port}/health', timeout=3) as resp:
@@ -2114,7 +2115,13 @@ class DashboardEndpoints:
 
         # Check AI module health
         try:
-            ai_port = int(os.getenv('AI_HEALTH_PORT', '8086'))
+            # Default 8087 (NOT 8086): the AI subprocess binds NO health
+            # server at all, and 8086 is ADVISOR_HEALTH_PORT's default — so
+            # probing 8086 returned the advisor's 200 and falsely labeled AI
+            # as running whenever the advisor was up. 8087 is unclaimed, so
+            # this probe now fails fast and the honest ai_runtime_stats
+            # heartbeat below becomes the deciding signal.
+            ai_port = int(os.getenv('AI_HEALTH_PORT', '8087'))
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'http://localhost:{ai_port}/health', timeout=3) as resp:
                     if resp.status == 200:
@@ -2527,7 +2534,10 @@ class DashboardEndpoints:
         },
         'ai': {
             'env': 'AI_MODULE_ENABLED',
-            'port_env': ('AI_HEALTH_PORT', 8086),
+            # 8087, NOT 8086 — AI binds no health server and 8086 is the
+            # advisor's port; probing it mislabeled AI as RUNNING. The
+            # ai_runtime_stats heartbeat below is the real liveness signal.
+            'port_env': ('AI_HEALTH_PORT', 8087),
             'heartbeat': ('ai_runtime_stats', 1800),
             'config_type': 'ai_config',
             'pause_keys': ('ai', 'ai_analysis'),
@@ -4346,7 +4356,9 @@ class DashboardEndpoints:
                 'trades': []
             }
             try:
-                ai_port = int(os.getenv('AI_HEALTH_PORT', '8086'))
+                # 8087 — AI binds no health server; 8086 is the advisor's
+                # port (see the /health probe note above).
+                ai_port = int(os.getenv('AI_HEALTH_PORT', '8087'))
                 async with aiohttp.ClientSession() as session:
                     async with session.get(f'http://localhost:{ai_port}/stats', timeout=3) as resp:
                         if resp.status == 200:
@@ -4413,7 +4425,9 @@ class DashboardEndpoints:
                 # 8088, not 8085 — 8085 is DEX's port (collision mislabeled
                 # DEX health as copy_trading when only one was deployed).
                 ('copytrading', 'COPYTRADING_HEALTH_PORT', '8088'),
-                ('ai', 'AI_HEALTH_PORT', '8086')
+                # 8087 — AI binds no health server; 8086 belongs to the
+                # advisor (probe fails fast, export stays fail-soft).
+                ('ai', 'AI_HEALTH_PORT', '8087')
             ]
 
             async with aiohttp.ClientSession() as session:
