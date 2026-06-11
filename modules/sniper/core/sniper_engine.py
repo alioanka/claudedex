@@ -686,8 +686,14 @@ class SniperEngine:
         target['_timing'] = timing
         try:
             # Wave-17: age floor BEFORE any API calls.
+            # _age_floor_passed is stamped by _process_watchlist at promotion
+            # time. Without it, a token whose block_time is unavailable
+            # (age=None) was re-parked here with a FRESH detected_at on every
+            # promotion — an infinite watchlist<->promote cycle in which no
+            # candidate ever reached the entry gates (the "WATCHLIST PROMOTE
+            # spam, no trades result" wave-18 observed).
             min_age = self.sniper_min_entry_age_seconds
-            if min_age > 0:
+            if min_age > 0 and not target.get('_age_floor_passed'):
                 age_secs = self._get_token_age_seconds(target)
                 if age_secs is None or age_secs < min_age:
                     # Too young — park in watchlist, don't evaluate yet.
@@ -760,13 +766,18 @@ class SniperEngine:
         """Return token age in seconds from pool block_time, or None if unavailable.
 
         Checks target['block_time'] (listener stamp) and
-        target['metadata']['pool_block_time'] (Solana WSS path).
+        target['metadata']['block_time'] (Solana listener path —
+        getTransaction.result.blockTime, Unix epoch seconds). The old
+        'pool_block_time' key is kept for back-compat but no listener
+        ever produced it; that mismatch made age permanently None and
+        broke watchlist promotion (every promoted token was re-parked).
         Returns None when the field is absent or unparseable — caller
         treats None as "unknown age" and may choose fail-open or fail-closed.
         """
         from datetime import timezone as _tz
         pool_block_time = (
             target.get('block_time')
+            or target.get('metadata', {}).get('block_time')
             or target.get('metadata', {}).get('pool_block_time')
         )
         if pool_block_time is None:
@@ -843,11 +854,15 @@ class SniperEngine:
                     self._stats['watchlist_promoted'] = (
                         self._stats.get('watchlist_promoted', 0) + 1
                     )
+                    # Stamp the floor as passed so _evaluate_target cannot
+                    # re-park the token (age may still resolve to None when
+                    # block_time is missing — detected_at proxy was already
+                    # used to satisfy the floor above).
+                    target['_age_floor_passed'] = True
                     try:
                         # Re-enter through the full evaluation path.
                         # The token is no longer in _watchlist so dedupe
-                        # won't block it; age floor won't re-park it because
-                        # age is now >= min_age.
+                        # won't block it.
                         await self._evaluate_target(target, chain_type)
                     except Exception as _pr_err:
                         logger.error(
@@ -905,8 +920,11 @@ class SniperEngine:
             # or target['metadata']['pool_block_time']. Fail-open when absent.
             min_age = self.sniper_min_token_age_seconds
             if min_age > 0:
+                # Same key set as _get_token_age_seconds: listeners stamp
+                # metadata['block_time']; 'pool_block_time' never existed.
                 pool_block_time = (
                     target.get('block_time')
+                    or target.get('metadata', {}).get('block_time')
                     or target.get('metadata', {}).get('pool_block_time')
                 )
                 if pool_block_time is not None:
