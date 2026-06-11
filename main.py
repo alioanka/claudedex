@@ -316,7 +316,7 @@ class ModuleProcess:
                 errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
 
         # Check database credentials (required for most modules, including dashboard)
-        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage')
+        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket')
         if needs_database:
             if not _check_database_credentials():
                 errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
@@ -555,6 +555,18 @@ class TradingBotOrchestrator:
             script_path="modules/copy_trading/main_copy.py",
             enabled_env_var="COPY_TRADING_MODULE_ENABLED",
             module_key="copy_trading"
+        )
+
+        # Polymarket prediction-market module. Trading-capable but LIVE
+        # execution is GATED OFF by default (shadow_mode + live_execution_enabled
+        # both fail-safe), mirroring the arbitrage module. Reads the free
+        # read-only Gamma API; records simulated outcomes to polymarket_trades.
+        # Default: DISABLED. Health server: port 8089 (POLYMARKET_HEALTH_PORT).
+        self.modules['polymarket'] = ModuleProcess(
+            name="Polymarket",
+            script_path="modules/polymarket/main_polymarket.py",
+            enabled_env_var="POLYMARKET_MODULE_ENABLED",
+            module_key="polymarket"
         )
 
         # Phase 3 D: AI/ML orchestrator (advisory layer).

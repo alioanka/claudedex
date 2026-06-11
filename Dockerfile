@@ -83,6 +83,12 @@ RUN pip install --no-cache-dir \
     mnemonic==0.20 \
     && echo "✅ Ethereum libraries installed"
 
+# Polymarket CLOB client (prediction-market module; live order path only,
+# read-only Gamma API needs no SDK). Pulls a web3-compatible client.
+RUN pip install --no-cache-dir \
+    py-clob-client==0.17.5 \
+    && echo "✅ Polymarket py-clob-client installed"
+
 # Stage 5: Database
 RUN pip install --no-cache-dir \
     sqlalchemy==2.0.25 \
