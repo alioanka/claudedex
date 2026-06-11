@@ -10,8 +10,9 @@ Specialized risk management for leverage trading:
 """
 
 import logging
-from typing import Dict, List, Optional
-from datetime import datetime
+from collections import deque
+from typing import Deque, Dict, List, Optional
+from datetime import datetime, timedelta
 
 
 class FuturesRiskManager:
@@ -87,6 +88,56 @@ class FuturesRiskManager:
         )
         self.per_symbol_consec_losses: Dict[str, int] = {}
         self.per_symbol_cooloff_until: Dict[str, datetime] = {}
+
+        # FUT-RM-27 (Wave 25): per-symbol tiering + rolling performance gate.
+        # Two layers, both fail-open:
+        #   1. STATIC tier weights (`symbol_size_weights`, operator-curated,
+        #      seeded by migration 088 from a week of live data): weight 0
+        #      disables a symbol entirely; 0 < w < 1 trades it at reduced
+        #      size; missing symbol = 1.0 (full size).
+        #   2. ROLLING gate: per-symbol trailing-N net PnL + win rate. When
+        #      BOTH fall below thresholds, the symbol is auto-BENCHED (no new
+        #      entries) for `rolling_gate_bench_minutes`. On expiry the
+        #      window is cleared and the symbol re-enters on PROBATION at
+        #      `rolling_gate_probation_weight` × static weight until it has
+        #      `rolling_gate_min_trades` fresh trades — so a still-losing
+        #      symbol re-benches quickly at reduced cost. This keeps the
+        #      tiering current without manual curation (the ZEC failure
+        #      mode: 42 trades/week through a 4h cool-off that kept expiring).
+        self.symbol_tiering_enabled = bool(
+            config.get('symbol_tiering_enabled', True)
+        )
+        raw_weights = config.get('symbol_size_weights') or {}
+        self.symbol_size_weights: Dict[str, float] = {}
+        if isinstance(raw_weights, dict):
+            for sym, w in raw_weights.items():
+                try:
+                    norm = self._normalize_symbol(sym)
+                    w_f = float(w)
+                    if norm and w_f >= 0.0:
+                        self.symbol_size_weights[norm] = w_f
+                except (TypeError, ValueError):
+                    continue  # bad row — skip rather than block boot
+        self.rolling_gate_enabled = bool(config.get('rolling_gate_enabled', True))
+        self.rolling_gate_window = int(config.get('rolling_gate_window', 20) or 0)
+        self.rolling_gate_min_trades = int(
+            config.get('rolling_gate_min_trades', 10) or 0
+        )
+        self.rolling_gate_max_net_pnl_usd = float(
+            config.get('rolling_gate_max_net_pnl_usd', -5.0)
+        )
+        self.rolling_gate_max_win_rate = float(
+            config.get('rolling_gate_max_win_rate', 0.45)
+        )
+        self.rolling_gate_bench_minutes = int(
+            config.get('rolling_gate_bench_minutes', 1440) or 0
+        )
+        self.rolling_gate_probation_weight = float(
+            config.get('rolling_gate_probation_weight', 0.5)
+        )
+        self._rolling_pnl: Dict[str, Deque[float]] = {}
+        self._rolling_benched_until: Dict[str, datetime] = {}
+        self._probation_trades_left: Dict[str, int] = {}
 
     @staticmethod
     def _normalize_symbol(sym: str) -> str:
@@ -454,6 +505,8 @@ class FuturesRiskManager:
             # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off.
             if symbol:
                 norm = self._normalize_symbol(symbol)
+                # FUT-RM-27: feed the rolling per-symbol performance gate.
+                self._record_rolling_trade(norm, symbol, pnl)
                 if pnl < 0:
                     self.per_symbol_consec_losses[norm] = (
                         self.per_symbol_consec_losses.get(norm, 0) + 1
@@ -518,6 +571,168 @@ class FuturesRiskManager:
         except Exception as e:
             self.logger.warning(f"should_skip_for_cooloff errored: {e}")
             return {'skip': False, 'reason': f'gate error: {e}'}
+
+    # ------------------------------------------------------------------
+    # FUT-RM-27 (Wave 25): per-symbol tiering + rolling performance gate
+    # ------------------------------------------------------------------
+
+    def _record_rolling_trade(self, norm: str, symbol: str, pnl: float) -> None:
+        """Append a closed trade to the symbol's trailing window and evaluate
+        the bench condition. Loudly logs ONCE per BENCH transition. Never
+        raises (called from update_on_trade_close's try block anyway)."""
+        if not (
+            self.symbol_tiering_enabled
+            and self.rolling_gate_enabled
+            and self.rolling_gate_window > 0
+        ):
+            return
+        dq = self._rolling_pnl.get(norm)
+        if dq is None or dq.maxlen != self.rolling_gate_window:
+            dq = deque(dq or [], maxlen=self.rolling_gate_window)
+            self._rolling_pnl[norm] = dq
+        dq.append(float(pnl))
+
+        # Probation bookkeeping: count down fresh post-unbench trades.
+        if norm in self._probation_trades_left:
+            left = self._probation_trades_left[norm] - 1
+            if left <= 0:
+                del self._probation_trades_left[norm]
+                self.logger.info(
+                    f"FUT-RM-27 probation complete for {symbol}: "
+                    f"restored to full tier weight"
+                )
+            else:
+                self._probation_trades_left[norm] = left
+
+        if norm in self._rolling_benched_until:
+            return  # already benched; nothing more to evaluate
+        min_trades = max(1, self.rolling_gate_min_trades)
+        if len(dq) < min_trades:
+            return
+        net = sum(dq)
+        wins = sum(1 for x in dq if x > 0)
+        win_rate = wins / len(dq)
+        if (
+            net < self.rolling_gate_max_net_pnl_usd
+            and win_rate < self.rolling_gate_max_win_rate
+        ):
+            until = datetime.now() + timedelta(
+                minutes=max(1, self.rolling_gate_bench_minutes)
+            )
+            self._rolling_benched_until[norm] = until
+            self.logger.warning(
+                f"🪑 FUT-RM-27 rolling gate BENCHED {symbol}: trailing "
+                f"{len(dq)} trades net ${net:.2f} < "
+                f"${self.rolling_gate_max_net_pnl_usd:.2f} and win rate "
+                f"{win_rate:.0%} < {self.rolling_gate_max_win_rate:.0%}; "
+                f"no new entries until {until.isoformat()} "
+                f"(existing positions unaffected)"
+            )
+
+    def seed_symbol_history(self, symbol: str, pnls: List[float]) -> None:
+        """Warm the rolling window from persisted trades, OLDEST FIRST, so
+        the gate is effective immediately after a restart instead of needing
+        rolling_gate_min_trades fresh closes. Bench evaluation runs exactly
+        as if the trades closed live (one loud log per benched symbol)."""
+        try:
+            norm = self._normalize_symbol(symbol)
+            if not norm:
+                return
+            for pnl in pnls:
+                self._record_rolling_trade(norm, symbol, float(pnl))
+        except Exception as e:
+            self.logger.warning(f"seed_symbol_history({symbol}) errored: {e}")
+
+    def should_skip_for_symbol(self, symbol: str) -> Dict:
+        """FUT-RM-27 entry gate. Returns {skip, reason, source[, expires_at]}.
+        Checks the static tier weight (0 = operator-disabled) then the
+        rolling bench. Handles auto-UNBENCH on expiry (logged once, symbol
+        re-enters on probation with a cleared window). Fail-open on error."""
+        try:
+            if not self.symbol_tiering_enabled:
+                return {'skip': False, 'reason': 'tiering disabled'}
+            norm = self._normalize_symbol(symbol)
+            w = self.symbol_size_weights.get(norm)
+            if w is not None and w <= 0.0:
+                return {
+                    'skip': True,
+                    'reason': 'symbol disabled (tier weight 0 — operator '
+                              'can re-enable via futures_risk.'
+                              'symbol_size_weights)',
+                    'source': 'static',
+                }
+            if self.rolling_gate_enabled:
+                until = self._rolling_benched_until.get(norm)
+                if until is not None:
+                    now = datetime.now()
+                    if now >= until:
+                        # UNBENCH transition: clear bench + window so the
+                        # symbol needs fresh evidence to re-bench; start
+                        # probation at reduced size.
+                        del self._rolling_benched_until[norm]
+                        self._rolling_pnl.pop(norm, None)
+                        if 0.0 < self.rolling_gate_probation_weight < 1.0:
+                            self._probation_trades_left[norm] = max(
+                                1, self.rolling_gate_min_trades
+                            )
+                        self.logger.info(
+                            f"✅ FUT-RM-27 rolling gate UNBENCHED {symbol}: "
+                            f"probation for next "
+                            f"{self._probation_trades_left.get(norm, 0)} "
+                            f"trades at "
+                            f"{self.rolling_gate_probation_weight:.2f}x size"
+                        )
+                    else:
+                        remaining_min = int((until - now).total_seconds() / 60)
+                        return {
+                            'skip': True,
+                            'reason': (
+                                f'rolling-gate bench ~{remaining_min} min '
+                                f'remaining'
+                            ),
+                            'source': 'rolling',
+                            'expires_at': until.isoformat(),
+                        }
+            return {'skip': False, 'reason': 'symbol ok'}
+        except Exception as e:
+            self.logger.warning(f"should_skip_for_symbol errored: {e}")
+            return {'skip': False, 'reason': f'gate error: {e}'}
+
+    def resolve_symbol_size_weight(self, symbol: str) -> float:
+        """FUT-RM-27 sizing multiplier: static tier weight (default 1.0)
+        × probation factor when in a post-unbench probation window.
+        Clamped to [0, 5]; returns 1.0 on any error (fail-open)."""
+        try:
+            if not self.symbol_tiering_enabled:
+                return 1.0
+            norm = self._normalize_symbol(symbol)
+            w = float(self.symbol_size_weights.get(norm, 1.0))
+            if norm in self._probation_trades_left and \
+                    self.rolling_gate_probation_weight > 0.0:
+                w *= float(self.rolling_gate_probation_weight)
+            return max(0.0, min(w, 5.0))
+        except Exception as e:
+            self.logger.warning(f"resolve_symbol_size_weight errored: {e}")
+            return 1.0
+
+    def get_symbol_gate_state(self) -> Dict:
+        """Observability snapshot for stats/dashboard surfaces."""
+        try:
+            return {
+                'tiering_enabled': self.symbol_tiering_enabled,
+                'rolling_gate_enabled': self.rolling_gate_enabled,
+                'static_weights': dict(self.symbol_size_weights),
+                'benched': {
+                    s: t.isoformat()
+                    for s, t in self._rolling_benched_until.items()
+                },
+                'probation': dict(self._probation_trades_left),
+                'window_counts': {
+                    s: len(d) for s, d in self._rolling_pnl.items()
+                },
+            }
+        except Exception:
+            return {}
 
     def get_adjusted_leverage(
         self,
