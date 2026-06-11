@@ -11,6 +11,7 @@ Multi-strategy crypto trading bot. Each strategy runs as an independent subproce
 | AI | `modules/ai_analysis/` | `main_ai.py` | AMBER → GREEN candidate (executor delegation + secrets + prompt-injection sanitization closed) |
 | COPY_TRADING | `modules/copy_trading/` | `main_copy.py` | AMBER → GREEN candidate (MB-22..MB-25, BaseModule conversion, pool_engine + secrets all closed) |
 | DASHBOARD | `modules/dashboard/` | `main_dashboard.py` | AMBER → GREEN candidate (security + operational P0s + reconcile-state surface + RESTART OVER-CAP banner) |
+| ADVISOR | `modules/advisor/` | `main_advisor.py` | ADVICE-ONLY, no trade execution (Wave-20+; CRYPTO/US/BIST/FX/Midas signals; default DISABLED, opt-in via `ADVISOR_MODULE_ENABLED=true`; health port 8086) |
 
 Each module has its own `CLAUDE.md` with entry point, config keys, kill-switch paths, log location, and risk-gate hooks.
 ## Run flows
@@ -34,6 +35,8 @@ Run-from-dashboard: the dashboard runs independently on port 8080 and does NOT r
 | COPY_TRADING | AMBER→GREEN: Solana wallet derived from PK at executor source (was None → Jupiter 400); EVM V3+aggregator + Solana Orca/Meteora detection added (was missing 22 method IDs and 11 DEX programs). |
 | DASHBOARD | AMBER→GREEN: DEX ml_source badge + ensemble version; copy probation/exposure knobs; AI model IDs + confidence decimal fix + health badge; pool fallback tier badge. |
 | INFRA | AMBER→GREEN: pool_engine anti-starvation fallback + exp backoff; secrets_manager idempotent re-init; migration 035 seeds Solana/BASE/FANTOM public RPC fallbacks. |
+## Recovery wave addendum (2026-06-11)
+Salvage/repair wave on top of Waves 14-25: sniper revival baseline (mig 089), futures FUT-RM-27 per-symbol tiering + rolling gate (mig 088), copy leader lifecycle (mig 092), arbitrage economics gates (LIVE execution default OFF behind `live_execution_enabled`), Solana pump.fun LIVE gating via `should_skip_live` + `pumpfun_live_enabled` knob (mig 096), Solana PriceValidator wired into `_get_token_price`, DEX week-1 tuning seeds + DB-first exit watchdog — watchdog closes are DRY_RUN-only (mig 095), dashboard per-module runtime-status endpoint + honest runtime badges, advisor Fonoloji activation auto-prefer (mig 083). Stale-worktree clobber from 0cb4c3a repaired in 46092cd. Note: migration numbers 084-087, 090-091, 093-094 are intentionally unused; `min_net_spread_bps_<chain>` / `live_execution_enabled` arb keys have no seed migration yet (code defaults are fail-safe OFF).
 ## See also
 - Phase 1 module audits: `docs/agents/reports/<MODULE>_*.md`
 - Wave-13 module reports: `docs/agents/wave13/agent_*.md`
