@@ -2952,6 +2952,16 @@ class SolanaTradingEngine:
                     slippage_bps=close_slippage
                 )
 
+                if close_tx_signature == 'DRY_RUN_SIMULATED':
+                    # Killswitch/pause gate engaged: nothing sold. Treating the
+                    # sentinel as success would delete the position and mark
+                    # the stuck token resolved with tokens still in the wallet.
+                    logger.warning(
+                        f"⛔ {stuck.token_symbol}: emergency-close gate engaged "
+                        f"(killswitch/pause) — nothing broadcast, will retry later"
+                    )
+                    continue
+
                 if close_tx_signature:
                     logger.info(f"🟢 EMERGENCY CLOSE SUCCESS: {stuck.token_symbol}")
                     logger.info(f"   TX: {close_tx_signature}")
@@ -3886,6 +3896,20 @@ class SolanaTradingEngine:
         except Exception as exc:
             logger.debug(f"price-validator config refresh failed: {exc}")
 
+    def _should_skip_live(self) -> bool:
+        """True iff a LIVE broadcast must NOT happen right now: module
+        DRY_RUN, global killswitch (logs/.killswitch) or per-module pause
+        (logs/.pause_solana). Fail-soft: if core.dry_run is unavailable,
+        falls back to the module flag alone."""
+        try:
+            from core.dry_run import should_skip_live
+            return should_skip_live(
+                self.dry_run, module='solana',
+                account=getattr(self, 'wallet_pubkey', None),
+            )
+        except ImportError:
+            return self.dry_run
+
     async def _get_token_price(self, token_mint: str) -> Optional[float]:
         """Get current VALIDATED price for a token.
 
@@ -3933,6 +3957,16 @@ class SolanaTradingEngine:
         uptake.
         """
         if not (self.jito and self.jito_enabled and self.jupiter_helper and JITO_CLIENT_AVAILABLE):
+            return None
+
+        # Jito signs + broadcasts directly (bypasses JupiterHelper.execute_swap
+        # and its should_skip_live gate) — enforce the same gate here so a
+        # killswitch/pause can never leak a live bundle.
+        if self._should_skip_live():
+            logger.info(
+                "🛡️ Jito attempt SKIPPED for %s — dry-run/killswitch/pause gate engaged",
+                token_symbol,
+            )
             return None
 
         keypair = getattr(self.jupiter_helper, 'keypair', None)
@@ -4288,6 +4322,30 @@ class SolanaTradingEngine:
                 logger.info(f"   Amount: {amount_sol} SOL (${value_usd:.2f})")
                 tx_signature = f"DRY_RUN_{uuid.uuid4().hex[:16]}"
             else:
+                # LIVE-flag bug fix: a live broadcast requires explicit
+                # non-dry-run AND no killswitch AND no pause. Previously the
+                # gate lived only inside JupiterHelper, which returned the
+                # 'DRY_RUN_SIMULATED' sentinel — the engine treated that as a
+                # real fill and persisted the position/trade with
+                # is_simulated=False (pump.fun trades saved as LIVE that never
+                # broadcast). Refuse the entry outright instead.
+                if self._should_skip_live():
+                    logger.warning(
+                        f"⛔ LIVE entry refused for {token_symbol} ({strategy.value}): "
+                        f"killswitch/pause engaged — nothing broadcast, nothing recorded"
+                    )
+                    return False
+
+                # Per-strategy LIVE kill knob (migration 096). DRY_RUN
+                # pump.fun entries are unaffected. Fail-soft default True.
+                if strategy == Strategy.PUMPFUN and self.config_manager:
+                    if not bool(self.config_manager.get('pumpfun_live_enabled', True)):
+                        logger.warning(
+                            f"⛔ LIVE entry refused for {token_symbol}: "
+                            f"pumpfun_live_enabled=false in DB config"
+                        )
+                        return False
+
                 # Check wallet balance before executing swap
                 try:
                     wallet_balance = await self._get_wallet_balance(force=True)
@@ -4410,6 +4468,16 @@ class SolanaTradingEngine:
                                 amount=int(amount_sol * self.LAMPORTS_PER_SOL),
                                 slippage_bps=trade_slippage
                             )
+
+                        if tx_signature == 'DRY_RUN_SIMULATED':
+                            # Helper's defense-in-depth gate engaged mid-flight
+                            # (killswitch/pause raced the engine-level check).
+                            # Nothing was broadcast — never record a LIVE fill.
+                            logger.warning(
+                                f"⛔ {token_symbol}: JupiterHelper gate engaged mid-flight — "
+                                f"no tx broadcast, entry aborted (not saved as LIVE)"
+                            )
+                            return False
 
                         if tx_signature:
                             logger.info(f"🟢 LIVE SWAP executed: {tx_signature}")
@@ -4589,7 +4657,12 @@ class SolanaTradingEngine:
             close_tx_signature = None
             close_actually_executed = False  # Track if close actually succeeded
 
-            if self.dry_run:
+            # A simulated position has no on-chain tokens — closing it must
+            # never broadcast a live sell (burns gas on a guaranteed-phantom
+            # swap and records a fake LIVE exit). LIVE positions closed while
+            # DRY_RUN is set also simulate: no broadcast in dry-run, ever.
+            close_is_simulated = self.dry_run or position.is_simulated
+            if close_is_simulated:
                 partial_tag = f" ({close_pct*100:.0f}%)" if is_partial else ""
                 logger.info(f"🔵 [DRY_RUN] SIMULATED SELL{partial_tag} {position.token_symbol} ({reason})")
                 close_tx_signature = f"DRY_RUN_CLOSE_{uuid.uuid4().hex[:16]}"
@@ -4687,6 +4760,19 @@ class SolanaTradingEngine:
                                 slippage_bps=close_slippage,
                                 restrict_intermediate_tokens=use_restricted_routes
                             )
+
+                            if close_tx_signature == 'DRY_RUN_SIMULATED':
+                                # Killswitch/pause engaged mid-close: nothing was
+                                # broadcast and every retry would hit the same
+                                # gate. Keep the position open (monitor retries
+                                # next cycle) WITHOUT recording a safety-engine
+                                # close failure — an operator gate is not a
+                                # market failure and must not mark it STUCK.
+                                logger.warning(
+                                    f"⛔ {position.token_symbol}: close gate engaged "
+                                    f"(killswitch/pause) — nothing broadcast, keeping position open"
+                                )
+                                return
 
                             if close_tx_signature:
                                 logger.info(f"🟢 LIVE CLOSE executed: {close_tx_signature}")
@@ -4804,7 +4890,9 @@ class SolanaTradingEngine:
                 opened_at=position.opened_at,
                 closed_at=datetime.now(timezone.utc),
                 close_reason=reason,
-                is_simulated=position.is_simulated
+                # Truthful flag: True iff the close did NOT broadcast on-chain
+                # (simulated position OR module in DRY_RUN at close time).
+                is_simulated=close_is_simulated
             )
             self.trade_history.append(trade)
 
@@ -4848,14 +4936,14 @@ class SolanaTradingEngine:
                 entry_time=position.opened_at,
                 exit_time=datetime.now(),
                 duration_seconds=int((datetime.now(timezone.utc) - _as_utc(position.opened_at)).total_seconds()),
-                is_simulated=position.is_simulated
+                is_simulated=close_is_simulated
             )
             self.pnl_tracker.record_trade(trade_record)
 
             if is_partial:
                 # Partial exit: Update position instead of removing
                 # For LIVE trading, get actual remaining balance to keep tracking accurate
-                if not self.dry_run:
+                if not close_is_simulated:
                     try:
                         # MB-06: omit hardcoded decimals; let _get_token_balance
                         # resolve via parsed tokenAmount.decimals / get_spl_decimals.

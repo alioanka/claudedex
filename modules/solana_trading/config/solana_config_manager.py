@@ -64,6 +64,7 @@ CONFIG_KEY_MAPPING = {
     'pumpfun_stop_loss': ('solana_pumpfun', 'float'),
     'pumpfun_take_profit': ('solana_pumpfun', 'float'),
     'pumpfun_max_positions': ('solana_pumpfun', 'int'),  # Separate position limit for pump.fun
+    'pumpfun_live_enabled': ('solana_pumpfun', 'bool'),  # Per-strategy LIVE-broadcast kill knob (DRY_RUN unaffected)
     'pumpfun_trailing_enabled': ('solana_pumpfun', 'bool'),  # Enable/disable trailing stops
     'pumpfun_tier0_sl': ('solana_pumpfun', 'float'),  # Tier 0 stop loss % (default -12)
     'pumpfun_partial_exit_pct': ('solana_pumpfun', 'float'),  # % to exit per tier (default 20)
@@ -173,6 +174,7 @@ class SolanaConfigManager:
         'pumpfun_stop_loss': 25.0,  # Fixed SL when trailing disabled (wider for volatility)
         'pumpfun_take_profit': 50.0,  # Fixed TP when trailing disabled (take profits earlier)
         'pumpfun_max_positions': 2,  # Reduced to 2 to limit exposure
+        'pumpfun_live_enabled': True,  # LIVE-broadcast kill knob; fail-soft True preserves behavior
         'pumpfun_trailing_enabled': True,  # Enable trailing stops (recommended)
         'pumpfun_tier0_sl': 20.0,  # Tier 0 stop loss % (wider for pump.fun volatility)
         'pumpfun_partial_exit_pct': 20.0,  # Exit 20% per tier to let winners run
