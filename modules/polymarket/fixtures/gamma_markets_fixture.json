@@ -1,0 +1,56 @@
+[
+  {
+    "id": "500001",
+    "question": "Will candidate A win the 2026 election?",
+    "category": "Politics",
+    "active": true,
+    "closed": false,
+    "endDate": "2026-11-04T00:00:00Z",
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": "[\"0.46\", \"0.51\"]",
+    "clobTokenIds": "[\"7131890250983402381...yes\", \"7131890250983402381...no\"]",
+    "volume24hr": 125000.5,
+    "liquidity": "88000.25",
+    "bestBid": 0.45,
+    "bestAsk": 0.47
+  },
+  {
+    "id": "500002",
+    "question": "Will BTC close above $150k on 2026-12-31?",
+    "category": "Crypto",
+    "active": true,
+    "closed": false,
+    "endDate": "2026-12-31T23:59:59Z",
+    "outcomes": ["Yes", "No"],
+    "outcomePrices": ["0.62", "0.38"],
+    "clobTokenIds": ["btc150k-yes-token", "btc150k-no-token"],
+    "volume24hr": "54000",
+    "liquidity": 41000,
+    "bestBid": 0.61,
+    "bestAsk": 0.63
+  },
+  {
+    "id": "500003",
+    "question": "Malformed market with no prices",
+    "category": "Other",
+    "active": true,
+    "closed": false,
+    "outcomes": "[\"Yes\", \"No\"]",
+    "outcomePrices": null,
+    "clobTokenIds": "not-json",
+    "volume24hr": null,
+    "liquidity": null
+  },
+  {
+    "id": "500004",
+    "question": "Three-outcome market (skipped: not binary)",
+    "category": "Sports",
+    "active": true,
+    "closed": false,
+    "outcomes": "[\"TeamA\", \"TeamB\", \"Draw\"]",
+    "outcomePrices": "[\"0.40\", \"0.35\", \"0.25\"]",
+    "clobTokenIds": "[\"a\", \"b\", \"c\"]",
+    "volume24hr": 9000,
+    "liquidity": 12000
+  }
+]
