@@ -41,7 +41,6 @@ Self-test (no live network): python -m modules.advisor.core.data.fonoloji_client
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import threading
@@ -53,50 +52,19 @@ logger = logging.getLogger("advisor.data.fonoloji")
 # Verified contract defaults (operator-overridable via advisor_config).
 _DEFAULT_BASE_URL = "https://fonoloji.com/v1"
 _DEFAULT_AUTH_HEADER = "X-API-Key"
-_DEFAULT_CACHE_TTL_S = 10800          # 3 hours (Developer plan, migration 083)
+_DEFAULT_CACHE_TTL_S = 21600          # 6 hours
 _DEFAULT_TIMEOUT_S = 15.0
-# Developer plan (2026-06 upgrade): 30,000/month, 3,000/day, 60/min.
-_MONTHLY_LOW_THRESHOLD = 1500         # warn once below this monthly-remaining
-_DEFAULT_DAILY_BUDGET = 3000          # plan per-day cap (config-overridable)
-_DEFAULT_DAILY_WARN_PCT = 0.8         # warn once at 80% of the daily budget
+_MONTHLY_LOW_THRESHOLD = 500          # warn once below this monthly-remaining
 _MAX_RETRY_AFTER_S = 30.0             # never block the loop longer than this
 _MAX_RETRIES = 2                      # 429/503 retries (bounded)
 
-# Per-endpoint TTL FLOORS (seconds). Slow-moving data is cached LONGER than the
-# base TTL so the daily budget is spent on price/NAV series, not static lists.
-# Effective TTL = max(base advisor_fonoloji_cache_ttl_s, floor). Matched by
-# substring against the request path.
-_TTL_FLOORS: Dict[str, float] = {
-    "/stocks/list": 86400.0,          # canonical equity list: daily
-    "/recommendations": 86400.0,      # broker ratings: daily
-    "/economy/cpi": 86400.0,          # CPI: monthly series, daily refresh plenty
-    "/percentile": 86400.0,           # fund category percentile: daily
-    "/estimate-accuracy": 86400.0,    # estimate honesty stat: daily
-    "/insights/": 21600.0,            # movers / flow / trend: 6h
-    "/tools/": 21600.0,               # portfolio-xray / fund-overlap: 6h
-}
-# Endpoints allowed a SHORTER TTL than the base (intraday by nature).
-_TTL_CEILINGS: Dict[str, float] = {
-    "/live-estimate": 3600.0,         # intraday NAV estimate: 1h
-    "/market/live": 3600.0,           # live indices: 1h
-}
-
 # Process-wide cache shared across analyzer instances (the advisor reconstructs
 # analyzers each cycle, so an instance-level cache would never hit). Keyed by
-# (api_key, base_url, method, path, frozenset(params/body)).
+# (api_key, base_url, path, frozenset(params)).
 _CACHE: Dict[Tuple, Tuple[float, Any]] = {}
 _CACHE_LOCK = threading.Lock()
 _MONTHLY_WARNED = False
 _MONTHLY_WARN_LOCK = threading.Lock()
-
-# Daily LOCAL request counter (UTC day) — budget guard + usage logging. The
-# plan enforces 3,000/day server-side; this guard keeps the advisor from
-# burning the whole day's quota on a misconfiguration, logs usage every 250
-# calls, and prefers stale cache once the local budget is exhausted.
-_DAILY = {"day": "", "count": 0, "warned": False, "exhausted": False}
-_DAILY_LOCK = threading.Lock()
-# Last rate-limit headers seen (startup diagnostics / dashboard surface).
-_LAST_QUOTA: Dict[str, Any] = {}
 
 
 def resolve_api_key(config: dict) -> str:
@@ -218,140 +186,15 @@ class FonolojiClient:
         return self._get(f"/funds/{code.upper()}/analyst-consensus", {})
 
     # ------------------------------------------------------------------
-    # Developer-plan endpoints (2026-06 upgrade). All JSON shapes are mapped
-    # DEFENSIVELY by the callers — no live Fonoloji access in dev, so confirm
-    # exact keys on the first live call. Every method is fail-soft (None).
-    # ------------------------------------------------------------------
-
-    def funds_list(self, sort: Optional[str] = None,
-                   limit: Optional[int] = None, **filters) -> Optional[Any]:
-        """GET /funds?sort=...&limit=... -> fund list with rich metrics
-        (sharpe_90, sortino, calmar, max_drawdown_1y, return_*, aum,
-        investor_count). Basis of the Top Funds screener."""
-        params = {k: v for k, v in dict(filters, sort=sort, limit=limit).items()
-                  if v is not None and v != ""}
-        return self._get("/funds", params)
-
-    def fund_percentile(self, code: str) -> Optional[Any]:
-        """GET /funds/{code}/percentile -> category percentile context."""
-        return self._get(f"/funds/{code.upper()}/percentile", {})
-
-    def fund_live_estimate(self, code: str) -> Optional[Any]:
-        """GET /funds/{code}/live-estimate -> intraday NAV estimate (1h TTL)."""
-        return self._get(f"/funds/{code.upper()}/live-estimate", {})
-
-    def fund_estimate_accuracy(self, code: str) -> Optional[Any]:
-        """GET /funds/{code}/estimate-accuracy -> historical accuracy of the
-        live estimate (honesty note for the operator)."""
-        return self._get(f"/funds/{code.upper()}/estimate-accuracy", {})
-
-    def insights_movers(self) -> Optional[Any]:
-        """GET /insights/movers -> fund momentum leaders."""
-        return self._get("/insights/movers", {})
-
-    def insights_flow(self) -> Optional[Any]:
-        """GET /insights/flow -> money inflow leaders (fund flows)."""
-        return self._get("/insights/flow", {})
-
-    def insights_trend(self) -> Optional[Any]:
-        """GET /insights/trend -> MA30/200 rising/falling trend signals."""
-        return self._get("/insights/trend", {})
-
-    def market_patterns(self) -> Optional[Any]:
-        """GET /market/patterns -> TradingView Candle.* pattern matches."""
-        return self._get("/market/patterns", {})
-
-    def economy_cpi(self) -> Optional[Any]:
-        """GET /economy/cpi -> Turkish CPI series (real-return context)."""
-        return self._get("/economy/cpi", {})
-
-    def gold_compare(self) -> Optional[Any]:
-        """GET /gold/compare -> fund returns vs gram-gold parity."""
-        return self._get("/gold/compare", {})
-
-    def stock_price(self, ticker: str) -> Optional[Any]:
-        """GET /stocks/{ticker}/price -> last price for one BIST equity
-        (the cheap KAP/accumulator price path)."""
-        return self._get(f"/stocks/{_bare_ticker(ticker)}/price", {})
-
-    def summary_today(self) -> Optional[Any]:
-        """GET /summary/today -> daily market summary (also the probe target)."""
-        return self._get("/summary/today", {})
-
-    def portfolio_xray(self, holdings: list) -> Optional[Any]:
-        """POST /tools/portfolio-xray with {holdings:[{code, weight|amount}]}.
-        Cached 6h; shape confirmed on first live call."""
-        return self._post("/tools/portfolio-xray", {"holdings": holdings})
-
-    def fund_overlap(self, codes: list) -> Optional[Any]:
-        """POST /tools/fund-overlap with {codes:[...]} -> holdings overlap."""
-        return self._post("/tools/fund-overlap",
-                          {"codes": [str(c).upper() for c in (codes or [])]})
-
-    # ------------------------------------------------------------------
     # Core GET with TTL cache + 429/503 retry-after + quota awareness
     # ------------------------------------------------------------------
-
-    def _ttl_for(self, path: str) -> float:
-        """Effective TTL for a path: base TTL raised to any matching floor,
-        lowered to any matching ceiling (intraday endpoints)."""
-        ttl = self.cache_ttl_s
-        for frag, floor in _TTL_FLOORS.items():
-            if frag in path:
-                ttl = max(ttl, floor)
-        for frag, ceil in _TTL_CEILINGS.items():
-            if frag in path:
-                ttl = min(ttl if ttl > 0 else ceil, ceil)
-        return ttl
-
-    def _daily_budget(self) -> int:
-        try:
-            return max(1, int(float(self.config.get(
-                "advisor_fonoloji_daily_budget", _DEFAULT_DAILY_BUDGET))))
-        except (TypeError, ValueError):
-            return _DEFAULT_DAILY_BUDGET
-
-    def _budget_allows(self) -> bool:
-        """Count one prospective remote call against the UTC-day local budget.
-        Returns False (skip the fetch, serve stale/None) once exhausted."""
-        import datetime as _dt
-        today = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
-        budget = self._daily_budget()
-        warn_at = budget * _daily_warn_pct(self.config)
-        with _DAILY_LOCK:
-            if _DAILY["day"] != today:
-                if _DAILY["day"] and _DAILY["count"]:
-                    logger.info(
-                        "[fonoloji] daily usage %s: %d local request(s) "
-                        "(budget %d).", _DAILY["day"], _DAILY["count"], budget)
-                _DAILY.update(day=today, count=0, warned=False, exhausted=False)
-            if _DAILY["count"] >= budget:
-                if not _DAILY["exhausted"]:
-                    _DAILY["exhausted"] = True
-                    logger.warning(
-                        "[fonoloji] local daily budget EXHAUSTED (%d/%d) — "
-                        "serving cache only until UTC midnight. Raise "
-                        "advisor_fonoloji_daily_budget or cache TTLs if this "
-                        "recurs.", _DAILY["count"], budget)
-                return False
-            _DAILY["count"] += 1
-            if _DAILY["count"] >= warn_at and not _DAILY["warned"]:
-                _DAILY["warned"] = True
-                logger.warning(
-                    "[fonoloji] daily usage at %d/%d (>=%.0f%% of budget).",
-                    _DAILY["count"], budget,
-                    100.0 * _daily_warn_pct(self.config))
-            if _DAILY["count"] % 250 == 0:
-                logger.info("[fonoloji] daily usage: %d/%d local request(s).",
-                            _DAILY["count"], budget)
-        return True
 
     def _get(self, path: str, params: dict) -> Optional[Any]:
         if not self.enabled:
             return None
 
         cache_key = (
-            self.api_key, self.base_url, "GET", path,
+            self.api_key, self.base_url, path,
             frozenset((k, str(v)) for k, v in (params or {}).items()),
         )
         now = time.monotonic()
@@ -361,12 +204,8 @@ class FonolojiClient:
             cached = _CACHE.get(cache_key)
         if cached is not None:
             ts, payload = cached
-            if (now - ts) <= self._ttl_for(path):
+            if (now - ts) <= self.cache_ttl_s:
                 return payload
-
-        # Local daily-budget guard: when exhausted, prefer stale cache.
-        if not self._budget_allows():
-            return cached[1] if cached is not None else None
 
         fresh = self._fetch_remote(path, params)
         if fresh is not None:
@@ -380,37 +219,7 @@ class FonolojiClient:
             return cached[1]
         return None
 
-    def _post(self, path: str, body: dict) -> Optional[Any]:
-        """Cached POST (the /tools/* endpoints are deterministic for a given
-        body, so the TTL cache + daily budget guard apply exactly like _get)."""
-        if not self.enabled:
-            return None
-        try:
-            body_key = json.dumps(body or {}, sort_keys=True, default=str)
-        except Exception:
-            body_key = str(body)
-        cache_key = (self.api_key, self.base_url, "POST", path, body_key)
-        now = time.monotonic()
-        with _CACHE_LOCK:
-            cached = _CACHE.get(cache_key)
-        if cached is not None:
-            ts, payload = cached
-            if (now - ts) <= self._ttl_for(path):
-                return payload
-        if not self._budget_allows():
-            return cached[1] if cached is not None else None
-        fresh = self._fetch_remote(path, {}, json_body=body or {})
-        if fresh is not None:
-            with _CACHE_LOCK:
-                _CACHE[cache_key] = (now, fresh)
-            return fresh
-        if cached is not None:
-            logger.debug("[fonoloji] %s POST failed; serving stale cache.", path)
-            return cached[1]
-        return None
-
-    def _fetch_remote(self, path: str, params: dict,
-                      json_body: Optional[dict] = None) -> Optional[Any]:
+    def _fetch_remote(self, path: str, params: dict) -> Optional[Any]:
         url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
         headers = {
             self.auth_header: self.api_key,
@@ -426,8 +235,7 @@ class FonolojiClient:
         while attempt <= _MAX_RETRIES:
             attempt += 1
             try:
-                resp = self._do_request(url, headers, req_params,
-                                        json_body=json_body)
+                resp = self._do_request(url, headers, req_params)
             except Exception as exc:
                 logger.debug("[fonoloji] %s transport error: %s", path, exc)
                 return None
@@ -482,57 +290,17 @@ class FonolojiClient:
             return None
         return None
 
-    def _do_request(self, url, headers, params, json_body=None):
-        """Perform one HTTP GET (or POST when json_body is given). Uses the
-        injected transport if present (tests), else `requests`. Returns a
-        response object with status_code/headers/json. The test transport
-        signature stays (url, headers, params, timeout); POST bodies are passed
-        through params under the reserved '_json' key for mock transports."""
+    def _do_request(self, url, headers, params):
+        """Perform one HTTP GET. Uses the injected transport if present (tests),
+        else `requests`. Returns a response object with status_code/headers/json."""
         if self._transport is not None:
-            p = dict(params or {})
-            if json_body is not None:
-                p["_json"] = json_body
-            return self._transport(url, headers, p, _DEFAULT_TIMEOUT_S)
+            return self._transport(url, headers, params, _DEFAULT_TIMEOUT_S)
         import requests  # local import: optional dependency, fail-soft on absence
-        if json_body is not None:
-            return requests.post(url, headers=headers, params=params,
-                                 json=json_body, timeout=_DEFAULT_TIMEOUT_S)
-        return requests.get(url, headers=headers, params=params,
-                            timeout=_DEFAULT_TIMEOUT_S)
-
-    def probe(self) -> dict:
-        """
-        ONE diagnostic call for the startup banner: GET /summary/today (the
-        cheapest documented endpoint), bypassing nothing (it warms the cache).
-        Returns {"ok": bool, "quota": {...rate-limit headers...}}. Never raises.
-        """
-        out = {"ok": False, "quota": {}}
-        if not self.enabled:
-            return out
-        try:
-            payload = self._get("/summary/today", {})
-            out["ok"] = payload is not None
-        except Exception as exc:
-            logger.debug("[fonoloji] probe failed: %s", exc)
-        out["quota"] = dict(_LAST_QUOTA)
-        return out
-
-    @staticmethod
-    def daily_usage() -> dict:
-        """Local daily-counter snapshot (for diagnostics/dashboard)."""
-        with _DAILY_LOCK:
-            return dict(_DAILY)
+        return requests.get(url, headers=headers, params=params, timeout=_DEFAULT_TIMEOUT_S)
 
     def _note_quota(self, headers: dict) -> None:
         """Log the monthly-remaining header once when it dips low (operator watch)."""
         global _MONTHLY_WARNED
-        try:
-            for k, v in (headers or {}).items():
-                kl = str(k).lower()
-                if kl.startswith("x-ratelimit") or kl == "retry-after":
-                    _LAST_QUOTA[kl] = v
-        except Exception:
-            pass
         try:
             remaining = headers.get("x-ratelimit-remaining-monthly")
             if remaining is None:
@@ -552,8 +320,8 @@ class FonolojiClient:
                     _MONTHLY_WARNED = True
                     logger.warning(
                         "[fonoloji] monthly quota LOW: %d requests remaining of "
-                        "the 30,000/month Developer plan — will prefer cached "
-                        "data. Reduce watchlist/universe size or raise "
+                        "the 15,000/month free tier — will prefer cached data. "
+                        "Reduce watchlist/universe size or raise "
                         "advisor_fonoloji_cache_ttl_s.", rem,
                     )
         else:
@@ -588,22 +356,10 @@ def _parse_retry_after(headers: dict) -> Optional[float]:
         return 5.0
 
 
-def _daily_warn_pct(config: dict) -> float:
-    """Fraction of the daily budget at which to warn once (default 0.8)."""
-    try:
-        pct = float((config or {}).get(
-            "advisor_fonoloji_daily_warn_pct", _DEFAULT_DAILY_WARN_PCT))
-        return min(1.0, max(0.05, pct))
-    except (TypeError, ValueError):
-        return _DEFAULT_DAILY_WARN_PCT
-
-
 def clear_cache() -> None:
-    """Test hook: drop the process-wide cache + reset the daily counter."""
+    """Test hook: drop the process-wide cache."""
     with _CACHE_LOCK:
         _CACHE.clear()
-    with _DAILY_LOCK:
-        _DAILY.update(day="", count=0, warned=False, exhausted=False)
 
 
 # ---------------------------------------------------------------------------
@@ -762,74 +518,6 @@ def _self_test() -> int:
     if cons != {"ok": True}:
         print("FAIL: fund_analyst_consensus should return payload")
         failures += 1
-
-    # --- Developer-plan endpoints: paths + POST tools (mock transport). ---
-    clear_cache()
-    seen = {"urls": [], "json": []}
-
-    def dev_transport(url, headers, params, timeout):
-        seen["urls"].append(url)
-        if "_json" in params:
-            seen["json"].append(params["_json"])
-        return _MockResponse(200, {"ok": True}, {})
-
-    c_dev = FonolojiClient(cfg, transport=dev_transport)
-    c_dev.funds_list(sort="sharpe_90", limit=20)
-    c_dev.fund_percentile("tpp")
-    c_dev.stock_price("THYAO.IS")
-    c_dev.portfolio_xray([{"code": "TPP", "weight": 0.5}])
-    c_dev.fund_overlap(["tpp", "AKP"])
-    want_suffixes = ("/funds", "/funds/TPP/percentile", "/stocks/THYAO/price",
-                     "/tools/portfolio-xray", "/tools/fund-overlap")
-    for suf in want_suffixes:
-        if not any(u.endswith(suf) for u in seen["urls"]):
-            print(f"FAIL: endpoint path missing: {suf} in {seen['urls']}")
-            failures += 1
-    if seen["json"] and seen["json"][-1] != {"codes": ["TPP", "AKP"]}:
-        print(f"FAIL: fund_overlap body {seen['json'][-1]}")
-        failures += 1
-    # POST result is cached: repeat must NOT hit transport again.
-    n_before = len(seen["urls"])
-    c_dev.fund_overlap(["tpp", "AKP"])
-    if len(seen["urls"]) != n_before:
-        print("FAIL: POST cache miss on identical body")
-        failures += 1
-    clear_cache()
-
-    # --- TTL floors/ceilings: static lists cached >= 1 day, live <= 1h. ---
-    c_ttl = FonolojiClient(cfg, transport=ok_transport)
-    if c_ttl._ttl_for("/stocks/list") < 86400.0:
-        print("FAIL: /stocks/list TTL floor not applied")
-        failures += 1
-    if c_ttl._ttl_for("/funds/TPP/live-estimate") > 3600.0:
-        print("FAIL: live-estimate TTL ceiling not applied")
-        failures += 1
-    if c_ttl._ttl_for("/funds/TPP/history") != c_ttl.cache_ttl_s:
-        print("FAIL: default TTL changed for plain endpoints")
-        failures += 1
-
-    # --- Daily budget guard: budget=2 -> third distinct fetch is skipped. ---
-    clear_cache()
-    budget_calls = {"n": 0}
-
-    def counting_transport(url, headers, params, timeout):
-        budget_calls["n"] += 1
-        return _MockResponse(200, {"u": url}, {})
-    c_budget = FonolojiClient(
-        {"advisor_fonoloji_api_key": "K", "advisor_fonoloji_daily_budget": "2"},
-        transport=counting_transport,
-    )
-    c_budget.fund_detail("AAA")
-    c_budget.fund_detail("BBB")
-    r3 = c_budget.fund_detail("CCC")   # over budget -> no fetch, None
-    if budget_calls["n"] != 2 or r3 is not None:
-        print(f"FAIL: daily budget guard (calls={budget_calls['n']}, r3={r3})")
-        failures += 1
-    # ... but a CACHED endpoint still serves (stale ok).
-    if c_budget.fund_detail("AAA") is None:
-        print("FAIL: budget exhaustion must still serve cache")
-        failures += 1
-    clear_cache()
 
     print("SELF-TEST", "PASS" if failures == 0 else f"FAIL ({failures})")
     return 1 if failures else 0

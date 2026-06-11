@@ -106,14 +106,6 @@ class RiskManagementConfig(BaseModel):
     max_position_size_percent: int = 10
     max_daily_loss_percent: int = 10
     max_drawdown_percent: int = 25
-    # Week-1 live tuning (migration 086): realized stop-loss avg was -14.5%
-    # against a 12% stop (polling latency + gap/slippage on thin pairs). The
-    # buffer makes the stop FIRE early by the measured overshoot so the
-    # REALIZED loss lands near stop_loss_pct (trigger at -(stop-buffer)).
-    sl_trigger_buffer_pct: float = 0.02
-    # When an open position's PnL is within this band ABOVE the stop trigger,
-    # the monitor loop drops to rapid (3s) polling to cut detection latency.
-    sl_fast_poll_band_pct: float = 0.04
 
 class TradingConfig(BaseModel):
     max_slippage_bps: int = 50
@@ -122,44 +114,6 @@ class TradingConfig(BaseModel):
     dex_fee_bps: int = 30
     min_opportunity_score: float = 0.25
     solana_min_opportunity_score: float = 0.20
-    # Week-1 live tuning (migration 086): daily entry budget across all DEX
-    # chains. 0 = unlimited. The engine processes opportunities sorted by
-    # score, so the budget keeps the highest-conviction entries.
-    max_trades_per_day: int = 100
-    # Per-chain capital weights (migration 086). 0 disables the chain in
-    # discovery AND execution; (0,1] scales position size. Chains absent
-    # from the map default to 1.0. Week-1 live data: solana avg -2.24/trade
-    # (n=388), monad avg -16.64 (n=2) -> default 0.
-    chain_weights: Dict[str, float] = Field(default_factory=lambda: {
-        'ethereum': 1.0, 'base': 1.0, 'bsc': 1.0,
-        'pulsechain': 1.0, 'solana': 0.0, 'monad': 0.0,
-    })
-
-    @validator('chain_weights', pre=True)
-    def _parse_chain_weights(cls, v):
-        # DB rows arrive as dict (value_type=json); env/file overrides may
-        # arrive as a JSON string. Never raise: a malformed override falls
-        # back to the safe default map.
-        if isinstance(v, str):
-            try:
-                v = json.loads(v)
-            except Exception:
-                return {
-                    'ethereum': 1.0, 'base': 1.0, 'bsc': 1.0,
-                    'pulsechain': 1.0, 'solana': 0.0, 'monad': 0.0,
-                }
-        if not isinstance(v, dict):
-            return {
-                'ethereum': 1.0, 'base': 1.0, 'bsc': 1.0,
-                'pulsechain': 1.0, 'solana': 0.0, 'monad': 0.0,
-            }
-        out = {}
-        for k, val in v.items():
-            try:
-                out[str(k).lower()] = max(0.0, float(val))
-            except (TypeError, ValueError):
-                continue
-        return out
 
 class StrategiesConfig(BaseModel):
     """Trading strategies configuration"""
@@ -245,11 +199,8 @@ class ChainConfig(BaseModel):
     base_enabled: bool = True
     arbitrum_enabled: bool = False  # Low activity
     polygon_enabled: bool = False
-    # Week-1 live data (migration 086): solana avg -2.24/trade over n=388,
-    # monad avg -16.64 over n=2 — both default OFF. Operator can re-enable
-    # via config_settings chain.{solana,monad}_enabled.
-    solana_enabled: bool = False
-    monad_enabled: bool = False      # Monad - supported by DexScreener Nov 2025
+    solana_enabled: bool = True
+    monad_enabled: bool = True       # Monad - supported by DexScreener Nov 2025
     pulsechain_enabled: bool = True
     fantom_enabled: bool = False
     cronos_enabled: bool = False
@@ -352,19 +303,6 @@ class TradingLimitsConfig(BaseModel):
 class MLModelsConfig(BaseModel):
     ml_retrain_interval_hours: int = 24
     ml_min_confidence: float = 0.7
-    # Migration 036 seeded these keys but the model lacked the fields, so
-    # pydantic dropped them and the engine never saw the DB values (it fell
-    # back to its own code defaults). Added so the seeds actually flow.
-    ml_retrain_enabled: bool = False
-    ml_retrain_days: int = 90
-    ml_retrain_min_trades: int = 50
-    # Week-1 live tuning (migration 086): per-head quality auto-gate. An
-    # ensemble head (pump/rug) may only VOTE on entries when its persisted
-    # cross-validated AUC (config_settings ml_models/ensemble_version, written
-    # by scripts/train_ensemble.py) clears this floor. Below the floor the
-    # head is advisory-only (logged, never gating). Week-1: rug head CV AUC
-    # 0.5498 = a coin flip; it must not veto trades.
-    ml_quality_auc_floor: float = 0.6
 
 class BacktestingConfig(BaseModel):
     backtest_start_date: str = "2024-01-01"
