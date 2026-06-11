@@ -105,8 +105,11 @@ DEFAULTS: Dict[str, Any] = {
     "advisor_discovery_bist_sort_by": "roe",
     "advisor_discovery_bist_sort_order": "desc",
     "advisor_discovery_bist_screener_limit": "30",
-    # BIST / FX universe scan (migration 078) — default 'watchlist' = unchanged.
-    "advisor_bist_universe": "watchlist",
+    # BIST / FX universe scan (migrations 078 + 083). BIST default 'auto' =
+    # Fonoloji live /stocks/list when a key is present (auto-prefer), else
+    # watchlist-only — matches the migration-083 DB seed. An explicit
+    # 'watchlist' row is an operator opt-out and is honored.
+    "advisor_bist_universe": "auto",
     "advisor_bist_universe_custom": "",
     "advisor_fx_universe": "watchlist",
     "advisor_fx_universe_custom": "",

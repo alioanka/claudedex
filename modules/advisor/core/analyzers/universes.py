@@ -15,9 +15,13 @@ This module provides:
     (off / bist30 / bist50 / bist100-if-provided) with the watchlist, dedupe,
     and cap. Watchlist tickers are ALWAYS included.
 
-Config keys (advisor_config, migration 078):
-  advisor_bist_universe  : '' | 'watchlist' | 'bist30' | 'bist50' | 'custom'
-                           (default 'watchlist' — unchanged behaviour)
+Config keys (advisor_config, migrations 078 + 083):
+  advisor_bist_universe  : 'auto' (DEFAULT since 083 — Fonoloji live list when a
+                           key is present, else watchlist-only) | '' (= auto) |
+                           'watchlist' | 'bist30' | 'bist50' | 'fonoloji' | 'custom'
+                           Resolution is delegated to
+                           activation.effective_universe_mode (auto-prefer rule;
+                           explicit presets always win).
   advisor_fx_universe    : '' | 'watchlist' | 'majors' | 'extended'
                            (default 'watchlist')
   advisor_bist_universe_custom : comma-sep extra BIST tickers (for 'custom' or to
@@ -151,17 +155,30 @@ def expand_bist_universe(config: dict, watchlist: List[str]) -> List[str]:
     Returns bare tickers; the BIST analyzer handles .IS normalisation.
     Default ('watchlist'/'') => returns the watchlist unchanged.
 
-    Mode 'fonoloji' / 'bist_all' / 'all' pulls the LIVE BIST list from the
-    Fonoloji API when a key is present (fail-soft to the hardcoded BIST-50
-    snapshot). The universe cap still applies.
+    Mode resolution is delegated to activation.effective_universe_mode:
+    'auto' (the migration-083 default, also '') resolves to the Fonoloji live
+    list when a key is present + auto-prefer on, else watchlist-only; explicit
+    presets ('watchlist'/'bist30'/'bist50'/'custom') always win; 'fonoloji'/
+    'bist_all'/'all' pull the LIVE BIST list (fail-soft to the hardcoded
+    BIST-50 snapshot). The universe cap still applies.
     """
-    mode = str(config.get("advisor_bist_universe", "watchlist") or "watchlist").lower()
+    try:
+        from modules.advisor.core.data.activation import effective_universe_mode
+        mode = effective_universe_mode(config)
+    except Exception:  # fail-soft: pre-083 behaviour
+        mode = str(config.get("advisor_bist_universe", "watchlist")
+                   or "watchlist").lower()
     custom = _split_csv(config.get("advisor_bist_universe_custom", ""))
 
     preset: List[str] = []
     if mode in ("bist30", "bist_30", "30"):
         preset = list(BIST_30)
     elif mode in ("bist50", "bist_50", "50"):
+        preset = list(BIST_50)
+    elif mode == "snapshot":
+        # Fonoloji explicitly requested but no key — fail-soft snapshot.
+        logger.info("[universes] Fonoloji universe requested without a key; "
+                    "using hardcoded BIST-50 snapshot.")
         preset = list(BIST_50)
     elif mode in ("fonoloji", "bist_all", "bistall", "all", "live"):
         live = _fonoloji_bist_list(config)
@@ -175,7 +192,7 @@ def expand_bist_universe(config: dict, watchlist: List[str]) -> List[str]:
             preset = list(BIST_50)
     elif mode in ("custom",):
         preset = []  # custom-only; rely on the custom list
-    # 'watchlist' / '' / unknown -> no preset (watchlist-only behaviour)
+    # 'watchlist' / unknown -> no preset (watchlist-only behaviour)
 
     # Strip any .IS the operator added so the universe is consistent (analyzer
     # re-adds .IS for yfinance). Watchlist is appended verbatim + always kept.
@@ -253,6 +270,23 @@ def _selftest() -> None:
     # Fonoloji mode with NO key => fail-soft to the BIST-50 snapshot.
     flive = expand_bist_universe({"advisor_bist_universe": "fonoloji"}, ["XYZ"])
     assert "THYAO" in flive and "XYZ" in flive, "fonoloji no-key must fall back to BIST-50"
+
+    # AUTO mode (default '' / 'auto') + key => Fonoloji live list (stubbed —
+    # no network) feeds the universe; explicit 'watchlist' still opts out.
+    global _fonoloji_bist_list
+    _orig = _fonoloji_bist_list
+    _fonoloji_bist_list = lambda cfg: ["AAA", "BBB"]  # noqa: E731
+    try:
+        ulive = expand_bist_universe(
+            {"advisor_fonoloji_api_key": "K"}, ["XYZ"])
+        assert "AAA" in ulive and "XYZ" in ulive, \
+            "auto+key must use the Fonoloji live list"
+        uwl = expand_bist_universe(
+            {"advisor_fonoloji_api_key": "K",
+             "advisor_bist_universe": "watchlist"}, ["XYZ"])
+        assert uwl == ["XYZ"], "explicit watchlist must opt out of auto-prefer"
+    finally:
+        _fonoloji_bist_list = _orig
 
     print("universes._selftest OK: bist30=%d bist50=%d fx_majors=%d fx_ext=%d"
           % (len(BIST_30), len(BIST_50), len(FX_MAJORS), len(FX_EXTENDED)))
