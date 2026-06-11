@@ -22,6 +22,14 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Non-fill sentinel returned by execute_swap when the dry-run / killswitch /
+# pause gate engages (nothing signed, nothing broadcast). Contract: callers
+# MUST compare against this constant before treating a return value as a tx
+# signature. The value is deliberately never base58-signature-shaped: '_' is
+# not in the base58 alphabet and its length (17) is nowhere near a real
+# 64-byte signature (86-88 base58 chars), so it can never parse as one.
+DRY_RUN_SENTINEL = 'DRY_RUN_SIMULATED'
+
 
 class RateLimiter:
     """
@@ -1088,11 +1096,12 @@ class JupiterHelper:
                 this helper to honor a passed-in flag and the global
                 killswitch in case a future caller forgets the engine
                 gate. When True (or the kill-switch / pause flag is
-                set), returns a sentinel signature instead of signing.
+                set), returns DRY_RUN_SENTINEL instead of signing.
             module: module-name used for the kill-switch/pause lookup.
 
         Returns:
-            Optional[str]: Transaction signature or None
+            Optional[str]: Transaction signature, DRY_RUN_SENTINEL
+            (non-fill: gate engaged, nothing broadcast), or None.
         """
         # Use module-level logger that matches SolanaTradingEngine
         import logging
@@ -1107,7 +1116,7 @@ class JupiterHelper:
                     f"🔶 JupiterHelper DRY-RUN/PAUSED gate engaged "
                     f"({input_mint[:6]}→{output_mint[:6]} amt={amount}) — no tx broadcast"
                 )
-                return 'DRY_RUN_SIMULATED'
+                return DRY_RUN_SENTINEL
         except ImportError:
             # core.dry_run absent (older deployments) — fall through
             # to the engine-layer gate.

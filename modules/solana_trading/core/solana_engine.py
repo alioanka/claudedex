@@ -83,10 +83,13 @@ from modules.solana_trading.core.price_validator import PriceValidator
 
 # Import JupiterHelper for live swap execution
 try:
-    from modules.solana_strategies.jupiter_helper import JupiterHelper
+    from modules.solana_strategies.jupiter_helper import JupiterHelper, DRY_RUN_SENTINEL
     JUPITER_HELPER_AVAILABLE = True
 except ImportError:
     JUPITER_HELPER_AVAILABLE = False
+    # Helper absent: execute_swap is never called, but the sentinel
+    # comparisons below must still resolve. Same value as the helper's.
+    DRY_RUN_SENTINEL = 'DRY_RUN_SIMULATED'
 
 # Wave-4: shared Jito MEV-bundle client (opt-in routing).
 try:
@@ -2952,7 +2955,7 @@ class SolanaTradingEngine:
                     slippage_bps=close_slippage
                 )
 
-                if close_tx_signature == 'DRY_RUN_SIMULATED':
+                if close_tx_signature == DRY_RUN_SENTINEL:
                     # Killswitch/pause gate engaged: nothing sold. Treating the
                     # sentinel as success would delete the position and mark
                     # the stuck token resolved with tokens still in the wallet.
@@ -4469,7 +4472,7 @@ class SolanaTradingEngine:
                                 slippage_bps=trade_slippage
                             )
 
-                        if tx_signature == 'DRY_RUN_SIMULATED':
+                        if tx_signature == DRY_RUN_SENTINEL:
                             # Helper's defense-in-depth gate engaged mid-flight
                             # (killswitch/pause raced the engine-level check).
                             # Nothing was broadcast — never record a LIVE fill.
@@ -4761,7 +4764,7 @@ class SolanaTradingEngine:
                                 restrict_intermediate_tokens=use_restricted_routes
                             )
 
-                            if close_tx_signature == 'DRY_RUN_SIMULATED':
+                            if close_tx_signature == DRY_RUN_SENTINEL:
                                 # Killswitch/pause engaged mid-close: nothing was
                                 # broadcast and every retry would hit the same
                                 # gate. Keep the position open (monitor retries
