@@ -10,9 +10,12 @@ Available strategies:
 from .trend_following import TrendFollowingStrategy
 from .hedge_strategy import HedgeStrategy
 from .funding_arbitrage import FundingArbitrageStrategy
+from .funding_carry import FundingCarryPlanner, CarryDecision
 
 __all__ = [
     'TrendFollowingStrategy',
     'HedgeStrategy',
-    'FundingArbitrageStrategy'
+    'FundingArbitrageStrategy',
+    'FundingCarryPlanner',
+    'CarryDecision',
 ]
