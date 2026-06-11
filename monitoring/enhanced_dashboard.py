@@ -2083,7 +2083,12 @@ class DashboardEndpoints:
 
         # Check Copy Trading module health
         try:
-            copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8085'))
+            # Default 8088 (NOT 8085): 8085 is DEX_HEALTH_PORT's default, so
+            # when only DEX was deployed this probe hit the DEX health server
+            # and labeled copy_trading as running. 8088 is unclaimed
+            # (8081 futures, 8082 solana, 8083 sniper, 8084 arbitrage,
+            # 8085 dex, 8086 ai/advisor). DEX stays on 8085 — no redeploy.
+            copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8088'))
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'http://localhost:{copy_port}/health', timeout=3) as resp:
                     if resp.status == 200:
@@ -4279,7 +4284,9 @@ class DashboardEndpoints:
                 'trades': []
             }
             try:
-                copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8085'))
+                # 8088 default — 8085 belongs to DEX (see health-check
+                # comment in _fallback_api_modules).
+                copy_port = int(os.getenv('COPYTRADING_HEALTH_PORT', '8088'))
                 async with aiohttp.ClientSession() as session:
                     async with session.get(f'http://localhost:{copy_port}/stats', timeout=3) as resp:
                         if resp.status == 200:
@@ -4403,7 +4410,9 @@ class DashboardEndpoints:
                 ('solana', 'SOLANA_HEALTH_PORT', '8082'),
                 ('sniper', 'SNIPER_HEALTH_PORT', '8083'),
                 ('arbitrage', 'ARBITRAGE_HEALTH_PORT', '8084'),
-                ('copytrading', 'COPYTRADING_HEALTH_PORT', '8085'),
+                # 8088, not 8085 — 8085 is DEX's port (collision mislabeled
+                # DEX health as copy_trading when only one was deployed).
+                ('copytrading', 'COPYTRADING_HEALTH_PORT', '8088'),
                 ('ai', 'AI_HEALTH_PORT', '8086')
             ]
 
