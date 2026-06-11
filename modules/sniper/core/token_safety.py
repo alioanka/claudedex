@@ -94,9 +94,13 @@ class TokenSafetyChecker:
         self.config = config or {}
         self.session: Optional[aiohttp.ClientSession] = None
 
-        # Cache to avoid redundant checks
-        self._cache: Dict[str, SafetyReport] = {}
+        # Cache to avoid redundant checks. Entries are (monotonic_ts, report);
+        # TTL was previously declared but never enforced, so reports were
+        # cached forever and the dict grew unbounded (tens of thousands of
+        # mints/day on the Solana path).
+        self._cache: Dict[str, Tuple[float, SafetyReport]] = {}
         self._cache_ttl = 300  # 5 minutes
+        self._cache_max = 5000  # hard size cap; oldest insertions evicted
 
     async def initialize(self):
         """Initialize HTTP session"""
@@ -116,12 +120,17 @@ class TokenSafetyChecker:
         Main entry point - check token safety.
         Returns a SafetyReport with comprehensive analysis.
         """
+        import time as _time
         cache_key = f"{chain}:{token_address.lower()}"
 
-        # Check cache
-        if cache_key in self._cache:
-            logger.debug(f"Using cached safety report for {token_address}")
-            return self._cache[cache_key]
+        # Check cache (TTL-enforced)
+        cached = self._cache.get(cache_key)
+        if cached is not None:
+            ts, cached_report = cached
+            if _time.monotonic() - ts < self._cache_ttl:
+                logger.debug(f"Using cached safety report for {token_address}")
+                return cached_report
+            self._cache.pop(cache_key, None)
 
         logger.info(f"🔍 Checking token safety: {token_address} on {chain}")
 
@@ -130,8 +139,16 @@ class TokenSafetyChecker:
         else:
             report = await self._check_evm_token(token_address, chain)
 
-        # Cache result
-        self._cache[cache_key] = report
+        # Cache result; evict expired entries first, then oldest if still full.
+        if len(self._cache) >= self._cache_max:
+            now = _time.monotonic()
+            expired = [k for k, (ts, _) in self._cache.items()
+                       if now - ts >= self._cache_ttl]
+            for k in expired:
+                self._cache.pop(k, None)
+            while len(self._cache) >= self._cache_max:
+                self._cache.pop(next(iter(self._cache)), None)
+        self._cache[cache_key] = (_time.monotonic(), report)
 
         # Log result
         self._log_report(report)
