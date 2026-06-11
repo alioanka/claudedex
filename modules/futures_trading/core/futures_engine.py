@@ -177,6 +177,10 @@ class RiskMetrics:
     current_exposure: float = 0.0  # Total notional value
     max_exposure: float = 0.0  # Max allowed exposure
     consecutive_losses: int = 0
+    # Wave-25: was hard-coded 5 inside can_trade, ignoring the DB-configured
+    # futures_risk.max_consecutive_losses (default 4). Now injected by the
+    # engine from FuturesRiskConfig.
+    max_consecutive_losses: int = 5
     drawdown_pct: float = 0.0
     peak_balance: float = 0.0
     last_reset: datetime = field(default_factory=datetime.now)
@@ -187,10 +191,32 @@ class RiskMetrics:
         # Daily loss limit check
         if self.daily_pnl <= -self.daily_loss_limit:
             return False
-        # Consecutive losses check (pause after 5 consecutive losses)
-        if self.consecutive_losses >= 5:
+        # Consecutive losses circuit breaker (any-symbol streak; clears on a
+        # winning close or at the midnight-UTC daily reset)
+        if self.consecutive_losses >= max(1, self.max_consecutive_losses):
             return False
         return True
+
+    @property
+    def pause_reason(self) -> Optional[str]:
+        """Wave-25: honest, specific pause reason for logging/status surfaces.
+        The old log claimed 'daily risk limit reached' even when the actual
+        trigger was the consecutive-loss breaker (observed: paused with a
+        POSITIVE +$20.68 daily PnL). Returns None when trading is allowed."""
+        if self.daily_pnl <= -self.daily_loss_limit:
+            return (
+                f"daily LOSS limit reached (Daily PnL ${self.daily_pnl:.2f} "
+                f"<= -${self.daily_loss_limit:.2f})"
+            )
+        if self.consecutive_losses >= max(1, self.max_consecutive_losses):
+            return (
+                f"consecutive-loss circuit breaker "
+                f"({self.consecutive_losses} losses in a row >= "
+                f"{self.max_consecutive_losses}; clears on a winning close "
+                f"or at the midnight-UTC daily reset; Daily PnL "
+                f"${self.daily_pnl:.2f})"
+            )
+        return None
 
     @property
     def risk_level(self) -> str:
@@ -371,6 +397,11 @@ class FuturesTradingEngine:
                 self.max_daily_loss = risk_config.max_daily_loss_usd
                 logger.info(f"Daily loss limit: ${self.max_daily_loss:.2f} (fixed USD)")
 
+            # Wave-25: consecutive-loss circuit breaker count — was hard-coded
+            # to 5 in RiskMetrics.can_trade while the DB default says 4.
+            self.max_consecutive_losses = int(getattr(
+                risk_config, 'max_consecutive_losses', 5) or 5)
+
             self.cooldown_duration = timedelta(minutes=strategy_config.cooldown_minutes)
 
             # Pairs settings
@@ -452,6 +483,7 @@ class FuturesTradingEngine:
             self.stop_loss_pct = -5.0
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
+            self.max_consecutive_losses = 5
             self.symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
             self.signal_timeframe = "15m"  # 15-minute candles for faster signals
             self.scan_interval_seconds = 30  # Scan every 30 seconds
@@ -519,8 +551,18 @@ class FuturesTradingEngine:
         # Risk metrics
         self.risk_metrics = RiskMetrics(
             daily_loss_limit=self.max_daily_loss,
+            max_consecutive_losses=getattr(self, 'max_consecutive_losses', 5),
             last_reset=datetime.now()
         )
+
+        # Wave-25 log-spam throttles (operator complaint: FUT-RM-17 refusals
+        # every ~35s per symbol for hours; pause warning every 5 min).
+        # Pause: WARNING once per state transition, INFO reminder per 30 min.
+        self._pause_state_key: Optional[str] = None
+        self._pause_last_log_at: Optional[datetime] = None
+        # Cool-off refusals: symbol -> {'expires_at': str, 'last_logged': dt}.
+        self._cooloff_log_state: Dict[str, Dict] = {}
+        self._risk_log_reminder_seconds: int = 1800  # 30 min
 
         # Price cache for simulated trading
         self._price_cache: Dict[str, Dict] = {}
@@ -1155,26 +1197,104 @@ class FuturesTradingEngine:
             self.risk_metrics.consecutive_losses = 0
             self.risk_metrics.last_reset = now
 
+    def _log_pause_state(self, pause_reason: Optional[str]) -> None:
+        """Wave-25 log-spam fix for the risk pause.
+
+        Old behavior: 'Trading paused — daily risk limit reached' at WARNING
+        every 5 min for the rest of the UTC day — and the text was WRONG when
+        the actual trigger was the consecutive-loss breaker (observed paused
+        at +$20.68 daily PnL). New behavior: WARNING once per state
+        transition (with the true reason), INFO reminder every 30 min, and
+        an INFO 'resumed' line when the pause clears."""
+        try:
+            now = datetime.now()
+            if pause_reason is None:
+                if self._pause_state_key is not None:
+                    logger.info(
+                        "✅ Trading entries resumed — risk limits back "
+                        "within bounds"
+                    )
+                    self._pause_state_key = None
+                    self._pause_last_log_at = None
+                return
+            # Coarse key so e.g. the streak count growing while paused does
+            # not re-fire the transition WARNING.
+            key = 'daily_loss' if 'daily LOSS' in pause_reason else 'breaker'
+            if key != self._pause_state_key:
+                logger.warning(
+                    f"⏸️ Trading entries paused — {pause_reason}. Open "
+                    f"positions are still monitored/exited. Reminders every "
+                    f"{self._risk_log_reminder_seconds // 60} min at INFO."
+                )
+                self._pause_state_key = key
+                self._pause_last_log_at = now
+            elif (
+                self._pause_last_log_at is None
+                or (now - self._pause_last_log_at).total_seconds()
+                >= self._risk_log_reminder_seconds
+            ):
+                logger.info(f"⏸️ Trading entries still paused — {pause_reason}")
+                self._pause_last_log_at = now
+        except Exception as e:
+            logger.debug(f"_log_pause_state error (non-fatal): {e}")
+
+    def _log_cooloff_refusal(self, symbol: str, cgate: Dict) -> None:
+        """Wave-25 log-spam fix for FUT-RM-17 refusals: the 30s scan re-hits
+        an armed cool-off every cycle, repeating the same WARNING for hours.
+        Now: INFO once per cool-off instance (keyed on expires_at), INFO
+        reminder every 30 min, DEBUG otherwise. The 'cool-off ARMED' WARNING
+        in FuturesRiskManager is unchanged — that is the true transition."""
+        reason = cgate.get('reason')
+        try:
+            now = datetime.now()
+            key = str(cgate.get('expires_at') or '')
+            prev = self._cooloff_log_state.get(symbol)
+            if prev is None or prev.get('expires_at') != key:
+                self._cooloff_log_state[symbol] = {
+                    'expires_at': key, 'last_logged': now,
+                }
+                logger.info(
+                    f"⏭️  FUT-RM-17 cool-off refused entry for {symbol}: "
+                    f"{reason} (further refusals at DEBUG; "
+                    f"{self._risk_log_reminder_seconds // 60}-min reminders "
+                    f"at INFO)"
+                )
+            elif (
+                now - prev['last_logged']
+            ).total_seconds() >= self._risk_log_reminder_seconds:
+                prev['last_logged'] = now
+                logger.info(
+                    f"⏭️  FUT-RM-17 cool-off still active for {symbol}: "
+                    f"{reason}"
+                )
+            else:
+                logger.debug(
+                    f"FUT-RM-17 cool-off refused entry for {symbol}: {reason}"
+                )
+        except Exception:
+            logger.debug(
+                f"FUT-RM-17 cool-off refused entry for {symbol}: {reason}"
+            )
+
     async def _trading_cycle(self):
         """Execute one trading cycle"""
         try:
-            # 1. Check risk limits
-            if not self.risk_metrics.can_trade:
-                # Wave-13 FUT-RM-22: throttle to once per 5 min — this fires every
-                # cycle (every 30s × 18 symbols) when at daily-loss limit, flooding
-                # the log with WARNING noise.
-                _now = datetime.now()
-                _last_paused = getattr(self, '_last_paused_log_at', None)
-                if _last_paused is None or (_now - _last_paused).total_seconds() >= 300:
-                    logger.warning(
-                        f"Trading paused — daily risk limit reached "
-                        f"(Daily PnL: ${self.risk_metrics.daily_pnl:.2f})"
-                    )
-                    self._last_paused_log_at = _now
-                return
+            # 1. Check risk limits — ENTRY-ONLY pause (Wave-25 fix).
+            # Pre-Wave-25 this early-returned BEFORE _monitor_positions, so a
+            # daily-limit/consecutive-loss pause also stopped SL/TP/time-exit
+            # monitoring of OPEN positions for the rest of the UTC day — the
+            # one moment unmanaged exposure is most dangerous. Now a pause
+            # only suppresses new entries + pending-order processing; open
+            # positions are always monitored and exited.
+            pause_reason = self.risk_metrics.pause_reason \
+                if not self.risk_metrics.can_trade else None
+            self._log_pause_state(pause_reason)
 
-            # 2. Monitor existing positions
+            # 2. Monitor existing positions (runs even while paused)
             await self._monitor_positions()
+
+            if pause_reason is not None:
+                return
 
             # FUT-RM-26 (Wave 24): entry suppression / neutralization gate.
             # When set, the engine still monitors and exits existing positions
@@ -2538,10 +2658,9 @@ class FuturesTradingEngine:
                 try:
                     cgate = self.risk_manager.should_skip_for_cooloff(symbol)
                     if cgate.get('skip'):
-                        logger.warning(
-                            f"⏭️  FUT-RM-17 cool-off refused entry for {symbol}: "
-                            f"{cgate.get('reason')}"
-                        )
+                        # Wave-25: throttled — once per cool-off instance +
+                        # 30-min INFO reminders (was WARNING every ~35s).
+                        self._log_cooloff_refusal(symbol, cgate)
                         return
                 except Exception as e:
                     logger.debug(f"cooloff gate non-fatal error for {symbol}: {e}")

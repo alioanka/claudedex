@@ -436,14 +436,17 @@ class HealthServer:
 
         risk = self.app.engine.risk_metrics
 
+        # Wave-25: surface the TRUE block reason (daily-loss vs consecutive-
+        # loss breaker) and the configured streak cap instead of hardcoded 5.
+        _pause_reason = getattr(risk, 'pause_reason', None)
         return web.json_response({
             'success': True,
             'trading_blocked': not risk.can_trade,
-            'block_reasons': [],
+            'block_reasons': [_pause_reason] if _pause_reason else [],
             'daily_pnl': risk.daily_pnl,
             'daily_loss_limit': risk.daily_loss_limit,
             'consecutive_losses': risk.consecutive_losses,
-            'max_consecutive_losses': 5,
+            'max_consecutive_losses': getattr(risk, 'max_consecutive_losses', 5),
             'risk_level': risk.risk_level,
             'daily_trades': risk.daily_trades,
             'can_trade': risk.can_trade
