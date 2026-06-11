@@ -41,6 +41,7 @@ Self-test (no live network): python -m modules.advisor.core.data.fonoloji_client
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
@@ -217,6 +218,77 @@ class FonolojiClient:
         return self._get(f"/funds/{code.upper()}/analyst-consensus", {})
 
     # ------------------------------------------------------------------
+    # Developer-plan endpoints (2026-06 upgrade). All JSON shapes are mapped
+    # DEFENSIVELY by the callers — no live Fonoloji access in dev, so confirm
+    # exact keys on the first live call. Every method is fail-soft (None).
+    # ------------------------------------------------------------------
+
+    def funds_list(self, sort: Optional[str] = None,
+                   limit: Optional[int] = None, **filters) -> Optional[Any]:
+        """GET /funds?sort=...&limit=... -> fund list with rich metrics
+        (sharpe_90, sortino, calmar, max_drawdown_1y, return_*, aum,
+        investor_count). Basis of the Top Funds screener."""
+        params = {k: v for k, v in dict(filters, sort=sort, limit=limit).items()
+                  if v is not None and v != ""}
+        return self._get("/funds", params)
+
+    def fund_percentile(self, code: str) -> Optional[Any]:
+        """GET /funds/{code}/percentile -> category percentile context."""
+        return self._get(f"/funds/{code.upper()}/percentile", {})
+
+    def fund_live_estimate(self, code: str) -> Optional[Any]:
+        """GET /funds/{code}/live-estimate -> intraday NAV estimate (1h TTL)."""
+        return self._get(f"/funds/{code.upper()}/live-estimate", {})
+
+    def fund_estimate_accuracy(self, code: str) -> Optional[Any]:
+        """GET /funds/{code}/estimate-accuracy -> historical accuracy of the
+        live estimate (honesty note for the operator)."""
+        return self._get(f"/funds/{code.upper()}/estimate-accuracy", {})
+
+    def insights_movers(self) -> Optional[Any]:
+        """GET /insights/movers -> fund momentum leaders."""
+        return self._get("/insights/movers", {})
+
+    def insights_flow(self) -> Optional[Any]:
+        """GET /insights/flow -> money inflow leaders (fund flows)."""
+        return self._get("/insights/flow", {})
+
+    def insights_trend(self) -> Optional[Any]:
+        """GET /insights/trend -> MA30/200 rising/falling trend signals."""
+        return self._get("/insights/trend", {})
+
+    def market_patterns(self) -> Optional[Any]:
+        """GET /market/patterns -> TradingView Candle.* pattern matches."""
+        return self._get("/market/patterns", {})
+
+    def economy_cpi(self) -> Optional[Any]:
+        """GET /economy/cpi -> Turkish CPI series (real-return context)."""
+        return self._get("/economy/cpi", {})
+
+    def gold_compare(self) -> Optional[Any]:
+        """GET /gold/compare -> fund returns vs gram-gold parity."""
+        return self._get("/gold/compare", {})
+
+    def stock_price(self, ticker: str) -> Optional[Any]:
+        """GET /stocks/{ticker}/price -> last price for one BIST equity
+        (the cheap KAP/accumulator price path)."""
+        return self._get(f"/stocks/{_bare_ticker(ticker)}/price", {})
+
+    def summary_today(self) -> Optional[Any]:
+        """GET /summary/today -> daily market summary (also the probe target)."""
+        return self._get("/summary/today", {})
+
+    def portfolio_xray(self, holdings: list) -> Optional[Any]:
+        """POST /tools/portfolio-xray with {holdings:[{code, weight|amount}]}.
+        Cached 6h; shape confirmed on first live call."""
+        return self._post("/tools/portfolio-xray", {"holdings": holdings})
+
+    def fund_overlap(self, codes: list) -> Optional[Any]:
+        """POST /tools/fund-overlap with {codes:[...]} -> holdings overlap."""
+        return self._post("/tools/fund-overlap",
+                          {"codes": [str(c).upper() for c in (codes or [])]})
+
+    # ------------------------------------------------------------------
     # Core GET with TTL cache + 429/503 retry-after + quota awareness
     # ------------------------------------------------------------------
 
@@ -308,7 +380,37 @@ class FonolojiClient:
             return cached[1]
         return None
 
-    def _fetch_remote(self, path: str, params: dict) -> Optional[Any]:
+    def _post(self, path: str, body: dict) -> Optional[Any]:
+        """Cached POST (the /tools/* endpoints are deterministic for a given
+        body, so the TTL cache + daily budget guard apply exactly like _get)."""
+        if not self.enabled:
+            return None
+        try:
+            body_key = json.dumps(body or {}, sort_keys=True, default=str)
+        except Exception:
+            body_key = str(body)
+        cache_key = (self.api_key, self.base_url, "POST", path, body_key)
+        now = time.monotonic()
+        with _CACHE_LOCK:
+            cached = _CACHE.get(cache_key)
+        if cached is not None:
+            ts, payload = cached
+            if (now - ts) <= self._ttl_for(path):
+                return payload
+        if not self._budget_allows():
+            return cached[1] if cached is not None else None
+        fresh = self._fetch_remote(path, {}, json_body=body or {})
+        if fresh is not None:
+            with _CACHE_LOCK:
+                _CACHE[cache_key] = (now, fresh)
+            return fresh
+        if cached is not None:
+            logger.debug("[fonoloji] %s POST failed; serving stale cache.", path)
+            return cached[1]
+        return None
+
+    def _fetch_remote(self, path: str, params: dict,
+                      json_body: Optional[dict] = None) -> Optional[Any]:
         url = f"{self.base_url}{path if path.startswith('/') else '/' + path}"
         headers = {
             self.auth_header: self.api_key,
@@ -324,7 +426,8 @@ class FonolojiClient:
         while attempt <= _MAX_RETRIES:
             attempt += 1
             try:
-                resp = self._do_request(url, headers, req_params)
+                resp = self._do_request(url, headers, req_params,
+                                        json_body=json_body)
             except Exception as exc:
                 logger.debug("[fonoloji] %s transport error: %s", path, exc)
                 return None
@@ -379,13 +482,23 @@ class FonolojiClient:
             return None
         return None
 
-    def _do_request(self, url, headers, params):
-        """Perform one HTTP GET. Uses the injected transport if present (tests),
-        else `requests`. Returns a response object with status_code/headers/json."""
+    def _do_request(self, url, headers, params, json_body=None):
+        """Perform one HTTP GET (or POST when json_body is given). Uses the
+        injected transport if present (tests), else `requests`. Returns a
+        response object with status_code/headers/json. The test transport
+        signature stays (url, headers, params, timeout); POST bodies are passed
+        through params under the reserved '_json' key for mock transports."""
         if self._transport is not None:
-            return self._transport(url, headers, params, _DEFAULT_TIMEOUT_S)
+            p = dict(params or {})
+            if json_body is not None:
+                p["_json"] = json_body
+            return self._transport(url, headers, p, _DEFAULT_TIMEOUT_S)
         import requests  # local import: optional dependency, fail-soft on absence
-        return requests.get(url, headers=headers, params=params, timeout=_DEFAULT_TIMEOUT_S)
+        if json_body is not None:
+            return requests.post(url, headers=headers, params=params,
+                                 json=json_body, timeout=_DEFAULT_TIMEOUT_S)
+        return requests.get(url, headers=headers, params=params,
+                            timeout=_DEFAULT_TIMEOUT_S)
 
     def probe(self) -> dict:
         """
@@ -649,6 +762,39 @@ def _self_test() -> int:
     if cons != {"ok": True}:
         print("FAIL: fund_analyst_consensus should return payload")
         failures += 1
+
+    # --- Developer-plan endpoints: paths + POST tools (mock transport). ---
+    clear_cache()
+    seen = {"urls": [], "json": []}
+
+    def dev_transport(url, headers, params, timeout):
+        seen["urls"].append(url)
+        if "_json" in params:
+            seen["json"].append(params["_json"])
+        return _MockResponse(200, {"ok": True}, {})
+
+    c_dev = FonolojiClient(cfg, transport=dev_transport)
+    c_dev.funds_list(sort="sharpe_90", limit=20)
+    c_dev.fund_percentile("tpp")
+    c_dev.stock_price("THYAO.IS")
+    c_dev.portfolio_xray([{"code": "TPP", "weight": 0.5}])
+    c_dev.fund_overlap(["tpp", "AKP"])
+    want_suffixes = ("/funds", "/funds/TPP/percentile", "/stocks/THYAO/price",
+                     "/tools/portfolio-xray", "/tools/fund-overlap")
+    for suf in want_suffixes:
+        if not any(u.endswith(suf) for u in seen["urls"]):
+            print(f"FAIL: endpoint path missing: {suf} in {seen['urls']}")
+            failures += 1
+    if seen["json"] and seen["json"][-1] != {"codes": ["TPP", "AKP"]}:
+        print(f"FAIL: fund_overlap body {seen['json'][-1]}")
+        failures += 1
+    # POST result is cached: repeat must NOT hit transport again.
+    n_before = len(seen["urls"])
+    c_dev.fund_overlap(["tpp", "AKP"])
+    if len(seen["urls"]) != n_before:
+        print("FAIL: POST cache miss on identical body")
+        failures += 1
+    clear_cache()
 
     # --- TTL floors/ceilings: static lists cached >= 1 day, live <= 1h. ---
     c_ttl = FonolojiClient(cfg, transport=ok_transport)
