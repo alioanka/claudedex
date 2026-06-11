@@ -212,6 +212,42 @@ NO code consumed them — they were dead. Wave-15 closes the loop:
   in-engine monitor never double-closes. Engine-owner follow-ups still open:
   `trading.max_trades_per_day` + `trading.chain_weights` entry-side consumption
   and the engine's hardcoded position-dict TP/SL (0.3/0.1) ignoring config.
+  **→ All three closed in Wave-26 (see below).**
+
+## Wave-26: entry-side tunable consumption + DB-authoritative position SL/TP
+Closes the three engine-owner follow-ups from Wave-15. All changes are in
+`core/engine.py` (the live DEX entry path); fail-soft everywhere — a missing
+or malformed config value reproduces pre-Wave-26 behavior exactly. No new
+migration: all keys were already seeded by migration 095 and are existing
+`ConfigManager` model fields (`TradingConfig.max_trades_per_day` /
+`chain_weights`, `RiskManagementConfig.stop_loss_pct` / `take_profit_pct`),
+flowing into the engine via `main_dex.py`'s `nested_config` rebuild-from-DB.
+- **`trading.chain_weights` (CHECK 0 in `_execute_opportunity`)**: weight 0.0
+  → NEW entry skipped (logged per-skip; solana/monad default 0 = measured
+  negative edge); weight in (0,1) → `recommended_position_size` scaled by the
+  weight; absent chains → 1.0 (unchanged). ENTRY-only — exits never pass
+  through `_execute_opportunity`, so they can never be blocked.
+- **`trading.max_trades_per_day` (`_check_daily_entry_budget`)**: per-UTC-day
+  entry cap, 0 = unlimited. Counter increments via `_register_entry()` after
+  each opened position (DRY_RUN and LIVE branches) and is re-seeded from
+  `trades` (`side='buy' AND entry_timestamp >= UTC midnight`, naive-then-aware
+  timestamp probe) on the first attempt of each UTC day so restarts cannot
+  reset the budget. Cap-reached logs ONCE per UTC day; any check error
+  fail-soft ALLOWS the entry. Opportunities are processed best-score-first,
+  so the budget keeps the highest-conviction trades.
+- **Position-dict SL/TP lie fixed (`_position_sl_tp`)**: both position dicts
+  (DRY_RUN + LIVE) now carry `risk_management.stop_loss_pct` (0.12) /
+  `take_profit_pct` (0.24) instead of hardcoded 0.1/0.3, so the in-engine
+  monitor, portfolio-manager stop/TP prices, the entry alert text, sizing
+  math (`_calculate_position_size`, which already used `stop_loss_pct`) and
+  the DB exit watchdog all agree. Entry-time SL/TP are persisted into trade
+  `metadata` so `_load_state` restores the SAME stop after a restart;
+  restored rows without persisted values fall back to the DB-configured
+  values (was hardcoded 0.1/0.3). Fail-soft to the legacy 0.1/0.3 constants
+  when the rows are unset, plus sanity clamps (SL in (0,1), TP in (0,5)).
+- Safety surface unchanged: `RiskManager.validate_trade`, DRY_RUN/killswitch/
+  pause gates, circuit breakers and `_final_safety_checks` all run exactly as
+  before; CHECK 0 only ever REMOVES entries or shrinks size, never loosens.
 
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
