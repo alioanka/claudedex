@@ -535,8 +535,9 @@ class SniperEngine:
             if self.sniper_budget_usd == 0.0:
                 logger.warning(
                     "SNIPER budget=0 (allocation_guard_config.budget_usd_sniper=0): "
-                    "all new entries suppressed. "
-                    "Operator action to re-enable: set budget_usd_sniper > 0 in DB."
+                    "all LIVE entries suppressed. DRY_RUN simulated entries are "
+                    "still collected for burn-in stats. "
+                    "Operator action to enable LIVE: set budget_usd_sniper > 0 in DB."
                 )
 
         except Exception as e:
@@ -1512,9 +1513,15 @@ class SniperEngine:
         # The allocation guard's own check() skips the per-module gate when
         # budget_usd==0 (treats 0 as "unlimited"), so this explicit check
         # is needed to make budget=0 mean "blocked".
-        if self.sniper_budget_usd == 0.0:
+        # Scoped to LIVE: budget=0 is the operator's hard block on real-money
+        # entries. Simulated entries (DRY_RUN / killswitch / pause) are allowed
+        # through so a burn-in window can collect honest stats with zero
+        # capital at risk — the executor routes them to _simulate_buy anyway.
+        if self.sniper_budget_usd == 0.0 and not should_skip_live(
+            self.dry_run, module='sniper'
+        ):
             logger.debug(
-                f"sniper budget=0: entry suppressed for {token_address}"
+                f"sniper budget=0: LIVE entry suppressed for {token_address}"
             )
             data['status'] = 'failed'
             data['error'] = 'budget_zero'
