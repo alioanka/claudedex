@@ -320,6 +320,15 @@ class TradingBotEngine:
         # Cooldown tracking
         self.recently_closed: Dict[str, ClosedPositionRecord] = {}  # token_address -> record
         self.cooldown_minutes = config.get('risk_management', {}).get('position_cooldown_minutes', 60)
+
+        # Wave-26: per-UTC-day ENTRY budget (trading.max_trades_per_day,
+        # seeded by migration 095 — previously had NO consumer). Counter is
+        # lazily re-seeded from the trades table on the first entry attempt
+        # of each UTC day so it survives subprocess restarts. ENTRY-only:
+        # exits never pass through _execute_opportunity.
+        self._entry_budget_day: Optional[str] = None      # 'YYYY-MM-DD' (UTC)
+        self._entries_today: int = 0
+        self._entry_budget_logged_day: Optional[str] = None  # log-once guard
         
       
         
@@ -1046,6 +1055,120 @@ class TradingBotEngine:
                 await asyncio.sleep(5)
                 
     # ============================================================================
+    # Wave-26: entry-side consumers for the migration-095 tunables that
+    # previously had NO consumer (trading.chain_weights /
+    # trading.max_trades_per_day) + DB-authoritative position SL/TP.
+    # ============================================================================
+
+    def _get_chain_weight(self, chain: str) -> float:
+        """Consumer of `trading.chain_weights` (seeded by migration 095).
+
+        0.0 disables NEW entries on the chain (measured negative edge —
+        week-1: solana avg -2.24/trade, monad -16.64); (0,1) scales position
+        size; chains absent from the map default to 1.0. Fail-soft: any
+        malformed value yields 1.0 (behavior identical to pre-Wave-26).
+        """
+        try:
+            weights = (self.config.get('trading', {}) or {}).get('chain_weights') or {}
+            if isinstance(weights, str):
+                weights = json.loads(weights)
+            if not isinstance(weights, dict):
+                return 1.0
+            w = float(weights.get((chain or '').lower(), 1.0))
+            if w != w:  # NaN guard
+                return 1.0
+            return min(max(w, 0.0), 1.0)
+        except Exception:
+            return 1.0
+
+    def _position_sl_tp(self) -> Tuple[float, float]:
+        """DB-configured position stop-loss / take-profit fractions.
+
+        Reads the authoritative `risk_management.stop_loss_pct` /
+        `take_profit_pct` rows (seeded 0.12 / 0.24 by migration 095) so the
+        position dicts agree with the sizing math in
+        _calculate_position_size (which already uses stop_loss_pct).
+        Fail-soft to the legacy hardcoded constants (0.1 / 0.3) if unset or
+        malformed.
+        """
+        risk_cfg = self.config.get('risk_management', {}) or {}
+        try:
+            sl = float(risk_cfg.get('stop_loss_pct') or 0.1)
+        except (TypeError, ValueError):
+            sl = 0.1
+        try:
+            tp = float(risk_cfg.get('take_profit_pct') or 0.3)
+        except (TypeError, ValueError):
+            tp = 0.3
+        if not (0.0 < sl < 1.0):
+            sl = 0.1
+        if not (0.0 < tp < 5.0):
+            tp = 0.3
+        return sl, tp
+
+    async def _check_daily_entry_budget(self) -> bool:
+        """Consumer of `trading.max_trades_per_day` (seeded by migration 095).
+
+        Returns True when a NEW entry is allowed today (UTC day). 0 or
+        negative = unlimited. Opportunities are processed best-score-first,
+        so the budget keeps the highest-conviction trades. ENTRY-only —
+        exits never pass through _execute_opportunity, so they are never
+        blocked. Fail-soft: any error allows the entry (never blocks on a
+        broken config/DB read). Cap-reached is logged ONCE per UTC day.
+        """
+        try:
+            cap = int((self.config.get('trading', {}) or {}).get('max_trades_per_day', 100) or 0)
+        except (TypeError, ValueError):
+            cap = 100
+        if cap <= 0:
+            return True
+        try:
+            today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+            if self._entry_budget_day != today:
+                self._entry_budget_day = today
+                self._entries_today = await self._count_entries_today_db()
+            if self._entries_today >= cap:
+                if self._entry_budget_logged_day != today:
+                    self._entry_budget_logged_day = today
+                    logger.warning(
+                        f"📅 Daily entry budget reached ({self._entries_today}/{cap}, "
+                        f"trading.max_trades_per_day) — skipping NEW entries until the "
+                        f"next UTC day. Exits/position monitoring unaffected."
+                    )
+                return False
+            return True
+        except Exception as e:
+            logger.debug(f"Daily entry budget check failed (fail-soft, allowing entry): {e}")
+            return True
+
+    async def _count_entries_today_db(self) -> int:
+        """Restart-safe seed for the daily entry counter (UTC midnight).
+
+        Counts today's BUY rows in the trades table. The column may be
+        TIMESTAMP (naive) or TIMESTAMPTZ depending on deployment age, so try
+        naive-UTC first, then tz-aware; fall back to 0 (in-memory counting
+        still applies from that point on).
+        """
+        midnight = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        query = "SELECT COUNT(*) AS n FROM trades WHERE side = 'buy' AND entry_timestamp >= $1"
+        for ts in (midnight.replace(tzinfo=None), midnight):
+            try:
+                row = await self.db.fetch_one(query, ts)
+                if row is not None:
+                    return int(row['n'] or 0)
+            except Exception:
+                continue
+        return 0
+
+    def _register_entry(self) -> None:
+        """Increment the per-UTC-day entry counter after a successful entry."""
+        today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+        if self._entry_budget_day != today:
+            self._entry_budget_day = today
+            self._entries_today = 0
+        self._entries_today += 1
+
+    # ============================================================================
     # FIX 4: engine.py - Add duplicate position check in _execute_opportunity
     # Add this check at the beginning of _execute_opportunity method (around line 620)
     # ============================================================================
@@ -1055,6 +1178,34 @@ class TradingBotEngine:
         try:
             token_symbol = opportunity.metadata.get('token_symbol', 'UNKNOWN')
             token_address = opportunity.token_address.lower()
+
+            # ✅ CHECK 0 (Wave-26): per-chain weight gate + per-UTC-day entry
+            # budget — the two migration-095 tunables that previously had NO
+            # consumer. ENTRY-only: exits never pass through this method, so
+            # they can never be blocked here.
+            entry_chain = (opportunity.chain or 'ethereum').lower()
+            chain_weight = self._get_chain_weight(entry_chain)
+            if chain_weight <= 0.0:
+                logger.info(
+                    f"⚖️ Chain '{entry_chain}' weighted 0 in trading.chain_weights "
+                    f"— skipping NEW entry {token_symbol} (measured negative edge)"
+                )
+                return
+            if not await self._check_daily_entry_budget():
+                return  # cap-reached warning already logged once per UTC day
+            if chain_weight < 1.0:
+                # (0,1) scales capital on chains with a weak measured edge.
+                scaled = float(opportunity.recommended_position_size) * chain_weight
+                logger.info(
+                    f"⚖️ Chain weight {chain_weight:.2f} for '{entry_chain}': position "
+                    f"${float(opportunity.recommended_position_size):.2f} → ${scaled:.2f}"
+                )
+                opportunity.recommended_position_size = scaled
+
+            # DB-authoritative SL/TP for the position dicts below (was
+            # hardcoded 0.1/0.3, contradicting risk_management.stop_loss_pct
+            # 0.12 / take_profit_pct 0.24 used by sizing and the DB watchdog).
+            sl_pct, tp_pct = self._position_sl_tp()
 
             # ✅ CHECK 1: Already have active position?
             # CRITICAL FIX (P1): Protect read with lock to prevent race conditions
@@ -1198,8 +1349,8 @@ class TradingBotEngine:
                     'chain': opportunity.chain,
                     'strategy': {'name': opportunity.entry_strategy},
                     'risk_score': opportunity.risk_score,
-                    'stop_loss_percentage': 0.1,
-                    'take_profit_percentage': 0.3,
+                    'stop_loss_percentage': sl_pct,
+                    'take_profit_percentage': tp_pct,
                     'max_hold_time': 60,
                     'metadata': opportunity.metadata,
                     'is_dry_run': True,
@@ -1210,6 +1361,9 @@ class TradingBotEngine:
                 # CRITICAL FIX (P1): Protect with lock to prevent race conditions
                 async with self.positions_lock:
                     self.active_positions[token_address] = position
+
+                # Wave-26: count this entry against trading.max_trades_per_day
+                self._register_entry()
 
                 # ⚡ CRITICAL: Schedule immediate first check for this position
                 # Don't wait for the monitoring loop - check within 5 seconds
@@ -1222,8 +1376,8 @@ class TradingBotEngine:
                 if hasattr(self, 'portfolio_manager') and self.portfolio_manager:
                     try:
                         # Calculate stop loss and take profit levels
-                        stop_loss_price = float(opportunity.price) * (1 - position.get('stop_loss_percentage', 0.1))
-                        take_profit_price = float(opportunity.price) * (1 + position.get('take_profit_percentage', 0.3))
+                        stop_loss_price = float(opportunity.price) * (1 - position.get('stop_loss_percentage', sl_pct))
+                        take_profit_price = float(opportunity.price) * (1 + position.get('take_profit_percentage', tp_pct))
                         
                         await self.portfolio_manager.update_portfolio({
                             'token_address': token_address,
@@ -1268,7 +1422,11 @@ class TradingBotEngine:
                             'token_symbol': token_symbol,
                             'is_dry_run': True,
                             'opportunity_score': float(opportunity.score),
-                            'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
+                            'executor_type': 'Jupiter' if chain == 'solana' else 'EVM',
+                            # Persist entry-time SL/TP so _load_state restores
+                            # the SAME stop after a subprocess restart.
+                            'stop_loss_percentage': sl_pct,
+                            'take_profit_percentage': tp_pct
                         }
                     }
                     await self.db.save_trade(trade_data)
@@ -1315,7 +1473,7 @@ class TradingBotEngine:
                     f"Amount: {simulated_amount:.2f} tokens\n"
                     f"Value: ${position_value:.2f}\n"
                     f"Score: {opportunity.score:.3f}\n"
-                    f"Stop Loss: -10% | Take Profit: +30%\n"
+                    f"Stop Loss: -{sl_pct * 100:.0f}% | Take Profit: +{tp_pct * 100:.0f}%\n"
                     f"Max Hold: 60 minutes"
                 )
                 
@@ -1450,8 +1608,8 @@ class TradingBotEngine:
                     'strategy': {'name': opportunity.entry_strategy},
                     'risk_score': opportunity.risk_score,
                     'entry_time': datetime.now(),
-                    'stop_loss_percentage': 0.1,
-                    'take_profit_percentage': 0.3,
+                    'stop_loss_percentage': sl_pct,
+                    'take_profit_percentage': tp_pct,
                     'metadata': {
                         **opportunity.metadata,
                         'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
@@ -1461,6 +1619,9 @@ class TradingBotEngine:
                 # CRITICAL FIX (P1): Protect with lock to prevent race conditions
                 async with self.positions_lock:
                     self.active_positions[opportunity.token_address] = position
+
+                # Wave-26: count this entry against trading.max_trades_per_day
+                self._register_entry()
 
                 # ⚡ CRITICAL: Schedule immediate first check for this position
                 asyncio.create_task(
@@ -1534,7 +1695,11 @@ class TradingBotEngine:
                             'tx_hash': result.get('signature' if chain == 'solana' else 'transactionHash'),
                             'expected_price': float(opportunity.price),
                             'execution_price': float(execution_price),
-                            'slippage_bps': result.get('slippage_bps', 0)
+                            'slippage_bps': result.get('slippage_bps', 0),
+                            # Persist entry-time SL/TP so _load_state restores
+                            # the SAME stop after a subprocess restart.
+                            'stop_loss_percentage': sl_pct,
+                            'take_profit_percentage': tp_pct
                         }
                     }
                     
@@ -3065,6 +3230,10 @@ class TradingBotEngine:
                 logger.info("   _load_state: no DB pool — starting with empty active_positions")
                 return
 
+            # Wave-26: restored rows without persisted SL/TP fall back to the
+            # DB-configured values (was hardcoded 0.1/0.3).
+            sl_pct, tp_pct = self._position_sl_tp()
+
             chains = ', '.join(f"'{c}'" for c in self._DEX_STATE_CHAINS)
             query = f"""
                 SELECT id, trade_id, token_address, chain, entry_price, amount,
@@ -3120,8 +3289,8 @@ class TradingBotEngine:
                             'chain': (row['chain'] or 'ethereum'),
                             'strategy': {'name': metadata.get('entry_strategy', 'momentum')},
                             'entry_time': entry_time,
-                            'stop_loss_percentage': metadata.get('stop_loss_percentage', 0.1),
-                            'take_profit_percentage': metadata.get('take_profit_percentage', 0.3),
+                            'stop_loss_percentage': metadata.get('stop_loss_percentage', sl_pct),
+                            'take_profit_percentage': metadata.get('take_profit_percentage', tp_pct),
                             # INTEGER trades.id -> engine close writes target this exact row.
                             'trade_id': row['id'],
                             'metadata': {**metadata, 'restored_from_db': True},
