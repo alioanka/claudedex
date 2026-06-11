@@ -1554,6 +1554,14 @@ class DashboardEndpoints:
         self.app.router.add_get(
             '/api/modules/{module}/dry-run', self._api_module_get_dry_run
         )
+        # Honest per-module runtime badge: enabled/running/paused/dry-run
+        # resolved from the same primitives the engines themselves honor
+        # (env flag, health-port probe + DB heartbeat, logs/.pause_<m>,
+        # resolve_module_dry_run, logs/.killswitch). Fail-soft.
+        self.app.router.add_get(
+            '/api/modules/{module}/runtime-status',
+            self._api_module_runtime_status
+        )
         # Phase 3 follow-up: explicit per-module restart via the
         # logs/.restart_<module> flag-file pattern (orchestrator
         # main.py polls every 5s). Replaces the operator's manual
@@ -2271,6 +2279,8 @@ class DashboardEndpoints:
             )
         dex_dry        = _eff('dex',        'dex_config')
         futures_dry    = _eff('futures',    'futures_config')
+        # Futures restart-reconcile state (log-tail scrape, fail-soft).
+        futures_reconcile = self._read_futures_reconcile_state()
         solana_dry     = _eff('solana',     'solana_config')
         sniper_dry     = _eff('sniper',     'sniper_config')
         arbitrage_dry  = _eff('arbitrage',  'arbitrage_config')
@@ -2304,6 +2314,15 @@ class DashboardEndpoints:
                         'health': futures_health_data,
                         'historical': not futures_enabled,
                         'effective_dry_run': futures_dry,
+                        # Restart-reconcile observability scraped from the
+                        # module log — feeds the base.html RESTART OVER-CAP
+                        # banner (filters last_restart_alert.level=='error').
+                        # The engine keeps this in-process, so the log tail
+                        # is the only cross-process source. All-None when
+                        # the log is absent (fail-soft).
+                        'last_reconcile_at': futures_reconcile['last_reconcile_at'],
+                        'last_reconcile_count': futures_reconcile['last_reconcile_count'],
+                        'last_restart_alert': futures_reconcile['restart_alert'],
                     },
                     'solana_strategies': {
                         'name': 'Solana Strategies',
@@ -2468,6 +2487,149 @@ class DashboardEndpoints:
             'config_type': config_type,
             'db_value': db_value,
             'effective_dry_run': effective,
+        })
+
+    # Honest runtime badge resolver. Maps each module to the SAME
+    # primitives the engines themselves honor, so the badge can never
+    # claim "running" for a dead subprocess or hide a pause/dry-run.
+    #   env        — orchestrator enable flag (main.py spawn gate)
+    #   port_env   — health-port probe (subprocess liveness, primary)
+    #   heartbeat  — DB runtime-stats freshness fallback (table, max age s)
+    #   pause_keys — logs/.pause_<key> flags; engines read the SHORT key
+    #                via should_skip_live(module=...), the dashboard pause
+    #                button historically wrote the LONG key — check both.
+    _RUNTIME_STATUS_MODULES = {
+        'dex': {
+            'env': 'DEX_MODULE_ENABLED',
+            'port_env': ('DEX_HEALTH_PORT', 8085),
+            'heartbeat': ('dex_runtime_stats', 150),
+            'config_type': 'dex_config',
+            'pause_keys': ('dex', 'dex_trading'),
+        },
+        'futures': {
+            'env': 'FUTURES_MODULE_ENABLED',
+            'port_env': ('FUTURES_HEALTH_PORT', 8081),
+            'heartbeat': None,
+            'config_type': 'futures_config',
+            'pause_keys': ('futures', 'futures_trading'),
+        },
+        'solana': {
+            'env': 'SOLANA_MODULE_ENABLED',
+            'port_env': ('SOLANA_HEALTH_PORT', 8082),
+            'heartbeat': None,
+            'config_type': 'solana_config',
+            'pause_keys': ('solana', 'solana_strategies'),
+        },
+        'ai': {
+            'env': 'AI_MODULE_ENABLED',
+            'port_env': ('AI_HEALTH_PORT', 8086),
+            'heartbeat': ('ai_runtime_stats', 1800),
+            'config_type': 'ai_config',
+            'pause_keys': ('ai', 'ai_analysis'),
+        },
+    }
+    # Template URLs use the long module names too — accept both.
+    _RUNTIME_STATUS_ALIASES = {
+        'dex_trading': 'dex', 'futures_trading': 'futures',
+        'solana_strategies': 'solana', 'ai_analysis': 'ai',
+    }
+
+    async def _api_module_runtime_status(self, request):
+        """GET /api/modules/{module}/runtime-status — honest
+        enabled/running/paused/dry-run/killswitch badge payload for the
+        per-module dashboards. Fail-soft by construction: every probe
+        degrades to its safe value, never a 500."""
+        raw = (request.match_info.get('module', '') or '').lower()
+        module = self._RUNTIME_STATUS_ALIASES.get(raw, raw)
+        spec = self._RUNTIME_STATUS_MODULES.get(module)
+        if not spec:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {raw}'},
+                status=400,
+            )
+
+        # 1. enabled — orchestrator spawn gate (missing flag = disabled).
+        enabled = str(os.getenv(spec['env'], 'false')).lower().strip() \
+            in ('true', '1', 'yes', 'on')
+
+        # 2. running — health-port probe, then DB heartbeat freshness.
+        running = False
+        try:
+            port = int(os.getenv(spec['port_env'][0], str(spec['port_env'][1])))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f'http://localhost:{port}/health', timeout=3
+                ) as resp:
+                    running = (resp.status == 200)
+        except Exception:
+            pass
+        if not running and spec['heartbeat'] and self.db \
+                and getattr(self.db, 'pool', None):
+            table, max_age = spec['heartbeat']
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval(f"""
+                        SELECT EXTRACT(EPOCH FROM (NOW() - updated_at))::int
+                        FROM {table} WHERE id = 1
+                    """)
+                    if age is not None and age <= max_age:
+                        running = True
+            except Exception:
+                pass
+
+        # 3. paused — flag files honored by should_skip_live().
+        paused = False
+        try:
+            from core.dry_run import is_module_paused
+            paused = any(is_module_paused(k) for k in spec['pause_keys'])
+        except Exception:
+            pass
+
+        # 4. dry_run — same resolution chain the engine boots with.
+        dry_run = True
+        try:
+            db_value = None
+            if self.db and getattr(self.db, 'pool', None):
+                async with self.db.pool.acquire() as conn:
+                    db_value = await conn.fetchval(
+                        "SELECT value FROM config_settings "
+                        "WHERE config_type = $1 AND key = 'dry_run'",
+                        spec['config_type'],
+                    )
+            from core.dry_run import resolve_module_dry_run
+            dry_run = resolve_module_dry_run(module, db_row_value=db_value)
+        except Exception:
+            pass  # safe-by-default True
+
+        # 5. killswitch — global flag file.
+        killswitch = False
+        try:
+            killswitch = Path('logs/.killswitch').exists()
+        except Exception:
+            pass
+
+        if not enabled:
+            status = 'disabled'
+        elif killswitch:
+            status = 'killswitch'
+        elif paused:
+            status = 'paused'
+        elif not running:
+            status = 'offline'
+        elif dry_run:
+            status = 'dry_run'
+        else:
+            status = 'live'
+
+        return web.json_response({
+            'success': True,
+            'module': module,
+            'enabled': enabled,
+            'running': running,
+            'paused': paused,
+            'dry_run': dry_run,
+            'killswitch': killswitch,
+            'status': status,
         })
 
     async def _api_module_set_dry_run(self, request):
@@ -7814,10 +7976,16 @@ class DashboardEndpoints:
                                 pnl_pct, fees_sol, exit_reason, entry_time, exit_time,
                                 duration_seconds, is_simulated, sol_price_usd
                             FROM solana_trades
-                            ORDER BY exit_time DESC
+                            ORDER BY exit_time DESC NULLS LAST
                             LIMIT $1
                         """, limit)
 
+                        # NULL-safe casts: rows for open trades (entry
+                        # written, exit pending) and legacy bad-exit rows
+                        # carry NULL exit_price/pnl_* — float(None) used to
+                        # throw here, dropping the WHOLE database branch to
+                        # the log-file fallback (usually empty on a fresh
+                        # host => blank Recent Trades panel).
                         for row in rows:
                             trades.append({
                                 'trade_id': row['trade_id'],
@@ -7827,12 +7995,12 @@ class DashboardEndpoints:
                                 'strategy': row['strategy'],
                                 'type': 'CLOSE',
                                 'side': 'SELL',
-                                'entry_price': float(row['entry_price']),
-                                'exit_price': float(row['exit_price']),
-                                'amount_sol': float(row['amount_sol']),
-                                'pnl_sol': float(row['pnl_sol']),
+                                'entry_price': float(row['entry_price'] or 0),
+                                'exit_price': float(row['exit_price'] or 0),
+                                'amount_sol': float(row['amount_sol'] or 0),
+                                'pnl_sol': float(row['pnl_sol'] or 0),
                                 'pnl_usd': float(row['pnl_usd']) if row['pnl_usd'] else 0,
-                                'pnl_pct': float(row['pnl_pct']),
+                                'pnl_pct': float(row['pnl_pct'] or 0),
                                 'fees_sol': float(row['fees_sol']) if row['fees_sol'] else 0,
                                 'reason': row['exit_reason'],
                                 'exit_reason': row['exit_reason'],
@@ -8450,8 +8618,129 @@ class DashboardEndpoints:
 
     # ========== FUTURES POSITION MANAGEMENT ==========
 
+    def _read_futures_reconcile_state(self) -> Dict[str, Any]:
+        """Best-effort cross-process read of the futures engine's restart
+        reconcile observability (last_reconcile_at/count + RESTART
+        OVER-CAP / AT-CAP detection) from the module's rotating log.
+        The engine keeps this state in-process only
+        (futures_engine._sync_positions), so the standalone dashboard's
+        single honest source is the log tail. Only an OVER/AT-CAP line at
+        or after the latest reconcile line counts — older alerts were
+        superseded by a later restart. Fail-soft: missing file or
+        unparseable lines return the all-None payload, never raise."""
+        state: Dict[str, Any] = {
+            'last_reconcile_at': None,
+            'last_reconcile_count': None,
+            'restart_alert': None,
+        }
+        try:
+            import re
+            log_path = Path('logs/futures_trading/futures_trading.log')
+            if not log_path.exists():
+                return state
+            with open(log_path, 'rb') as f:
+                f.seek(max(0, log_path.stat().st_size - 262_144))
+                lines = f.read().decode('utf-8', errors='replace').splitlines()
+            ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})')
+            reconcile_idx = None
+            for i in range(len(lines) - 1, -1, -1):
+                line = lines[i]
+                if 'Position reconcile:' in line \
+                        or 'position reconcile skipped' in line:
+                    reconcile_idx = i
+                    m = re.search(
+                        r'Position reconcile: (\d+) seeded.*?'
+                        r'last_reconcile_at=([0-9T:\.\-\+]+)', line)
+                    if m:
+                        state['last_reconcile_count'] = int(m.group(1))
+                        state['last_reconcile_at'] = m.group(2)
+                    else:
+                        # DRY_RUN skip line — reconcile ran, count 0.
+                        state['last_reconcile_count'] = 0
+                        ts = ts_re.match(line)
+                        if ts:
+                            state['last_reconcile_at'] = ts.group(1)
+                    break
+            search_from = reconcile_idx if reconcile_idx is not None else 0
+            for line in reversed(lines[search_from:]):
+                if 'RESTART OVER-CAP' in line or 'RESTART AT-CAP' in line:
+                    counts = re.search(
+                        r'reconciled (\d+)'
+                        r'(?:/| positions but max_positions=)(\d+)', line)
+                    ts = ts_re.match(line)
+                    state['restart_alert'] = {
+                        'level': ('error' if 'OVER-CAP' in line
+                                  else 'warning'),
+                        'message': line.split(' - ')[-1].strip(),
+                        'count': int(counts.group(1)) if counts else None,
+                        'max_positions': (int(counts.group(2))
+                                          if counts else None),
+                        'timestamp': ts.group(1) if ts else None,
+                    }
+                    break
+        except Exception as e:
+            logger.debug(f"futures reconcile-state log scan failed: {e}")
+        return state
+
+    async def _futures_trades_from_db(self, limit: int) -> List[Dict]:
+        """DB fallback for /api/futures/trades when the module health
+        server is offline. Mirrors main_futures.trades_handler's payload
+        shape so dashboard_futures.html renders identically. NULL-safe on
+        every numeric/timestamp column (rows written by older engine
+        versions can carry NULLs). No is_simulated/exchange filter — with
+        the engine down we cannot know its mode, so show everything and
+        let the is_simulated flag disambiguate. Fail-soft: returns []."""
+        trades: List[Dict] = []
+        if not self.db_pool:
+            return trades
+        try:
+            async with self.db_pool.acquire() as conn:
+                records = await conn.fetch("""
+                    SELECT
+                        id, symbol, side, entry_price, exit_price, size,
+                        notional_value, leverage, pnl, pnl_pct, fees,
+                        net_pnl, exit_reason, entry_time, exit_time,
+                        duration_seconds, is_simulated, exchange, network
+                    FROM futures_trades
+                    ORDER BY exit_time DESC NULLS LAST
+                    LIMIT $1
+                """, limit)
+            for r in records:
+                trades.append({
+                    'trade_id': str(r['id']),
+                    'symbol': r['symbol'],
+                    'side': r['side'] or 'long',
+                    'entry_price': float(r['entry_price'] or 0),
+                    'exit_price': float(r['exit_price'] or 0),
+                    'size': float(r['size'] or 0),
+                    'notional_value': float(r['notional_value'] or 0),
+                    'leverage': int(r['leverage'] or 1),
+                    'pnl': float(r['pnl'] or 0),
+                    'pnl_pct': float(r['pnl_pct'] or 0),
+                    'fees': float(r['fees'] or 0),
+                    'net_pnl': float(r['net_pnl'] or 0),
+                    'opened_at': (r['entry_time'].isoformat()
+                                  if r['entry_time'] else None),
+                    'closed_at': (r['exit_time'].isoformat()
+                                  if r['exit_time'] else None),
+                    'close_reason': r['exit_reason'],
+                    'is_simulated': r['is_simulated'],
+                    'duration_seconds': int(r['duration_seconds'] or 0),
+                    'exchange': r['exchange'],
+                    'network': r['network'],
+                })
+        except Exception as e:
+            logger.debug(f"futures_trades DB fallback failed: {e}")
+        return trades
+
     async def api_futures_positions(self, request):
-        """Get all futures positions from the Futures module"""
+        """Get all futures positions from the Futures module.
+
+        Module offline => success:true with an EMPTY list (the
+        futures_positions DB table has no live writer, so serving rows
+        from it would show stale state as if it were live). The template
+        renders its empty-state panel instead of console-erroring on 503.
+        """
         try:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
             async with aiohttp.ClientSession() as session:
@@ -8461,38 +8750,50 @@ class DashboardEndpoints:
                         return web.json_response(data)
                     else:
                         return web.json_response({
-                            'success': False,
-                            'error': f'Futures module returned status {resp.status}'
-                        }, status=resp.status)
+                            'success': True,
+                            'positions': [],
+                            'count': 0,
+                            'module_offline': True,
+                            'note': f'Futures module returned status {resp.status}'
+                        })
         except Exception as e:
-            logger.error(f"Error fetching futures positions: {e}")
+            logger.debug(f"Futures module not reachable for positions: {e}")
             return web.json_response({
-                'success': False,
-                'error': f'Futures module not available: {str(e)}'
-            }, status=503)
+                'success': True,
+                'positions': [],
+                'count': 0,
+                'module_offline': True,
+                'note': 'Futures module offline — live positions unavailable'
+            })
 
     async def api_futures_trades(self, request):
-        """Get recent futures trades from the Futures module"""
+        """Get recent futures trades from the Futures module, falling back
+        to the futures_trades DB table when the module is offline so the
+        dashboard keeps showing history (trade rows persist across
+        restarts; only live position state needs the subprocess)."""
         try:
-            # Default to 10000 to show all trades (was 50 which truncated results)
-            limit = request.query.get('limit', '10000')
+            limit = int(request.query.get('limit', '10000'))
+        except (TypeError, ValueError):
+            limit = 10000
+        limit = max(1, min(100000, limit))
+        try:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'http://localhost:{futures_port}/trades?limit={limit}', timeout=5) as resp:
                     if resp.status == 200:
                         data = await resp.json()
                         return web.json_response(data)
-                    else:
-                        return web.json_response({
-                            'success': False,
-                            'error': f'Futures module returned status {resp.status}'
-                        }, status=resp.status)
         except Exception as e:
-            logger.error(f"Error fetching futures trades: {e}")
-            return web.json_response({
-                'success': False,
-                'error': f'Futures module not available: {str(e)}'
-            }, status=503)
+            logger.debug(f"Futures module not reachable for trades: {e}")
+        # Module offline or returned non-200 — serve persisted history.
+        trades = await self._futures_trades_from_db(limit)
+        return web.json_response({
+            'success': True,
+            'trades': trades,
+            'count': len(trades),
+            'source': 'database',
+            'module_offline': True,
+        })
 
     async def api_futures_funding_forecast(self, request):
         """FUT-RM-09b (Wave 4): per-symbol 24h forward funding-cost forecast.
@@ -8646,25 +8947,40 @@ class DashboardEndpoints:
             }, status=503)
 
     async def api_futures_trading_status(self, request):
-        """Get futures trading status including block status"""
+        """Get futures trading status including block status.
+
+        Additively merges the restart-reconcile observability scraped
+        from the module log (last_reconcile_at/count + RESTART OVER-CAP
+        alert) so the Trading Status card can surface it whether or not
+        the subprocess is up. Offline => HTTP 200 with success:false +
+        module_offline:true (never a bare 503 that the frontend can only
+        render as a console error)."""
+        reconcile = self._read_futures_reconcile_state()
         try:
             futures_port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'http://localhost:{futures_port}/trading/status', timeout=5) as resp:
                     if resp.status == 200:
                         data = await resp.json()
+                        if isinstance(data, dict):
+                            for k, v in reconcile.items():
+                                data.setdefault(k, v)
                         return web.json_response(data)
                     else:
                         return web.json_response({
                             'success': False,
-                            'error': f'Futures module returned status {resp.status}'
-                        }, status=resp.status)
+                            'module_offline': False,
+                            'error': f'Futures module returned status {resp.status}',
+                            **reconcile,
+                        })
         except Exception as e:
-            logger.error(f"Error fetching futures trading status: {e}")
+            logger.debug(f"Futures module not reachable for trading status: {e}")
             return web.json_response({
                 'success': False,
-                'error': f'Futures module not available: {str(e)}'
-            }, status=503)
+                'module_offline': True,
+                'error': 'Futures module offline — live trading status unavailable',
+                **reconcile,
+            })
 
     async def api_futures_trading_unblock(self, request):
         """Unblock futures trading by resetting daily loss/consecutive losses"""
@@ -13841,7 +14157,9 @@ class DashboardEndpoints:
                         "SELECT score, timestamp FROM sentiment_logs ORDER BY timestamp DESC LIMIT 1"
                     )
                     if latest:
-                        score = float(latest['score'])
+                        # NULL-safe: a sentiment row with NULL score must
+                        # not 500 the whole stats endpoint.
+                        score = float(latest['score'] or 0)
                         if enabled and latest.get('timestamp'):
                             age = (datetime.now(timezone.utc) - _as_utc(latest['timestamp'])).total_seconds()
                             if age <= 1800:
@@ -13920,9 +14238,14 @@ class DashboardEndpoints:
                         LIMIT 50
                     """)
                     for row in rows:
+                        # NULL-safe: skip rows without a timestamp (the
+                        # chart x-axis needs one); default NULL score to 0
+                        # instead of crashing the endpoint.
+                        if not row['timestamp']:
+                            continue
                         data.append({
                             'timestamp': row['timestamp'].isoformat(),
-                            'score': float(row['score'])
+                            'score': float(row['score'] or 0)
                         })
             # Reverse for chart (oldest first)
             data.reverse()
