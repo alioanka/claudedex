@@ -1532,6 +1532,8 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/advisor/portfolio/{holding_id}/delete', self.api_delete_advisor_holding)
         self.app.router.add_get('/api/advisor/settings', self.api_get_advisor_settings)
         self.app.router.add_post('/api/advisor/settings', self.api_save_advisor_settings)
+        self.app.router.add_get('/api/advisor/market-status', self.api_get_advisor_market_status)
+        self.app.router.add_get('/api/advisor/fonoloji-image', self.api_get_advisor_fonoloji_image)
 
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
@@ -16344,11 +16346,14 @@ class DashboardEndpoints:
                             'channel': r['channel'] or r['market'],
                             'direction': r['direction'],
                             'horizon': r['horizon'],
-                            'entry_price': float(r['entry_price']),
+                            # NULL-safe: a single row with a NULL entry/notional
+                            # must not 500 the whole endpoint (it feeds both the
+                            # sims page AND the overview summary tiles).
+                            'entry_price': float(r['entry_price']) if r['entry_price'] is not None else None,
                             'current_price': float(r['current_price']) if r['current_price'] else None,
                             'target_price': float(r['target_price']) if r['target_price'] else None,
                             'stop_price': float(r['stop_price']) if r['stop_price'] else None,
-                            'notional_usd': float(r['notional_usd']),
+                            'notional_usd': float(r['notional_usd']) if r['notional_usd'] is not None else None,
                             'exit_price': float(r['exit_price']) if r['exit_price'] else None,
                             'pnl_pct': float(r['pnl_pct']) if r['pnl_pct'] is not None else None,
                             'pnl_usd': float(r['pnl_usd']) if r['pnl_usd'] is not None else None,
@@ -16520,8 +16525,10 @@ class DashboardEndpoints:
                            FROM advisor_portfolio ORDER BY updated_at DESC"""
                     )
                     for r in db_rows:
-                        qty = float(r['quantity'])
-                        cost = float(r['avg_cost'])
+                        # NULL-safe: a row with NULL quantity/avg_cost must not
+                        # 500 the endpoint (the overview Portfolio tile reads it).
+                        qty = float(r['quantity']) if r['quantity'] is not None else 0.0
+                        cost = float(r['avg_cost']) if r['avg_cost'] is not None else 0.0
                         current = float(r['current_price']) if r['current_price'] else None
                         market_value = qty * current if current else None
                         unrealized_pnl = market_value - (qty * cost) if market_value is not None else None
@@ -16667,3 +16674,282 @@ class DashboardEndpoints:
         except Exception as exc:
             logger.error(f'[advisor] api_save_advisor_settings error: {exc}')
             return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def _advisor_fonoloji_key_present(self, cfg: dict) -> bool:
+        """True iff a Fonoloji API key is resolvable the way the advisor
+        resolves it (advisor_config -> Secure Credentials -> env). Presence
+        only — the value is never returned to the page."""
+        try:
+            from modules.advisor.core.data import fonoloji_client as _fc
+            if _fc.resolve_api_key(cfg or {}):
+                return True
+        except Exception:
+            pass
+        return await self._ai_key_configured('ADVISOR_FONOLOJI_API_KEY')
+
+    async def _advisor_fonoloji_api_key(self) -> str:
+        """Resolve the actual Fonoloji key for the server-side image proxy
+        (Secure Credentials -> env). Empty string when unset."""
+        try:
+            from security.secrets_manager import secrets as _s
+            if self.db and (
+                not _s._initialized or _s._db_pool is None
+                or getattr(_s, '_bootstrap_mode', False)
+            ):
+                _s.initialize(self.db.pool)
+            v = await _s.get_async('ADVISOR_FONOLOJI_API_KEY', log_access=False)
+            if v:
+                return str(v).strip()
+        except Exception as exc:
+            logger.debug(f'[advisor] fonoloji key lookup failed: {exc}')
+        return os.getenv('ADVISOR_FONOLOJI_API_KEY', '').strip()
+
+    async def api_get_advisor_market_status(self, request):
+        """
+        Per-market data-source status + WHY, for the overview market badges.
+
+        Combines (a) the LATEST observed data_source_status per market from
+        advisor_advice (what the analyzer actually reported last cycle) with
+        (b) a config-derived resolution reason: enabled_markets membership,
+        watchlist emptiness, configured source, and Fonoloji key presence.
+        This replaces the old UI inference "no advice rows => NOT CONFIGURED",
+        which could not say WHY (e.g. Midas Funds: 'fonoloji key missing').
+        """
+        try:
+            markets = ('crypto', 'us_equities', 'bist', 'fx', 'midas_funds')
+            cfg = {}
+            latest = {}
+            counts_7d = {}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for row in await conn.fetch(
+                        "SELECT key, value FROM config_settings "
+                        "WHERE config_type='advisor_config'"
+                    ):
+                        cfg[row['key']] = row['value']
+                    try:
+                        for r in await conn.fetch(
+                            """SELECT DISTINCT ON (market) market,
+                                      data_source_status, created_at
+                               FROM advisor_advice
+                               ORDER BY market, created_at DESC"""
+                        ):
+                            latest[r['market']] = {
+                                'status': r['data_source_status'],
+                                'at': r['created_at'].isoformat()
+                                      if r['created_at'] else None,
+                            }
+                        for r in await conn.fetch(
+                            """SELECT market, COUNT(*) AS n FROM advisor_advice
+                               WHERE created_at > NOW() - INTERVAL '7 days'
+                               GROUP BY market"""
+                        ):
+                            counts_7d[r['market']] = int(r['n'])
+                    except Exception as exc:
+                        logger.debug(f'[advisor] market-status advice scan: {exc}')
+
+            enabled_csv = str(cfg.get('enabled_markets',
+                                      'crypto,us_equities') or '')
+            enabled = {m.strip() for m in enabled_csv.split(',') if m.strip()}
+            fono_key = await self._advisor_fonoloji_key_present(cfg)
+
+            def _watchlist_n(market):
+                wl = str(cfg.get(f'watchlist_{market}', '') or '').strip()
+                return len([s for s in wl.split(',') if s.strip()]) if wl else 0
+
+            out = {}
+            for m in markets:
+                wl_n = _watchlist_n(m)
+                src, reason = '', ''
+                if m == 'crypto':
+                    src = str(cfg.get('advisor_crypto_exchange', 'binance'))
+                    reason = f'ccxt public REST via {src} (free, no key required)'
+                elif m == 'us_equities':
+                    src = 'yfinance'
+                    reason = 'yfinance (free, no key required)'
+                elif m == 'fx':
+                    src = str(cfg.get('advisor_fx_data_source', 'yfinance')
+                              or 'yfinance')
+                    reason = f'source={src}' + (
+                        '' if src == 'yfinance'
+                        else ' (requires ADVISOR_FX_ALPHAVANTAGE_KEY)')
+                elif m == 'bist':
+                    explicit = str(cfg.get('advisor_bist_data_source', '') or '')
+                    if fono_key:
+                        src = 'fonoloji'
+                        reason = 'Fonoloji key present — /stocks chart source preferred'
+                    elif explicit:
+                        src = explicit
+                        reason = f'source={explicit}' + (
+                            ' (degraded — partial .IS coverage)'
+                            if explicit == 'yfinance' else '')
+                    else:
+                        src = 'yfinance (.IS fallback)'
+                        reason = ('fonoloji key missing (ADVISOR_FONOLOJI_API_KEY '
+                                  'not set in Secure Credentials) and '
+                                  'advisor_bist_data_source unset — degraded '
+                                  'yfinance .IS fallback')
+                elif m == 'midas_funds':
+                    explicit = str(cfg.get('advisor_midas_data_source', '') or '')
+                    if fono_key:
+                        src = 'fonoloji'
+                        reason = ('Fonoloji key present — auto-preferred for '
+                                  'TEFAS fund NAV')
+                    elif explicit:
+                        src = explicit
+                        reason = f'source={explicit} (degraded fallback chain)'
+                    else:
+                        src = 'tefas-crawler chain (unverified)'
+                        reason = ('fonoloji key missing (ADVISOR_FONOLOJI_API_KEY '
+                                  'not set in Secure Credentials) and '
+                                  'advisor_midas_data_source unset — falls back '
+                                  'to the tefas-crawler chain; library '
+                                  'availability is decided in the advisor '
+                                  'process, not the dashboard')
+                if m not in enabled:
+                    reason = (f"market not in enabled_markets ('{enabled_csv}') "
+                              f'— enable it in Advisor Settings. ' + reason)
+                if wl_n == 0 and m in enabled:
+                    reason = f'watchlist_{m} is empty — no symbols to analyze. ' + reason
+                out[m] = {
+                    'enabled': m in enabled,
+                    'watchlist_count': wl_n,
+                    'source': src,
+                    'reason': reason,
+                    'latest_status': (latest.get(m) or {}).get('status'),
+                    'latest_status_at': (latest.get(m) or {}).get('at'),
+                    'advice_rows_7d': counts_7d.get(m, 0),
+                }
+            return web.json_response({
+                'success': True, 'markets': out,
+                'fonoloji_key_present': fono_key,
+            })
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_market_status error: {exc}')
+            return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    # Image-proxy whitelist: kind -> default Fonoloji path template. Paths are
+    # operator-overridable via advisor_config advisor_fonoloji_img_<kind>_path
+    # because the PNG endpoints are part of the operator's Fonoloji api-docs
+    # that are not vendored in this repo — the UI hides cleanly on 404 anyway.
+    _FONOLOJI_IMG_KINDS = {
+        'fund_holdings': '/funds/{code}/holdings-image',
+        'fund_chart': '/funds/{code}/chart-image',
+        'heatmap': '/market/heatmap-image',
+    }
+    _fonoloji_img_cache: dict = {}
+
+    async def api_get_advisor_fonoloji_image(self, request):
+        """
+        Server-side proxy for Fonoloji PNG visuals (fund holdings / heatmap).
+
+        GET /api/advisor/fonoloji-image?kind=fund_holdings&code=TPP
+        The browser never sees the API key. Fail-soft contract for <img>
+        consumers: any miss (no key / 404 / unexpected content) => HTTP 404;
+        429/503 => HTTP 503 with Retry-After passthrough (one bounded async
+        retry when the hint is <= 5 s). Successful images are cached in-memory
+        (TTL = advisor_fonoloji_cache_ttl_s, default 6 h) to protect the
+        15k/month free tier.
+        """
+        import re as _re
+        import time as _time
+        try:
+            kind = str(request.rel_url.query.get('kind', '')).strip()
+            tmpl = self._FONOLOJI_IMG_KINDS.get(kind)
+            if not tmpl:
+                return web.json_response(
+                    {'success': False, 'error': f'unknown kind: {kind}'},
+                    status=400)
+            code = str(request.rel_url.query.get('code', '')).strip().upper()
+            code = _re.sub(r'[^A-Z0-9]', '', code)[:12]
+            if '{code}' in tmpl and not code:
+                return web.json_response(
+                    {'success': False, 'error': 'code required'}, status=400)
+
+            api_key = await self._advisor_fonoloji_api_key()
+            if not api_key:
+                return web.json_response(
+                    {'success': False, 'reason': 'fonoloji key missing'},
+                    status=404)
+
+            cfg = {}
+            if self.db:
+                async with self.db.pool.acquire() as conn:
+                    for row in await conn.fetch(
+                        "SELECT key, value FROM config_settings "
+                        "WHERE config_type='advisor_config' AND key LIKE 'advisor_fonoloji%'"
+                    ):
+                        cfg[row['key']] = row['value']
+            base = str(cfg.get('advisor_fonoloji_base_url',
+                               'https://fonoloji.com/v1') or '').rstrip('/')
+            auth_header = str(cfg.get('advisor_fonoloji_auth_header',
+                                      'X-API-Key') or 'X-API-Key').strip()
+            tmpl = str(cfg.get(f'advisor_fonoloji_img_{kind}_path', tmpl) or tmpl)
+            path = tmpl.replace('{code}', code)
+            url = base + path
+            try:
+                ttl = max(0.0, float(cfg.get('advisor_fonoloji_cache_ttl_s', 21600)))
+            except (TypeError, ValueError):
+                ttl = 21600.0
+
+            cache_key = (base, path)
+            cached = self._fonoloji_img_cache.get(cache_key)
+            if cached and (_time.monotonic() - cached[0]) <= ttl:
+                return web.Response(body=cached[2], content_type=cached[1],
+                                    headers={'Cache-Control': 'private, max-age=3600'})
+
+            attempt = 0
+            while True:
+                attempt += 1
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        url,
+                        headers={auth_header: api_key, 'Accept': 'image/*'},
+                        params={'api_key': api_key},
+                        timeout=aiohttp.ClientTimeout(total=15),
+                    ) as resp:
+                        if resp.status == 200:
+                            ctype = (resp.headers.get('Content-Type', '') or '').split(';')[0].strip()
+                            body = await resp.read()
+                            if not ctype.startswith('image/') or not body:
+                                # JSON/HTML body => endpoint shape mismatch; hide.
+                                return web.json_response(
+                                    {'success': False, 'reason': 'not an image'},
+                                    status=404)
+                            # Bound the cache (LRU-ish: drop oldest on overflow).
+                            if len(self._fonoloji_img_cache) >= 64:
+                                oldest = min(self._fonoloji_img_cache,
+                                             key=lambda k: self._fonoloji_img_cache[k][0])
+                                self._fonoloji_img_cache.pop(oldest, None)
+                            self._fonoloji_img_cache[cache_key] = (
+                                _time.monotonic(), ctype, body)
+                            return web.Response(
+                                body=body, content_type=ctype,
+                                headers={'Cache-Control': 'private, max-age=3600'})
+                        if resp.status in (429, 503):
+                            try:
+                                retry_after = float(
+                                    resp.headers.get('Retry-After', '') or 5)
+                            except (TypeError, ValueError):
+                                retry_after = 5.0
+                            if attempt == 1 and retry_after <= 5.0:
+                                await asyncio.sleep(max(0.0, retry_after))
+                                continue
+                            # Serve stale cache if we have it, else 503 + hint.
+                            if cached:
+                                return web.Response(
+                                    body=cached[2], content_type=cached[1],
+                                    headers={'Cache-Control': 'private, max-age=600'})
+                            return web.json_response(
+                                {'success': False, 'reason': 'rate limited'},
+                                status=503,
+                                headers={'Retry-After': str(int(retry_after))})
+                        # 401/404/5xx => hide cleanly.
+                        return web.json_response(
+                            {'success': False,
+                             'reason': f'fonoloji HTTP {resp.status}'},
+                            status=404)
+        except Exception as exc:
+            logger.debug(f'[advisor] api_get_advisor_fonoloji_image error: {exc}')
+            return web.json_response({'success': False, 'error': 'proxy error'},
+                                     status=404)
