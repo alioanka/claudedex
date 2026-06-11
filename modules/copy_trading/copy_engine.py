@@ -1188,6 +1188,26 @@ class CopyTradingEngine(BaseModule):
         self._wallet_last_copy_time: Dict[str, datetime] = {}
         self._wallet_cooldown_seconds = 300  # 5 minutes
 
+        # ACTIVATION FIX (2026-06-11): leader lifecycle. The operator's
+        # 33-wallet target list had accumulated dead leaders (no on-chain
+        # activity) — the monitor burned its whole Helius budget polling
+        # wallets that never trade. The refresh job (migration 092):
+        #   - rescores every target via leader_scorer every
+        #     copy_leader_refresh_interval_hours,
+        #   - persists the newest observed tx blockTime per leader
+        #     (copy_leader_scores.last_activity_at),
+        #   - AUTO-FLAGS leaders with no activity for copy_dead_leader_days
+        #     (is_dead=TRUE + a WARNING list in the log suggesting removal).
+        # Advisory only: the engine NEVER auto-removes a target.
+        self.copy_leader_refresh_enabled = True
+        self.copy_leader_refresh_interval_hours = 6.0
+        self.copy_dead_leader_days = 7.0
+        # target-string -> epoch seconds of the newest on-chain tx observed
+        # (any tx via getSignatures fallback; newest SWAP via Helius path).
+        self._wallet_last_activity: Dict[str, float] = {}
+        self._last_leader_refresh: float = 0.0
+        self._monitor_started_at: float = 0.0
+
         # Statistics
         self._stats = {
             'cycles': 0,
@@ -1249,6 +1269,8 @@ class CopyTradingEngine(BaseModule):
         self._running = True
         self.status = ModuleStatus.RUNNING
         self.start_time = datetime.now()
+        import time as _t
+        self._monitor_started_at = _t.time()
         logger.info("👯 Copy Trading Engine Started")
         logger.info(f"   Mode: {'DRY_RUN (Simulated)' if self.dry_run else 'LIVE TRADING'}")
         if self.etherscan_api_key:
@@ -1283,6 +1305,13 @@ class CopyTradingEngine(BaseModule):
                     await self._process_close_flag_files()
                 except Exception as e:
                     logger.error(f"close-flag processor failed: {e}")
+
+                # Leader lifecycle: rescore targets + flag dead leaders
+                # every copy_leader_refresh_interval_hours. Fail-soft.
+                try:
+                    await self._maybe_refresh_leaders()
+                except Exception as e:
+                    logger.error(f"leader refresh failed: {e}")
 
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
@@ -1325,6 +1354,162 @@ class CopyTradingEngine(BaseModule):
                 'sol_copies': 0,
                 'last_stats_log': now
             }
+
+    # ------------------------------------------------------------------
+    # Leader lifecycle (activation fix, migration 092)
+    # ------------------------------------------------------------------
+
+    def _record_wallet_activity(self, target: str, epoch_s: float) -> None:
+        """Remember the newest on-chain tx time observed for a target.
+
+        Keyed by the raw target string (bare Solana address, or
+        '0x...@chain' for EVM) so the refresh job maps 1:1 to targets.
+        """
+        try:
+            prev = self._wallet_last_activity.get(target, 0.0)
+            if epoch_s > prev:
+                self._wallet_last_activity[target] = float(epoch_s)
+        except Exception:
+            pass
+
+    def _target_chain_addr(self, target: str) -> tuple:
+        """Resolve a target string to (chain, bare_address)."""
+        if self._is_solana_address(target):
+            return 'solana', target.split('@')[0]
+        addr, chain_name, _ = self._parse_evm_wallet(target)
+        return chain_name, addr
+
+    async def _maybe_refresh_leaders(self) -> None:
+        """Run the leader refresh when copy_leader_refresh_interval_hours
+        has elapsed (also on the first cycle after start). No-op when
+        disabled, no DB, or no targets."""
+        if not self.copy_leader_refresh_enabled or not self.db_pool or not self.targets:
+            return
+        import time as _t
+        interval_s = max(1.0, float(self.copy_leader_refresh_interval_hours)) * 3600.0
+        now = _t.monotonic()
+        if self._last_leader_refresh and (now - self._last_leader_refresh) < interval_s:
+            return
+        self._last_leader_refresh = now
+        await self._refresh_leaders()
+
+    async def _refresh_leaders(self) -> None:
+        """Rescore every target via leader_scorer, persist observed
+        activity, and AUTO-FLAG dead leaders (advisory — never removes).
+
+        Dead = newest observed on-chain tx older than copy_dead_leader_days.
+        Targets with NO observed tx history are only flagged after the
+        engine has been monitoring for at least one full refresh interval
+        (avoids false flags from a cold activity map right after restart).
+        Fail-soft throughout: a DB/scorer error skips that wallet only.
+        """
+        import time as _t
+        from modules.copy_trading.leader_scorer import score_leader, upsert_score
+        from modules.copy_trading.wallet_discovery import _load_leader_trades
+
+        now_s = _t.time()
+        dead_threshold_s = max(1.0, float(self.copy_dead_leader_days)) * 86400.0
+        uptime_s = now_s - (self._monitor_started_at or now_s)
+        interval_s = max(1.0, float(self.copy_leader_refresh_interval_hours)) * 3600.0
+        dead: List[Dict] = []
+        alive = 0
+
+        for target in list(self.targets):
+            try:
+                chain, addr = self._target_chain_addr(target)
+                # 1. Rescore from our mirrored-trade history (creates the
+                #    copy_leader_scores row if absent; probation auto-bench
+                #    applies when the gate is enabled).
+                trades = await _load_leader_trades(self.db_pool, chain, addr)
+                m = score_leader(chain, addr, trades)
+                await upsert_score(
+                    self.db_pool, m, source='manual',
+                    probation_score_threshold=(
+                        self.probation_score_threshold
+                        if self.probation_gate_enabled else None
+                    ),
+                    probation_days=self.probation_days,
+                )
+
+                # 2. Persist newest observed activity (monotone via GREATEST).
+                epoch = self._wallet_last_activity.get(target)
+                async with self.db_pool.acquire() as conn:
+                    if epoch:
+                        await conn.execute(
+                            """
+                            UPDATE copy_leader_scores
+                               SET last_activity_at = GREATEST(
+                                       COALESCE(last_activity_at, 'epoch'::timestamptz),
+                                       to_timestamp($3))
+                             WHERE chain = $1 AND lower(wallet_address) = lower($2)
+                            """,
+                            chain, addr, float(epoch),
+                        )
+                    row = await conn.fetchrow(
+                        "SELECT last_activity_at, is_dead FROM copy_leader_scores "
+                        "WHERE chain = $1 AND lower(wallet_address) = lower($2)",
+                        chain, addr,
+                    )
+
+                # 3. Dead determination.
+                last_act = row['last_activity_at'] if row else None
+                last_epoch = last_act.timestamp() if last_act else None
+                is_dead = False
+                reason = None
+                if last_epoch is not None:
+                    age_d = (now_s - last_epoch) / 86400.0
+                    if (now_s - last_epoch) > dead_threshold_s:
+                        is_dead = True
+                        reason = f"no on-chain activity for {age_d:.1f}d"
+                elif uptime_s >= interval_s:
+                    # Monitored a full interval, never saw a single tx.
+                    is_dead = True
+                    reason = (
+                        f"no tx history observed in {uptime_s / 3600.0:.1f}h "
+                        "of monitoring"
+                    )
+                async with self.db_pool.acquire() as conn:
+                    if is_dead:
+                        await conn.execute(
+                            """
+                            UPDATE copy_leader_scores
+                               SET is_dead = TRUE,
+                                   dead_flagged_at = COALESCE(dead_flagged_at, NOW()),
+                                   dead_reason = $3
+                             WHERE chain = $1 AND lower(wallet_address) = lower($2)
+                            """,
+                            chain, addr, reason,
+                        )
+                        dead.append({'target': target, 'chain': chain, 'reason': reason})
+                    else:
+                        alive += 1
+                        if row and row['is_dead']:
+                            await conn.execute(
+                                """
+                                UPDATE copy_leader_scores
+                                   SET is_dead = FALSE, dead_flagged_at = NULL,
+                                       dead_reason = NULL
+                                 WHERE chain = $1 AND lower(wallet_address) = lower($2)
+                                """,
+                                chain, addr,
+                            )
+                            logger.info(f"Leader revived (activity resumed): {target[:16]}...")
+            except Exception as e:
+                logger.debug(f"leader refresh skipped for {target[:16]}: {e}")
+
+        if dead:
+            lines = "; ".join(
+                f"{d['target'][:20]}... ({d['chain']}: {d['reason']})" for d in dead
+            )
+            logger.warning(
+                f"DEAD LEADERS {len(dead)}/{len(self.targets)} — suggest removing "
+                f"from target_wallets (engine never auto-removes): {lines}"
+            )
+        logger.info(
+            f"Leader refresh complete: {alive} active, {len(dead)} dead-flagged, "
+            f"{len(self.targets)} targets (dead threshold "
+            f"{self.copy_dead_leader_days:.0f}d; see copy_leader_scores.is_dead)"
+        )
 
     async def _load_settings(self):
         """Load Copy Trading settings from database"""
@@ -1512,6 +1697,22 @@ class CopyTradingEngine(BaseModule):
                             self.copy_poll_interval_s = max(5.0, min(300.0, v))
                         except (TypeError, ValueError):
                             pass
+                    elif key == 'copy_leader_refresh_enabled':
+                        self.copy_leader_refresh_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key == 'copy_leader_refresh_interval_hours':
+                        try:
+                            v = float(val) if val else 6.0
+                            self.copy_leader_refresh_interval_hours = max(1.0, min(168.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_dead_leader_days':
+                        try:
+                            v = float(val) if val else 7.0
+                            self.copy_dead_leader_days = max(1.0, min(90.0, v))
+                        except (TypeError, ValueError):
+                            pass
                     elif key == 'copy_request_spacing_s':
                         # Wave-19 per-request spacing. Minimum gap between
                         # consecutive outbound Solana RPC calls. 0 disables.
@@ -1623,6 +1824,14 @@ class CopyTradingEngine(BaseModule):
 
                         # V2 API returns different status format
                         if data.get('status') == '1' and data.get('result'):
+                            # Leader-lifecycle: result is sort=desc, so the
+                            # first row's timeStamp is the newest activity.
+                            try:
+                                _newest = int(data['result'][0].get('timeStamp') or 0)
+                                if _newest > 0:
+                                    self._record_wallet_activity(wallet_with_chain, float(_newest))
+                            except (ValueError, TypeError, IndexError, AttributeError):
+                                pass
                             for tx in data['result']:
                                 tx_hash = tx.get('hash')
 
@@ -1893,6 +2102,14 @@ class CopyTradingEngine(BaseModule):
         signal_age_s = self._effective_signal_age_s()
         trades_copied = 0
 
+        # Leader-lifecycle: record the newest tx blockTime (list is
+        # newest-first) regardless of staleness — feeds dead-leader flagging.
+        for sig_info in signatures:
+            bt = sig_info.get('blockTime')
+            if bt:
+                self._record_wallet_activity(wallet, float(bt))
+                break
+
         # Wave-15/16 cursor logic.
         # On first run (cursor absent) apply the lookback window instead of
         # skipping ALL history (W15 behaviour). Any sig whose blockTime is
@@ -2112,6 +2329,18 @@ class CopyTradingEngine(BaseModule):
                             pass
                         else:
                             if txs:
+                                # Leader-lifecycle: newest SWAP timestamp
+                                # feeds dead-leader flagging even when the
+                                # signal is too stale to copy.
+                                try:
+                                    newest = max(
+                                        float(t.get('timestamp') or t.get('blockTime') or 0)
+                                        for t in txs if isinstance(t, dict)
+                                    )
+                                    if newest > 0:
+                                        self._record_wallet_activity(wallet, newest)
+                                except (ValueError, TypeError):
+                                    pass
                                 sub_results = await asyncio.gather(
                                     *[self._process_helius_enhanced_tx(wallet, tx) for tx in txs],
                                     return_exceptions=True,
