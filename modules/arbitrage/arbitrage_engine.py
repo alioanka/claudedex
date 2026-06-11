@@ -1499,6 +1499,13 @@ class EVMArbitrageEngine:
                     pair_symbol = meta.get('pair_symbol') or meta.get('token_symbol') or ''
                     if not pair_symbol:
                         continue
+                    # Legacy labeling bug: pre-wave-13 rows were written as
+                    # "WETH/WETH" (token_out_symbol was hardcoded while pairs
+                    # were ('WETH', X)). Degenerate labels carry no usable
+                    # slippage signal — drop them from the estimator.
+                    parts = pair_symbol.split('/')
+                    if len(parts) == 2 and parts[0] == parts[1]:
+                        continue
                     gas_cost = float(meta.get('gas_cost') or 0.0)
                     entry_usd = float(r['entry_usd'] or 0.0)
                     if entry_usd <= 0:
@@ -1911,6 +1918,10 @@ class EVMArbitrageEngine:
                     except Exception:
                         pass
                     await asyncio.sleep(sleep_s)
+                    # Rotation contract: after penalizing the endpoint, pull a
+                    # fresh one from pool_engine instead of re-hammering the
+                    # same pinned URL forever.
+                    await self._rotate_rpc_endpoint()
                 else:
                     # Reset streak on non-rate-limit errors so a single 429
                     # followed by an unrelated transient doesn't keep us in
@@ -1918,6 +1929,50 @@ class EVMArbitrageEngine:
                     if getattr(self, '_rate_limit_streak', 0) > 0:
                         self._rate_limit_streak = 0
                     await asyncio.sleep(5)
+
+    async def _rotate_rpc_endpoint(self) -> None:
+        """Pull a fresh endpoint from pool_engine after a rate-limit penalty
+        and rebuild w3 + contract handles when the URL actually changed.
+        Fail-soft: any error leaves the current connection in place."""
+        try:
+            from config.rpc_provider import RPCProvider
+            new_url = await RPCProvider.get_rpc(self.RPC_PROVIDER_KEY)
+            current = (self.rpc_url or '').split(',')[0]
+            if not new_url or new_url == current:
+                return
+            w3 = Web3(Web3.HTTPProvider(new_url))
+            if not w3.is_connected() or w3.eth.chain_id != self.chain_id:
+                return  # wrong/unreachable endpoint — keep what we have
+            self.rpc_url = new_url
+            self.w3 = w3
+            self.router_contracts = {}
+            for name, address in self.routers.items():
+                try:
+                    self.router_contracts[name] = w3.eth.contract(
+                        address=Web3.to_checksum_address(address), abi=ROUTER_ABI
+                    )
+                except Exception:
+                    pass
+            if self.v3_quoter_contract is not None:
+                quoter_addr = UNIV3_QUOTER_ADDRESSES.get(self.chain_id)
+                if quoter_addr:
+                    self.v3_quoter_contract = w3.eth.contract(
+                        address=Web3.to_checksum_address(quoter_addr),
+                        abi=UNIV3_QUOTER_ABI,
+                    )
+            if self.flash_loan_executor:
+                self.flash_loan_executor.w3 = w3
+                self.flash_loan_executor.flash_loan_contract = w3.eth.contract(
+                    address=Web3.to_checksum_address(self.flash_loan_executor.receiver_contract),
+                    abi=FLASH_LOAN_CONTRACT_ABI,
+                )
+            if self.flashbots_executor:
+                self.flashbots_executor.w3 = w3
+            self.logger.info(
+                f"🔁 [{self.chain_name.upper()}] Rotated RPC endpoint after rate-limit"
+            )
+        except Exception as e:
+            self.logger.debug(f"RPC rotation failed (non-fatal): {e}")
 
     async def _log_stats_if_needed(self):
         """Log statistics every 5 minutes with spread visibility"""
@@ -2177,6 +2232,16 @@ class EVMArbitrageEngine:
             # Ensure addresses are checksummed for web3.py compatibility
             token_checksum = Web3.to_checksum_address(token_in)  # The token being arbitraged
             weth_checksum = Web3.to_checksum_address(token_out)  # WETH (borrow asset)
+
+            # Identity guard: token_in == token_out (e.g. a misconfigured
+            # ('WETH','WETH') pair) produces a degenerate quote AND poisons
+            # arbitrage_trades / arb_realized_slippage with "WETH/WETH" rows.
+            if token_checksum.lower() == weth_checksum.lower():
+                self.logger.warning(
+                    f"[arb-config] Pair {token_symbol}/{token_out_symbol} is degenerate "
+                    f"(token_in == token_out) -- skipping"
+                )
+                return False
 
             # WAVE-13 GUARD: token_out MUST be the WETH address for this chain.
             # If it is not, borrow_amount (ETH wei) is compared against a non-WETH
@@ -2509,7 +2574,11 @@ class EVMArbitrageEngine:
                     token_out=token_out,    # WETH (borrow asset)
                     amount=borrow_amount,
                     expected_profit=net_spread,
-                    token_symbol=token_symbol
+                    token_symbol=token_symbol,
+                    token_out_symbol=token_out_symbol,
+                    # Pre-fee round-trip spread: _log_arb_trade deducts
+                    # flash fee + slippage + gas from THIS value.
+                    gross_spread=(weth_returned - borrow_amount) / borrow_amount,
                 )
                 return True
             # Net spread is positive but BELOW the effective gate. This is
@@ -2582,18 +2651,36 @@ class EVMArbitrageEngine:
         token_out: str,
         amount: int,
         expected_profit: float,
-        token_symbol: str = "UNKNOWN"
+        token_symbol: str = "UNKNOWN",
+        token_out_symbol: str = "WETH",
+        gross_spread: Optional[float] = None,
     ):
-        """Execute the arbitrage trade using flash loans and Flashbots"""
+        """Execute the arbitrage trade using flash loans and Flashbots.
+
+        expected_profit = NET spread (post gas+slippage estimate, used for gating/logs).
+        gross_spread    = round-trip spread BEFORE gas/slippage/flash-fee deductions;
+                          this is what _log_arb_trade deducts costs from. Passing the
+                          net value there double-counted gas+slippage in recorded PnL.
+        """
         token_decimals = TOKEN_DECIMALS.get(token_symbol, 18)
         token_divisor = 10 ** token_decimals
-        self.logger.info(f"⚡ [{self.chain_name.upper()}] Executing Arbitrage [{token_symbol}]: {buy_dex} -> {sell_dex} | Amount: {amount/token_divisor:.4f} {token_symbol} | Expected: +{expected_profit:.2%}")
+        if gross_spread is None:
+            gross_spread = expected_profit
+        self.logger.info(f"⚡ [{self.chain_name.upper()}] Executing Arbitrage [{token_symbol}]: {buy_dex} -> {sell_dex} | Amount: {amount/token_divisor:.4f} {token_symbol} | Expected net: +{expected_profit:.2%}")
 
-        if self.dry_run:
+        # Kill-switch / pause / dry-run gate. Fail-safe: if the gate itself is
+        # unreadable we must NOT broadcast.
+        try:
+            from core.dry_run import should_skip_live
+            skip_live = should_skip_live(self.dry_run, module='arbitrage')
+        except Exception:
+            skip_live = True
+
+        if skip_live:
             # Simulate execution
             await asyncio.sleep(0.5)
             self.logger.info(f"✅ [{self.chain_name.upper()}] Flash Swap Executed (DRY RUN) [{token_symbol}]")
-            await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, "DRY_RUN", token_symbol)
+            await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, gross_spread, "DRY_RUN", token_symbol, token_out_symbol)
             return
 
         # Validate credentials before live execution
@@ -2687,7 +2774,7 @@ class EVMArbitrageEngine:
 
             if tx_hash:
                 self.logger.info(f"✅ [{self.chain_name.upper()}] Arbitrage executed [{token_symbol}]: {tx_hash}")
-                await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, expected_profit, tx_hash, token_symbol)
+                await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, gross_spread, tx_hash, token_symbol, token_out_symbol)
             else:
                 self.logger.error(f"❌ [{self.chain_name.upper()}] Arbitrage execution failed [{token_symbol}]")
                 # Send Telegram error alert for failed execution

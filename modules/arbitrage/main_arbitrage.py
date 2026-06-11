@@ -327,17 +327,9 @@ async def main():
     except Exception as e:
         logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
 
-    # Check for at least one RPC
-    eth_rpc = os.getenv('ETHEREUM_RPC_URL', os.getenv('WEB3_PROVIDER_URL'))
-    sol_rpc = os.getenv('SOLANA_RPC_URL')
-
-    if not eth_rpc and not sol_rpc:
-        logger.error("❌ No RPC URLs configured (ETHEREUM_RPC_URL or SOLANA_RPC_URL)")
-        logger.info("   Set at least one RPC URL in your .env file")
-        while True:
-            logger.info("⚖️ Arbitrage Module IDLE - Waiting for RPC configuration...")
-            await asyncio.sleep(300)
-        return
+    # NOTE: RPC availability is resolved AFTER PoolEngine init below (RPCs are
+    # DB-managed via pool_engine; .env keys are only a fallback). The old
+    # pre-DB env check idle-looped forever for DB-managed RPC setups.
 
     # Init DB - Use Docker secrets or environment
     try:
@@ -365,6 +357,15 @@ async def main():
         logger.info("✅ Secrets manager initialized with database")
     except Exception as e:
         logger.warning(f"Could not initialize secrets manager: {e}")
+
+    # Kill-switch poller: logs/.killswitch flips the process-wide gate read by
+    # core.dry_run.should_skip_live in the engine execute path. Every trading
+    # subprocess must run its own poller (per-process singleton).
+    try:
+        from core.dry_run import start_killswitch_poller
+        start_killswitch_poller()
+    except Exception as e:
+        logger.warning(f"Could not start killswitch poller: {e}")
 
     # Initialize Pool Engine BEFORE using RPCProvider
     try:

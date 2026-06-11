@@ -670,17 +670,13 @@ class TelegramNotificationEngine:
         # summary queries (monitoring/enhanced_dashboard.py:api_dashboard_summary).
         # The previous mapping guessed `entry_timestamp` + `pnl_usd`/`profit_usd`
         # for every table, but the real columns differ per module:
-        #   - trades (DEX)  : profit_loss / entry_timestamp (status='closed')
         #   - solana_trades : pnl_sol  / entry_time      (no status col)
         #   - futures_trades: pnl      / entry_time
         #   - sniper_trades : profit_loss / entry_timestamp (status='closed')
         #   - arbitrage_trades  : profit_loss / entry_timestamp
         #   - copytrading_trades: profit_loss / entry_timestamp (status='closed')
         #   - ai_trades     : profit_loss / entry_timestamp (status='closed')
-        # NOTE: DEX writes to the legacy `trades` table — `dex_trades` does
-        # NOT exist. The previous schema-verification pass dropped DEX
-        # entirely when `dex_trades` failed to verify, which is why DEX was
-        # the one module missing from the Full-Dashboard and Summary digests.
+        # `dex_trades` does not exist, so DEX is intentionally omitted.
         # The old mapping made EVERY query raise (caught at debug) -> empty
         # stats -> the periodic summary/dashboard builders returned early and
         # NOTHING was ever posted to the summary/dashboard topics.
@@ -688,7 +684,6 @@ class TelegramNotificationEngine:
         # closed_filter is an optional extra WHERE clause (already prefixed
         # with AND) restricting to settled trades so PnL is meaningful.
         module_tables = {
-            'dex':       ('trades',             'profit_loss', 'entry_timestamp', " AND status = 'closed'"),
             'futures':   ('futures_trades',     'pnl',         'entry_time',      ''),
             'solana':    ('solana_trades',      'pnl_sol',     'entry_time',      " AND exit_time IS NOT NULL"),
             'ai':        ('ai_trades',          'profit_loss', 'entry_timestamp', " AND status = 'closed'"),
