@@ -101,6 +101,9 @@ from modules.advisor.core.data.fonoloji_client import (
     FonolojiClient,
     resolve_api_key as _fonoloji_api_key,
 )
+from modules.advisor.core.data.activation import (
+    prefer_fonoloji_bist as _prefer_fonoloji,
+)
 
 
 def _flag(config: dict, key: str, default: bool) -> bool:
@@ -168,10 +171,12 @@ class BISTAnalyzer(BaseAnalyzer):
     def data_source_status(self) -> DataSourceStatus:
         source = self.config.get("advisor_bist_data_source", "")
 
-        # Fonoloji (AVAILABLE) — explicit 'fonoloji' OR auto-preferred when a key
-        # is present and the source is unset/''. No key => treated as not
-        # selected (fail-through to borsapy/yfinance).
-        if source in ("fonoloji", "") and _fonoloji_api_key(self.config):
+        # Fonoloji (AVAILABLE) — explicit 'fonoloji', legacy '', or AUTO-PREFER
+        # (activation.prefer_fonoloji_bist): when a key is present and
+        # advisor_fonoloji_auto_prefer is on (default true), Fonoloji is tried
+        # FIRST even over a stale 'yfinance'/'borsapy' value. Explicit
+        # 'matriks' opt-out wins. No key => fail-through to borsapy/yfinance.
+        if _prefer_fonoloji(self.config):
             return DataSourceStatus.AVAILABLE
 
         # Paid path: key required
@@ -228,10 +233,11 @@ class BISTAnalyzer(BaseAnalyzer):
         note = ""
         data_source_tag = ""
 
-        # --- Fonoloji (AVAILABLE) — explicit 'fonoloji' OR auto-preferred when a
-        # key is present (source unset/''). FAIL-SOFT: no data => fall through to
+        # --- Fonoloji (AVAILABLE) — explicit 'fonoloji', legacy '', or
+        # AUTO-PREFER (activation.prefer_fonoloji_bist; even over a stale
+        # 'yfinance'/'borsapy' value). FAIL-SOFT: no data => fall through to
         # borsapy/yfinance below. Preferred over the DEGRADED yfinance .IS path.
-        if _fonoloji_api_key(self.config) and configured_source in ("fonoloji", ""):
+        if _prefer_fonoloji(self.config):
             loop = asyncio.get_event_loop()
             signals = await loop.run_in_executor(
                 None, self._fetch_fonoloji, symbol, horizon

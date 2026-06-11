@@ -149,6 +149,9 @@ from modules.advisor.core.data.fonoloji_client import (
     FonolojiClient,
     resolve_api_key as _fonoloji_api_key,
 )
+from modules.advisor.core.data.activation import (
+    prefer_fonoloji_midas as _prefer_fonoloji,
+)
 
 def _flag(config: dict, key: str, default: bool) -> bool:
     """Read a boolean advisor_config flag tolerating bool or string values."""
@@ -224,9 +227,11 @@ class MidasFundsAnalyzer(BaseAnalyzer):
     def data_source_status(self) -> DataSourceStatus:
         source = self.config.get("advisor_midas_data_source", "")
 
-        # Fonoloji (AVAILABLE) — explicit OR auto-preferred when a key is set.
-        # No key => treated as if Fonoloji were not selected (fail-through).
-        if (source in ("fonoloji", "")) and _fonoloji_api_key(self.config):
+        # Fonoloji (AVAILABLE) — explicit 'fonoloji', legacy '', or AUTO-PREFER
+        # (activation.prefer_fonoloji_midas: key present + auto_prefer, default
+        # true, even over a stale 'tefas_scrape' value). Explicit 'manual'
+        # opt-out wins. No key => fail-through.
+        if _prefer_fonoloji(self.config):
             return DataSourceStatus.AVAILABLE
 
         # Auto-detect: tefas-crawler (AVAILABLE) preferred
@@ -254,11 +259,12 @@ class MidasFundsAnalyzer(BaseAnalyzer):
 
         source = self.config.get("advisor_midas_data_source", "")
         try:
-            # Fonoloji — explicit ('fonoloji') OR auto-preferred when a key is
-            # present (source unset/''). FAIL-SOFT: on no data / HTTP error it
-            # falls through to the tefas-crawler chain below.
-            fono_key = _fonoloji_api_key(self.config)
-            if fono_key and source in ("fonoloji", ""):
+            # Fonoloji — explicit ('fonoloji'), legacy '', or AUTO-PREFER
+            # (activation.prefer_fonoloji_midas; even over a stale
+            # 'tefas_scrape'/'tefas_crawler' value; explicit 'manual' opt-out
+            # wins). FAIL-SOFT: on no data / HTTP error it falls through to the
+            # tefas-crawler chain below.
+            if _prefer_fonoloji(self.config):
                 result = await self._analyze_fonoloji(symbol, horizon)
                 if result.data_source_status != DataSourceStatus.NOT_CONFIGURED:
                     return result
