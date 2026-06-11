@@ -132,6 +132,14 @@ class SniperEngine:
         self.min_liquidity = 1000.0
         self.test_mode_min_liquidity = 10.0  # Very relaxed for test mode
         self.safety_check_enabled = True
+        # Exit thresholds + routing chain. These were previously created
+        # ONLY inside _load_settings when the DB rows existed — no migration
+        # seeds them, so on a fresh DB _monitor_active_snipes crashed with
+        # AttributeError on self.take_profit_pct at first tick. Defaults
+        # here match the long-standing _load_settings fallbacks.
+        self.take_profit_pct = 50.0
+        self.stop_loss_pct = 20.0
+        self.target_chain = 'solana'
         self.test_mode = False  # Relaxed safety for testing
         # Emergency brake against runaway position accumulation
         # (DRY_RUN stress test hit 10k+ positions in 22h).
