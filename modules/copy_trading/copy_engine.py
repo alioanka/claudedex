@@ -1078,7 +1078,25 @@ class CopyTradingEngine(BaseModule):
         # measured p50 fill delay is 23 s; memecoin edge evaporates
         # within ~1-2 s, so any signal > 5 s old is a guaranteed loss.
         # Tune via config_settings.copytrading_config.copy_max_signal_age_s.
+        #
+        # ACTIVATION FIX (2026-06-11): a 5 s staleness gate is INCOHERENT
+        # with the 15 s poll cadence — a leader swap is on average ~7.5 s
+        # old (up to 15 s + API indexing lag) by the time the next poll
+        # cycle sees it, so the gate rejected nearly every detected swap
+        # ([replay] reason=signal_stale was the dominant funnel kill).
+        # The gate now applies an EFFECTIVE age limit via
+        # _effective_signal_age_s():
+        #     max(copy_max_signal_age_s,
+        #         copy_poll_interval_s + copy_signal_age_buffer_s)
+        # so the limit can never be tighter than one full poll cycle plus
+        # an indexing-lag buffer. Operators who want a genuinely tighter
+        # gate must lower copy_poll_interval_s (you cannot reject signals
+        # younger than your own detection cadence and still trade).
         self.copy_max_signal_age_s = 5.0
+        # Buffer added on top of the poll interval to cover Helius/RPC
+        # indexing lag. Migration 092 seeds copy_signal_age_buffer_s=10.
+        self.copy_signal_age_buffer_s = 10.0
+        self._last_logged_effective_age: float = -1.0
 
         # Wave-15: concurrency cap for Solana wallet fan-out.
         # Default 5 — caps Helius REST calls at 5 concurrent so the
@@ -1453,9 +1471,21 @@ class CopyTradingEngine(BaseModule):
                         # Wave-14 staleness guard. Clamp: floor at 1 s
                         # (below that no copy can physically execute),
                         # ceiling at 3600 s (1 h effectively disables).
+                        # NOTE: the gates use _effective_signal_age_s(),
+                        # which floors this at poll_interval + buffer.
                         try:
                             v = float(val) if val else 5.0
                             self.copy_max_signal_age_s = max(1.0, min(3600.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_signal_age_buffer_s':
+                        # Activation fix: indexing-lag buffer added on top
+                        # of copy_poll_interval_s when computing the
+                        # effective staleness limit. 0 allowed (gate floors
+                        # at exactly the poll interval); max 60 s.
+                        try:
+                            v = float(val) if val else 10.0
+                            self.copy_signal_age_buffer_s = max(0.0, min(60.0, v))
                         except (TypeError, ValueError):
                             pass
                     elif key == 'copy_cursor_lookback_minutes':
@@ -1744,6 +1774,34 @@ class CopyTradingEngine(BaseModule):
                 now = _t.monotonic()
             self._last_sol_rpc_ts = now
 
+    def _effective_signal_age_s(self) -> float:
+        """Coherent staleness limit for the Solana copy gates.
+
+        Returns max(copy_max_signal_age_s,
+                    copy_poll_interval_s + copy_signal_age_buffer_s).
+
+        Rationale: with a 15 s poll cadence a detected swap is on average
+        ~7.5 s old (up to 15 s + indexing lag) before the engine can even
+        SEE it, so any limit tighter than one poll cycle rejects almost
+        every signal ([replay] reason=signal_stale — the dominant kill in
+        the 6-trades-per-week funnel). Logs once whenever the effective
+        value diverges from the configured copy_max_signal_age_s.
+        """
+        configured = float(getattr(self, 'copy_max_signal_age_s', 5.0))
+        poll = float(getattr(self, 'copy_poll_interval_s', 15.0))
+        buffer_s = float(getattr(self, 'copy_signal_age_buffer_s', 10.0))
+        effective = max(configured, poll + buffer_s)
+        if effective != self._last_logged_effective_age:
+            if effective > configured:
+                logger.info(
+                    "Copy staleness gate: effective signal-age limit raised "
+                    f"{configured:.0f}s -> {effective:.0f}s "
+                    f"(poll_interval={poll:.0f}s + buffer={buffer_s:.0f}s; "
+                    "a gate tighter than the poll cadence rejects every signal)"
+                )
+            self._last_logged_effective_age = effective
+        return effective
+
     async def _poll_wallet_sigs(
         self,
         session: aiohttp.ClientSession,
@@ -1832,7 +1890,7 @@ class CopyTradingEngine(BaseModule):
             return 0
 
         now_ts = _time.time()
-        signal_age_s = float(getattr(self, 'copy_max_signal_age_s', 5.0))
+        signal_age_s = self._effective_signal_age_s()
         trades_copied = 0
 
         # Wave-15/16 cursor logic.
@@ -1939,7 +1997,7 @@ class CopyTradingEngine(BaseModule):
                     )
                     return False
             else:
-                signal_age_s = float(getattr(self, 'copy_max_signal_age_s', 5.0))
+                signal_age_s = self._effective_signal_age_s()
                 if age_s > signal_age_s:
                     # Remember stale sig so it is silently skipped next cycle.
                     self._remember_sol_sig(sig)
