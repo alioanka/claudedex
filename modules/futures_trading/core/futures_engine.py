@@ -698,6 +698,54 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.warning(f"Could not load stats from DB: {e}")
 
+    async def warm_symbol_gate_from_db(self):
+        """FUT-RM-27 (Wave 25): seed the rolling per-symbol performance gate
+        from persisted trades so it is effective immediately after a restart
+        (otherwise every symbol gets rolling_gate_min_trades free trades).
+        Called by main_futures AFTER set_risk_manager. Fail-soft."""
+        if not self.db_pool or self.risk_manager is None or not hasattr(
+            self.risk_manager, 'seed_symbol_history'
+        ):
+            return
+        try:
+            window = int(getattr(self.risk_manager, 'rolling_gate_window', 20))
+            if window <= 0:
+                return
+            async with self.db_pool.acquire() as conn:
+                # Last `window` closed trades per symbol, replayed oldest-
+                # first so the deque ends in live order. Same identity
+                # filters as _load_stats_from_db.
+                rows = await conn.fetch("""
+                    SELECT symbol, net_pnl FROM (
+                        SELECT symbol, net_pnl, exit_time,
+                               ROW_NUMBER() OVER (
+                                   PARTITION BY symbol
+                                   ORDER BY exit_time DESC
+                               ) AS rn
+                        FROM futures_trades
+                        WHERE is_simulated = $1
+                          AND exchange = $2
+                          AND network = $3
+                    ) t
+                    WHERE rn <= $4
+                    ORDER BY symbol, exit_time ASC
+                """, self.dry_run, self.exchange,
+                    'testnet' if self.testnet else 'mainnet', window)
+            by_symbol: Dict[str, List[float]] = {}
+            for row in rows:
+                by_symbol.setdefault(row['symbol'], []).append(
+                    float(row['net_pnl'])
+                )
+            for symbol, pnls in by_symbol.items():
+                self.risk_manager.seed_symbol_history(symbol, pnls)
+            if by_symbol:
+                logger.info(
+                    f"FUT-RM-27 rolling gate warmed from DB: "
+                    f"{len(by_symbol)} symbols, window={window}"
+                )
+        except Exception as e:
+            logger.warning(f"warm_symbol_gate_from_db failed (non-fatal): {e}")
+
     async def _save_trade_to_db(self, trade: Trade):
         """Save a closed trade to the database"""
         if not self.db_pool:
@@ -1396,6 +1444,27 @@ class FuturesTradingEngine:
                         if self.verbose_signals:
                             logger.debug(f"  {symbol}: Skipped - cooldown ({remaining}s remaining)")
                         continue
+
+                # FUT-RM-27 (Wave 25): per-symbol tier / rolling-gate skip.
+                # Cheap, BEFORE the OHLCV fetch + signal math. The
+                # authoritative gate (with transition logging) lives in
+                # _open_position; this one just saves the scan work.
+                if self.risk_manager is not None and hasattr(
+                    self.risk_manager, 'should_skip_for_symbol'
+                ):
+                    try:
+                        sgate = self.risk_manager.should_skip_for_symbol(symbol)
+                        if sgate.get('skip'):
+                            if self.verbose_signals:
+                                logger.debug(
+                                    f"  {symbol}: Skipped - FUT-RM-27 "
+                                    f"{sgate.get('reason')}"
+                                )
+                            continue
+                    except Exception as e:
+                        logger.debug(
+                            f"symbol gate non-fatal error for {symbol}: {e}"
+                        )
 
                 # FUT-RM-20 (Wave 7): one-entry-per-candle throttle. The 30s
                 # scan loop re-evaluates the same 15m bar ~30 times; without
@@ -2335,8 +2404,38 @@ class FuturesTradingEngine:
 
             current_price = float(ticker['last'])
 
+            # FUT-RM-27 (Wave 25): per-symbol tier / rolling-gate. This is
+            # the AUTHORITATIVE check (the scan-loop one is just an
+            # optimization) so it also covers the FUT-RM-25 carry path,
+            # which enters via _open_position directly. Fail-open.
+            symbol_weight = 1.0
+            if self.risk_manager is not None:
+                try:
+                    if hasattr(self.risk_manager, 'should_skip_for_symbol'):
+                        sgate = self.risk_manager.should_skip_for_symbol(symbol)
+                        if sgate.get('skip'):
+                            logger.debug(
+                                f"FUT-RM-27 symbol gate refused entry for "
+                                f"{symbol}: {sgate.get('reason')}"
+                            )
+                            return
+                    if hasattr(self.risk_manager, 'resolve_symbol_size_weight'):
+                        symbol_weight = float(
+                            self.risk_manager.resolve_symbol_size_weight(symbol)
+                        )
+                except Exception as e:
+                    logger.debug(f"symbol gate non-fatal error for {symbol}: {e}")
+                    symbol_weight = 1.0
+
             # Calculate position size based on settings
             notional = self._calculate_position_size(signals)
+            # FUT-RM-27: apply the per-symbol tier/probation size multiplier.
+            if symbol_weight != 1.0:
+                logger.info(
+                    f"FUT-RM-27 size weight {symbol_weight:.2f}x on {symbol}: "
+                    f"${notional:.2f} -> ${notional * symbol_weight:.2f}"
+                )
+                notional *= symbol_weight
             size = notional / current_price
 
             # Ensure minimum trade size

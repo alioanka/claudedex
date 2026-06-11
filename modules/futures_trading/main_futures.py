@@ -679,6 +679,17 @@ class FuturesTradingApplication:
                 self.risk_manager = FuturesRiskManager(risk_cfg)
                 self.engine.set_risk_manager(self.risk_manager)
 
+                # FUT-RM-27 (Wave 25): warm the rolling per-symbol
+                # performance gate from persisted trades so a symbol that
+                # was bleeding before the restart is benched immediately.
+                try:
+                    if hasattr(self.engine, 'warm_symbol_gate_from_db'):
+                        await self.engine.warm_symbol_gate_from_db()
+                except Exception as e:
+                    self.logger.warning(
+                        f"FUT-RM-27 warm-up failed (non-fatal): {e}"
+                    )
+
                 # FUT-RM-02: startup assertion — runtime risk manager must
                 # reflect the DB-configured caps. Surfaces silent regressions.
                 self._assert_runtime_risk_matches_config()
