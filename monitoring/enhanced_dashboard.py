@@ -3478,23 +3478,89 @@ class DashboardEndpoints:
         else:
             return web.json_response({'error': 'Failed to set env flag'}, status=500)
 
+    # Display-name -> SHORT engine pause key. The engines gate live writes
+    # via should_skip_live(module=<SHORT>), which polls logs/.pause_<SHORT>
+    # (e.g. 'futures' -> logs/.pause_futures). Templates and routes pass the
+    # LONG display names ('futures_trading'), so the pause button used to
+    # write logs/.pause_futures_trading — a flag no engine ever read. Pause
+    # silently never reached the engines. Every pause WRITE must resolve
+    # through this map; we also write the legacy long spelling for any
+    # straggler reader, but the short key is the canonical one.
+    _MODULE_PAUSE_KEY_MAP = {
+        'dex': 'dex', 'dex_trading': 'dex',
+        'futures': 'futures', 'futures_trading': 'futures',
+        'solana': 'solana', 'solana_strategies': 'solana',
+        'solana_trading': 'solana',
+        'sniper': 'sniper',
+        'arbitrage': 'arbitrage',
+        # copy engine passes module='copy_trading' — that IS its short key.
+        'copy': 'copy_trading', 'copy_trading': 'copy_trading',
+        'copytrading': 'copy_trading',
+        'ai': 'ai', 'ai_analysis': 'ai',
+        'advisor': 'advisor', 'financial_advisor': 'advisor',
+    }
+
+    @classmethod
+    def _resolve_pause_key(cls, module: str) -> str:
+        """Map any module spelling to the SHORT key the engines poll.
+        Returns '' for unknown modules (caller decides how to fail)."""
+        return cls._MODULE_PAUSE_KEY_MAP.get(
+            (module or '').lower().strip(), ''
+        )
+
     async def _api_module_pause(self, request):
         """Pause a module — MB-30: writes the cross-process flag file so
         subprocess loops actually halt new live writes via should_skip_live().
+
+        Writes the SHORT canonical key (logs/.pause_futures, not
+        .pause_futures_trading) — the only spelling the engines poll —
+        plus the legacy long spelling as a best-effort alias.
         """
         module = request.match_info.get('module', '')
+        short = self._resolve_pause_key(module)
+        if not short:
+            return web.json_response(
+                {'success': False, 'error': f'Unknown module: {module}'},
+                status=400,
+            )
         from core.dry_run import set_module_pause
-        ok = set_module_pause(module, True)
-        logger.info(f"Module {module} paused via API (flag_file={ok})")
+        ok = set_module_pause(short, True)  # canonical — engines poll this
+        raw = (module or '').lower().strip()
+        if raw != short:
+            try:
+                set_module_pause(raw, True)  # legacy alias, best-effort
+            except Exception:
+                pass
+        logger.info(
+            f"Module {module} paused via API (pause_key={short}, flag_file={ok})"
+        )
         return web.json_response({
             'success': bool(ok),
             'message': f'{module} paused' if ok else f'failed to pause {module}',
+            'pause_key': short,
             'cross_process': ok,
         }, status=200 if ok else 500)
 
     async def _api_module_start(self, request):
-        """Start/resume a module"""
+        """Start/resume a module.
+
+        Also clears the pause flag files (short canonical key + legacy long
+        alias) — the inverse of _api_module_pause. Without this, a pause
+        written under the short key the engines poll had no resume path in
+        the standalone dashboard."""
         module = request.match_info.get('module', '')
+
+        resumed = False
+        short = self._resolve_pause_key(module)
+        if short:
+            try:
+                from core.dry_run import set_module_pause
+                resumed = set_module_pause(short, False)
+                raw = (module or '').lower().strip()
+                if raw != short:
+                    set_module_pause(raw, False)  # legacy alias, best-effort
+            except Exception:
+                pass
 
         module_env_map = {
             'dex_trading': 'DEX_MODULE_ENABLED',
@@ -3503,6 +3569,19 @@ class DashboardEndpoints:
         }
 
         if module not in module_env_map:
+            if short:
+                # Known module without an env-flag mapping (sniper/arb/
+                # copy/ai/advisor): the pause-flag clear above IS the
+                # resume. Don't 400 — that stranded paused modules.
+                logger.info(
+                    f"Module {module} resumed via API "
+                    f"(pause_key={short}, flag_cleared={resumed})"
+                )
+                return web.json_response({
+                    'success': True,
+                    'message': f'{module} resumed (pause flag cleared)',
+                    'pause_key': short,
+                })
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
         env_key = module_env_map[module]
