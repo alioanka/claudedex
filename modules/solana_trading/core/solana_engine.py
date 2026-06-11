@@ -3732,11 +3732,18 @@ class SolanaTradingEngine:
             )
 
             # Cross-module risk gate before any (even simulated) entry.
+            # validate_trade returns Tuple[bool, str]; the old single-value
+            # unpack made `allowed` a (False, reason) tuple — always truthy —
+            # so the gate NEVER blocked a Drift entry. Unpack properly.
             if self.risk_manager:
                 try:
-                    allowed = await self.risk_manager.validate_trade(market_name, base_amount)
+                    allowed, rm_reason = await self.risk_manager.validate_trade(
+                        market_name, base_amount
+                    )
                     if not allowed:
-                        logger.warning(f"⛔ Drift {market_name} blocked by RiskManager")
+                        logger.warning(
+                            f"⛔ Drift {market_name} blocked by RiskManager: {rm_reason}"
+                        )
                         continue
                 except Exception as e:
                     logger.warning(f"⚠️ Drift RiskManager check failed: {e} — skipping entry")
