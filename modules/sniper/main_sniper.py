@@ -74,13 +74,19 @@ async def main():
     # Per-module DRY_RUN override (Phase 3 A2). SNIPER_DRY_RUN env beats
     # DRY_RUN env. Mirror into DRY_RUN so the engine's internal env
     # reads pick up the resolved value.
+    sniper_dry = True
     try:
-        from core.dry_run import resolve_module_dry_run
+        from core.dry_run import resolve_module_dry_run, start_killswitch_poller
         sniper_dry = resolve_module_dry_run('sniper', default=True)
         os.environ['DRY_RUN'] = 'true' if sniper_dry else 'false'
         logger.info(f"   DRY_RUN (resolved per-module): {sniper_dry}")
+        # Sniper runs standalone (not a BaseModule), so without this poller
+        # the logs/.killswitch flag was never observed by this subprocess and
+        # should_skip_live() could not trip on emergency-stop.
+        start_killswitch_poller()
+        logger.info("   Killswitch poller started (logs/.killswitch)")
     except Exception as e:
-        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
+        logger.warning(f"   Could not resolve per-module DRY_RUN / killswitch: {e}")
 
     # Check for RPC URLs - use Pool Engine with fallback
     solana_rpc = None
@@ -169,6 +175,16 @@ async def main():
     try:
         from core.risk_manager import RiskManager
         risk_manager = RiskManager(config={}, config_manager=config_manager)
+        # Wave-15 capital-protection gate reads risk_manager._allocation_guard;
+        # it was never injected here so the per-module USD budget cap was dead
+        # code. Wire it per the documented pattern (fail-soft).
+        try:
+            from core.allocation_guard import AllocationGuard
+            guard = AllocationGuard(db_pool, dry_run=sniper_dry, module='sniper')
+            risk_manager.set_allocation_guard(guard, module_name='sniper')
+            logger.info("✅ AllocationGuard wired into RiskManager (module=sniper)")
+        except Exception as ag_err:
+            logger.warning(f"AllocationGuard init failed (budget cap inactive): {ag_err}")
         engine.set_risk_manager(risk_manager)
         logger.info("✅ RiskManager wired into Sniper engine")
     except Exception as e:
@@ -201,7 +217,7 @@ async def main():
                 )
                 await telegram_controller.start_polling()
                 logger.info("📱 Telegram remote control enabled")
-                await telegram_controller.notify("Sniper Module started. Send /help for commands.", priority="normal")
+                await telegram_controller.notify("Sniper Module started. Send /help for commands.", priority="normal", category="lifecycle")
         except Exception as e:
             logger.warning(f"Telegram controller failed to initialize: {e}")
 
@@ -209,7 +225,7 @@ async def main():
         await engine.run()
     except KeyboardInterrupt:
         if telegram_controller:
-            await telegram_controller.notify("Sniper module shutting down...", priority="high")
+            await telegram_controller.notify("Sniper module shutting down...", priority="high", category="lifecycle")
             await telegram_controller.stop_polling()
         await engine.stop()
     except Exception as e:
