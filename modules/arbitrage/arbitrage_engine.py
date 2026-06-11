@@ -1188,7 +1188,7 @@ class EVMArbitrageEngine:
         #   enter the execute path.
         # live_execution_enabled (default OFF): even with shadow_mode off and
         #   dry_run false, broadcast requires this explicit opt-in.
-        # min_net_spread_bps_<chain>: operator floor on NET spread (migration 090).
+        # min_net_spread_bps_<chain>: operator floor on NET spread (migration 097).
         # ═════════════════════════════════════════════════════════════════
         self.shadow_mode = self._cfg_bool(config.get('shadow_mode'), True)
         self.live_execution_enabled = self._cfg_bool(
@@ -1339,7 +1339,7 @@ class EVMArbitrageEngine:
         Adaptive min_profit_bps curve (enhancement #4). Multiplies the
         operator-configured baseline by the gas-spike multiplier so we
         raise the bar when gas is volatile. The per-chain operator floor
-        (min_net_spread_bps_<chain>, migration 090) is applied on top.
+        (min_net_spread_bps_<chain>, migration 097) is applied on top.
         """
         adaptive = self._min_profit_threshold_base * self._gas_spike_multiplier()
         return max(adaptive, self._min_net_spread_frac)
@@ -2825,7 +2825,7 @@ class EVMArbitrageEngine:
             skip_live = True
 
         # Defense-in-depth: broadcast requires the explicit live opt-in
-        # (live_execution_enabled, migration 090 default false) even when
+        # (live_execution_enabled, migration 097 default false) even when
         # dry_run is off and no kill switch is set.
         if not skip_live and not self.live_execution_enabled:
             self.logger.info(
