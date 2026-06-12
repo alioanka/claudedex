@@ -697,6 +697,20 @@ class TelegramNotificationEngine:
             'copy':      ('copytrading_trades', 'profit_loss', 'entry_timestamp', " AND status = 'closed'"),
         }
 
+        # EVERY module is pre-seeded with a zero placeholder BEFORE its query
+        # runs, so a per-module query error (e.g. the legacy `trades` table not
+        # yet created in this DB, a transient DB hiccup, or a schema drift) can
+        # NEVER silently drop a module from the digest — the exact failure mode
+        # that kept DEX out of the Summary + Full-Dashboard topics. A module
+        # whose query fails renders an honest "data unavailable" line instead of
+        # vanishing; a module with no closed trades renders a "0 trades" line.
+        for mod in module_tables:
+            stats[mod] = {
+                'total_trades': 0, 'wins': 0, 'wr_pct': 0.0,
+                'total_pnl': 0.0, 'pnl_24h': 0.0, 'streak': '',
+                'available': True,
+            }
+
         for mod, (tbl, pnl_col, ts_col, closed) in module_tables.items():
             try:
                 async with self.db_pool.acquire() as conn:
@@ -730,11 +744,14 @@ class TelegramNotificationEngine:
                         'total_pnl':     round(float(row['total_pnl'] or 0), 2),
                         'pnl_24h':       round(float(row['pnl_24h'] or 0), 2),
                         'streak':        streak,
+                        'available':     True,
                     }
             except Exception as e:
-                # Surface at WARNING (not debug): a failed query here means a
-                # module silently drops out of the summary/dashboard digest,
-                # which is exactly the class of bug that hid the empty topics.
+                # Keep the pre-seeded placeholder but mark it unavailable so the
+                # module STILL appears in the digest (with an honest note) rather
+                # than being dropped. WARNING-level: a recurring line here points
+                # at a missing/renamed table for that module.
+                stats[mod]['available'] = False
                 logger.warning(f"Stats query failed for {mod} ({tbl}): {e}")
 
         return stats
@@ -760,13 +777,19 @@ class TelegramNotificationEngine:
         pnl_24h_all = 0.0
         for mod, s in sorted(stats.items(), key=lambda x: -x[1]['total_pnl']):
             emoji = MODULE_EMOJI.get(mod, "🔔")
+            mod_upper = escape_mdv2(mod.upper())
+            if not s.get('available', True):
+                # Module's trade table couldn't be queried this cycle — show it
+                # honestly rather than dropping it from the digest entirely.
+                lines.append(f"{emoji} *{mod_upper}* — {escape_mdv2('data unavailable')}")
+                lines.append("")
+                continue
             wr = s['wr_pct']
             wr_str = escape_mdv2(f"{wr:.1f}%")
             tp = escape_mdv2(f"${s['total_pnl']:+.2f}")
             p24 = escape_mdv2(f"${s['pnl_24h']:+.2f}")
             trades = escape_mdv2(str(s['total_trades']))
             streak = escape_mdv2(s['streak'] or "N/A")
-            mod_upper = escape_mdv2(mod.upper())
             lines.append(
                 f"{emoji} *{mod_upper}* — {trades} trades \\| WR: {wr_str}"
             )
@@ -800,10 +823,13 @@ class TelegramNotificationEngine:
 
         for mod, s in sorted(stats.items(), key=lambda x: -x[1]['pnl_24h']):
             emoji = MODULE_EMOJI.get(mod, "🔔")
+            mod_upper = escape_mdv2(mod.upper())
+            if not s.get('available', True):
+                lines.append(f"{emoji} *{mod_upper}* {escape_mdv2('data unavailable')}")
+                continue
             wr_str = escape_mdv2(f"{s['wr_pct']:.1f}%")
             p24 = escape_mdv2(f"${s['pnl_24h']:+.2f}")
             trades = escape_mdv2(str(s['total_trades']))
-            mod_upper = escape_mdv2(mod.upper())
             lines.append(
                 f"{emoji} *{mod_upper}* {trades}T \\| WR {wr_str} \\| 24h {p24}"
             )
