@@ -474,6 +474,15 @@ class CopyTradeExecutor:
         # be allowed. Amount sent to RiskManager is lamports->SOL.
         SOL_MINT = 'So11111111111111111111111111111111111111112'
         is_buy = (input_mint == SOL_MINT)
+        # LIVE-READY (2026-06-11): fail CLOSED on live BUY when the
+        # RiskManager was never wired (fail-soft construction). Only
+        # reachable in LIVE mode; SELLs reduce exposure and stay exempt.
+        if is_buy and self.risk_manager is None:
+            logger.critical(
+                "LIVE COPY Solana BUY refused: RiskManager unavailable "
+                "(fail-closed). Check 'RiskManager init failed' at startup."
+            )
+            return {'success': False, 'error': 'risk manager unavailable (live buy fail-closed)'}
         if is_buy and self.risk_manager is not None:
             try:
                 amount_sol_equiv = amount_lamports / 1_000_000_000
@@ -543,6 +552,19 @@ class CopyTradeExecutor:
         if not self.evm_wallet or not self.evm_private_key:
             return {'success': False, 'error': 'EVM wallet not configured'}
 
+        # LIVE-READY (2026-06-11): fail CLOSED when the RiskManager was
+        # never wired (its construction in initialize() is fail-soft, so a
+        # crashed init would otherwise let LIVE BUYs broadcast unguarded).
+        # Only reachable in LIVE mode (should_skip_live returned False
+        # above), so DRY_RUN behavior is unchanged. SELLs are exempt —
+        # they only reduce exposure and must never be blocked.
+        if is_buy and self.risk_manager is None:
+            logger.critical(
+                "LIVE COPY EVM BUY refused: RiskManager unavailable "
+                "(fail-closed). Check 'RiskManager init failed' at startup."
+            )
+            return {'success': False, 'error': 'risk manager unavailable (live buy fail-closed)'}
+
         # P1 cross-module risk gate. Only BUYs are gated — SELLs close
         # existing exposure and must always be allowed. Amount sent to
         # RiskManager is in chain-native (ETH) — wei / 1e18 — matching
@@ -577,36 +599,46 @@ class CopyTradeExecutor:
             if not w3.is_connected():
                 return {'success': False, 'error': f'Failed to connect to Web3 on {chain}'}
 
-            ROUTER = routing['router']
-            WRAPPED_NATIVE = routing['wrapped_native']
+            ROUTER = Web3.to_checksum_address(routing['router'])
+            WRAPPED_NATIVE = Web3.to_checksum_address(routing['wrapped_native'])
+            TOKEN = Web3.to_checksum_address(token_address)
+            WALLET = Web3.to_checksum_address(self.evm_wallet)
 
-            ROUTER_ABI = [{
-                "inputs": [
-                    {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
-                    {"internalType": "address[]", "name": "path", "type": "address[]"},
-                    {"internalType": "address", "name": "to", "type": "address"},
-                    {"internalType": "uint256", "name": "deadline", "type": "uint256"}
-                ],
-                "name": "swapExactETHForTokens",
-                "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
-                "stateMutability": "payable",
-                "type": "function"
-            }]
-
-            router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER), abi=ROUTER_ABI)
-
-            if is_buy:
-                path = [Web3.to_checksum_address(WRAPPED_NATIVE), Web3.to_checksum_address(token_address)]
-            else:
-                path = [Web3.to_checksum_address(token_address), Web3.to_checksum_address(WRAPPED_NATIVE)]
-
-            deadline = int(datetime.now().timestamp()) + 120
-
-            # CRITICAL: Calculate minOut to prevent sandwich attacks
-            # Get quote first to determine expected output
-            try:
-                # Add getAmountsOut to ABI for quote
-                quote_abi = [{
+            # LIVE-READY (2026-06-11): the previous implementation built
+            # swapExactETHForTokens with value=amount_wei for BOTH
+            # directions. On a SELL (is_buy=False) that would have SENT
+            # native ETH — sized by the TOKEN's raw balance — instead of
+            # selling the token. The sell path now does approve +
+            # swapExactTokensForETHSupportingFeeOnTransferTokens (the
+            # fee-on-transfer-safe variant present on all configured V2
+            # routers), with the same getAmountsOut/minOut protection.
+            ROUTER_ABI = [
+                {
+                    "inputs": [
+                        {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+                        {"internalType": "address[]", "name": "path", "type": "address[]"},
+                        {"internalType": "address", "name": "to", "type": "address"},
+                        {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+                    ],
+                    "name": "swapExactETHForTokens",
+                    "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
+                    "stateMutability": "payable",
+                    "type": "function"
+                },
+                {
+                    "inputs": [
+                        {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
+                        {"internalType": "uint256", "name": "amountOutMin", "type": "uint256"},
+                        {"internalType": "address[]", "name": "path", "type": "address[]"},
+                        {"internalType": "address", "name": "to", "type": "address"},
+                        {"internalType": "uint256", "name": "deadline", "type": "uint256"}
+                    ],
+                    "name": "swapExactTokensForETHSupportingFeeOnTransferTokens",
+                    "outputs": [],
+                    "stateMutability": "nonpayable",
+                    "type": "function"
+                },
+                {
                     "inputs": [
                         {"internalType": "uint256", "name": "amountIn", "type": "uint256"},
                         {"internalType": "address[]", "name": "path", "type": "address[]"}
@@ -615,9 +647,43 @@ class CopyTradeExecutor:
                     "outputs": [{"internalType": "uint256[]", "name": "amounts", "type": "uint256[]"}],
                     "stateMutability": "view",
                     "type": "function"
-                }]
-                quote_router = w3.eth.contract(address=Web3.to_checksum_address(ROUTER), abi=quote_abi)
-                amounts = quote_router.functions.getAmountsOut(amount_wei, path).call()
+                },
+            ]
+            ERC20_ABI = [
+                {
+                    "inputs": [
+                        {"internalType": "address", "name": "spender", "type": "address"},
+                        {"internalType": "uint256", "name": "amount", "type": "uint256"}
+                    ],
+                    "name": "approve",
+                    "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
+                    "stateMutability": "nonpayable",
+                    "type": "function"
+                },
+                {
+                    "inputs": [
+                        {"internalType": "address", "name": "owner", "type": "address"},
+                        {"internalType": "address", "name": "spender", "type": "address"}
+                    ],
+                    "name": "allowance",
+                    "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+                    "stateMutability": "view",
+                    "type": "function"
+                },
+            ]
+
+            router = w3.eth.contract(address=ROUTER, abi=ROUTER_ABI)
+
+            if is_buy:
+                path = [WRAPPED_NATIVE, TOKEN]
+            else:
+                path = [TOKEN, WRAPPED_NATIVE]
+
+            deadline = int(datetime.now().timestamp()) + 120
+
+            # CRITICAL: Calculate minOut to prevent sandwich attacks
+            try:
+                amounts = router.functions.getAmountsOut(amount_wei, path).call()
                 expected_out = amounts[-1]
                 # Apply slippage tolerance (e.g., 10% slippage = accept 90% of expected)
                 min_out = int(expected_out * (100 - slippage) / 100)
@@ -626,17 +692,48 @@ class CopyTradeExecutor:
                 logger.warning(f"Could not get quote, using 0 minOut (RISKY): {quote_error}")
                 min_out = 0  # Fallback - still risky but at least we tried
 
-            tx = router.functions.swapExactETHForTokens(
-                min_out,  # Apply slippage protection
-                path,
-                Web3.to_checksum_address(self.evm_wallet),
-                deadline
-            ).build_transaction({
-                'from': Web3.to_checksum_address(self.evm_wallet),
-                'value': amount_wei,
-                'gas': 300000,
-                'nonce': w3.eth.get_transaction_count(self.evm_wallet)
-            })
+            nonce = w3.eth.get_transaction_count(WALLET)
+
+            if is_buy:
+                tx = router.functions.swapExactETHForTokens(
+                    min_out,  # Apply slippage protection
+                    path,
+                    WALLET,
+                    deadline
+                ).build_transaction({
+                    'from': WALLET,
+                    'value': amount_wei,
+                    'gas': 300000,
+                    'nonce': nonce,
+                })
+            else:
+                # SELL: ensure router allowance, then swap token -> native.
+                # No msg.value is ever attached on this branch.
+                erc20 = w3.eth.contract(address=TOKEN, abi=ERC20_ABI)
+                allowance = erc20.functions.allowance(WALLET, ROUTER).call()
+                if int(allowance) < int(amount_wei):
+                    approve_tx = erc20.functions.approve(ROUTER, amount_wei).build_transaction({
+                        'from': WALLET,
+                        'gas': 80000,
+                        'nonce': nonce,
+                    })
+                    signed_approve = w3.eth.account.sign_transaction(approve_tx, self.evm_private_key)
+                    approve_hash = w3.eth.send_raw_transaction(signed_approve.rawTransaction)
+                    receipt = w3.eth.wait_for_transaction_receipt(approve_hash, timeout=90)
+                    if not receipt or receipt.get('status') != 1:
+                        return {'success': False, 'error': f'approve failed for {token_address[:10]} on {chain}'}
+                    nonce += 1
+                tx = router.functions.swapExactTokensForETHSupportingFeeOnTransferTokens(
+                    amount_wei,
+                    min_out,
+                    path,
+                    WALLET,
+                    deadline
+                ).build_transaction({
+                    'from': WALLET,
+                    'gas': 300000,
+                    'nonce': nonce,
+                })
 
             signed = w3.eth.account.sign_transaction(tx, self.evm_private_key)
             tx_hash = w3.eth.send_raw_transaction(signed.rawTransaction)
@@ -1184,9 +1281,23 @@ class CopyTradingEngine(BaseModule):
         self._known_sig_order: list = []
         self._known_max = 5000
 
-        # Rate limiting - cooldown per wallet (5 min)
+        # Rate limiting - cooldown per wallet (5 min). LIVE-READY: now
+        # DB-tunable via copytrading_config.copy_wallet_cooldown_s
+        # (migration 110); default unchanged.
         self._wallet_last_copy_time: Dict[str, datetime] = {}
         self._wallet_cooldown_seconds = 300  # 5 minutes
+
+        # LIVE-READY (2026-06-11, migration 110) — execution tunables.
+        # All defaults preserve the previous hardcoded behavior exactly.
+        #   copy_evm_slippage_pct          — EVM minOut tolerance (was 10%)
+        #   copy_solana_buy_slippage_bps   — Jupiter BUY slippage (was 100)
+        #   copy_solana_sell_slippage_bps  — Jupiter SELL slippage (was 300)
+        #   copy_max_open_per_leader       — per-leader open-position cap;
+        #                                    0 = disabled (previous behavior)
+        self.copy_evm_slippage_pct = 10.0
+        self.copy_solana_buy_slippage_bps = 100
+        self.copy_solana_sell_slippage_bps = 300
+        self.copy_max_open_per_leader = 0
 
         # ACTIVATION FIX (2026-06-11): leader lifecycle. The operator's
         # 33-wallet target list had accumulated dead leaders (no on-chain
