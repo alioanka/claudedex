@@ -210,6 +210,23 @@ class TradingBotEngine:
         self.pattern_analyzer = PatternAnalyzer()
         self.decision_maker = DecisionMaker(config)
 
+        # RiskManager.validate_trade calls wallet_manager.get_available_balance(),
+        # which WalletSecurityManager does not implement — every validation
+        # would fail-closed with an AttributeError in LIVE mode. Back the call
+        # with the portfolio manager (USD available balance) until the
+        # risk-manager owner ships a real implementation. 0.0 on error keeps
+        # the check fail-closed.
+        if not hasattr(self.risk_manager.wallet_manager, 'get_available_balance'):
+            _pm = self.portfolio_manager
+
+            async def _available_balance_usd() -> float:
+                try:
+                    return float(_pm.get_available_balance())
+                except Exception:
+                    return 0.0
+
+            self.risk_manager.wallet_manager.get_available_balance = _available_balance_usd
+
         # Data collectors
         self.dex_collector = DexScreenerCollector(
             config.get('data_sources', {}).get('dexscreener', {})
@@ -1156,6 +1173,16 @@ class TradingBotEngine:
         'avalanche': '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
     }
 
+    @staticmethod
+    def _to_checksum(addr: str) -> str:
+        """EIP-55 checksum for EVM addresses (web3 contract calls reject
+        lowercase). Fail-soft: returns the input unchanged on error."""
+        try:
+            from web3 import Web3
+            return Web3.to_checksum_address(addr)
+        except Exception:
+            return addr
+
     def _live_slippage(self, key: str, default: float = 0.05) -> float:
         """trading.live_entry_slippage_pct / live_exit_slippage_pct (migration
         105). Fail-soft to the legacy hardcoded 0.05; sanity-clamped to
@@ -1666,7 +1693,7 @@ class TradingBotEngine:
                 logger.info(f"  ✅ Balance check passed: {balance_native:.6f} native")
 
                 order = TradeOrder(
-                    token_address=opportunity.token_address,
+                    token_address=self._to_checksum(opportunity.token_address),
                     side='buy',
                     amount=amount_native,
                     slippage=self._live_slippage('live_entry_slippage_pct'),
@@ -1731,7 +1758,10 @@ class TradingBotEngine:
                 position = {
                     'token_address': opportunity.token_address,
                     'token_symbol': token_symbol,
-                    'entry_price': result.get('execution_price') or opportunity.price,
+                    # Decimal like the DRY/restored paths — the monitoring /
+                    # exit arithmetic mixes these with Decimal and a float
+                    # here silently breaks every PnL/trailing computation.
+                    'entry_price': Decimal(str(result.get('execution_price') or opportunity.price)),
                     'amount': Decimal(str(result.get('token_amount') or est_token_amount)),
                     'entry_value': opportunity.recommended_position_size,
                     'tx_hash': tx_hash,
@@ -2622,7 +2652,7 @@ class TradingBotEngine:
                 return False
 
             order = TradeOrder(
-                token_address=token_address,
+                token_address=self._to_checksum(token_address),
                 side='sell',
                 amount=float(position['amount']),
                 token_amount=raw_token_amount,
@@ -2650,10 +2680,14 @@ class TradingBotEngine:
                 return False
 
             if result.success:
-                exit_price = result.execution_price
-                final_pnl = (exit_price - position['entry_price']) * position['amount']
-                pnl_percentage = ((exit_price - position['entry_price']) / position['entry_price']) * 100
-                
+                # All-float PnL math: execution_price is a float while the
+                # position carries Decimals (float-Decimal ops raise).
+                exit_price = float(result.execution_price)
+                entry_price_f = float(position['entry_price'])
+                amount_f = float(position['amount'])
+                final_pnl = (exit_price - entry_price_f) * amount_f
+                pnl_percentage = ((exit_price - entry_price_f) / entry_price_f) * 100 if entry_price_f else 0.0
+
                 self.stats['total_profit'] += final_pnl
                 if final_pnl > 0:
                     self.stats['successful_trades'] += 1
@@ -3514,7 +3548,9 @@ class TradingBotEngine:
                     chain = (pos.get('chain') or 'ethereum').lower()
                     if self._CHAIN_IDS.get(chain) != exec_chain_id:
                         continue
-                    balance = float(await executor._get_token_balance(token_address))
+                    balance = float(await executor._get_token_balance(
+                        self._to_checksum(token_address)
+                    ))
                     checked += 1
                     db_amount = float(pos.get('amount') or 0)
                     if db_amount <= 0:
