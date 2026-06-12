@@ -2084,9 +2084,16 @@ class SolanaTradingEngine:
             return 0.0
 
     async def _update_sol_price(self):
-        """Update SOL price in USD"""
+        """Update SOL price in USD (validated).
+
+        sol_price_usd is the USD anchor for every value_usd / pnl_usd /
+        token_amount calculation, so it gets the same PriceValidator
+        treatment as token quotes: an unconfirmed >2x jump (wrong-unit or
+        wrong-token quote leaking in) returns the last-good price instead
+        of poisoning all USD denominations downstream.
+        """
         if self.jupiter_client:
-            price = await self.jupiter_client.get_price(SOL_MINT)
+            price = await self._get_token_price(SOL_MINT)
             if price:
                 old_price = self.sol_price_usd
                 self.sol_price_usd = price
@@ -3551,9 +3558,9 @@ class SolanaTradingEngine:
             return
 
         try:
-            # Update SOL price
+            # Update SOL price (validated — see _update_sol_price docstring)
             if self.jupiter_client:
-                sol_price = await self.jupiter_client.get_price(SOL_MINT)
+                sol_price = await self._get_token_price(SOL_MINT)
                 if sol_price and sol_price != self.sol_price_usd:
                     old_price = self.sol_price_usd
                     self.sol_price_usd = sol_price
