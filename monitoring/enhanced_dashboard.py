@@ -1570,6 +1570,22 @@ class DashboardEndpoints:
         self.app.router.add_post(
             '/api/modules/{module}/restart', self._api_module_restart
         )
+        # Control Center v4: batched overview (runtime badge + PnL +
+        # win rate + open positions for every module in ONE request),
+        # cross-module performance comparison, and the read-only
+        # meta_controller decision surface. All fail-soft.
+        self.app.router.add_get(
+            '/control-center', require_auth(self._control_center_page)
+        )
+        self.app.router.add_get(
+            '/api/control-center/overview', self.api_control_center_overview
+        )
+        self.app.router.add_get(
+            '/api/performance/cross-module', self.api_performance_cross_module
+        )
+        self.app.router.add_get(
+            '/api/meta/decisions', self.api_meta_decisions
+        )
         # Phase 4C: circuit breaker events read API.
         self.app.router.add_get(
             '/api/circuit-breaker/events', self._api_breaker_events
@@ -1694,6 +1710,16 @@ class DashboardEndpoints:
     async def _fallback_modules_page(self, request):
         template = self.jinja_env.get_template('modules.html')
         return web.Response(text=template.render(page='modules', modules=[], metrics={}), content_type='text/html')
+
+    async def _control_center_page(self, request):
+        """Control Center v4 — unified module overview + cross-module
+        performance + read-only meta-controller surface. Pure template;
+        all data arrives via the batched fail-soft APIs."""
+        template = self.jinja_env.get_template('control_center.html')
+        return web.Response(
+            text=template.render(page='control_center'),
+            content_type='text/html',
+        )
 
     async def _fallback_api_modules(self, request):
         """Return module data from .env settings and database"""
@@ -2507,7 +2533,13 @@ class DashboardEndpoints:
     # claim "running" for a dead subprocess or hide a pause/dry-run.
     #   env        — orchestrator enable flag (main.py spawn gate)
     #   port_env   — health-port probe (subprocess liveness, primary)
-    #   heartbeat  — DB runtime-stats freshness fallback (table, max age s)
+    #   heartbeat  — DB runtime-stats freshness fallback (table, max age s);
+    #                queried as `WHERE id = 1` single-heartbeat-row tables.
+    #   heartbeat_sql — alternative freshness probe for modules without an
+    #                id=1 heartbeat table: (sql returning age-in-seconds,
+    #                max age s). Used by ARB (one runtime_stats row per
+    #                chain), COPY (recent-trade proxy) and POLYMARKET
+    #                (signal-stream recency).
     #   pause_keys — logs/.pause_<key> flags; engines read the SHORT key
     #                via should_skip_live(module=...), the dashboard pause
     #                button historically wrote the LONG key — check both.
@@ -2543,26 +2575,79 @@ class DashboardEndpoints:
             'config_type': 'ai_config',
             'pause_keys': ('ai', 'ai_analysis'),
         },
+        # Control-center v4: the remaining trading modules get the same
+        # honest badge. Probes mirror the per-module liveness logic
+        # already used by _fallback_api_modules — port first, then the
+        # module's most reliable DB freshness signal.
+        'sniper': {
+            'env': 'SNIPER_MODULE_ENABLED',
+            'port_env': ('SNIPER_HEALTH_PORT', 8083),
+            'heartbeat': ('sniper_runtime_stats', 120),
+            'config_type': 'sniper_config',
+            'pause_keys': ('sniper',),
+        },
+        'arbitrage': {
+            'env': 'ARBITRAGE_MODULE_ENABLED',
+            'port_env': ('ARBITRAGE_HEALTH_PORT', 8084),
+            'heartbeat': None,
+            # One arbitrage_runtime_stats row per chain (no id=1) —
+            # any fresh row means the subprocess is alive.
+            'heartbeat_sql': (
+                "SELECT MIN(EXTRACT(EPOCH FROM (NOW() - updated_at)))::int "
+                "FROM arbitrage_runtime_stats",
+                120,
+            ),
+            'config_type': 'arbitrage_config',
+            'pause_keys': ('arbitrage',),
+        },
+        'copy_trading': {
+            'env': 'COPY_TRADING_MODULE_ENABLED',
+            'port_env': ('COPYTRADING_HEALTH_PORT', 8088),
+            'heartbeat': None,
+            # COPY writes no runtime_stats yet — a copytrading_trades row
+            # in the last 2h is the most honest cross-process signal
+            # (mirrors api_get_copytrading_stats).
+            'heartbeat_sql': (
+                "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(entry_timestamp)))::int "
+                "FROM copytrading_trades",
+                7200,
+            ),
+            'config_type': 'copytrading_config',
+            'pause_keys': ('copy_trading', 'copytrading'),
+        },
+        'polymarket': {
+            'env': 'POLYMARKET_MODULE_ENABLED',
+            'port_env': ('POLYMARKET_HEALTH_PORT', 8089),
+            'heartbeat': None,
+            # Signal stream recency fallback (poll interval 60s, shadow
+            # record interval 300s — 30 min is a generous liveness bound).
+            'heartbeat_sql': (
+                "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(created_at)))::int "
+                "FROM polymarket_signals",
+                1800,
+            ),
+            # No dry_run key — POLYMARKET's live gate is
+            # shadow_mode=false AND live_execution_enabled=true; resolved
+            # by the special-case below.
+            'config_type': None,
+            'pause_keys': ('polymarket',),
+        },
     }
     # Template URLs use the long module names too — accept both.
     _RUNTIME_STATUS_ALIASES = {
         'dex_trading': 'dex', 'futures_trading': 'futures',
         'solana_strategies': 'solana', 'ai_analysis': 'ai',
+        'copytrading': 'copy_trading', 'copy': 'copy_trading',
     }
 
-    async def _api_module_runtime_status(self, request):
-        """GET /api/modules/{module}/runtime-status — honest
-        enabled/running/paused/dry-run/killswitch badge payload for the
-        per-module dashboards. Fail-soft by construction: every probe
-        degrades to its safe value, never a 500."""
-        raw = (request.match_info.get('module', '') or '').lower()
-        module = self._RUNTIME_STATUS_ALIASES.get(raw, raw)
+    async def _resolve_module_runtime(self, module: str):
+        """Resolve the honest runtime payload for one module, or None if
+        the module is unknown. Shared by the per-module runtime-status
+        endpoint and the control-center batch overview. Fail-soft by
+        construction: every probe degrades to its safe value."""
         spec = self._RUNTIME_STATUS_MODULES.get(module)
         if not spec:
-            return web.json_response(
-                {'success': False, 'error': f'unknown module: {raw}'},
-                status=400,
-            )
+            return None
 
         # 1. enabled — orchestrator spawn gate (missing flag = disabled).
         enabled = str(os.getenv(spec['env'], 'false')).lower().strip() \
@@ -2592,6 +2677,16 @@ class DashboardEndpoints:
                         running = True
             except Exception:
                 pass
+        if not running and spec.get('heartbeat_sql') and self.db \
+                and getattr(self.db, 'pool', None):
+            hb_sql, max_age = spec['heartbeat_sql']
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval(hb_sql)
+                    if age is not None and age <= max_age:
+                        running = True
+            except Exception:
+                pass
 
         # 3. paused — flag files honored by should_skip_live().
         paused = False
@@ -2602,18 +2697,35 @@ class DashboardEndpoints:
             pass
 
         # 4. dry_run — same resolution chain the engine boots with.
+        # POLYMARKET has no dry_run key: its live gate is shadow_mode=false
+        # AND live_execution_enabled=true (mig 101); anything else is
+        # shadow (= dry-run for badge purposes).
         dry_run = True
         try:
-            db_value = None
-            if self.db and getattr(self.db, 'pool', None):
-                async with self.db.pool.acquire() as conn:
-                    db_value = await conn.fetchval(
-                        "SELECT value FROM config_settings "
-                        "WHERE config_type = $1 AND key = 'dry_run'",
-                        spec['config_type'],
+            if module == 'polymarket':
+                if self.db and getattr(self.db, 'pool', None):
+                    async with self.db.pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            "SELECT key, value FROM config_settings "
+                            "WHERE config_type = 'polymarket_config' "
+                            "AND key IN ('shadow_mode', 'live_execution_enabled')"
+                        )
+                    vals = {r['key']: str(r['value']).lower().strip() for r in rows}
+                    dry_run = not (
+                        vals.get('shadow_mode') == 'false'
+                        and vals.get('live_execution_enabled') == 'true'
                     )
-            from core.dry_run import resolve_module_dry_run
-            dry_run = resolve_module_dry_run(module, db_row_value=db_value)
+            elif spec.get('config_type'):
+                db_value = None
+                if self.db and getattr(self.db, 'pool', None):
+                    async with self.db.pool.acquire() as conn:
+                        db_value = await conn.fetchval(
+                            "SELECT value FROM config_settings "
+                            "WHERE config_type = $1 AND key = 'dry_run'",
+                            spec['config_type'],
+                        )
+                from core.dry_run import resolve_module_dry_run
+                dry_run = resolve_module_dry_run(module, db_row_value=db_value)
         except Exception:
             pass  # safe-by-default True
 
@@ -2637,7 +2749,7 @@ class DashboardEndpoints:
         else:
             status = 'live'
 
-        return web.json_response({
+        return {
             'success': True,
             'module': module,
             'enabled': enabled,
@@ -2646,7 +2758,509 @@ class DashboardEndpoints:
             'dry_run': dry_run,
             'killswitch': killswitch,
             'status': status,
+        }
+
+    async def _api_module_runtime_status(self, request):
+        """GET /api/modules/{module}/runtime-status — honest
+        enabled/running/paused/dry-run/killswitch badge payload for the
+        per-module dashboards. Fail-soft by construction: every probe
+        degrades to its safe value, never a 500."""
+        raw = (request.match_info.get('module', '') or '').lower()
+        module = self._RUNTIME_STATUS_ALIASES.get(raw, raw)
+        payload = await self._resolve_module_runtime(module)
+        if payload is None:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {raw}'},
+                status=400,
+            )
+        return web.json_response(payload)
+
+    # ===== Control Center v4 =====
+    # One batch endpoint feeds the unified control-center page: per-module
+    # runtime badge + today/7d/all PnL + win rate + open positions, all
+    # resolved concurrently (no N+1 round-trips from the browser) and all
+    # fail-soft — a missing table or dead module yields nulls, never a 500.
+    #
+    # PnL units are NOT comparable across modules (Solana reports SOL,
+    # Futures USDT, the rest USD) — every row carries its `unit` and the
+    # UI must never sum across modules.
+    _CC_MODULES = (
+        # (key, display name, pnl unit)
+        ('dex',          'DEX Trading',   'USD'),
+        ('futures',      'Futures',       'USDT'),
+        ('solana',       'Solana',        'SOL'),
+        ('sniper',       'Sniper',        'USD'),
+        ('arbitrage',    'Arbitrage',     'USD'),
+        ('copy_trading', 'Copy Trading',  'USD'),
+        ('ai',           'AI Analysis',   'USD'),
+        ('polymarket',   'Polymarket',    'USD'),
+    )
+
+    # Single aggregate per module: today / 7d / all-time PnL + win rate +
+    # open count in one table scan. Column conventions mirror the existing
+    # per-module endpoints (incl. the sniper absurd-PnL filter and the
+    # Solana metadata->>'excluded' bad-exit guard from mig 079).
+    _CC_AGG_SQL = {
+        'dex': """
+            SELECT
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= date_trunc('day', NOW())), 0) AS pnl_today,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= NOW() - INTERVAL '7 days'), 0) AS pnl_7d,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'), 0) AS pnl_all,
+                COUNT(*) FILTER (WHERE status = 'closed') AS closed_n,
+                COUNT(*) FILTER (WHERE status = 'closed' AND profit_loss > 0) AS wins,
+                COUNT(*) FILTER (WHERE status = 'open') AS open_n
+            FROM trades
+            WHERE UPPER(COALESCE(chain, '')) NOT IN ('SOLANA', 'SOL')
+        """,
+        'futures': """
+            SELECT
+                COALESCE(SUM(net_pnl) FILTER (WHERE exit_time >= date_trunc('day', NOW())), 0) AS pnl_today,
+                COALESCE(SUM(net_pnl) FILTER (WHERE exit_time >= NOW() - INTERVAL '7 days'), 0) AS pnl_7d,
+                COALESCE(SUM(net_pnl), 0) AS pnl_all,
+                COUNT(*) AS closed_n,
+                COUNT(*) FILTER (WHERE net_pnl > 0) AS wins,
+                NULL::int AS open_n
+            FROM futures_trades
+        """,
+        'solana': """
+            SELECT
+                COALESCE(SUM(pnl_sol) FILTER (WHERE exit_time >= date_trunc('day', NOW())), 0) AS pnl_today,
+                COALESCE(SUM(pnl_sol) FILTER (WHERE exit_time >= NOW() - INTERVAL '7 days'), 0) AS pnl_7d,
+                COALESCE(SUM(pnl_sol), 0) AS pnl_all,
+                COUNT(*) AS closed_n,
+                COUNT(*) FILTER (WHERE pnl_sol > 0) AS wins,
+                (SELECT COUNT(*) FROM solana_positions) AS open_n
+            FROM solana_trades
+            WHERE NOT COALESCE((metadata->>'excluded')::boolean, false)
+        """,
+        'sniper': """
+            SELECT
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND profit_loss_pct BETWEEN -100 AND 200
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= date_trunc('day', NOW())), 0) AS pnl_today,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND profit_loss_pct BETWEEN -100 AND 200
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= NOW() - INTERVAL '7 days'), 0) AS pnl_7d,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND profit_loss_pct BETWEEN -100 AND 200), 0) AS pnl_all,
+                COUNT(*) FILTER (WHERE status = 'closed'
+                    AND profit_loss_pct BETWEEN -100 AND 200) AS closed_n,
+                COUNT(*) FILTER (WHERE status = 'closed'
+                    AND profit_loss_pct BETWEEN -100 AND 200
+                    AND profit_loss > 0) AS wins,
+                COUNT(*) FILTER (WHERE status = 'open') AS open_n
+            FROM sniper_trades
+        """,
+        'arbitrage': """
+            SELECT
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= date_trunc('day', NOW())), 0) AS pnl_today,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= NOW() - INTERVAL '7 days'), 0) AS pnl_7d,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'), 0) AS pnl_all,
+                COUNT(*) FILTER (WHERE status = 'closed') AS closed_n,
+                COUNT(*) FILTER (WHERE status = 'closed' AND profit_loss > 0) AS wins,
+                COUNT(*) FILTER (WHERE status = 'open') AS open_n
+            FROM arbitrage_trades
+        """,
+        'copy_trading': """
+            SELECT
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= date_trunc('day', NOW())), 0) AS pnl_today,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= NOW() - INTERVAL '7 days'), 0) AS pnl_7d,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'), 0) AS pnl_all,
+                COUNT(*) FILTER (WHERE status = 'closed') AS closed_n,
+                COUNT(*) FILTER (WHERE status = 'closed' AND profit_loss > 0) AS wins,
+                COUNT(*) FILTER (WHERE status = 'open') AS open_n
+            FROM copytrading_trades
+        """,
+        'ai': """
+            SELECT
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= date_trunc('day', NOW())), 0) AS pnl_today,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'
+                    AND COALESCE(exit_timestamp, entry_timestamp) >= NOW() - INTERVAL '7 days'), 0) AS pnl_7d,
+                COALESCE(SUM(profit_loss) FILTER (WHERE status = 'closed'), 0) AS pnl_all,
+                COUNT(*) FILTER (WHERE status = 'closed') AS closed_n,
+                COUNT(*) FILTER (WHERE status = 'closed' AND profit_loss > 0) AS wins,
+                COUNT(*) FILTER (WHERE status = 'open') AS open_n
+            FROM ai_trades
+        """,
+        # POLYMARKET is shadow-first and records no realized PnL — surface
+        # activity counts + average expected edge honestly instead of a
+        # fabricated PnL.
+        'polymarket': """
+            SELECT
+                NULL::float8 AS pnl_today,
+                NULL::float8 AS pnl_7d,
+                NULL::float8 AS pnl_all,
+                COUNT(*) AS closed_n,
+                NULL::int AS wins,
+                NULL::int AS open_n,
+                COUNT(*) FILTER (WHERE is_simulated) AS sim_n,
+                COALESCE(AVG(expected_edge_bps), 0) AS avg_edge_bps
+            FROM polymarket_trades
+        """,
+    }
+
+    async def _cc_module_entry(self, key: str, name: str, unit: str) -> dict:
+        """Build one control-center row. Never raises."""
+        entry = {
+            'key': key, 'name': name, 'unit': unit,
+            'enabled': False, 'running': False, 'paused': False,
+            'dry_run': True, 'killswitch': False, 'status': 'unknown',
+            'pnl_today': None, 'pnl_7d': None, 'pnl_all': None,
+            'trades_closed': 0, 'win_rate': None, 'open_positions': None,
+            'pnl_available': key != 'polymarket',
+        }
+        try:
+            runtime = await self._resolve_module_runtime(key)
+            if runtime:
+                for k in ('enabled', 'running', 'paused', 'dry_run',
+                          'killswitch', 'status'):
+                    entry[k] = runtime[k]
+        except Exception as e:
+            logger.debug(f"control-center runtime probe failed for {key}: {e}")
+        sql = self._CC_AGG_SQL.get(key)
+        if sql and self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    row = await conn.fetchrow(sql)
+                if row:
+                    for col, field in (('pnl_today', 'pnl_today'),
+                                       ('pnl_7d', 'pnl_7d'),
+                                       ('pnl_all', 'pnl_all')):
+                        entry[field] = (float(row[col])
+                                        if row[col] is not None else None)
+                    closed_n = int(row['closed_n'] or 0)
+                    entry['trades_closed'] = closed_n
+                    wins = row['wins']
+                    if wins is not None and closed_n > 0:
+                        entry['win_rate'] = round(int(wins) / closed_n * 100, 2)
+                    entry['open_positions'] = (int(row['open_n'])
+                                               if row['open_n'] is not None
+                                               else None)
+                    if key == 'polymarket':
+                        entry['sim_trades'] = int(row['sim_n'] or 0)
+                        entry['avg_edge_bps'] = round(float(row['avg_edge_bps'] or 0), 1)
+            except Exception as e:
+                logger.debug(f"control-center agg failed for {key}: {e}")
+        # FUTURES open positions are live-only (no DB writer) — probe the
+        # module's /positions endpoint; offline leaves None (shown as "—").
+        if key == 'futures' and entry['running']:
+            try:
+                port = int(os.getenv('FUTURES_HEALTH_PORT', '8081'))
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f'http://localhost:{port}/positions', timeout=3
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            entry['open_positions'] = int(
+                                data.get('count',
+                                         len(data.get('positions') or []))
+                            )
+            except Exception:
+                pass
+        return entry
+
+    async def api_control_center_overview(self, request):
+        """GET /api/control-center/overview — one batched payload for the
+        unified control center: every module's honest runtime badge plus
+        today/7d/all PnL, win rate and open positions. Fail-soft."""
+        try:
+            results = await asyncio.gather(
+                *(self._cc_module_entry(k, n, u) for k, n, u in self._CC_MODULES),
+                return_exceptions=True,
+            )
+            modules = []
+            for (k, n, u), res in zip(self._CC_MODULES, results):
+                if isinstance(res, Exception):
+                    logger.debug(f"control-center entry failed for {k}: {res}")
+                    modules.append({
+                        'key': k, 'name': n, 'unit': u, 'status': 'unknown',
+                        'enabled': False, 'running': False, 'paused': False,
+                        'dry_run': True, 'killswitch': False,
+                        'pnl_today': None, 'pnl_7d': None, 'pnl_all': None,
+                        'trades_closed': 0, 'win_rate': None,
+                        'open_positions': None, 'pnl_available': False,
+                    })
+                else:
+                    modules.append(res)
+            killswitch = False
+            try:
+                killswitch = Path('logs/.killswitch').exists()
+            except Exception:
+                pass
+            return web.json_response({
+                'success': True,
+                'killswitch': killswitch,
+                'modules': modules,
+                'generated_at': datetime.utcnow().isoformat() + 'Z',
+            })
+        except Exception as e:
+            logger.error(f"control-center overview error: {e}")
+            return web.json_response(
+                {'success': True, 'killswitch': False, 'modules': [],
+                 'error': str(e)},
+            )
+
+    # Per-module closed-trade PnL series for the comparison view.
+    # {cutoff} is replaced with the parametrized time filter (or '' for
+    # all-time); $1 is the cutoff timestamp when present.
+    _CC_SERIES_SQL = {
+        'dex': """
+            SELECT COALESCE(exit_timestamp, entry_timestamp) AS ts,
+                   profit_loss AS pnl
+            FROM trades
+            WHERE status = 'closed'
+              AND UPPER(COALESCE(chain, '')) NOT IN ('SOLANA', 'SOL')
+              {cutoff}
+            ORDER BY 1 ASC LIMIT 5000
+        """,
+        'futures': """
+            SELECT exit_time AS ts, net_pnl AS pnl
+            FROM futures_trades
+            WHERE net_pnl IS NOT NULL {cutoff}
+            ORDER BY 1 ASC LIMIT 5000
+        """,
+        'solana': """
+            SELECT exit_time AS ts, pnl_sol AS pnl
+            FROM solana_trades
+            WHERE NOT COALESCE((metadata->>'excluded')::boolean, false)
+              {cutoff}
+            ORDER BY 1 ASC LIMIT 5000
+        """,
+        'sniper': """
+            SELECT COALESCE(exit_timestamp, entry_timestamp) AS ts,
+                   profit_loss AS pnl
+            FROM sniper_trades
+            WHERE status = 'closed'
+              AND profit_loss_pct BETWEEN -100 AND 200
+              {cutoff}
+            ORDER BY 1 ASC LIMIT 5000
+        """,
+        'arbitrage': """
+            SELECT COALESCE(exit_timestamp, entry_timestamp) AS ts,
+                   profit_loss AS pnl
+            FROM arbitrage_trades
+            WHERE status = 'closed' {cutoff}
+            ORDER BY 1 ASC LIMIT 5000
+        """,
+        'copy_trading': """
+            SELECT COALESCE(exit_timestamp, entry_timestamp) AS ts,
+                   profit_loss AS pnl
+            FROM copytrading_trades
+            WHERE status = 'closed' {cutoff}
+            ORDER BY 1 ASC LIMIT 5000
+        """,
+        'ai': """
+            SELECT COALESCE(exit_timestamp, entry_timestamp) AS ts,
+                   profit_loss AS pnl
+            FROM ai_trades
+            WHERE status = 'closed' {cutoff}
+            ORDER BY 1 ASC LIMIT 5000
+        """,
+    }
+    # The series WHERE clauses above all alias the time column as the
+    # first SELECT expr; cutoff predicates must reference the raw column:
+    _CC_SERIES_CUTOFF = {
+        'dex': "AND COALESCE(exit_timestamp, entry_timestamp) >= $1",
+        'futures': "AND exit_time >= $1",
+        'solana': "AND exit_time >= $1",
+        'sniper': "AND COALESCE(exit_timestamp, entry_timestamp) >= $1",
+        'arbitrage': "AND COALESCE(exit_timestamp, entry_timestamp) >= $1",
+        'copy_trading': "AND COALESCE(exit_timestamp, entry_timestamp) >= $1",
+        'ai': "AND COALESCE(exit_timestamp, entry_timestamp) >= $1",
+    }
+
+    @staticmethod
+    def _cc_perf_metrics(pnls: list) -> dict:
+        """Pure-python trade-list metrics: expectancy, profit factor,
+        max drawdown, per-trade sharpe-like ratio. Never raises."""
+        n = len(pnls)
+        out = {
+            'trades': n, 'total_pnl': 0.0, 'win_rate': None,
+            'expectancy': None, 'profit_factor': None,
+            'max_drawdown': None, 'sharpe_per_trade': None,
+        }
+        if n == 0:
+            return out
+        total = sum(pnls)
+        wins = [p for p in pnls if p > 0]
+        losses = [p for p in pnls if p <= 0]
+        out['total_pnl'] = round(total, 6)
+        out['win_rate'] = round(len(wins) / n * 100, 2)
+        out['expectancy'] = round(total / n, 6)
+        gross_loss = -sum(losses)
+        if gross_loss > 0:
+            out['profit_factor'] = round(sum(wins) / gross_loss, 3)
+        # max drawdown of the cumulative-PnL equity curve
+        cum = peak = 0.0
+        mdd = 0.0
+        for p in pnls:
+            cum += p
+            if cum > peak:
+                peak = cum
+            mdd = max(mdd, peak - cum)
+        out['max_drawdown'] = round(mdd, 6)
+        if n >= 2:
+            mean = total / n
+            var = sum((p - mean) ** 2 for p in pnls) / (n - 1)
+            std = var ** 0.5
+            if std > 0:
+                out['sharpe_per_trade'] = round(mean / std, 3)
+        return out
+
+    async def api_performance_cross_module(self, request):
+        """GET /api/performance/cross-module?days=N — comparison metrics
+        (PnL, win rate, expectancy, profit factor, max drawdown, per-trade
+        sharpe) per module from closed trades in range. days=0 = all-time.
+        PnL units are per-module (see `unit`) and must not be summed.
+        Fail-soft: a missing table yields an empty row, never a 500."""
+        try:
+            days = int(request.query.get('days', '7') or 7)
+        except (TypeError, ValueError):
+            days = 7
+        days = max(0, min(3650, days))
+        cutoff = (datetime.utcnow() - timedelta(days=days)) if days else None
+
+        async def one(key, name, unit):
+            row = {'key': key, 'name': name, 'unit': unit,
+                   'pnl_available': key != 'polymarket'}
+            row.update(self._cc_perf_metrics([]))
+            if not (self.db and getattr(self.db, 'pool', None)):
+                return row
+            try:
+                if key == 'polymarket':
+                    # Shadow module: activity + expected edge, no PnL.
+                    sql = (
+                        "SELECT COUNT(*) AS n, "
+                        "COUNT(*) FILTER (WHERE is_simulated) AS sim_n, "
+                        "COALESCE(AVG(expected_edge_bps), 0) AS avg_edge "
+                        "FROM polymarket_trades"
+                    )
+                    args = []
+                    if cutoff is not None:
+                        sql += " WHERE created_at >= $1"
+                        args = [cutoff]
+                    async with self.db.pool.acquire() as conn:
+                        prow = await conn.fetchrow(sql, *args)
+                    if prow:
+                        row['trades'] = int(prow['n'] or 0)
+                        row['sim_trades'] = int(prow['sim_n'] or 0)
+                        row['avg_edge_bps'] = round(float(prow['avg_edge'] or 0), 1)
+                    return row
+                tmpl = self._CC_SERIES_SQL.get(key)
+                if not tmpl:
+                    return row
+                if cutoff is not None:
+                    sql = tmpl.format(cutoff=self._CC_SERIES_CUTOFF[key])
+                    args = [cutoff]
+                else:
+                    sql = tmpl.format(cutoff='')
+                    args = []
+                async with self.db.pool.acquire() as conn:
+                    rows = await conn.fetch(sql, *args)
+                pnls = [float(r['pnl']) for r in rows if r['pnl'] is not None]
+                row.update(self._cc_perf_metrics(pnls))
+                # daily cumulative-PnL points for the comparison chart
+                # (bucketed in SQL-free python; series already time-asc)
+                points = []
+                cum = 0.0
+                for r in rows:
+                    if r['pnl'] is None or r['ts'] is None:
+                        continue
+                    cum += float(r['pnl'])
+                    points.append([r['ts'].isoformat(), round(cum, 6)])
+                # thin to <=200 points to keep the payload small
+                if len(points) > 200:
+                    step = len(points) / 200.0
+                    points = [points[int(i * step)] for i in range(200)] \
+                        + [points[-1]]
+                row['equity_curve'] = points
+            except Exception as e:
+                logger.debug(f"cross-module perf failed for {key}: {e}")
+            return row
+
+        results = await asyncio.gather(
+            *(one(k, n, u) for k, n, u in self._CC_MODULES),
+            return_exceptions=True,
+        )
+        modules = []
+        for (k, n, u), res in zip(self._CC_MODULES, results):
+            if isinstance(res, Exception):
+                base = {'key': k, 'name': n, 'unit': u,
+                        'pnl_available': False}
+                base.update(self._cc_perf_metrics([]))
+                modules.append(base)
+            else:
+                modules.append(res)
+        return web.json_response({
+            'success': True,
+            'days': days,
+            'modules': modules,
         })
+
+    async def api_meta_decisions(self, request):
+        """GET /api/meta/decisions — READ-ONLY surface for the
+        meta_controller's self-decision rows. Strictly fail-soft: when the
+        table (or the DB) is absent the payload says available=false and
+        the UI hides the panel — the dashboard never hard-depends on the
+        meta_controller module."""
+        empty = {'success': True, 'available': False,
+                 'decisions': [], 'latest_by_module': []}
+        if not (self.db and getattr(self.db, 'pool', None)):
+            return web.json_response(empty)
+        try:
+            async with self.db.pool.acquire() as conn:
+                has_table = await conn.fetchval(
+                    "SELECT to_regclass('public.meta_decisions') IS NOT NULL"
+                )
+                if not has_table:
+                    return web.json_response(empty)
+
+                def _ser(r):
+                    return {
+                        'module': r['module'],
+                        'decision': r['decision'],
+                        'health_score': (float(r['health_score'])
+                                         if r['health_score'] is not None
+                                         else None),
+                        'confidence': (float(r['confidence'])
+                                       if r['confidence'] is not None
+                                       else None),
+                        'reason': r['reason'],
+                        'created_at': (r['created_at'].isoformat()
+                                       if r['created_at'] else None),
+                    }
+
+                rows = await conn.fetch("""
+                    SELECT module, decision, health_score, confidence,
+                           reason, created_at
+                    FROM meta_decisions
+                    ORDER BY created_at DESC
+                    LIMIT 50
+                """)
+                latest = await conn.fetch("""
+                    SELECT DISTINCT ON (module)
+                           module, decision, health_score, confidence,
+                           reason, created_at
+                    FROM meta_decisions
+                    ORDER BY module, created_at DESC
+                """)
+            return web.json_response({
+                'success': True,
+                'available': True,
+                'decisions': [_ser(r) for r in rows],
+                'latest_by_module': [_ser(r) for r in latest],
+            })
+        except Exception as e:
+            logger.debug(f"meta_decisions read failed (fail-soft): {e}")
+            return web.json_response(empty)
 
     async def _api_module_set_dry_run(self, request):
         """POST /api/modules/{module}/dry-run {"dry_run": bool} —
@@ -3514,6 +4128,7 @@ class DashboardEndpoints:
         'copytrading': 'copy_trading',
         'ai': 'ai', 'ai_analysis': 'ai',
         'advisor': 'advisor', 'financial_advisor': 'advisor',
+        'polymarket': 'polymarket',
     }
 
     @classmethod

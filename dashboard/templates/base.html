@@ -713,6 +713,15 @@
     <!-- Sidebar -->
     <aside class="sidebar" id="sidebar">
         <ul class="nav-menu">
+            <!-- Control Center (v4): unified runtime badges + PnL +
+                 controls + cross-module performance + meta surface. -->
+            <li class="nav-item {% if page == 'control_center' %}active{% endif %}">
+                <a href="/control-center">
+                    <i class="fas fa-satellite-dish"></i>
+                    <span>Control Center</span>
+                </a>
+            </li>
+
             <!-- Full Dashboard (All Modules) -->
             <li class="nav-item {% if page == 'full_dashboard' %}active{% endif %}">
                 <a href="/full-dashboard">

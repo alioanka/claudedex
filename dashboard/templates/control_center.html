@@ -1,0 +1,231 @@
+{% extends "base.html" %}
+
+{% block title %}Control Center - ClaudeDex{% endblock %}
+
+{% block extra_css %}
+<style>
+  .cc-page { color: var(--text-primary, #f1f5f9); }
+  .cc-header {
+    display: flex; flex-wrap: wrap; gap: 12px;
+    align-items: center; justify-content: space-between;
+    margin-bottom: 14px;
+  }
+  .cc-header h1 { margin: 0; font-size: 1.4rem; }
+  .cc-sub { color: var(--text-secondary, #94a3b8); font-size: 0.85rem; }
+  .cc-emergency {
+    background: #dc2626; color: #fff; border: none;
+    padding: 10px 18px; border-radius: 8px; font-weight: 700;
+    font-size: 0.95rem; cursor: pointer; display: inline-flex;
+    align-items: center; gap: 8px;
+  }
+  .cc-emergency:hover { background: #b91c1c; }
+  .cc-killswitch-banner {
+    display: none; background: #7f1d1d; border: 1px solid #dc2626;
+    color: #fecaca; padding: 10px 14px; border-radius: 8px;
+    margin-bottom: 14px; font-weight: 600;
+  }
+  .cc-state {
+    padding: 18px; text-align: center; border-radius: 10px;
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    color: var(--text-secondary, #94a3b8); margin-bottom: 14px;
+  }
+  .cc-state.error { border-color: #dc2626; color: #fca5a5; }
+  .cc-state button {
+    margin-left: 10px; background: var(--accent-primary, #3b82f6);
+    color: #fff; border: none; border-radius: 6px;
+    padding: 4px 12px; cursor: pointer;
+  }
+  .cc-grid {
+    display: grid; gap: 14px; margin-bottom: 20px;
+    grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+  }
+  .cc-card {
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .cc-card-head {
+    display: flex; align-items: center;
+    justify-content: space-between; gap: 8px;
+  }
+  .cc-card-head .name { font-weight: 700; font-size: 1rem; }
+  .cc-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+  .cc-badge {
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+    padding: 3px 8px; border-radius: 999px; text-transform: uppercase;
+    border: 1px solid transparent;
+  }
+  .cc-badge.live      { background: rgba(16,185,129,.15); color: #34d399; border-color: #059669; }
+  .cc-badge.dry_run   { background: rgba(59,130,246,.15); color: #60a5fa; border-color: #2563eb; }
+  .cc-badge.paused    { background: rgba(245,158,11,.15); color: #fbbf24; border-color: #d97706; }
+  .cc-badge.offline   { background: rgba(148,163,184,.15); color: #94a3b8; border-color: #475569; }
+  .cc-badge.disabled  { background: rgba(148,163,184,.10); color: #64748b; border-color: #334155; }
+  .cc-badge.killswitch{ background: rgba(220,38,38,.18); color: #f87171; border-color: #b91c1c; }
+  .cc-badge.unknown   { background: rgba(148,163,184,.10); color: #94a3b8; border-color: #475569; }
+  .cc-metrics {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;
+  }
+  .cc-metric {
+    background: var(--bg-tertiary, #0f172a); border-radius: 6px;
+    padding: 6px 8px; text-align: center;
+  }
+  .cc-metric .lbl {
+    display: block; font-size: 0.62rem; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-secondary, #94a3b8);
+  }
+  .cc-metric .val {
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 0.85rem; font-weight: 600;
+  }
+  .cc-metric .val.pos { color: #34d399; }
+  .cc-metric .val.neg { color: #f87171; }
+  .cc-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+  .cc-actions button {
+    border: 1px solid var(--border-color, #334155);
+    background: var(--bg-tertiary, #0f172a);
+    color: var(--text-primary, #f1f5f9);
+    border-radius: 6px; padding: 5px 10px; font-size: 0.75rem;
+    cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  }
+  .cc-actions button:hover { border-color: var(--accent-primary, #3b82f6); }
+  .cc-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+  .cc-actions button.warn { color: #fbbf24; }
+  .cc-actions button.ok { color: #34d399; }
+  .cc-section {
+    background: var(--bg-secondary, #1e293b);
+    border: 1px solid var(--border-color, #334155);
+    border-radius: 10px; padding: 16px; margin-bottom: 20px;
+  }
+  .cc-section h2 { font-size: 1.05rem; margin: 0 0 4px 0; }
+  .cc-section .hint { color: var(--text-secondary, #94a3b8); font-size: 0.78rem; margin-bottom: 12px; }
+  .cc-range { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .cc-range button {
+    border: 1px solid var(--border-color, #334155);
+    background: var(--bg-tertiary, #0f172a);
+    color: var(--text-secondary, #94a3b8);
+    border-radius: 6px; padding: 5px 14px; font-size: 0.8rem; cursor: pointer;
+  }
+  .cc-range button.active {
+    background: var(--accent-primary, #3b82f6); color: #fff;
+    border-color: var(--accent-primary, #3b82f6);
+  }
+  .cc-table-wrap { overflow-x: auto; }
+  .cc-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+  .cc-table th, .cc-table td {
+    padding: 7px 10px; text-align: right;
+    border-bottom: 1px solid var(--border-color, #334155);
+    white-space: nowrap;
+  }
+  .cc-table th:first-child, .cc-table td:first-child { text-align: left; }
+  .cc-table th {
+    background: var(--bg-tertiary, #0f172a); font-weight: 600;
+    color: var(--text-secondary, #94a3b8);
+  }
+  .cc-table td.num { font-family: ui-monospace, Menlo, monospace; }
+  .cc-table td.pos { color: #34d399; }
+  .cc-table td.neg { color: #f87171; }
+  .cc-chart-wrap { position: relative; height: 300px; margin-top: 14px; }
+  .cc-meta-decision {
+    font-size: 0.7rem; font-weight: 700; padding: 2px 8px;
+    border-radius: 999px; text-transform: uppercase;
+  }
+  .cc-meta-decision.activate, .cc-meta-decision.keep { background: rgba(16,185,129,.15); color: #34d399; }
+  .cc-meta-decision.pause, .cc-meta-decision.deactivate { background: rgba(245,158,11,.15); color: #fbbf24; }
+  .cc-meta-decision.other { background: rgba(148,163,184,.15); color: #94a3b8; }
+  @media (max-width: 600px) {
+    .cc-grid { grid-template-columns: 1fr; }
+    .cc-metrics { grid-template-columns: repeat(3, 1fr); }
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="cc-page">
+  <div class="cc-header">
+    <div>
+      <h1><i class="fas fa-satellite-dish"></i> Control Center</h1>
+      <div class="cc-sub">
+        Every module's honest runtime state, PnL and controls in one place.
+        PnL units differ per module (SOL / USDT / USD) and are never summed.
+      </div>
+    </div>
+    <button class="cc-emergency" onclick="controlBot('emergency')"
+            aria-label="Emergency stop: close all positions and stop all modules">
+      <i class="fas fa-exclamation-triangle"></i> EMERGENCY STOP
+    </button>
+  </div>
+
+  <div id="cc-killswitch" class="cc-killswitch-banner" role="alert">
+    <i class="fas fa-skull-crossbones"></i>
+    KILL SWITCH ACTIVE — all live execution is blocked (logs/.killswitch).
+  </div>
+
+  <!-- 1. Unified module overview -->
+  <div id="cc-overview-state" class="cc-state">Loading modules…</div>
+  <div id="cc-grid" class="cc-grid" style="display:none;"></div>
+
+  <!-- 2. Cross-module performance -->
+  <div class="cc-section">
+    <h2><i class="fas fa-chart-line"></i> Cross-Module Performance</h2>
+    <div class="hint">
+      Closed trades only. Win rate, expectancy (avg PnL/trade), profit factor,
+      max drawdown and per-trade Sharpe are computed per module in its own
+      PnL unit — compare shapes and ratios, not absolute magnitudes.
+      DRY vs LIVE column shows the module's <em>current</em> mode (historic
+      rows are not mode-tagged except Solana/Polymarket simulations).
+    </div>
+    <div class="cc-range" id="cc-range" role="group" aria-label="Time range">
+      <button data-days="1">Today</button>
+      <button data-days="7" class="active">7D</button>
+      <button data-days="30">30D</button>
+      <button data-days="90">90D</button>
+      <button data-days="0">All</button>
+    </div>
+    <div id="cc-perf-state" class="cc-state">Loading performance…</div>
+    <div id="cc-perf-body" style="display:none;">
+      <div class="cc-table-wrap">
+        <table class="cc-table" id="cc-perf-table">
+          <thead>
+            <tr>
+              <th>Module</th><th>Mode</th><th>Trades</th><th>PnL</th>
+              <th>Win rate</th><th>Expectancy</th><th>Profit factor</th>
+              <th>Max DD</th><th>Sharpe/trade</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="cc-chart-wrap">
+        <canvas id="cc-perf-chart" aria-label="Cumulative PnL per module"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Meta controller surface (read-only; hidden when absent) -->
+  <div class="cc-section" id="cc-meta-section" style="display:none;">
+    <h2><i class="fas fa-robot"></i> Meta Controller Decisions</h2>
+    <div class="hint">
+      Read-only view of the meta controller's self-decisions
+      (activate / keep / pause) with per-module health scores. The
+      dashboard never acts on these — they are surfaced for transparency.
+    </div>
+    <div class="cc-table-wrap">
+      <table class="cc-table" id="cc-meta-table">
+        <thead>
+          <tr>
+            <th>Module</th><th>Decision</th><th>Health</th>
+            <th>Confidence</th><th>Rationale</th><th>When</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="/static/js/control_center.js?v={{ asset_version or 'dev' }}"></script>
+{% endblock %}
