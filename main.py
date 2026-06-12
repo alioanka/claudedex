@@ -316,7 +316,7 @@ class ModuleProcess:
                 errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
 
         # Check database credentials (required for most modules, including dashboard)
-        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller', 'regime_allocator', 'execution_quality', 'treasury', 'sentinel', 'market_data_warehouse', 'catalyst_calendar', 'options_vol', 'yield_treasury', 'execution_gateway', 'clmm_lp')
+        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller', 'regime_allocator', 'execution_quality', 'treasury', 'sentinel', 'market_data_warehouse', 'catalyst_calendar', 'options_vol', 'yield_treasury', 'execution_gateway', 'clmm_lp', 'param_tuner', 'intent_solver', 'basis_desk', 'stat_arb', 'smart_money')
         if needs_database:
             if not _check_database_credentials():
                 errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
@@ -680,6 +680,44 @@ class TradingBotOrchestrator:
             script_path="modules/clmm_lp/main_clmm_lp.py",
             enabled_env_var="CLMM_LP_MODULE_ENABLED",
             module_key="clmm_lp",
+        )
+
+        # ── Tier-3 + strategy-backlog modules (advisory/shadow-first, default OFF) ──
+        # param_tuner: bandit shadow-tuning of module knobs; bounded auto-apply
+        # gated OFF + hard blocklist on risk/leverage/killswitch keys. Port 8101.
+        self.modules['param_tuner'] = ModuleProcess(
+            name="Param Tuner",
+            script_path="modules/param_tuner/main_param_tuner.py",
+            enabled_env_var="PARAM_TUNER_MODULE_ENABLED",
+            module_key="param_tuner",
+        )
+        # intent_solver: CoW/UniswapX shadow scaffold (experimental, no live path). Port 8102.
+        self.modules['intent_solver'] = ModuleProcess(
+            name="Intent Solver",
+            script_path="modules/intent_solver/main_intent_solver.py",
+            enabled_env_var="INTENT_SOLVER_MODULE_ENABLED",
+            module_key="intent_solver",
+        )
+        # basis_desk: delta-neutral funding/basis carry advisor (shadow-first). Port 8103.
+        self.modules['basis_desk'] = ModuleProcess(
+            name="Basis Desk",
+            script_path="modules/basis_desk/main_basis_desk.py",
+            enabled_env_var="BASIS_DESK_MODULE_ENABLED",
+            module_key="basis_desk",
+        )
+        # stat_arb: market-neutral pairs / mean-reversion (shadow-first, hard z-stops). Port 8104.
+        self.modules['stat_arb'] = ModuleProcess(
+            name="Stat Arb",
+            script_path="modules/stat_arb/main_stat_arb.py",
+            enabled_env_var="STAT_ARB_MODULE_ENABLED",
+            module_key="stat_arb",
+        )
+        # smart_money: on-chain accumulation-cluster signal (advisory, no look-ahead). Port 8105.
+        self.modules['smart_money'] = ModuleProcess(
+            name="Smart Money",
+            script_path="modules/smart_money/main_smart_money.py",
+            enabled_env_var="SMART_MONEY_MODULE_ENABLED",
+            module_key="smart_money",
         )
 
         # Phase 4B: per-module capital allocator (advisory).
