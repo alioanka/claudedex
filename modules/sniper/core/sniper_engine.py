@@ -1975,14 +1975,22 @@ class SniperEngine:
                             f"(+{pnl_pct:.1f}% >= +{partial_take_pct:.1f}%) "
                             f"selling {partial_size_pct:.0f}% = {partial_amount:.4f} tokens"
                         )
-                        await self._partial_exit(data, partial_amount, 'PARTIAL_TAKE')
-                        data['amount_bought'] = remaining_amount
-                        data['partial_taken'] = True
-                        data['partial_take_price'] = current_price
-                        data['high_watermark_price'] = current_price
-                        self._stats['partial_takes_fired'] = (
-                            self._stats.get('partial_takes_fired', 0) + 1
+                        # Only commit the state change when the sell actually
+                        # executed. Previously a FAILED partial sell still
+                        # reduced amount_bought and set partial_taken=True —
+                        # in LIVE the unsold tokens vanished from tracking
+                        # and the trailing stop armed on a phantom partial.
+                        partial_ok = await self._partial_exit(
+                            data, partial_amount, 'PARTIAL_TAKE'
                         )
+                        if partial_ok:
+                            data['amount_bought'] = remaining_amount
+                            data['partial_taken'] = True
+                            data['partial_take_price'] = current_price
+                            data['high_watermark_price'] = current_price
+                            self._stats['partial_takes_fired'] = (
+                                self._stats.get('partial_takes_fired', 0) + 1
+                            )
 
                     # Check take profit (remaining position)
                     elif pnl_pct >= take_profit_pct:
@@ -2338,19 +2346,21 @@ class SniperEngine:
             logger.debug(f"Birdeye fallback error for {token_address}: {e}")
         return 0
 
-    async def _partial_exit(self, data: Dict, partial_amount: float, reason: str):
+    async def _partial_exit(self, data: Dict, partial_amount: float, reason: str) -> bool:
         """Wave-15: Sell a fraction of the position (partial take).
 
         Executes execute_sell for partial_amount tokens, logs the partial exit
         to sniper_trades as a supplementary 'sell' row (does NOT close the parent
         open row — the parent remains open until the remaining position exits).
+        Returns True iff the sell executed; the caller must only mutate
+        position state (amount_bought / partial_taken) on True.
         Fail-soft: any error is logged but does not crash the monitor loop.
         """
         token_address = data['target'].get('token_address')
         chain = data.get('chain_type', 'solana')
         try:
             if not self.executor or partial_amount <= 0:
-                return
+                return False
             result = await self.executor.execute_sell(
                 token_address=token_address,
                 chain=chain,
@@ -2413,12 +2423,14 @@ class SniperEngine:
                             )
                     except Exception as db_e:
                         logger.debug(f"partial exit DB log failed (non-fatal): {db_e}")
+                return True
             else:
                 logger.warning(
                     f"PARTIAL EXIT failed for {token_address}: {result.error}"
                 )
         except Exception as e:
             logger.error(f"_partial_exit error for {token_address}: {e}")
+        return False
 
     async def _exit_position(self, data: Dict, reason: str):
         """Exit a position (sell tokens)"""
