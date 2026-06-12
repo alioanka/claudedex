@@ -110,6 +110,33 @@ async def _read_orchestrator_budgets(conn, ttl_minutes: int = 120) -> Dict[str, 
     return result
 
 
+async def _read_latest_regime(conn, ttl_minutes: int = 180) -> Optional[dict]:
+    """Read the most recent regime_snapshots row (regime_allocator module).
+
+    Purely informational: the regime label + confidence are attached to each
+    proposal's metrics so the operator sees the performance lens (this
+    allocator) and the regime lens (regime_allocator) side-by-side. Does NOT
+    change the allocation math. Fail-soft: returns None when the table is
+    absent (migration 118 not applied) or the snapshot is stale."""
+    try:
+        row = await conn.fetchrow(
+            "SELECT regime, confidence, created_at FROM regime_snapshots "
+            "WHERE created_at > NOW() - INTERVAL '%d minutes' "
+            "ORDER BY created_at DESC LIMIT 1" % int(ttl_minutes)
+        )
+        if not row:
+            return None
+        return {
+            "regime": row["regime"],
+            "confidence": (round(float(row["confidence"]), 3)
+                           if row["confidence"] is not None else None),
+            "as_of": row["created_at"].isoformat() if row["created_at"] else None,
+        }
+    except Exception as exc:
+        logger.debug("_read_latest_regime fail-soft: %s", exc)
+        return None
+
+
 async def _read_module_sharpe(conn, module: str, lookback_hours: int) -> Optional[float]:
     """Most recent Sharpe from orchestrator_recommendations.metrics.
     Falls back to None when no rec has fired for this module in the
@@ -150,6 +177,7 @@ async def write_proposals(
     conn,
     report: AllocationReport,
     orchestrator_budgets: Optional[Dict[str, Optional[float]]] = None,
+    regime: Optional[dict] = None,
 ) -> int:
     """Insert one row per proposal with proposed_by='allocator'.
     Returns the number of rows inserted.
@@ -191,6 +219,11 @@ async def write_proposals(
                     if orch_budget is not None
                     else "no orchestrator budget active; allocator proposal is advisory"
                 )
+            if regime is not None:
+                # Informational only (regime_allocator's latest read) — the
+                # allocation math above is untouched. Lets the operator see
+                # "performance says X% / regime says style Y" side-by-side.
+                components["market_regime"] = regime
             await conn.execute(
                 "INSERT INTO portfolio_allocations "
                 "(module, pct_of_book, usd_amount, proposed_by, reason, metrics) "
@@ -235,8 +268,13 @@ async def run_tick(
                 1 for v in orch_budgets.values() if v is not None
             )
 
+            # Latest regime read (regime_allocator, migration 118) — purely
+            # informational annotation; fail-soft None when absent/stale.
+            regime = await _read_latest_regime(conn)
+            summary["market_regime"] = regime["regime"] if regime else None
+
             summary["proposals_written"] = await write_proposals(
-                conn, report, orchestrator_budgets=orch_budgets
+                conn, report, orchestrator_budgets=orch_budgets, regime=regime
             )
             logger.info(
                 "tick: reserve=%.2f%% proposals=%d (modules=%d, orch_budgets=%d)",
