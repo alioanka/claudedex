@@ -92,9 +92,10 @@
             }
             var pnlCells;
             if (m.pnl_available === false) {
+                // shadow module: no realized PnL — show honest activity stats
                 pnlCells =
-                    metric('Signals today', m.pnl_today === null ? '—' : m.pnl_today, '') +
-                    metric('Trades', m.trades_closed, '') +
+                    metric('Recorded', m.trades_closed, '') +
+                    metric('Simulated', m.sim_trades === undefined ? '—' : m.sim_trades, '') +
                     metric('Avg edge', m.avg_edge_bps !== undefined ? fmtNum(m.avg_edge_bps, 1) + ' bps' : '—', '');
             } else {
                 pnlCells =
