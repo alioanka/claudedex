@@ -3956,6 +3956,52 @@ class SolanaTradingEngine:
             self.jupiter_client._price_cache_time.pop(token_mint, None)
         return validated
 
+    async def _late_confirm_rescue(self, token_symbol: str) -> Optional[str]:
+        """Recheck a broadcast-but-unconfirmed buy before declaring it failed.
+
+        execute_swap returns None when confirm_transaction times out, but the
+        tx can still land afterwards. Recording the entry as failed would
+        leave the bought tokens untracked (no position row, no SL/TP, no
+        exit) until the next restart reconcile. Bounded by DB knob
+        `solana_late_confirm_window_s` (default 45s; 0 disables). Fail-soft:
+        any error returns None (entry stays failed, original behavior).
+        """
+        try:
+            sig = getattr(self.jupiter_helper, 'last_unconfirmed_signature', None)
+            if not sig:
+                return None
+            window_s = 45.0
+            if self.config_manager:
+                try:
+                    window_s = float(self.config_manager.get(
+                        'solana_late_confirm_window_s', 45.0))
+                except Exception:
+                    window_s = 45.0
+            if window_s <= 0:
+                return None
+            logger.warning(
+                f"⏳ {token_symbol}: buy broadcast but unconfirmed at timeout — "
+                f"late-confirm window {window_s:.0f}s for {sig[:16]}..."
+            )
+            landed = await self.jupiter_helper.confirm_transaction(
+                sig, timeout=int(window_s)
+            )
+            if landed:
+                logger.warning(
+                    f"🟢 {token_symbol}: late confirmation LANDED — recording "
+                    f"position for {sig} (would otherwise be untracked tokens)"
+                )
+                return sig
+            logger.error(
+                f"❌ {token_symbol}: still unconfirmed after late window — "
+                f"entry stays failed. If it lands later the startup reconcile "
+                f"or manual check must pick it up: https://solscan.io/tx/{sig}"
+            )
+            return None
+        except Exception as e:
+            logger.debug(f"late-confirm rescue error for {token_symbol}: {e}")
+            return None
+
     async def _execute_swap_via_jito(
         self,
         input_mint: str,
@@ -4495,6 +4541,15 @@ class SolanaTradingEngine:
                                 f"no tx broadcast, entry aborted (not saved as LIVE)"
                             )
                             return False
+
+                        # Late-confirmation rescue: execute_swap returned None
+                        # but the tx WAS broadcast and only timed out waiting
+                        # for confirmation. If it lands late and we drop it,
+                        # the bought tokens sit untracked in the wallet (no
+                        # position, no SL/TP, no exit). One bounded extra
+                        # confirmation window closes that gap.
+                        if not tx_signature:
+                            tx_signature = await self._late_confirm_rescue(token_symbol)
 
                         if tx_signature:
                             logger.info(f"🟢 LIVE SWAP executed: {tx_signature}")

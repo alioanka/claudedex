@@ -221,6 +221,13 @@ class JupiterHelper:
         # Track last swap error for callers to detect specific failure types
         self.last_swap_error = None  # e.g., "0x1788", "0x1771", etc.
 
+        # Signature of the most recent swap that was BROADCAST but timed out
+        # waiting for confirmation. None when the last swap either confirmed
+        # or never reached the network. Callers (solana_engine late-confirm
+        # rescue) use this to detect "tx landed after our timeout" fills so
+        # bought tokens are never left untracked in the wallet.
+        self.last_unconfirmed_signature: Optional[str] = None
+
         # Optional raw-lamports priority fee override (wired from SolanaConfigManager).
         # None => get_swap_transaction uses its structured-dict default.
         self.priority_fee_lamports = priority_fee_lamports
@@ -1123,8 +1130,9 @@ class JupiterHelper:
             pass
 
         try:
-            # Clear last error for this swap attempt
+            # Clear last error + unconfirmed-signature marker for this attempt
             self.last_swap_error = None
+            self.last_unconfirmed_signature = None
 
             # Pre-check: Verify keypair is loaded before attempting swap
             if not self.keypair:
@@ -1224,6 +1232,10 @@ class JupiterHelper:
                 # CRITICAL: Do NOT return signature for unconfirmed transactions!
                 # Returning signature here would create a phantom position
                 # since caller treats any non-None return as success
+                # Expose the signature so the engine can run a bounded
+                # late-confirmation rescue (tx may still land after timeout;
+                # without the rescue, bought tokens would sit untracked).
+                self.last_unconfirmed_signature = signature
                 swap_logger.error(f"   ❌ Jupiter: Transaction NOT confirmed after timeout: {signature}")
                 swap_logger.error(f"      Signature sent but not confirmed - NO position will be opened")
                 swap_logger.error(f"      Check explorer: https://solscan.io/tx/{signature}")
