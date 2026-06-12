@@ -2824,6 +2824,16 @@ class EVMArbitrageEngine:
         except Exception:
             skip_live = True
 
+        # shadow_mode (migration 097, default ON) is documented as 'never
+        # enter the execute path' but was previously only surfaced in stats —
+        # flipping live_execution_enabled alone could broadcast with shadow
+        # still on. Enforce the documented shadow -> live ordering here.
+        if not skip_live and self.shadow_mode:
+            self.logger.info(
+                "shadow_mode=true — recording simulated trade only"
+            )
+            skip_live = True
+
         # Defense-in-depth: broadcast requires the explicit live opt-in
         # (live_execution_enabled, migration 097 default false) even when
         # dry_run is off and no kill switch is set.
@@ -3283,6 +3293,13 @@ class EVMArbitrageEngine:
 
             trade_id = f"arb_{uuid.uuid4().hex[:12]}"
 
+            # Honest simulation flag: rows written via the skip path (tx_hash
+            # 'DRY_RUN' — killswitch/pause/shadow/live-flag gate) are simulated
+            # even when dry_run=false. Previously they were stamped
+            # is_simulated=false, poisoning live PnL and the realized-slippage
+            # learner.
+            is_sim = bool(self.dry_run) or tx_hash == "DRY_RUN"
+
             async with self.db_pool.acquire() as conn:
                 # Insert into dedicated arbitrage_trades table
                 await conn.execute("""
@@ -3310,7 +3327,7 @@ class EVMArbitrageEngine:
                     net_profit_pct * 100,  # Use NET profit % after costs
                     gross_profit_pct * 100,  # Keep gross spread for reference
                     'closed',
-                    self.dry_run,
+                    is_sim,
                     datetime.now(),
                     datetime.now(),
                     tx_hash,
@@ -3357,7 +3374,7 @@ class EVMArbitrageEngine:
                         profit_amount=net_profit_usd / eth_price if eth_price > 0 else 0,
                         profit_usd=net_profit_usd,
                         tx_hash=tx_hash,
-                        is_simulated=self.dry_run,
+                        is_simulated=is_sim,
                         gas_cost_usd=gas_cost_usd,
                         flash_loan_fee=flash_loan_cost,
                     )
