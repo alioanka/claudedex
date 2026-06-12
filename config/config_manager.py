@@ -126,6 +126,13 @@ class TradingConfig(BaseModel):
     # chains. 0 = unlimited. The engine processes opportunities sorted by
     # score, so the budget keeps the highest-conviction entries.
     max_trades_per_day: int = 100
+    # LIVE execution knobs (migration 105). Defaults mirror the previously
+    # hardcoded engine values exactly — seeding them changes no behavior.
+    live_entry_slippage_pct: float = 0.05   # was hardcoded 0.05 in _execute_opportunity
+    live_exit_slippage_pct: float = 0.05    # was hardcoded 0.05 in _close_position
+    # Executor in-flight retry count. WARNING: a receipt-timeout retry can
+    # RE-BROADCAST the swap (duplicate buy); 1 is the safe live setting.
+    live_max_execute_retries: int = 3       # current executor default
     # Per-chain capital weights (migration 095). 0 disables the chain in
     # discovery AND execution; (0,1] scales position size. Chains absent
     # from the map default to 1.0. Week-1 live data: solana avg -2.24/trade

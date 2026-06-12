@@ -68,6 +68,17 @@ class BotState(Enum):
 
 logger = logging.getLogger(__name__)
 
+
+def _clamp_retries(config: Dict) -> int:
+    """trading.live_max_execute_retries (migration 105), clamped to 1..5.
+    Fail-soft to the legacy executor default of 3."""
+    try:
+        v = int((config.get('trading', {}) or {}).get('live_max_execute_retries', 3) or 3)
+    except (TypeError, ValueError):
+        return 3
+    return min(max(v, 1), 5)
+
+
 @dataclass
 class TradingOpportunity:
     """Represents a potential trading opportunity"""
@@ -230,7 +241,10 @@ class TradingBotEngine:
             'chain_id': config.get('web3', {}).get('chain_id', 1),
             'max_gas_price': config.get('web3', {}).get('max_gas_price', 50),  # FIXED: Was 500
             'gas_limit': config.get('web3', {}).get('gas_limit', 500000),
-            'max_retries': 3,
+            # trading.live_max_execute_retries (migration 105) — clamped 1..5.
+            # WARNING: a receipt-timeout retry can RE-BROADCAST the swap;
+            # 1 is the safe LIVE setting (default 3 = legacy behavior).
+            'max_retries': _clamp_retries(config),
             'retry_delay': 1,
             'uniswap_v2_router': '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D',  # Mainnet router
             '1inch_api_key': config.get('api', {}).get('1inch_api_key'),
@@ -1142,6 +1156,16 @@ class TradingBotEngine:
         'avalanche': '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
     }
 
+    def _live_slippage(self, key: str, default: float = 0.05) -> float:
+        """trading.live_entry_slippage_pct / live_exit_slippage_pct (migration
+        105). Fail-soft to the legacy hardcoded 0.05; sanity-clamped to
+        (0, 0.5]."""
+        try:
+            v = float((self.config.get('trading', {}) or {}).get(key, default) or default)
+        except (TypeError, ValueError):
+            return default
+        return v if 0.0 < v <= 0.5 else default
+
     async def _native_usd_price(self, chain: str) -> Optional[float]:
         """USD price of the chain's native token via the wrapped-native pair.
         Returns None when unresolvable — live callers must fail CLOSED (skip
@@ -1595,7 +1619,7 @@ class TradingBotEngine:
                     token_out=opportunity.token_address,
                     amount=Decimal(str(position_value_usd / opportunity.price)),
                     order_type=OrderType.MARKET,
-                    slippage=0.05,
+                    slippage=self._live_slippage('live_entry_slippage_pct'),
                     chain=opportunity.chain,
                     wallet_address=str(self.solana_executor.wallet_keypair.pubkey()),
                     metadata={
@@ -1645,7 +1669,7 @@ class TradingBotEngine:
                     token_address=opportunity.token_address,
                     side='buy',
                     amount=amount_native,
-                    slippage=0.05,
+                    slippage=self._live_slippage('live_entry_slippage_pct'),
                     deadline=300,
                     use_mev_protection=True,
                     metadata={
@@ -2602,7 +2626,7 @@ class TradingBotEngine:
                 side='sell',
                 amount=float(position['amount']),
                 token_amount=raw_token_amount,
-                slippage=0.05,
+                slippage=self._live_slippage('live_exit_slippage_pct'),
                 deadline=300,
                 gas_price_multiplier=1.5 if 'rug' in reason else 1.2,
                 use_mev_protection=True,
