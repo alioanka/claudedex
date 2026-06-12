@@ -15,9 +15,9 @@
     // enable/disable exists only for the 3 env-mapped modules (and is
     // in-process only — MB-33); restart is unsupported for polymarket.
     var CONTROLS = {
-        dex:          { pause: 'dex',          restart: 'dex',          dry: 'dex' },
-        futures:      { pause: 'futures',      restart: 'futures',      dry: 'futures' },
-        solana:       { pause: 'solana',       restart: 'solana',       dry: 'solana' },
+        dex:          { pause: 'dex',          restart: 'dex',          dry: 'dex', enable: 'dex_trading' },
+        futures:      { pause: 'futures',      restart: 'futures',      dry: 'futures', enable: 'futures_trading' },
+        solana:       { pause: 'solana',       restart: 'solana',       dry: 'solana', enable: 'solana_strategies' },
         sniper:       { pause: 'sniper',       restart: 'sniper',       dry: 'sniper' },
         arbitrage:    { pause: 'arbitrage',    restart: 'arbitrage',    dry: 'arbitrage' },
         copy_trading: { pause: 'copy_trading', restart: 'copy_trading', dry: 'copy_trading' },
@@ -151,6 +151,18 @@
                 m.dry_run ? 'Go LIVE' : 'Go DRY',
                 'Flips the DB dry_run flag. Takes effect after the module restarts.'));
         }
+        if (c.enable) {
+            // Honest semantics: flips the dashboard-process env flag only
+            // (MB-33) — the orchestrator subprocess is unaffected until
+            // its next start. Pause is the cross-process halt.
+            if (m.enabled) {
+                b.push(btn('disable', c.enable, 'warn', 'fa-power-off', 'Disable',
+                    'Clears the enable flag in the dashboard process (MB-33: .env and running subprocesses unaffected; use Pause to halt live writes now).'));
+            } else {
+                b.push(btn('enable', c.enable, 'ok', 'fa-power-off', 'Enable',
+                    'Sets the enable flag in the dashboard process (MB-33: .env unaffected; the orchestrator spawns the module on its next start).'));
+            }
+        }
         return b.join('');
     }
 
@@ -181,6 +193,10 @@
         } else if (action === 'restart') {
             url = '/api/modules/' + target + '/restart';
             confirmMsg = 'Restart ' + modKey + '? The orchestrator will respawn the subprocess.';
+        } else if (action === 'enable' || action === 'disable') {
+            url = '/api/modules/' + target + '/' + action;
+            confirmMsg = (action === 'disable' ? 'Disable ' : 'Enable ') + modKey +
+                '? This flips the dashboard-process flag only (running subprocesses are unaffected; use Pause for an immediate cross-process halt).';
         } else if (action === 'dry') {
             var goingLive = el.textContent.indexOf('LIVE') !== -1;
             confirmMsg = goingLive
