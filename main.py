@@ -316,7 +316,7 @@ class ModuleProcess:
                 errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
 
         # Check database credentials (required for most modules, including dashboard)
-        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller')
+        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller', 'regime_allocator')
         if needs_database:
             if not _check_database_credentials():
                 errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
@@ -591,6 +591,19 @@ class TradingBotOrchestrator:
             script_path="modules/meta_controller/main_meta_controller.py",
             enabled_env_var="META_CONTROLLER_MODULE_ENABLED",
             module_key="meta_controller",
+        )
+
+        # Volatility-regime capital allocator (advisory layer).
+        # Classifies the market regime from free BTC/ETH price data and writes
+        # regime-conditioned per-module capital-weight PROPOSALS to
+        # regime_allocation_proposals for operator approval. Never trades,
+        # never flips live flags, never touches the killswitch. Default
+        # DISABLED. Health server: port 8091 (REGIME_ALLOCATOR_HEALTH_PORT).
+        self.modules['regime_allocator'] = ModuleProcess(
+            name="Regime Allocator",
+            script_path="modules/regime_allocator/main_regime_allocator.py",
+            enabled_env_var="REGIME_ALLOCATOR_MODULE_ENABLED",
+            module_key="regime_allocator",
         )
 
         # Phase 4B: per-module capital allocator (advisory).

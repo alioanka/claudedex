@@ -26,6 +26,13 @@ Modified fractional Kelly:
 4. Reserve = 10% of book always uninvested (gas + emergencies)
 5. Normalize so sum of allocations + reserve = 100%
 
+## Regime annotation (advisory cross-link)
+Each proposal's `metrics` is annotated with `market_regime` — the latest
+fresh (< 3h) `regime_snapshots` row written by the REGIME_ALLOCATOR module
+(migration 118). Purely informational: the Kelly math is untouched; the
+operator sees the performance lens (this module) and the regime lens
+(regime_allocator) side-by-side. Fail-soft when the table is absent.
+
 ## Kill switch
 - Global: `logs/.killswitch` (writes paused)
 - Per-module: `logs/.pause_portfolio_allocator`
