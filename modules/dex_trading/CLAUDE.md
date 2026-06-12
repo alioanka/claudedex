@@ -249,6 +249,53 @@ flowing into the engine via `main_dex.py`'s `nested_config` rebuild-from-DB.
   pause gates, circuit breakers and `_final_safety_checks` all run exactly as
   before; CHECK 0 only ever REMOVES entries or shrinks size, never loosens.
 
+## Live-readiness wave (2026-06-12, migration 105)
+The LIVE broadcast path in `core/engine.py` was previously UNREACHABLE-dead:
+flipping `DRY_RUN=false` was a silent no-op (engine read top-level
+`config['dry_run']` / executor read `config['DRY_RUN']`, neither key was ever
+set → both defaulted True), and had it been reachable it crashed post-broadcast
+(dict-vs-attribute result handling, undefined `chain`/`trade_id` NameErrors,
+human-unit sell amounts, missing `get_balance`, lowercase addresses,
+float/Decimal PnL math). All fixed; DRY_RUN behavior byte-identical.
+- DRY_RUN plumbing: `main_dex.py` wires `resolve_module_dry_run('dex')` into
+  `nested_config['dry_run']` + `trading.dry_run`; engine passes `DRY_RUN` +
+  `wallet_address` (mismatch check) into the executor config. Kill-switch
+  poller now started in the DEX subprocess (was never honored here).
+- Engine broadcast boundary: `_effective_dry_run()` (= `should_skip_live`)
+  gates entry AND close; re-asserted immediately before send; executor-
+  simulated fills (kill-switch race) are detected and never recorded as live.
+- Risk gate: `RiskManager.validate_trade(token, usd)` runs FAIL-CLOSED before
+  every live entry broadcast (circuit breakers + fresh honeypot/liquidity/dev
+  risk + allocation guard). Engine back-fills the missing
+  `wallet_manager.get_available_balance` (AttributeError would have blocked
+  every entry) with the portfolio-manager USD balance.
+- Entry: correct EVM `TradeOrder` (BUY amount in NATIVE units via wrapped-
+  native USD price, fail-closed when unresolvable; was token-units in a
+  mismatched Order shape), checksummed addresses, `trade_id` pre-broadcast,
+  Decimal-consistent position dict, CRITICAL alert when the DB write fails
+  after an on-chain fill.
+- Close: sell leg passes RAW token units (`core.units.to_raw_evm`; executor
+  consumes `token_amount` as on-chain integers — human units sold dust),
+  solana live closes refused (EVM executor only), repeated-failure alert at 5
+  attempts, kill-switch refuses to fake-close REAL positions.
+- Manual close (`logs/.close_dex_<id>`): LIVE real fills route through the
+  engine's on-chain sell; DB-only close REFUSED for real fills (desync guard).
+  DRY_RUN rows unchanged. Watchdog closes remain DRY_RUN-only.
+- Startup reconcile (LIVE only, observability-only): restored real positions
+  on the executor's chain are checked against on-chain ERC20 balances; >5%
+  deficit logs CRITICAL + flags `metadata.reconcile_onchain_deficit`.
+- Migration 105 knobs (defaults = legacy hardcoded values):
+  `trading.live_entry_slippage_pct=0.05`, `trading.live_exit_slippage_pct=0.05`,
+  `trading.live_max_execute_retries=3` (set 1 for LIVE — the executor retry
+  loop can re-broadcast after a receipt timeout), `trading.live_reconcile_enabled=true`.
+- REPORTED, not fixed (forbidden/out-of-scope files):
+  `base_executor._execute_with_retry` re-broadcast-on-timeout double-spend;
+  single-chain `TradeExecutor` (`web3.chain_id`) while discovery is
+  multi-chain — LIVE entries on other chains will fail at the executor;
+  `base_executor` sell path scales `token_amount` without decimals lookup
+  (engine now pre-scales); RiskManager owner should implement
+  `get_available_balance` natively.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
 - Wave-2 campaign report: `docs/agents/reports/DEX_CAMPAIGN.md`.
