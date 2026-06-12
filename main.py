@@ -316,7 +316,7 @@ class ModuleProcess:
                 errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
 
         # Check database credentials (required for most modules, including dashboard)
-        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller', 'regime_allocator', 'execution_quality', 'treasury', 'sentinel', 'market_data_warehouse', 'catalyst_calendar')
+        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller', 'regime_allocator', 'execution_quality', 'treasury', 'sentinel', 'market_data_warehouse', 'catalyst_calendar', 'options_vol', 'yield_treasury', 'execution_gateway', 'clmm_lp')
         if needs_database:
             if not _check_database_credentials():
                 errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
@@ -646,6 +646,40 @@ class TradingBotOrchestrator:
             script_path="modules/catalyst_calendar/main_catalyst_calendar.py",
             enabled_env_var="CATALYST_CALENDAR_MODULE_ENABLED",
             module_key="catalyst_calendar",
+        )
+
+        # ── Tier-2 modules (new P&L / execution surfaces, shadow-first, default OFF) ──
+        # options_vol: Deribit vol-surface + defined-risk hedging advisory
+        # (shadow-first; BUY-only gated live path). Health port 8097.
+        self.modules['options_vol'] = ModuleProcess(
+            name="Options Vol",
+            script_path="modules/options_vol/main_options_vol.py",
+            enabled_env_var="OPTIONS_VOL_MODULE_ENABLED",
+            module_key="options_vol",
+        )
+        # yield_treasury: idle-capital carry advisory (LST/lending), latency-aware.
+        # Observe/advise only by default. Health port 8098.
+        self.modules['yield_treasury'] = ModuleProcess(
+            name="Yield Treasury",
+            script_path="modules/yield_treasury/main_yield_treasury.py",
+            enabled_env_var="YIELD_TREASURY_MODULE_ENABLED",
+            module_key="yield_treasury",
+        )
+        # execution_gateway: MEV-aware EVM send-policy shared service (library +
+        # health/diagnostics subprocess). Never trades. Health port 8099.
+        self.modules['execution_gateway'] = ModuleProcess(
+            name="Execution Gateway",
+            script_path="modules/execution_gateway/main_execution_gateway.py",
+            enabled_env_var="EXECUTION_GATEWAY_MODULE_ENABLED",
+            module_key="execution_gateway",
+        )
+        # clmm_lp: concentrated-liquidity LP shadow proposals with honest IL
+        # accounting (shadow-first; live mint not implemented). Health port 8100.
+        self.modules['clmm_lp'] = ModuleProcess(
+            name="CLMM LP",
+            script_path="modules/clmm_lp/main_clmm_lp.py",
+            enabled_env_var="CLMM_LP_MODULE_ENABLED",
+            module_key="clmm_lp",
         )
 
         # Phase 4B: per-module capital allocator (advisory).
