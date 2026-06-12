@@ -2943,20 +2943,11 @@ class FuturesTradingEngine:
                 logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}, Notional: ${notional:.2f}")
                 logger.info(f"   SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f}")
             else:
-                # Execute real order via the ISOLATED-margin + leverage-set helpers
+                # Execute real order via the ISOLATED-margin + leverage-set helper.
+                # LIVE-P0: raw ccxt has no open_long/open_short — see
+                # _exchange_open_market.
                 try:
-                    if side == TradeSide.LONG:
-                        order = await self.exchange_client.open_long(
-                            symbol=symbol,
-                            quantity=size,
-                            leverage=self.leverage,
-                        )
-                    else:
-                        order = await self.exchange_client.open_short(
-                            symbol=symbol,
-                            quantity=size,
-                            leverage=self.leverage,
-                        )
+                    order = await self._exchange_open_market(symbol, side, size)
                     if not order:
                         logger.error(f"❌ Order execution returned empty result for {symbol}")
                         return
@@ -3503,6 +3494,29 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.debug(f"funding snapshot write failed (non-fatal): {e}")
 
+    async def _exchange_open_market(self, symbol: str, side: 'TradeSide', quantity: float):
+        """LIVE-P0 entry helper: `exchange_client` is a raw ccxt instance which
+        has NO open_long/open_short — the previous calls raised AttributeError
+        on every live entry (swallowed as 'Order execution failed'), so the
+        module could never open a live position. This applies the MB-17 intent
+        inline (ISOLATED margin + leverage), then sends the market order.
+        Exchange 'already set' idempotency errors are expected and skipped;
+        any real order error still raises to the caller."""
+        try:
+            await self.exchange_client.set_margin_mode('isolated', symbol)
+        except Exception as e:
+            msg = str(e).lower()
+            if not any(t in msg for t in ('no need to change', 'not modified', '110026', '-4046')):
+                logger.warning(f"set_margin_mode('isolated', {symbol}) failed: {e}")
+        try:
+            await self.exchange_client.set_leverage(self.leverage, symbol)
+        except Exception as e:
+            msg = str(e).lower()
+            if not any(t in msg for t in ('not modified', '110043', '-4059')):
+                logger.warning(f"set_leverage({self.leverage}, {symbol}) failed: {e}")
+        order_side = 'buy' if side == TradeSide.LONG else 'sell'
+        return await self.exchange_client.create_market_order(symbol, order_side, quantity)
+
     async def _verify_isolated_or_close(self, symbol: str, side: TradeSide) -> None:
         """FUT-RM-07: defense-in-depth on MB-17.
 
@@ -3522,12 +3536,32 @@ class FuturesTradingEngine:
         """
         try:
             executor = self.exchange_client
-            if executor is None or not hasattr(executor, 'get_position'):
+            if executor is None:
+                return
+            if hasattr(executor, 'get_position'):
+                pos = await executor.get_position(symbol)
+            elif hasattr(executor, 'fetch_positions'):
+                # LIVE-P0 fallback: raw ccxt has no get_position, which made
+                # this verify a silent no-op in live. Use unified
+                # fetch_positions and map ccxt marginMode -> margin_type.
+                try:
+                    rows = await executor.fetch_positions([symbol])
+                except Exception:
+                    rows = await executor.fetch_positions()
+                pos = None
+                for row in rows or []:
+                    row_sym = str(row.get('symbol') or '')
+                    if (row_sym == symbol or row_sym.split(':')[0] == symbol) and \
+                            float(row.get('contracts') or 0) != 0:
+                        pos = dict(row)
+                        if pos.get('margin_type') is None and row.get('marginMode'):
+                            pos['margin_type'] = str(row['marginMode']).upper()
+                        break
+            else:
                 logger.warning(
                     f"FUT-RM-07: executor has no get_position(); skipping isolated verify for {symbol}"
                 )
                 return
-            pos = await executor.get_position(symbol)
             if not pos:
                 # No position came back — fill failed silently or fully closed.
                 # Don't open a second order, just log.
