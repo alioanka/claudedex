@@ -1106,6 +1106,23 @@ class TradingBotEngine:
             tp = 0.3
         return sl, tp
 
+    def _effective_dry_run(self) -> bool:
+        """Engine-side broadcast gate: module dry-run OR global kill-switch OR
+        pause flag (`core.dry_run.should_skip_live`). The executors apply the
+        same gate at the tx-write boundary; mirroring it here keeps the engine
+        from labeling a gated (simulated) fill as a real one. Fail-safe: any
+        error in the gate means NO live broadcast."""
+        try:
+            from core.dry_run import should_skip_live
+            return should_skip_live(
+                bool(self.config.get('dry_run', True)),
+                module='dex',
+                account=self.config.get('wallet_address'),
+            )
+        except Exception as e:
+            logger.error(f"dry-run gate check failed (failing safe to DRY_RUN): {e}")
+            return True
+
     async def _check_daily_entry_budget(self) -> bool:
         """Consumer of `trading.max_trades_per_day` (seeded by migration 095).
 
@@ -2270,9 +2287,23 @@ class TradingBotEngine:
         try:
             logger.info(f"💰 CLOSING POSITION: {token_symbol} ({token_address[:10]}...)")
             logger.info(f"   Reason: {reason}")
-            
-            is_dry_run = self.config.get('dry_run', True) or position.get('is_dry_run', False)
-            
+
+            chain = (position.get('chain') or 'ethereum').lower()
+            module_dry_run = bool(self.config.get('dry_run', True))
+            position_is_real = not (module_dry_run or position.get('is_dry_run', False))
+            if position_is_real and self._effective_dry_run():
+                # Kill-switch / pause while LIVE: never fake-close a REAL
+                # position — a DB-only close would desync the row from actual
+                # on-chain holdings. The position stays open and the monitor
+                # retries once the gate clears.
+                logger.error(
+                    f"🛑 LIVE close of {token_symbol} BLOCKED by kill-switch/pause — "
+                    f"refusing simulated close of a REAL position (will retry)"
+                )
+                return False
+
+            is_dry_run = module_dry_run or position.get('is_dry_run', False)
+
             if is_dry_run:
                 # Calculate P&L
                 current_price = position.get('current_price', position['entry_price'])
@@ -2447,13 +2478,39 @@ class TradingBotEngine:
                 logger.info(f"✅ DRY RUN position closed and added to cooldown")
                 return True
             
-            # REAL EXECUTION
+            # REAL EXECUTION (EVM only — the executor confirms the receipt
+            # internally and returns success only when receipt.status == 1,
+            # so no second confirmation wait is needed here).
             from trading.executors.base_executor import TradeOrder
-            
+
+            if chain == 'solana':
+                logger.error(
+                    f"❌ LIVE close for solana position {token_symbol} is not "
+                    f"supported by the DEX module (EVM executor only) — position kept open"
+                )
+                return False
+
+            # Sell leg needs RAW token units: the executor consumes
+            # order.token_amount as on-chain integer units (no decimals
+            # scaling). A human-unit value would sell dust. Fail-closed.
+            try:
+                from core.units import to_raw_evm
+                raw_token_amount = await to_raw_evm(chain, token_address, position['amount'])
+            except Exception as e:
+                logger.error(
+                    f"❌ Cannot resolve token decimals for LIVE SELL of "
+                    f"{token_symbol} — aborting close (will retry): {e}"
+                )
+                return False
+            if raw_token_amount <= 0:
+                logger.error(f"❌ LIVE SELL of {token_symbol}: zero raw amount — aborting close")
+                return False
+
             order = TradeOrder(
                 token_address=token_address,
                 side='sell',
-                amount=position['amount'],
+                amount=float(position['amount']),
+                token_amount=raw_token_amount,
                 slippage=0.05,
                 deadline=300,
                 gas_price_multiplier=1.5 if 'rug' in reason else 1.2,
@@ -2465,40 +2522,18 @@ class TradingBotEngine:
                     'exit_reason': reason
                 }
             )
-            
+
             result = await self.trade_executor.execute(order)
 
+            # Executor-level kill-switch/pause race: a simulated fill must
+            # never be recorded as a real on-chain close.
+            if result.success and (result.metadata or {}).get('dry_run'):
+                logger.error(
+                    f"🛑 LIVE close of {token_symbol} was SIMULATED by the executor "
+                    f"(kill-switch/pause) — keeping position open (will retry)"
+                )
+                return False
 
-            # Wait for transaction confirmation
-            if not self.config.get('dry_run', True):
-                try:
-                    if chain == 'solana':
-                        # Solana confirmation
-                        confirmation = await self.solana_executor.wait_for_confirmation(
-                            result.tx_hash,
-                            max_wait=30
-                        )
-                    else:
-                        # EVM confirmation
-                        w3 = self.trade_executor.w3
-                        receipt = w3.eth.wait_for_transaction_receipt(
-                            result.tx_hash,
-                            timeout=120
-                        )
-                        
-                        if receipt.status != 1:
-                            logger.error(f"❌ Transaction FAILED: {result.tx_hash}")
-                            # Update database with failed status
-                            await self.db.update_trade(trade_id, {'status': 'failed'})
-                            return
-                        
-                        logger.info(f"✅ Transaction CONFIRMED: {result.tx_hash}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Transaction confirmation failed: {e}")
-                    return
-
-            
             if result.success:
                 exit_price = result.execution_price
                 final_pnl = (exit_price - position['entry_price']) * position['amount']
@@ -2620,14 +2655,29 @@ class TradingBotEngine:
                     f"Exit: ${exit_price:.8f}\n"
                     f"P&L: ${final_pnl:.2f} ({pnl_percentage:.2f}%)\n"
                     f"Reason: {reason}\n"
-                    f"Tx: {result.tx_hash[:10]}..."
+                    f"Tx: {(result.tx_hash or 'N/A')[:10]}..."
                 )
-                
+
                 logger.info(f"✅ Successfully closed position: {token_symbol}")
                 return True
             else:
-                logger.error(f"❌ Failed to close position: {result.error}")
-                
+                # Surface repeated live-close failures loudly: the position
+                # stays in active_positions so the monitor retries, but an
+                # unsellable token (honeypot / drained pool) must not fail
+                # silently forever.
+                failures = position.get('_close_failures', 0) + 1
+                position['_close_failures'] = failures
+                logger.error(
+                    f"❌ Failed to close position ({failures} attempt(s)): {result.error}"
+                )
+                if failures == 5:
+                    await self.alert_manager.send_critical(
+                        f"🚨 LIVE close FAILING repeatedly: {token_symbol}\n"
+                        f"Attempts: {failures}\n"
+                        f"Last error: {result.error}\n"
+                        f"Possible honeypot / drained pool — manual action needed."
+                    )
+
                 # Update circuit breaker for failed trade
                 self.risk_manager.update_trade_metrics({
                     'success': False,
