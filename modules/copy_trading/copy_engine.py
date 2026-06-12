@@ -3201,7 +3201,10 @@ class CopyTradingEngine(BaseModule):
 
             # Global open-position cap; bounded SQL count so a fanout
             # of leaders can't blow past the operator's exposure budget.
-            if await self._at_position_cap():
+            # BUY-only (matches the Solana path): now that EVM SELLs are
+            # actually mirrored, a full book must never block an exit —
+            # at-cap is exactly when exits matter most.
+            if is_buy and await self._at_position_cap():
                 self._log_replay_decision(
                     chain=chain_name, wallet=source_tx.get('from', ''),
                     tx_hash=tx_hash, decision='skipped',
