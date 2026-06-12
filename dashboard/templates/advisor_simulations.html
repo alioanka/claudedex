@@ -59,8 +59,28 @@
   }
   .empty-row td { color:#777; font-style:italic; text-align:center; padding:1.1rem 0; }
 
+  /* Performance panel (dashboard v2) */
+  .perf-grid {
+    display:grid; grid-template-columns: 1.5fr 1fr; gap:1rem; padding:1rem;
+  }
+  .perf-chart-wrap { position:relative; height:240px; }
+  .perf-stats {
+    display:grid; grid-template-columns: repeat(2,1fr); gap:.5rem;
+  }
+  .perf-tile {
+    background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.07);
+    border-radius:8px; padding:.45rem .65rem;
+  }
+  .perf-tile .pv { font-size:.95rem; font-weight:700; line-height:1.15; }
+  .perf-tile .pl { font-size:.62rem; text-transform:uppercase; letter-spacing:.05em; color:#777; }
+  .hz-chip {
+    display:inline-block; font-size:.7rem; font-weight:600; padding:.2rem .55rem;
+    border-radius:20px; background:rgba(255,255,255,.05); margin-right:.35rem; margin-top:.25rem;
+  }
+
   @media (max-width:640px) {
     .sim-summary-bar { grid-template-columns: repeat(2,1fr); }
+    .perf-grid { grid-template-columns: 1fr; }
   }
 </style>
 
@@ -86,6 +106,78 @@
     independent bucket capped at the per-channel limit (gems = discovered "New Gems";
     kap = KAP strong-polarity disclosures). Channel totals sum open (unrealized) +
     closed (realized) P&amp;L.
+  </div>
+
+  <!-- Filters (dashboard v2): apply to the channel tables AND the performance panel -->
+  <div class="d-flex flex-wrap gap-2 align-items-center mb-3" id="simFilters" style="font-size:.78rem">
+    <span class="text-muted text-uppercase" style="letter-spacing:.05em">Filter</span>
+    <select id="fltChannel" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="applyFilters()">
+      <option value="all">Channel: all</option>
+      <option value="crypto">crypto</option><option value="us_equities">us equities</option>
+      <option value="bist">bist</option><option value="fx">fx</option>
+      <option value="midas_funds">midas funds</option><option value="gems">gems</option>
+      <option value="kap">kap</option>
+    </select>
+    <select id="fltMarket" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="applyFilters()">
+      <option value="all">Market: all</option>
+      <option value="crypto">crypto</option><option value="us_equities">us equities</option>
+      <option value="bist">bist</option><option value="fx">fx</option>
+      <option value="midas_funds">midas funds</option>
+    </select>
+    <select id="fltHorizon" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="applyFilters()">
+      <option value="all">Horizon: all</option>
+      <option value="short">short</option><option value="mid">mid</option><option value="long">long</option>
+    </select>
+    <select id="fltStatus" class="form-select form-select-sm bg-dark text-light border-secondary" style="width:auto" onchange="applyFilters()">
+      <option value="all">Status: all</option>
+      <option value="open">open</option><option value="closed">closed</option><option value="expired">expired</option>
+    </select>
+    <button class="btn btn-sm btn-outline-secondary" style="font-size:.72rem" onclick="resetFilters()">Reset</button>
+  </div>
+
+  <!-- Performance + equity curve panel (dashboard v2). Fed by
+       /api/advisor/performance; fail-soft: renders an empty state, never blocks
+       the channel tables below. -->
+  <div class="chan-panel" id="perfPanel">
+    <div class="chan-head">
+      <span class="chan-name">📊 Performance (realized + open)</span>
+      <span style="display:flex;align-items:center;gap:8px;">
+        <span class="text-muted" id="perfLookbackNote" style="font-size:.72rem"></span>
+        <select id="perfDays" class="form-select form-select-sm bg-dark text-light border-secondary"
+                style="width:auto;font-size:.72rem" onchange="loadPerf()">
+          <option value="">Lookback: default</option>
+          <option value="30">30 days</option>
+          <option value="90">90 days</option>
+          <option value="365">1 year</option>
+          <option value="0">All history</option>
+        </select>
+      </span>
+    </div>
+    <div class="perf-grid">
+      <div class="perf-chart-wrap">
+        <canvas id="equityChart"></canvas>
+        <div id="equityEmpty" class="text-muted"
+             style="display:none;position:absolute;inset:0;align-items:center;justify-content:center;font-size:.8rem;font-style:italic">
+          No decided sims in this window yet — the equity curve appears after the first closes.
+        </div>
+      </div>
+      <div>
+        <div class="perf-stats" id="perfStats"></div>
+        <div id="perfHorizon" class="mt-2"></div>
+      </div>
+    </div>
+    <div class="px-3 pb-3">
+      <div class="text-muted text-uppercase mb-1" style="font-size:.68rem;letter-spacing:.05em">Per-channel performance</div>
+      <div class="table-responsive">
+        <table class="table table-dark table-sm sim-table mb-0" id="perfChannelTable">
+          <thead><tr>
+            <th>Channel</th><th>Decided</th><th>Win rate</th><th>Avg win</th><th>Avg loss</th>
+            <th>Expectancy</th><th>Realized</th><th>Unrealized</th><th>Total</th>
+          </tr></thead>
+          <tbody id="perfChannelBody"><tr class="empty-row"><td colspan="9">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
   </div>
 
   <!-- One panel per channel rendered here -->
@@ -129,10 +221,38 @@ const CHANNEL_ICONS = {
 let simRows = [];
 let capPerChannel = 15;
 let wrByChannel = {};   // {channel: {wins, decided, win_rate}}
+let equityChartObj = null;
+
+function currentFilters() {
+  const v = id => (document.getElementById(id) || {value:'all'}).value || 'all';
+  return { channel: v('fltChannel'), market: v('fltMarket'),
+           horizon: v('fltHorizon'), status: v('fltStatus') };
+}
+
+function filterQuery(extra) {
+  const f = currentFilters();
+  const p = new URLSearchParams(extra || {});
+  if (f.status && f.status !== 'all') p.set('status', f.status); else p.set('status', 'all');
+  for (const k of ['channel','market','horizon']) {
+    if (f[k] && f[k] !== 'all') p.set(k, f[k]);
+  }
+  return p.toString();
+}
+
+function applyFilters() { loadSims(); loadPerf(); }
+function resetFilters() {
+  for (const id of ['fltChannel','fltMarket','fltHorizon','fltStatus']) {
+    const el = document.getElementById(id);
+    if (el) el.selectedIndex = 0;
+  }
+  const pd = document.getElementById('perfDays');
+  if (pd) pd.selectedIndex = 0;
+  applyFilters();
+}
 
 async function loadSims() {
   try {
-    const res = await fetch('/api/advisor/simulations?status=all&limit=500');
+    const res = await fetch('/api/advisor/simulations?' + filterQuery({limit: 500}));
     const data = await res.json();
     if (!data.success) throw new Error(data.error);
 
@@ -181,9 +301,11 @@ function renderPanels() {
 
   let html = '';
   // Render canonical seven first, then any stray channels not in the list.
-  const allChannels = CHANNELS.concat(
-    Object.keys(byChannel).filter(c => !CHANNELS.includes(c))
-  );
+  // With an active channel filter, render only that channel's panel.
+  const fch = currentFilters().channel;
+  const allChannels = (fch && fch !== 'all')
+    ? [fch]
+    : CHANNELS.concat(Object.keys(byChannel).filter(c => !CHANNELS.includes(c)));
   for (const ch of allChannels) {
     html += renderChannelPanel(ch, byChannel[ch] || []);
   }
@@ -320,6 +442,132 @@ async function confirmClose() {
   } catch(e) { alert('Request failed: ' + e.message); }
 }
 
+// ---------------------------------------------------------------------------
+// Performance panel (dashboard v2) — fed by /api/advisor/performance.
+// Fail-soft: any error renders the empty state; the channel tables are
+// unaffected either way.
+// ---------------------------------------------------------------------------
+async function loadPerf() {
+  try {
+    const days = (document.getElementById('perfDays') || {value:''}).value;
+    const extra = {};
+    if (days !== '') extra.days = days;
+    const res = await fetch('/api/advisor/performance?' + filterQuery(extra));
+    renderPerf(await res.json() || {});
+  } catch (e) {
+    renderPerf({});
+  }
+}
+
+function fmtUsd(v) { return v == null ? '—' : (v >= 0 ? '+$' : '-$') + Math.abs(v).toFixed(2); }
+function pnlColor(v) { return v == null ? '#888' : v > 0 ? '#00e396' : v < 0 ? '#ff4560' : '#888'; }
+
+function renderPerf(data) {
+  data = data || {};
+  const o = data.overall || {};
+  const note = document.getElementById('perfLookbackNote');
+  if (note) {
+    note.textContent = data.lookback_days != null
+      ? (data.lookback_days > 0 ? 'last ' + data.lookback_days + 'd' : 'all history') : '';
+  }
+
+  const tile = (label, value, color) =>
+    `<div class="perf-tile"><div class="pv" style="color:${color || '#ddd'}">${value}</div>` +
+    `<div class="pl">${label}</div></div>`;
+  const wr = o.win_rate != null
+    ? o.win_rate + '% (' + (o.wins || 0) + '/' + (o.decided_count || 0) + ')' : '—';
+  document.getElementById('perfStats').innerHTML =
+    tile('Win rate (decided)', wr,
+         o.win_rate == null ? '#888' : o.win_rate >= 50 ? '#00e396' : '#feb019') +
+    tile('Expectancy / sim', fmtUsd(o.expectancy_usd), pnlColor(o.expectancy_usd)) +
+    tile('Avg win', fmtUsd(o.avg_win_usd), pnlColor(o.avg_win_usd)) +
+    tile('Avg loss', fmtUsd(o.avg_loss_usd), pnlColor(o.avg_loss_usd)) +
+    tile('Profit factor', o.profit_factor != null ? o.profit_factor.toFixed(2) : '—', '#ddd') +
+    tile('Realized P&L', fmtUsd(o.realized_pnl_usd), pnlColor(o.realized_pnl_usd)) +
+    tile('Open unrealized', fmtUsd(o.unrealized_pnl_usd), pnlColor(o.unrealized_pnl_usd)) +
+    tile('Total P&L', fmtUsd(o.total_pnl_usd), pnlColor(o.total_pnl_usd)) +
+    tile('Best sim', o.best ? escHtml(o.best.symbol) + ' ' + fmtUsd(o.best.pnl_usd) : '—', '#00e396') +
+    tile('Worst sim', o.worst ? escHtml(o.worst.symbol) + ' ' + fmtUsd(o.worst.pnl_usd) : '—', '#ff4560');
+
+  // Hit rate by horizon (decided sims only).
+  const hz = data.hit_rate_by_horizon || {};
+  let chips = '';
+  for (const h of ['short','mid','long']) {
+    const s = hz[h];
+    chips += s
+      ? `<span class="hz-chip" title="${s.wins}/${s.decided} decided profitable; expectancy ${fmtUsd(s.expectancy_usd)}/sim"
+              style="color:${s.hit_rate >= 50 ? '#00e396' : s.hit_rate > 0 ? '#feb019' : '#ff4560'}">${h}: ${s.hit_rate}% (${s.wins}/${s.decided})</span>`
+      : `<span class="hz-chip" style="color:#777">${h}: —</span>`;
+  }
+  document.getElementById('perfHorizon').innerHTML =
+    '<div class="text-muted text-uppercase" style="font-size:.62rem;letter-spacing:.05em">Hit rate by horizon</div>' + chips;
+
+  // Per-channel performance table.
+  const byCh = data.by_channel || {};
+  const tbody = document.getElementById('perfChannelBody');
+  const chans = CHANNELS.filter(c => byCh[c])
+    .concat(Object.keys(byCh).filter(c => !CHANNELS.includes(c)));
+  if (!chans.length) {
+    tbody.innerHTML = '<tr class="empty-row"><td colspan="9">No sims yet for this filter/window.</td></tr>';
+  } else {
+    tbody.innerHTML = chans.map(c => {
+      const p = byCh[c] || {};
+      const cell = v => `<td style="color:${pnlColor(v)}">${fmtUsd(v)}</td>`;
+      return `<tr><td><strong>${escHtml(fmtChannel(c))}</strong></td>` +
+        `<td>${p.decided_count != null ? p.decided_count : '—'}</td>` +
+        `<td>${p.win_rate != null ? p.win_rate + '%' : '—'}</td>` +
+        cell(p.avg_win_usd) + cell(p.avg_loss_usd) + cell(p.expectancy_usd) +
+        cell(p.realized_pnl_usd) + cell(p.unrealized_pnl_usd) + cell(p.total_pnl_usd) + '</tr>';
+    }).join('');
+  }
+
+  renderEquity(data.equity_curve || []);
+}
+
+function renderEquity(curve) {
+  const empty = document.getElementById('equityEmpty');
+  const canvas = document.getElementById('equityChart');
+  if (!canvas || !empty) return;
+  if (!curve.length || typeof Chart === 'undefined') {
+    if (equityChartObj) { equityChartObj.destroy(); equityChartObj = null; }
+    canvas.style.display = 'none';
+    empty.style.display = 'flex';
+    return;
+  }
+  canvas.style.display = '';
+  empty.style.display = 'none';
+  const labels = curve.map(p => (p.t || '').slice(0, 10));
+  const values = curve.map(p => p.equity);
+  const last = values[values.length - 1] || 0;
+  const lineColor = last >= 0 ? '#00e396' : '#ff4560';
+  if (equityChartObj) equityChartObj.destroy();
+  equityChartObj = new Chart(canvas.getContext('2d'), {
+    type: 'line',
+    data: { labels, datasets: [{
+      label: 'Cumulative realized P&L ($)', data: values,
+      borderColor: lineColor,
+      backgroundColor: last >= 0 ? 'rgba(0,227,150,.08)' : 'rgba(255,69,96,.08)',
+      fill: true, pointRadius: 0, borderWidth: 2, tension: .15,
+    }]},
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => {
+          const p = curve[ctx.dataIndex] || {};
+          const trade = p.pnl != null
+            ? ' (' + (p.symbol || '') + ' ' + (p.pnl >= 0 ? '+' : '') + p.pnl + ')' : '';
+          return 'equity $' + ctx.parsed.y + trade;
+        }}},
+      },
+      scales: {
+        x: { ticks: { color: '#888', maxTicksLimit: 8 }, grid: { color: 'rgba(255,255,255,.05)' } },
+        y: { ticks: { color: '#888' }, grid: { color: 'rgba(255,255,255,.07)' } },
+      },
+    },
+  });
+}
+
 function fmtChannel(c) { return (c||'').replace(/_/g,' '); }
 function dirLabel(d) { return d==='long'?'LONG ▲': d==='short'?'SHORT ▼':'HOLD ~'; }
 function fmtN(n) {
@@ -332,6 +580,7 @@ function fmtN(n) {
 function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
 loadSims();
-setInterval(loadSims, 60000);
+loadPerf();
+setInterval(() => { loadSims(); loadPerf(); }, 60000);
 </script>
 {% endblock %}
