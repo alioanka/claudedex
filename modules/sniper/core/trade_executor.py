@@ -114,6 +114,30 @@ ROUTER_ABI = [
     }
 ]
 
+# Minimal ERC20 ABI for the sell-leg allowance/approve flow.
+ERC20_MIN_ABI = [
+    {
+        "inputs": [
+            {"internalType": "address", "name": "owner", "type": "address"},
+            {"internalType": "address", "name": "spender", "type": "address"}
+        ],
+        "name": "allowance",
+        "outputs": [{"internalType": "uint256", "name": "", "type": "uint256"}],
+        "stateMutability": "view",
+        "type": "function"
+    },
+    {
+        "inputs": [
+            {"internalType": "address", "name": "spender", "type": "address"},
+            {"internalType": "uint256", "name": "amount", "type": "uint256"}
+        ],
+        "name": "approve",
+        "outputs": [{"internalType": "bool", "name": "", "type": "bool"}],
+        "stateMutability": "nonpayable",
+        "type": "function"
+    }
+]
+
 
 @dataclass
 class TradeResult:
@@ -916,12 +940,29 @@ class TradeExecutor:
             # Wait for confirmation (optional, can be async)
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
 
+            # Quoted-output estimate (post-slippage floor would be lower).
+            # amount_out=0 made the engine compute entry_price=0, so the
+            # monitor skipped the position FOREVER — bought tokens were
+            # never SL/TP-managed or sold.
+            est_tokens_out = 0.0
+            if receipt['status'] == 1:
+                try:
+                    from core.units import from_raw_evm
+                    est_tokens_out = float(await from_raw_evm(
+                        chain or 'ethereum', token_address, expected_out
+                    ))
+                except Exception as conv_err:
+                    logger.warning(
+                        f"EVM buy: could not convert quoted output to tokens "
+                        f"({conv_err}) — position may not be monitorable"
+                    )
+
             return TradeResult(
                 success=receipt['status'] == 1,
                 chain=chain,
                 token_address=token_address,
                 amount_in=amount_in,
-                amount_out=0,  # Would parse from logs in production
+                amount_out=est_tokens_out,  # quoted estimate (receipt-log parse TODO)
                 tx_hash=tx_hash_hex,
                 gas_used=receipt['gasUsed'],
                 error=None if receipt['status'] == 1 else "Transaction reverted",
@@ -955,9 +996,6 @@ class TradeExecutor:
 
             from web3 import Web3
 
-            # First, approve router to spend tokens (if not already approved)
-            # In production, check allowance first
-
             # Router contract
             router = self.w3.eth.contract(
                 address=Web3.to_checksum_address(UNISWAP_V2_ROUTER),
@@ -972,6 +1010,39 @@ class TradeExecutor:
 
             # MB-11: convert input using on-chain decimals, not hardcoded 1e18.
             amount_tokens = await to_raw_evm(chain or 'ethereum', token_address, Decimal(str(amount_in)))
+
+            # Allowance gate: swapExactTokensForETH REVERTS without an
+            # approval — every LIVE sell burned gas and the position stayed
+            # stuck. Approve exact amount on demand (no unlimited approval).
+            token_contract = self.w3.eth.contract(
+                address=Web3.to_checksum_address(token_address), abi=ERC20_MIN_ABI
+            )
+            wallet_cs = Web3.to_checksum_address(self.evm_wallet)
+            router_cs = Web3.to_checksum_address(UNISWAP_V2_ROUTER)
+            allowance = token_contract.functions.allowance(wallet_cs, router_cs).call()
+            if allowance < amount_tokens:
+                logger.info(
+                    f"EVM sell: allowance {allowance} < {amount_tokens}, "
+                    f"sending approve for {token_address[:12]}..."
+                )
+                approve_tx = token_contract.functions.approve(
+                    router_cs, amount_tokens
+                ).build_transaction({
+                    'from': wallet_cs,
+                    'gas': 80000,
+                    'maxPriorityFeePerGas': Web3.to_wei(priority_fee, 'gwei'),
+                    'maxFeePerGas': Web3.to_wei(priority_fee + 50, 'gwei'),
+                    'nonce': self.w3.eth.get_transaction_count(wallet_cs)
+                })
+                signed_approve = self.w3.eth.account.sign_transaction(approve_tx, self.evm_private_key)
+                approve_hash = self.w3.eth.send_raw_transaction(signed_approve.rawTransaction)
+                approve_receipt = self.w3.eth.wait_for_transaction_receipt(approve_hash, timeout=60)
+                if approve_receipt['status'] != 1:
+                    return TradeResult(
+                        success=False, chain=chain, token_address=token_address,
+                        amount_in=amount_in, amount_out=0, tx_hash=None, gas_used=None,
+                        error="Approve reverted - cannot sell", timestamp=datetime.now()
+                    )
 
             # MB-11: quote expected ETH out and apply slippage haircut.
             try:
@@ -1022,12 +1093,17 @@ class TradeExecutor:
             # Wait for confirmation
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
 
+            # Quoted ETH-out estimate (WETH is 18 decimals). amount_out=0
+            # made _log_exit_to_db compute exit_usd=0 -> every successful
+            # LIVE EVM exit was persisted as -100% PnL.
+            est_eth_out = (expected_out / 1e18) if receipt['status'] == 1 else 0.0
+
             return TradeResult(
                 success=receipt['status'] == 1,
                 chain=chain,
                 token_address=token_address,
                 amount_in=amount_in,
-                amount_out=0,
+                amount_out=est_eth_out,  # quoted estimate (receipt-log parse TODO)
                 tx_hash=tx_hash_hex,
                 gas_used=receipt['gasUsed'],
                 error=None if receipt['status'] == 1 else "Transaction reverted",
