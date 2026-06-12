@@ -112,3 +112,83 @@ Each module follows the established pattern: `modules/<name>/` subprocess under 
 **Safety posture.** Pure data feed; no orders, no keys. Consumers treat absence-of-data as "no constraint" (fail-open for the feed, their own gates still apply).
 
 ---
+
+## TIER 2 — Medium-term / new P&L or execution surfaces
+
+### 6. `options_vol` — Crypto options module (hedging-first, Deribit)
+
+**Thesis.** The fleet's aggregate book is structurally long crypto-beta (DEX/Solana/Sniper/Copy are long-only or long-biased; Futures can short but rarely offsets the rest). Options are the only instrument that buys *convex* protection against the correlated-drawdown scenario, and BTC/ETH options on Deribit are the one deep, liquid crypto derivatives market the bot doesn't touch. Hedging-first sequencing: (1) tail-hedge overlay — when fleet net delta exceeds a threshold, buy short-dated OTM puts sized to cap fleet drawdown; (2) later, defined-risk premium selling (covered calls against treasury inventory, put spreads — never naked) when realized-vs-implied spread is favorable. The hedge leg alone justifies the module: it converts the fleet's worst-case from "correlated wipeout" to "known premium cost".
+
+**Where it slots in.** New `modules/options_vol/` subprocess. Reads fleet net exposure from pnl_tracker/allocation_guard aggregates; trades only on Deribit (new venue integration via ccxt, which supports Deribit options). Reports greeks (delta/vega/theta) to the dashboard as first-class numbers.
+
+**Data + infra.** Need: Deribit account + API keys, options chain data (free via Deribit API), a greeks/IV library (py_vollib-class, small), margin-model understanding (Deribit portfolio margin). Capital: a dedicated sub-account; hedging budget is a premium *expense* line (e.g., ≤50–100 bps of fleet NAV per month, DB-capped).
+
+**Feasibility: MEDIUM. Build size: L** (new venue, new instrument math, new risk dimension).
+
+**Key risks / why it might not work.**
+- *Premium bleed*: systematic put-buying is negative-EV in calm regimes; if the cap isn't enforced, the hedge eats more than the tail it insures. The monthly premium budget must be a hard DB cap.
+- *Premium selling is the classic bot-killer*: short vol pays daily and dies yearly. Hence sequencing — selling only after the hedging leg has run shadow + live cleanly, only defined-risk structures, and `reduceOnly`-equivalent discipline on every exit.
+- *Liquidity cliff outside BTC/ETH*: do not touch alt options; spreads there are uncrossable for a bot this size.
+- *Operational*: options margin + expiry/settlement handling is genuinely harder than perps; a missed expiry is an unhedged weekend.
+
+**Safety posture.** Shadow-first (log intended hedges + marked-to-market greeks for ≥4 weeks). Live behind `options_live_enabled=false` + `should_skip_live` + RiskManager-style notional caps + hard monthly premium budget. Selling strategies behind a *separate* second flag. Isolated sub-account so a margin error cannot touch spot/perp capital.
+
+---
+
+### 7. `yield_treasury` — Idle-capital carry (LST + blue-chip lending)
+
+**Thesis.** Once the `treasury` module (idea #2) exists, the bot will have a measurable idle balance: SOL waiting for sniper opportunities, USDC float between trades. Parking idle SOL in jitoSOL/mSOL (~7% APY, instantly usable as collateral, thin unstake friction) and idle USDC in Aave v3 / Kamino main markets (~3–8%) converts dead inventory into carry with no directional risk added. This is not a get-rich module — it is the desk discipline of never holding unremunerated cash. On a $50k idle float it's ~$2–3k/yr; the point is it scales linearly with the fleet and the build is small *because it rides on treasury's allowlist machinery*.
+
+**Where it slots in.** Extension wing of `modules/treasury/` (same subprocess, separate flag) rather than a standalone module — it shares the balance observer, allowlists, and caps. Only deposits to a short hard-coded venue allowlist (jitoSOL, mSOL, Aave v3 USDC, Kamino USDC main).
+
+**Data + infra.** Already have: Solana + EVM execution, Jupiter for LST swaps. Need: Aave/Kamino deposit/withdraw call wiring, an LST/stable depeg monitor (sentinel rule — idea #3 synergy).
+
+**Feasibility: MEDIUM-HIGH. Build size: S–M** (conditional on treasury Phase 2 existing).
+
+**Key risks / why it might not work.**
+- *Smart-contract risk is the whole story*: yields of 3–8% do not compensate a protocol exploit on concentrated treasury funds. Caps: max % of idle float deployed (e.g., 50%), max per venue (e.g., 25%), blue-chip venues only, no looping/leverage, no points farming, no new-protocol chasing — ever.
+- *Liquidity exactly when needed*: stress events that drain treasury liquidity are the same events when trading modules need capital. Keep an undeployed floor (gas + N days of trading float) that yield deployment can never touch.
+- *LST depeg/discount* during validator or market stress; sentinel must watch the LST/SOL ratio and trigger unwind alerts.
+- Opportunity cost is near zero, but so is the upside — this should never be prioritized above a measurement or safety module.
+
+**Safety posture.** Gated live behind `treasury_yield_enabled=false` AND treasury Phase 2 flags; venue allowlist hard-coded; per-venue and total caps in DB; every deposit/withdraw alerted; killswitch triggers no new deposits + withdrawal of lent stables.
+
+---
+
+### 8. `execution_gateway` — MEV-aware order-flow router (shared service)
+
+**Thesis.** Four modules (DEX, Arbitrage, Sniper EVM leg, Copy EVM leg) broadcast EVM transactions through public RPC today, which means every sizeable swap is sandwich bait — a silent 10–50 bps tax that TCA (idea #1) will likely make visible. A shared execution gateway routes EVM transactions through private order flow (Flashbots Protect / MEV Blocker style RPC) with public-RPC fallback, centralizes nonce management and gas/priority-fee policy, and unifies the Jito tip policy already used on Solana. Architecturally it is the execution sibling of pool_engine: pool_engine answers "which RPC do I read from?", the gateway answers "how do I *send* safely?". Centralizing send policy also closes a live-readiness gap: today each module re-implements broadcast logic, so every DRY_RUN/killswitch check at the send boundary is duplicated code that can drift.
+
+**Where it slots in.** Not a trading subprocess — a shared library + thin service under `trading/executors/` + `config/` (gateway policy in DB), adopted module-by-module behind per-module flags. Optionally a small monitor subprocess reporting inclusion latency and estimated sandwich savings (joint output with TCA).
+
+**Data + infra.** Need: private-relay RPC endpoints (free: Flashbots Protect RPC, MEV Blocker), pool_engine extension for "send-class" endpoints. Already have: Jito on Solana, nonce handling per module (to be consolidated carefully).
+
+**Feasibility: MEDIUM. Build size: M** — the code is modest; the *migration* of four live modules onto it without regressions is the real cost.
+
+**Key risks / why it might not work.**
+- *Latency vs protection trade-off*: private relays add inclusion delay; for Sniper, speed IS the edge, so Sniper likely opts out for entries and uses the gateway only for exits. This must be per-module, per-direction policy, not a blanket switch.
+- *Chain coverage*: protect-style RPC is mature on Ethereum mainnet, patchy on L2s/alt-L1s where the bot actually does much of its volume (Base, etc. — sequencer-ordered chains have different MEV profiles and less sandwich risk anyway). Honest sizing: the benefit may be concentrated on a minority of volume.
+- *Migration risk*: touching every module's send path is exactly where new bugs enter pre-live. Adopt one module at a time, DEX first (lowest latency sensitivity), with TCA before/after comparison as the acceptance test.
+
+**Safety posture.** Library-level: inherits each caller's DRY_RUN/killswitch gating, and adds a single choke-point assertion of `should_skip_live` at send time (defense in depth, not replacement). Per-module adoption flags default to legacy path.
+
+---
+
+### 9. `clmm_lp` — Concentrated-liquidity market-making (Uniswap v3 / Orca)
+
+**Thesis.** The bot already has deep plumbing on the *taker* side of AMMs; CLMM LPing is the maker side: deploy ranges on high-fee-tier pools the bot already understands (its own traded universe), earn fees, actively re-range. Done well, fees on volatile-pair CLMM positions can yield 20–80% APR. Done naively, impermanent loss eats it all. The honest framing: an LP position is a *short-gamma, short-vol position paid in fees* — it is a real trading desk with inventory risk, not passive yield.
+
+**Where it slots in.** New `modules/clmm_lp/` subprocess. Heavy synergy with existing code: pool state reading (DEX module), Orca detection (Copy module already decodes Orca/Meteora), price validation (Solana PriceValidator), and — critically — the Futures module could delta-hedge LP inventory (an internal cross-module hedge, which meta layers can see via allocation_guard).
+
+**Data + infra.** Have: RPC, pool math partially, venues. Need: position NFT management (Uni v3) / Orca whirlpool position accounts, IL accounting in pnl_tracker terms (fees earned vs HODL benchmark — must be first-class or the module will look profitable while losing), re-range cost model (gas + crossing spread every rebalance).
+
+**Feasibility: MEDIUM-LOW. Build size: L.**
+
+**Key risks / why it might not work.**
+- *IL in trending markets*: a one-way move converts the position into the depreciating asset at the worst average price. Without delta-hedging this is a levered short-vol bet; with hedging it becomes an operationally complex MM desk (hedge slippage + funding cost can exceed fee income).
+- *Toxic flow*: informed flow (arb bots — including this bot's own Arbitrage module, ironically) picks off stale ranges; retail fee flow is concentrated in a few pools where professional LPs already compete with better re-range latency.
+- *Measurement trap*: fee APR looks great while IL accrues unrealized. If the HODL-benchmark accounting isn't built first, the module will be approved on fake numbers. This is the #1 reason to defer it until TCA + warehouse exist.
+
+**Safety posture.** Shadow-first with full IL-vs-HODL simulation on live pool data (warehouse-dependent) for ≥4 weeks. Live behind dedicated flag + small fixed inventory cap + sentinel depeg/deviation rules. No leverage, no exotic pools, max 2 pools in v1.
+
+---
