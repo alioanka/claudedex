@@ -1065,6 +1065,35 @@ class RiskManager:
                 
         return targets
         
+    async def get_available_balance(self, chain: Optional[str] = None) -> float:
+        """Deployable USD balance for sizing (additive; used by the DEX live path).
+
+        Sources, in order (same chain validate_trade uses): wallet_manager,
+        then portfolio_manager. Fail-soft: any error returns 0.0 — a zero
+        balance can only shrink position sizing, never over-size or raise.
+        """
+        try:
+            getter = getattr(self.wallet_manager, 'get_available_balance', None)
+            if getter is not None:
+                balance = getter()
+                if asyncio.iscoroutine(balance):
+                    balance = await balance
+                if balance is not None:
+                    return max(0.0, float(balance))
+        except Exception as e:
+            log.warning(f"get_available_balance: wallet_manager source failed ({e})")
+        try:
+            if self.portfolio_manager is not None:
+                balance = self.portfolio_manager.get_available_balance()
+                if asyncio.iscoroutine(balance):
+                    balance = await balance
+                if balance is not None:
+                    return max(0.0, float(balance))
+        except Exception as e:
+            log.warning(f"get_available_balance: portfolio_manager source failed ({e})")
+        log.warning("get_available_balance: no source available — returning 0.0 (fail-soft)")
+        return 0.0
+
     async def validate_trade(self, token_address: str, amount: float) -> Tuple[bool, str]:
         """
         Final validation before executing trade
