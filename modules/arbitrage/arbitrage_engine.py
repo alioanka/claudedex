@@ -2971,10 +2971,33 @@ class EVMArbitrageEngine:
                     )
                     return
                 if receipt_ok is None:
+                    # Punch-list #6: do NOT book an unconfirmed tx as a closed
+                    # won fill. A receipt-timeout tx that later reverts would
+                    # become a fake win in arbitrage_trades and poison live PnL
+                    # + the realized-slippage learner. Record an UNVERIFIED
+                    # near-miss + alert the operator with the hash to check;
+                    # only a confirmed receipt.status==1 books a real fill.
                     self.logger.warning(
-                        f"⚠️ Receipt unconfirmed after {self._receipt_confirm_timeout_s:.0f}s "
-                        f"— booking trade optimistically; VERIFY {tx_hash} on-chain"
+                        f"⚠️ [{self.chain_name.upper()}] Receipt UNCONFIRMED after "
+                        f"{self._receipt_confirm_timeout_s:.0f}s [{token_symbol}] "
+                        f"— NOT booking; VERIFY {tx_hash} on-chain"
                     )
+                    self._record_near_miss(
+                        'tx_unconfirmed',
+                        pair=token_symbol, buy_dex=buy_dex, sell_dex=sell_dex,
+                        detail=tx_hash[:24],
+                    )
+                    await self._send_error_alert(
+                        error_type="Tx Unconfirmed",
+                        details=(
+                            f"Arbitrage tx for {token_symbol} not confirmed within "
+                            f"{self._receipt_confirm_timeout_s:.0f}s — NOT booked as a "
+                            f"fill. Verify on-chain.\nTx: {tx_hash}"
+                        ),
+                        token_symbol=token_symbol,
+                        tx_hash=tx_hash,
+                    )
+                    return
                 self.logger.info(f"✅ [{self.chain_name.upper()}] Arbitrage executed [{token_symbol}]: {tx_hash}")
                 await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, gross_spread, tx_hash, token_symbol, token_out_symbol)
             else:
@@ -3118,6 +3141,28 @@ class EVMArbitrageEngine:
         amount: int
     ) -> Optional[str]:
         """Execute arbitrage with own capital, optionally via Flashbots"""
+
+        # Punch-list #3: hard-disabled, mirroring the MB-05 triangular gate.
+        # Both legs below are built with amountOutMin=0 (unbounded slippage /
+        # sandwich exposure) and the sell leg sells the INPUT amount instead of
+        # the buy leg's actual output ("Simplified" in-code). It only failed
+        # safe because Flashbots simulation + MB-04 rejected it. Refuse to
+        # execute until rebuilt with real slippage floors on both legs, chained
+        # leg outputs, and _get_next_nonce. Re-enabling requires a deliberate
+        # code change, not a config flip — there is no flag that can reach the
+        # unsafe body.
+        self.logger.warning(
+            "Direct-swap execution path is disabled (punch-list #3): "
+            "amountOutMin=0 on both legs + sell leg uses input units. Deploy "
+            f"the flash-loan receiver contract for {self.chain_name.upper()} "
+            "or rebuild this path before use."
+        )
+        self._record_near_miss(
+            'direct_swap_disabled',
+            buy_dex=buy_dex, sell_dex=sell_dex,
+            pair=f"{token_in[:10]}/{token_out[:10]}",
+        )
+        return None
 
         try:
             buy_router = self.router_contracts.get(buy_dex)
