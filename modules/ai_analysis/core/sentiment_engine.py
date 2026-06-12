@@ -108,7 +108,22 @@ class AITradeExecutor:
 
         # Phase 2 #5 wired self.risk_manager — finally consult it on the live path.
         # Mirrors the ARB P1-06 gate; rejection short-circuits before any exchange call.
-        if self.risk_manager is not None:
+        #
+        # LIVE-READY refinements (entry-only gating, mirrors COPY's BUY-only
+        # posture):
+        #   - reduce_only closes are EXEMPT — an exit reduces exposure and
+        #     must never be blocked by a daily-loss circuit breaker, which
+        #     would strand an open futures position past its SL.
+        #   - entries fail CLOSED when the RiskManager was never wired
+        #     (main_ai constructs it fail-soft; a crashed init would
+        #     otherwise let LIVE entries through ungated).
+        if not reduce_only and self.risk_manager is None:
+            logger.critical(
+                "LIVE AI entry refused: RiskManager unavailable (fail-closed). "
+                "Check 'core.risk_manager wiring failed' at startup."
+            )
+            return {'success': False, 'error': 'risk manager unavailable (live entry fail-closed)'}
+        if not reduce_only and self.risk_manager is not None:
             try:
                 allowed, reason = await self.risk_manager.validate_trade(symbol, amount_usd)
             except Exception as e:
@@ -310,6 +325,11 @@ class SentimentEngine:
         # >= 0.5" refers to the display layer, not the execution gate.
         self.confidence_threshold = 0.35
         self.trade_amount_usd = 50.0
+        # LIVE-READY (migration 111): hard ceiling on per-trade notional.
+        # trade_amount_usd is clamped to [1, this] at load so a fat-finger
+        # DB value (e.g. 50000) cannot size a $50k futures entry. Default
+        # 1000 is 20x the default trade size — no behavior change.
+        self.ai_trade_amount_max_usd = 1000.0
         self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
         # Exit strategy settings
@@ -519,7 +539,19 @@ class SentimentEngine:
                         # Handle both percentage (50-100) and decimal (0.5-1.0) formats
                         thresh = float(val)
                         # If > 1, it's a percentage, convert to decimal
-                        self.confidence_threshold = thresh / 100.0 if thresh > 1 else thresh
+                        thresh = thresh / 100.0 if thresh > 1 else thresh
+                        # LIVE-READY: clamp to the score domain so a negative
+                        # or garbage DB value cannot make every cycle trade.
+                        self.confidence_threshold = max(0.0, min(1.0, thresh))
+                    elif key == 'ai_trade_amount_max_usd':
+                        # LIVE-READY (migration 111): per-trade notional
+                        # ceiling. Loaded BEFORE the clamp below relies on it
+                        # only within this loop iteration order — so the
+                        # clamp is re-applied after the loop as well.
+                        try:
+                            self.ai_trade_amount_max_usd = max(1.0, min(100000.0, float(val)))
+                        except (ValueError, TypeError):
+                            pass
                     elif key == 'trade_amount_usd':
                         self.trade_amount_usd = float(val)
                     elif key == 'ai_provider':
@@ -611,6 +643,16 @@ class SentimentEngine:
                             self.ai_confirmation_max_opposing_momentum = max(0.0, min(1.0, float(val)))
                         except (ValueError, TypeError):
                             pass
+
+            # LIVE-READY: apply the notional ceiling AFTER the loop so the
+            # clamp holds regardless of DB row iteration order.
+            try:
+                self.trade_amount_usd = max(
+                    1.0,
+                    min(float(self.ai_trade_amount_max_usd), float(self.trade_amount_usd)),
+                )
+            except (ValueError, TypeError):
+                self.trade_amount_usd = 50.0
 
             logger.info(f"📋 AI Settings loaded:")
             logger.info(f"   Provider: {self.ai_provider.upper()}")
@@ -1374,6 +1416,22 @@ class SentimentEngine:
         # MB-21: if sanitization dropped every headline, skip the LLM entirely.
         if not texts:
             return 0.0
+
+        # LIVE-READY: this legacy path POSTs directly to a PAID endpoint and
+        # is reachable whenever the AIProviderManager is unavailable OR
+        # returned 0.0 (the run loop falls through), and on every
+        # _quorum_sentiment call — previously with NO budget gate, unlike
+        # ai_provider.py which already consults core.llm_budget. Gate it the
+        # same way: when the bot-wide daily cap is reached, make NO paid
+        # call and return neutral. try_consume itself fails soft (cap<=0
+        # disables); the except guard keeps a budget-module bug from ever
+        # breaking analysis.
+        try:
+            from core.llm_budget import try_consume
+            if not try_consume(kind=f"ai_legacy_{provider}", log=logger):
+                return 0.0
+        except Exception:
+            pass  # never let the budget gate itself break analysis
 
         # Wave-13: model IDs are now instance attrs loaded from DB so
         # operators can change them without a code deploy. Previously
