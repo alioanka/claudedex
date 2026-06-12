@@ -2160,9 +2160,13 @@ class SniperEngine:
         """Derive USD price per whole token from a Jupiter quote.
 
         Sends a small SOL → token quote and converts outAmount into a
-        USD price. Trade executor normalizes amount_out at /1e6 (i.e.
-        assumes 6 decimals) so we match that convention here for unit
-        consistency with entry_price. Returns 0 on failure.
+        USD price using REAL on-chain decimals (executor's cached
+        _get_mint_decimals, fail-soft 6) so the price stays unit-
+        consistent with the executor's amount_out AND with the Pyth /
+        Price-v2 / Birdeye sources (all true USD-per-whole-token).
+        The old hardcoded /1e6 disagreed 1000x with those sources for
+        9-dec mints, tripping the phantom-price guard and (in LIVE)
+        blocking every exit decision. Returns 0 on failure.
         """
         try:
             import aiohttp
@@ -2186,10 +2190,14 @@ class SniperEngine:
             if sol_usd <= 0:
                 return 0
 
-            # Match trade_executor's 6-decimal convention: tokens_received
-            # is out_amount_raw / 1e6.
+            decimals = 6
+            try:
+                if self.executor is not None:
+                    decimals = await self.executor._get_mint_decimals(token_address)
+            except Exception:
+                decimals = 6
             in_sol = in_lamports / 1e9
-            tokens_received = out_amount_raw / 1e6
+            tokens_received = out_amount_raw / (10 ** decimals)
             if tokens_received <= 0:
                 return 0
             price_usd = (in_sol * sol_usd) / tokens_received

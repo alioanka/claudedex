@@ -148,6 +148,11 @@ class TradeExecutor:
 
         # Settings
         self.dry_run = True
+        # LIVE confirmation budget for Solana sends (engine overwrites from
+        # DB key sniper_confirm_timeout_secs after _load_settings).
+        self.confirm_timeout_secs = 45.0
+        # Per-mint SPL decimals cache (on-chain lookup is immutable data).
+        self._decimals_cache: Dict[str, int] = {}
 
     async def _get_decrypted_key(self, key_name: str) -> Optional[str]:
         """
@@ -411,6 +416,68 @@ class TradeExecutor:
 
     # ===== SOLANA EXECUTION (Jupiter) =====
 
+    async def _get_mint_decimals(self, token_address: str) -> int:
+        """On-chain SPL decimals with cache; fail-soft to 6 (legacy assumption).
+
+        The hardcoded 1e6 convention silently mis-sized every non-6-decimal
+        mint: a 9-dec token's sell leg requested 1000x the held balance
+        (always failed -> position stuck) and PnL denomination was off by
+        the same factor.
+        """
+        cached = self._decimals_cache.get(token_address)
+        if cached is not None:
+            return cached
+        try:
+            from core.units import get_spl_decimals
+            decimals = int(await get_spl_decimals(token_address))
+            self._decimals_cache[token_address] = decimals
+            return decimals
+        except Exception as e:
+            logger.warning(
+                f"SPL decimals fetch failed for {token_address[:12]}... ({e}); "
+                f"falling back to 6 — amounts may be mis-scaled for this mint"
+            )
+            return 6
+
+    async def _confirm_solana_tx(self, signature: str, rpc_url: str) -> bool:
+        """Poll getSignatureStatuses until confirmed/finalized, on-chain error,
+        or timeout (self.confirm_timeout_secs). Returns True ONLY for a
+        landed tx with no err — a confirmed-but-failed tx (e.g. 0x1771
+        slippage) is a failure, not a fill."""
+        deadline = asyncio.get_event_loop().time() + max(5.0, float(self.confirm_timeout_secs))
+        poll_s = 1.5
+        payload = {
+            "jsonrpc": "2.0", "id": 1,
+            "method": "getSignatureStatuses",
+            "params": [[signature], {"searchTransactionHistory": True}],
+        }
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                async with self.session.post(rpc_url, json=payload) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        value = (data.get('result') or {}).get('value') or []
+                        status = value[0] if value else None
+                        if status:
+                            if status.get('err'):
+                                logger.error(
+                                    f"❌ Solana TX FAILED on-chain: {status['err']} sig={signature}"
+                                )
+                                return False
+                            if status.get('confirmationStatus') in ('confirmed', 'finalized'):
+                                logger.info(f"✅ Solana TX confirmed: {signature}")
+                                return True
+                    elif resp.status == 429:
+                        poll_s = min(poll_s * 1.5, 5.0)
+            except Exception as e:
+                logger.debug(f"confirm poll error for {signature[:16]}...: {e}")
+            await asyncio.sleep(poll_s)
+        logger.error(
+            f"❌ Solana TX NOT confirmed within {self.confirm_timeout_secs:.0f}s: {signature} "
+            f"— treated as FAILED (no fill recorded). Check https://solscan.io/tx/{signature}"
+        )
+        return False
+
     async def _execute_solana_buy(
         self,
         token_address: str,
@@ -466,9 +533,13 @@ class TradeExecutor:
             tx_hash = await self._sign_and_send_solana_tx(swap_tx)
 
             if tx_hash:
+                # Real on-chain decimals (fail-soft 6): /1e6 overstated a
+                # 9-dec mint's token count 1000x, which then broke the sell
+                # leg and PnL denomination.
+                decimals = await self._get_mint_decimals(token_address)
                 return TradeResult(
                     success=True, chain='solana', token_address=token_address,
-                    amount_in=amount_in, amount_out=expected_output / 1e6,  # Assume 6 decimals
+                    amount_in=amount_in, amount_out=expected_output / (10 ** decimals),
                     tx_hash=tx_hash, gas_used=priority_fee,
                     error=None, timestamp=datetime.now()
                 )
@@ -503,8 +574,12 @@ class TradeExecutor:
                     error="Solana wallet not configured", timestamp=datetime.now()
                 )
 
-            # 1. Get quote from Jupiter (selling token for SOL)
-            amount_tokens = int(amount_in * 1e6)  # Assume 6 decimals
+            # 1. Get quote from Jupiter (selling token for SOL).
+            # Real on-chain decimals: the old *1e6 assumption requested 1000x
+            # the held balance for 9-dec mints — every sell failed and the
+            # position was permanently stuck.
+            decimals = await self._get_mint_decimals(token_address)
+            amount_tokens = int(amount_in * (10 ** decimals))
             slippage_bps = int(slippage * 100)
 
             quote = await self._get_jupiter_quote(
@@ -713,17 +788,39 @@ class TradeExecutor:
                     logger.error(f"❌ Missing co-signer for slot {i} ({account_keys[i]})")
                     return None
             signed_tx = VersionedTransaction.populate(message, final_sigs)
+            # The tx signature IS the fee-payer signature — known before
+            # broadcast. Used for idempotent status recovery when the send
+            # call errors after the tx already reached the network.
+            expected_sig = str(final_sigs[0])
 
             # Send transaction - PoolEngine first (async ctx), .env preserved as fallback
             rpc_url = (
                 (await RPCProvider.get_rpc('SOLANA_RPC') if RPCProvider else None)
                 or os.getenv('SOLANA_RPC_URL')
             )
-            async with AsyncClient(rpc_url) as client:
-                result = await client.send_transaction(signed_tx)
-                tx_hash = str(result.value)
-                logger.info(f"✅ Solana TX sent: {tx_hash}")
-                return tx_hash
+            tx_hash = None
+            try:
+                async with AsyncClient(rpc_url) as client:
+                    result = await client.send_transaction(signed_tx)
+                    tx_hash = str(result.value)
+                    logger.info(f"📤 Solana TX sent: {tx_hash}")
+            except Exception as send_err:
+                # The RPC call failing does NOT prove the tx didn't broadcast
+                # (timeout after relay). Check the known signature's status
+                # below instead of silently double-spending on a retry.
+                logger.warning(
+                    f"send_transaction error ({send_err}); checking status of "
+                    f"known signature {expected_sig[:16]}... before declaring failure"
+                )
+                tx_hash = expected_sig
+
+            # CRITICAL: a sent tx is not a fill. Confirm (commitment +
+            # on-chain err check) before reporting success — otherwise
+            # blockhash-expired/slippage-failed txs are recorded as LIVE
+            # buys that never happened.
+            if not await self._confirm_solana_tx(tx_hash, rpc_url):
+                return None
+            return tx_hash
 
         except ImportError as e:
             logger.error(f"Solana libraries not installed: {e}")
