@@ -1574,6 +1574,9 @@ class DashboardEndpoints:
         # cross-module performance comparison, and the read-only
         # meta_controller decision surface. All fail-soft.
         self.app.router.add_get(
+            '/control-center', require_auth(self._control_center_page)
+        )
+        self.app.router.add_get(
             '/api/control-center/overview', self.api_control_center_overview
         )
         self.app.router.add_get(
@@ -1706,6 +1709,16 @@ class DashboardEndpoints:
     async def _fallback_modules_page(self, request):
         template = self.jinja_env.get_template('modules.html')
         return web.Response(text=template.render(page='modules', modules=[], metrics={}), content_type='text/html')
+
+    async def _control_center_page(self, request):
+        """Control Center v4 — unified module overview + cross-module
+        performance + read-only meta-controller surface. Pure template;
+        all data arrives via the batched fail-soft APIs."""
+        template = self.jinja_env.get_template('control_center.html')
+        return web.Response(
+            text=template.render(page='control_center'),
+            content_type='text/html',
+        )
 
     async def _fallback_api_modules(self, request):
         """Return module data from .env settings and database"""
