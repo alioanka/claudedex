@@ -2619,16 +2619,12 @@ class FuturesTradingEngine:
                 logger.info(f"🔵 [DRY_RUN] Partial close {symbol} ({reason})")
                 logger.info(f"   Closed: {close_size:.6f} ({close_pct:.1f}%), PnL: ${net_pnl:.2f}")
             else:
-                # Execute real partial close order
-                close_side = 'sell' if position.side == TradeSide.LONG else 'buy'
+                # Execute real partial close via the unified reduce-only path (#4).
                 try:
-                    order = await self.exchange_client.create_market_order(
-                        symbol=symbol,
-                        side=close_side,
-                        amount=close_size,
-                        params={'reduceOnly': True}
+                    order = await self._exchange_close_market(
+                        symbol, position.side, close_size, leverage=position.leverage
                     )
-                    logger.info(f"🎯 Partial close {symbol} - Order ID: {order['id']}")
+                    logger.info(f"🎯 Partial close {symbol} - Order ID: {order.get('id', 'unknown')}")
                 except Exception as e:
                     logger.error(f"❌ Partial close order failed: {e}")
                     return
@@ -2967,9 +2963,9 @@ class FuturesTradingEngine:
                 logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}, Notional: ${notional:.2f}")
                 logger.info(f"   SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f}")
             else:
-                # Execute real order via the ISOLATED-margin + leverage-set helper.
-                # LIVE-P0: raw ccxt has no open_long/open_short — see
-                # _exchange_open_market.
+                # Execute real order via the unified open helper (#4): native
+                # adapter open_long/open_short when present, else the ccxt
+                # ISOLATED-margin + leverage-set fallback.
                 try:
                     order = await self._exchange_open_market(symbol, side, size)
                     if not order:
@@ -3076,16 +3072,12 @@ class FuturesTradingEngine:
             if _skip and position.is_simulated:
                 logger.info(f"🔵 [DRY_RUN] SIMULATED CLOSE {symbol} ({reason})")
             else:
-                # Execute real close order
-                close_side = 'sell' if position.side == TradeSide.LONG else 'buy'
+                # Execute real close via the unified reduce-only path (#4).
                 try:
-                    order = await self.exchange_client.create_market_order(
-                        symbol=symbol,
-                        side=close_side,
-                        amount=position.size,
-                        params={'reduceOnly': True}
+                    order = await self._exchange_close_market(
+                        symbol, position.side, position.size, leverage=position.leverage
                     )
-                    logger.info(f"🔴 CLOSED {symbol} - Order ID: {order['id']}")
+                    logger.info(f"🔴 CLOSED {symbol} - Order ID: {order.get('id', 'unknown')}")
                 except Exception as e:
                     logger.error(f"❌ Close order failed: {e}")
                     return
@@ -3531,14 +3523,75 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.debug(f"funding snapshot write failed (non-fatal): {e}")
 
+    @staticmethod
+    def _resolve_order_interface(client) -> str:
+        """Method-resolution for the unified live-order path (#4): 'adapter'
+        when the client implements the native open_long/open_short surface
+        (modules/futures_trading/exchanges/*), 'ccxt' when it only exposes
+        raw ccxt create_market_order, 'unsupported' otherwise. Pure and
+        offline-testable — see _order_interface_self_test()."""
+        if client is None:
+            return 'unsupported'
+        if callable(getattr(client, 'open_long', None)) and \
+                callable(getattr(client, 'open_short', None)):
+            return 'adapter'
+        if callable(getattr(client, 'create_market_order', None)):
+            return 'ccxt'
+        return 'unsupported'
+
+    @staticmethod
+    def _adapter_symbol(symbol: str) -> str:
+        """ccxt-unified 'BTC/USDT' (or 'BTC/USDT:USDT') -> raw 'BTCUSDT'
+        format expected by the native adapters."""
+        return symbol.split(':')[0].replace('/', '')
+
+    @staticmethod
+    def _normalize_order_result(order):
+        """Guarantee 'id' and best-effort 'average' on order results from any
+        source (ccxt unified / Binance raw / Bybit V5). Fail-soft."""
+        if not isinstance(order, dict):
+            return order
+        normalized = dict(order)
+        if normalized.get('id') is None:
+            for key in ('orderId', 'orderLinkId', 'clientOrderId'):
+                if normalized.get(key):
+                    normalized['id'] = str(normalized[key])
+                    break
+            else:
+                normalized['id'] = 'unknown'
+        if normalized.get('average') is None:
+            try:
+                avg = float(normalized.get('avgPrice') or 0)
+                if avg > 0:
+                    normalized['average'] = avg
+            except (TypeError, ValueError):
+                pass
+        return normalized
+
     async def _exchange_open_market(self, symbol: str, side: 'TradeSide', quantity: float):
-        """LIVE-P0 entry helper: `exchange_client` is a raw ccxt instance which
-        has NO open_long/open_short — the previous calls raised AttributeError
-        on every live entry (swallowed as 'Order execution failed'), so the
-        module could never open a live position. This applies the MB-17 intent
-        inline (ISOLATED margin + leverage), then sends the market order.
-        Exchange 'already set' idempotency errors are expected and skipped;
-        any real order error still raises to the caller."""
+        """Unified LIVE entry helper (#4) — ONE resolution for both client
+        shapes so a future adapter swap cannot reintroduce the 20ca565
+        AttributeError P0:
+        - native adapter (open_long/open_short): sets ISOLATED margin +
+          leverage internally, with exchange-side idempotency tokens;
+        - raw ccxt: MB-17 applied inline (ISOLATED + leverage idempotency
+          errors skipped), then create_market_order.
+        Callers keep should_skip_live + validate_new_position upstream and
+        the FUT-RM-07 isolated-verify downstream of this call. Raises on an
+        unsupported client (fail-closed — never silently no-op a live order)."""
+        iface = self._resolve_order_interface(self.exchange_client)
+        if iface == 'adapter':
+            fn = (self.exchange_client.open_long if side == TradeSide.LONG
+                  else self.exchange_client.open_short)
+            order = await fn(self._adapter_symbol(symbol), quantity,
+                             leverage=int(self.leverage))
+            return self._normalize_order_result(order) if order else None
+        if iface != 'ccxt':
+            raise RuntimeError(
+                f"exchange client {type(self.exchange_client).__name__} supports neither "
+                f"the native adapter (open_long/open_short) nor the ccxt "
+                f"(create_market_order) order interface — refusing live order for {symbol}"
+            )
         try:
             await self.exchange_client.set_margin_mode('isolated', symbol)
         except Exception as e:
@@ -3552,7 +3605,40 @@ class FuturesTradingEngine:
             if not any(t in msg for t in ('not modified', '110043', '-4059')):
                 logger.warning(f"set_leverage({self.leverage}, {symbol}) failed: {e}")
         order_side = 'buy' if side == TradeSide.LONG else 'sell'
-        return await self.exchange_client.create_market_order(symbol, order_side, quantity)
+        order = await self.exchange_client.create_market_order(symbol, order_side, quantity)
+        return self._normalize_order_result(order)
+
+    async def _exchange_close_market(self, symbol: str, position_side: 'TradeSide',
+                                     quantity: float, leverage: Optional[int] = None):
+        """Unified LIVE reduce-only market close (full or partial) — same
+        resolution as _exchange_open_market. Adapter route: opposite-side
+        open_* with reduce_only=True (the native reduce-only surface), passing
+        the position's own leverage so the exchange-side leverage set is a
+        no-op. ccxt route: create_market_order with params={'reduceOnly': True}.
+        Raises when no order could be placed so callers keep the position open
+        and retry next cycle (never book a close that did not happen)."""
+        iface = self._resolve_order_interface(self.exchange_client)
+        if iface == 'adapter':
+            fn = (self.exchange_client.open_short if position_side == TradeSide.LONG
+                  else self.exchange_client.open_long)
+            order = await fn(self._adapter_symbol(symbol), quantity,
+                             leverage=int(leverage or self.leverage), reduce_only=True)
+            if not order:
+                raise RuntimeError(f"adapter reduce-only close returned empty for {symbol}")
+            return self._normalize_order_result(order)
+        if iface != 'ccxt':
+            raise RuntimeError(
+                f"exchange client {type(self.exchange_client).__name__} supports no known "
+                f"order interface — cannot close {symbol}"
+            )
+        order_side = 'sell' if position_side == TradeSide.LONG else 'buy'
+        order = await self.exchange_client.create_market_order(
+            symbol=symbol,
+            side=order_side,
+            amount=quantity,
+            params={'reduceOnly': True}
+        )
+        return self._normalize_order_result(order)
 
     async def _verify_isolated_or_close(self, symbol: str, side: TradeSide) -> None:
         """FUT-RM-07: defense-in-depth on MB-17.
@@ -3862,3 +3948,103 @@ class FuturesTradingEngine:
                 pass
 
         logger.info("✅ Engine shutdown complete")
+
+def _order_interface_self_test() -> None:
+    """Offline asserts on the #4 unified live-order method-resolution.
+    No network, no keys, no live calls:
+    python -m modules.futures_trading.core.futures_engine"""
+
+    class _AdapterStub:
+        """Mimics exchanges/binance_futures.py / bybit_futures.py surface."""
+        def __init__(self):
+            self.calls = []
+
+        async def open_long(self, symbol, quantity, leverage=3, reduce_only=False):
+            self.calls.append(('open_long', symbol, quantity, leverage, reduce_only))
+            return {'orderId': '42', 'avgPrice': '101.5'}
+
+        async def open_short(self, symbol, quantity, leverage=3, reduce_only=False):
+            self.calls.append(('open_short', symbol, quantity, leverage, reduce_only))
+            return {'orderId': '43'}
+
+    class _CcxtStub:
+        """Mimics the raw ccxt surface the engine builds in _init_binance/_init_bybit."""
+        def __init__(self):
+            self.calls = []
+
+        async def set_margin_mode(self, mode, symbol):
+            self.calls.append(('set_margin_mode', mode, symbol))
+
+        async def set_leverage(self, lev, symbol):
+            self.calls.append(('set_leverage', lev, symbol))
+
+        async def create_market_order(self, symbol, side=None, amount=None, params=None):
+            self.calls.append(('create_market_order', symbol, side, amount, params))
+            return {'id': 'ccxt-1', 'average': 99.0}
+
+    class _BothStub(_AdapterStub, _CcxtStub):
+        pass
+
+    resolve = FuturesTradingEngine._resolve_order_interface
+    assert resolve(_AdapterStub()) == 'adapter'
+    assert resolve(_CcxtStub()) == 'ccxt'
+    assert resolve(_BothStub()) == 'adapter'  # native adapter wins when both exist
+    assert resolve(object()) == 'unsupported'
+    assert resolve(None) == 'unsupported'
+
+    sym = FuturesTradingEngine._adapter_symbol
+    assert sym('BTC/USDT') == 'BTCUSDT'
+    assert sym('BTC/USDT:USDT') == 'BTCUSDT'
+    assert sym('BTCUSDT') == 'BTCUSDT'
+
+    norm = FuturesTradingEngine._normalize_order_result
+    n = norm({'orderId': '7', 'avgPrice': '3.5'})
+    assert n['id'] == '7' and abs(n['average'] - 3.5) < 1e-9
+    assert norm({'orderLinkId': 'cd-x'})['id'] == 'cd-x'
+    assert norm({'retCode': 0})['id'] == 'unknown'
+    assert norm({'id': 'keep', 'average': 1.0})['id'] == 'keep'
+
+    eng = object.__new__(FuturesTradingEngine)
+    eng.leverage = 5
+
+    async def _run():
+        # Adapter route: open + reduce-only close with side flip + symbol map.
+        eng.exchange_client = _AdapterStub()
+        o = await eng._exchange_open_market('BTC/USDT', TradeSide.LONG, 0.5)
+        assert o['id'] == '42' and abs(o['average'] - 101.5) < 1e-9
+        c = await eng._exchange_close_market('BTC/USDT', TradeSide.LONG, 0.5, leverage=10)
+        assert c['id'] == '43'
+        assert eng.exchange_client.calls == [
+            ('open_long', 'BTCUSDT', 0.5, 5, False),
+            ('open_short', 'BTCUSDT', 0.5, 10, True),
+        ]
+        # ccxt route: ISOLATED + leverage on open, reduceOnly param on close.
+        eng.exchange_client = _CcxtStub()
+        o = await eng._exchange_open_market('ETH/USDT', TradeSide.SHORT, 1.0)
+        assert o['id'] == 'ccxt-1'
+        c = await eng._exchange_close_market('ETH/USDT', TradeSide.SHORT, 1.0)
+        assert c['id'] == 'ccxt-1'
+        names = [x[0] for x in eng.exchange_client.calls]
+        assert names == ['set_margin_mode', 'set_leverage',
+                         'create_market_order', 'create_market_order']
+        open_call = eng.exchange_client.calls[2]
+        assert open_call[2] == 'sell' and open_call[4] is None  # SHORT entry
+        close_call = eng.exchange_client.calls[3]
+        assert close_call[2] == 'buy' and close_call[4] == {'reduceOnly': True}
+        # Unsupported client must raise (fail-closed), never silently no-op.
+        eng.exchange_client = object()
+        for make in (lambda: eng._exchange_open_market('X/USDT', TradeSide.LONG, 1.0),
+                     lambda: eng._exchange_close_market('X/USDT', TradeSide.LONG, 1.0)):
+            try:
+                await make()
+            except RuntimeError:
+                pass
+            else:
+                raise AssertionError('unsupported client did not raise')
+
+    asyncio.run(_run())
+    print('futures_engine order-interface self-test OK')
+
+
+if __name__ == '__main__':
+    _order_interface_self_test()
