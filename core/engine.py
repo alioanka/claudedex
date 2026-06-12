@@ -219,6 +219,12 @@ class TradingBotEngine:
         # Trading components
 
         executor_config = {
+            # Resolved module dry-run flag (set by main_dex from
+            # resolve_module_dry_run). Without this key the executor fell
+            # back to its safe default True and could never broadcast live.
+            'DRY_RUN': config.get('dry_run', True),
+            # Enables the executor's wallet-mismatch safety check.
+            'wallet_address': config.get('wallet_address'),
             'web3_provider_url': config.get('web3', {}).get('provider_url'),
             'private_key': config.get('security', {}).get('private_key'),
             'chain_id': config.get('web3', {}).get('chain_id', 1),
