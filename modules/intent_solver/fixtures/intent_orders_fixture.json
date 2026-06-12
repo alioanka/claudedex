@@ -1,0 +1,57 @@
+{
+  "now_ts": 1765000000,
+  "cow_orders": [
+    {
+      "uid": "0xaaa1",
+      "kind": "sell",
+      "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "sellAmount": "1000000000000000000",
+      "buyAmount": "2900000000",
+      "validTo": 1765003600,
+      "partiallyFillable": false,
+      "class": "limit"
+    },
+    {
+      "uid": "0xaaa2",
+      "kind": "buy",
+      "sellToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "buyToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "sellAmount": "3100000000",
+      "buyAmount": "1000000000000000000",
+      "validTo": 1765003600,
+      "partiallyFillable": true,
+      "class": "market"
+    },
+    {
+      "uid": "0xaaa3",
+      "kind": "sell",
+      "sellToken": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+      "buyToken": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+      "sellAmount": "1000000000000000000",
+      "buyAmount": "2900000000",
+      "validTo": 1764999999,
+      "partiallyFillable": false,
+      "class": "limit"
+    }
+  ],
+  "uniswapx_orders": [
+    {
+      "orderHash": "0xbbb1",
+      "decayStartTime": 1764999900,
+      "decayEndTime": 1765000100,
+      "input": {
+        "token": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+        "startAmount": "1000000000000000000",
+        "endAmount": "1000000000000000000"
+      },
+      "outputs": [
+        {
+          "token": "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          "startAmount": "2950000000",
+          "endAmount": "2850000000"
+        }
+      ]
+    }
+  ]
+}
