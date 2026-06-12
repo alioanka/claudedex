@@ -1834,6 +1834,52 @@ class CopyTradingEngine(BaseModule):
                             self.copy_request_spacing_s = max(0.0, min(5.0, v))
                         except (TypeError, ValueError):
                             pass
+                    elif key == 'copy_wallet_cooldown_s':
+                        # LIVE-READY (migration 110): per-leader cooldown,
+                        # previously hardcoded 300 s. Clamp 0..86400 (0
+                        # disables the cooldown entirely — operator intent).
+                        try:
+                            v = float(val) if val else 300.0
+                            self._wallet_cooldown_seconds = max(0.0, min(86400.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_evm_slippage_pct':
+                        # LIVE-READY (migration 110): EVM minOut tolerance in
+                        # percent (was hardcoded 10). Clamp 0.1..49 so a
+                        # fat-finger can neither zero the protection nor
+                        # permit a >49% sandwich.
+                        try:
+                            v = float(val) if val else 10.0
+                            self.copy_evm_slippage_pct = max(0.1, min(49.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_solana_buy_slippage_bps':
+                        # LIVE-READY (migration 110): Jupiter BUY slippage in
+                        # bps (was hardcoded 100). Clamp 10..2000.
+                        try:
+                            v = int(float(val)) if val else 100
+                            self.copy_solana_buy_slippage_bps = max(10, min(2000, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_solana_sell_slippage_bps':
+                        # LIVE-READY (migration 110): Jupiter SELL slippage in
+                        # bps (was hardcoded 300). Wider ceiling (5000) than
+                        # BUY because exits must not strand a memecoin bag.
+                        try:
+                            v = int(float(val)) if val else 300
+                            self.copy_solana_sell_slippage_bps = max(10, min(5000, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_max_open_per_leader':
+                        # LIVE-READY (migration 110): per-leader open-position
+                        # cap. 0 = disabled (previous behavior). Bounds a
+                        # single hyperactive leader from consuming the whole
+                        # global max_active_positions budget.
+                        try:
+                            v = int(float(val)) if val else 0
+                            self.copy_max_open_per_leader = max(0, min(100, v))
+                        except (TypeError, ValueError):
+                            pass
 
                 if targets_loaded != self.targets:
                     self.targets = targets_loaded
@@ -3064,6 +3110,17 @@ class CopyTradingEngine(BaseModule):
                     )
                     return
 
+                # LIVE-READY (migration 110): per-leader open-position
+                # cap (0 = disabled). BUY-only — SELLs reduce exposure.
+                if await self._at_leader_position_cap(source_tx.get('from', '')):
+                    self._log_replay_decision(
+                        chain=chain_name, wallet=source_tx.get('from', ''),
+                        tx_hash=tx_hash, decision='skipped',
+                        reason='leader_position_cap',
+                        extra={'cap': self.copy_max_open_per_leader},
+                    )
+                    return
+
             # Global open-position cap; bounded SQL count so a fanout
             # of leaders can't blow past the operator's exposure budget.
             if await self._at_position_cap():
@@ -3075,11 +3132,14 @@ class CopyTradingEngine(BaseModule):
                 )
                 return
 
-            # Execute copy trade
+            # Execute copy trade. Slippage is the operator-tunable EVM
+            # minOut tolerance (migration 110; default preserves the old
+            # hardcoded 10%).
             result = await self.executor.copy_evm_swap(
                 token_address=token_address,
                 amount_wei=copy_amount,
                 is_buy=is_buy,
+                slippage=float(self.copy_evm_slippage_pct),
                 chain=chain_name,
             )
 
@@ -3179,6 +3239,37 @@ class CopyTradingEngine(BaseModule):
             return False
         except Exception as e:
             logger.debug(f"COPY position-cap check failed (fail-soft): {e}")
+            return False
+
+    async def _at_leader_position_cap(self, source_wallet: str) -> bool:
+        """LIVE-READY (migration 110): per-leader open-position cap.
+
+        Returns True iff copy_max_open_per_leader > 0 AND this leader
+        already has that many open mirrored BUY rows. Bounds a single
+        hyperactive leader from consuming the whole global
+        max_active_positions budget. 0 disables (previous behavior).
+        SELLs are never gated. Fail-soft: a DB error returns False —
+        the global cap + RiskManager remain the safety net."""
+        cap = int(getattr(self, 'copy_max_open_per_leader', 0) or 0)
+        if cap <= 0 or not self.db_pool or not source_wallet:
+            return False
+        try:
+            async with self.db_pool.acquire() as conn:
+                count = await conn.fetchval(
+                    "SELECT COUNT(*) FROM copytrading_trades "
+                    "WHERE source_wallet = $1 AND status = 'open' AND side = 'buy'",
+                    source_wallet,
+                )
+            count = int(count or 0)
+            if count >= cap:
+                logger.info(
+                    f"🛑 LEADER CAP: {source_wallet[:10]}... holds {count}/{cap} "
+                    f"open copies — refusing new copy from this leader"
+                )
+                return True
+            return False
+        except Exception as e:
+            logger.debug(f"per-leader cap check failed (fail-soft): {e}")
             return False
 
     async def _has_open_copy_position(self, chain: str, token_address: str) -> bool:
@@ -3532,6 +3623,16 @@ class CopyTradingEngine(BaseModule):
                     )
                     return
 
+                # LIVE-READY (migration 110): per-leader open-position
+                # cap (0 = disabled). BUY-only — SELLs reduce exposure.
+                if await self._at_leader_position_cap(wallet):
+                    self._log_replay_decision(
+                        chain='solana', wallet=wallet, tx_hash=signature,
+                        decision='skipped', reason='leader_position_cap',
+                        extra={'cap': self.copy_max_open_per_leader},
+                    )
+                    return
+
                 # Global open-position cap — only gates BUYs because
                 # SELLs close existing exposure and should never be
                 # blocked by the cap.
@@ -3542,11 +3643,13 @@ class CopyTradingEngine(BaseModule):
                         extra={'cap': self.max_active_positions},
                     )
                     return
-                # Execute BUY copy trade
+                # Execute BUY copy trade. Slippage is operator-tunable
+                # (migration 110; default preserves the old 100 bps).
                 result = await self.executor.copy_solana_swap(
                     input_mint=WSOL_MINT,
                     output_mint=token_mint,
-                    amount_lamports=copy_lamports
+                    amount_lamports=copy_lamports,
+                    slippage_bps=int(self.copy_solana_buy_slippage_bps),
                 )
             else:
                 # SELL: only mirror if WE hold the token. Check BOTH
@@ -3579,7 +3682,8 @@ class CopyTradingEngine(BaseModule):
                     input_mint=token_mint,
                     output_mint=WSOL_MINT,
                     amount_lamports=exit_amount,
-                    slippage_bps=300,  # memecoin-tolerant exit
+                    # memecoin-tolerant exit; tunable via migration 110
+                    slippage_bps=int(self.copy_solana_sell_slippage_bps),
                 )
 
             if result.get('success'):
@@ -4154,7 +4258,8 @@ class CopyTradingEngine(BaseModule):
                 input_mint=token,
                 output_mint=WSOL_MINT,
                 amount_lamports=balance_raw,
-                slippage_bps=300,  # memecoin-tolerant exit, matches MB-22
+                # memecoin-tolerant exit, matches MB-22; tunable via mig 110
+                slippage_bps=int(self.copy_solana_sell_slippage_bps),
             )
 
         # EVM: prefer actual on-chain balance; fall back to DB `amount` if the
@@ -4169,6 +4274,7 @@ class CopyTradingEngine(BaseModule):
             token_address=token,
             amount_wei=amount_wei,
             is_buy=False,
+            slippage=float(self.copy_evm_slippage_pct),
             chain=chain,
         )
 
