@@ -1,0 +1,46 @@
+{
+  "_comment": "Static offline fixture for modules/catalyst_calendar self-tests. Test 'now' is 2026-06-12T00:00:00Z (epoch 1781222400). No live network is used.",
+  "defillama_emissions": [
+    {
+      "name": "TestProtocol",
+      "tokenSymbol": "TPT",
+      "maxSupply": 1000000000,
+      "events": [
+        {"timestamp": 1781654400, "noOfTokens": [50000000], "description": "Team + investor cliff unlock"},
+        {"timestamp": 1750000000, "noOfTokens": [99], "description": "past event - must be skipped"}
+      ]
+    },
+    {
+      "name": "BrokenProtocol"
+    },
+    {
+      "name": "FarFuture",
+      "symbol": "FAR",
+      "maxSupply": 0,
+      "events": [
+        {"timestamp": 1800000000, "noOfTokens": 5, "description": "beyond 30d lookahead - must be skipped"}
+      ]
+    },
+    "not-a-dict"
+  ],
+  "binance_announcements": {
+    "data": {
+      "catalogs": [
+        {
+          "catalogId": 48,
+          "articles": [
+            {"title": "Binance Will List TestToken (TPT) with Seed Tag Applied", "code": "abc123", "releaseDate": 1781218800000},
+            {"title": "Binance Will Delist DeadCoin (DEAD) on 2026-06-20", "code": "def456", "releaseDate": 1781215200000},
+            {"title": "Notice on System Maintenance", "code": "zzz789", "releaseDate": 1781211600000},
+            {"title": "Binance Will List StaleCoin (OLD)", "code": "old111", "releaseDate": 1780862400000}
+          ]
+        }
+      ]
+    }
+  },
+  "fmp_macro": [
+    {"date": "2026-07-01 12:30:00", "event": "CPI (YoY)", "impact": "High", "country": "US"},
+    {"date": "2026-06-20 12:30:00", "event": "Building Permits", "impact": "Low", "country": "US"},
+    {"date": "2026-06-22 08:00:00", "event": "Ifo Business Climate", "impact": "High", "country": "DE"}
+  ]
+}
