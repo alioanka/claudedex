@@ -192,3 +192,58 @@ Each module follows the established pattern: `modules/<name>/` subprocess under 
 **Safety posture.** Shadow-first with full IL-vs-HODL simulation on live pool data (warehouse-dependent) for ≥4 weeks. Live behind dedicated flag + small fixed inventory cap + sentinel depeg/deviation rules. No leverage, no exotic pools, max 2 pools in v1.
 
 ---
+
+## TIER 3 — Ambitious / high-risk (honest moonshot assessment)
+
+### 10. `param_tuner` — Bandit-based self-tuning of module knobs (shadow-only)
+
+**Thesis.** This repo's history is a graveyard of mis-set thresholds discovered weeks late: the DEX vol/liq gate blocking 100% of candidates, the Futures volume gate blocking 100% of signals, the AI confidence threshold mismatched to its own signal distribution. All of these were *DB-configurable knobs with a measurable objective* — exactly the setting where a contextual bandit (not deep RL) earns its keep. A param_tuner module would, for an explicit whitelist of non-risk knobs (entry thresholds, scoring weights, hold-time params), maintain counterfactual estimates ("had threshold been X, N more trades would have fired with estimated P&L Y" — computable because rejected candidates are already logged) and *propose* changes. The realistic v1 win is not autonomous optimization — it is institutionalizing the "Wave-13 audit" as a continuous process instead of a quarterly heroic effort.
+
+**Where it slots in.** New `modules/param_tuner/` subprocess, architecturally a sibling of meta_controller: reads trade + rejected-candidate logs, writes proposals to a `param_proposals` table, surfaces them on the dashboard for one-click operator apply. Autopilot (auto-applying within pre-approved bounds) is a v3 question at the earliest.
+
+**Data + infra.** Need: rejected-candidate logging with features (partially exists in some modules, missing in others — a prerequisite wiring pass), warehouse (idea #4) for market context, careful experiment bookkeeping. No capital, no keys.
+
+**Feasibility: LOW-MEDIUM. Build size: L** (plus prerequisite logging work).
+
+**Key risks / why it might not work.**
+- *Non-stationarity*: crypto regimes shift faster than per-knob sample sizes accumulate; a threshold "optimized" on three weeks of chop is mis-set for the breakout. Counterfactual P&L on rejected trades is also biased (no market impact, fill assumptions).
+- *Reward hacking / confounding*: the tuner moving knobs while regime_allocator moves capital while meta_controller pauses modules = three feedback controllers on one plant. Without coordination this oscillates. Tuner must run proposals-only until the other two layers are stable in production.
+- *The seductive failure*: it will "work" in shadow (counterfactuals always look good) and overfit live. Acceptance must be out-of-sample: proposals scored on what happened *after* they were made, not on the data that generated them.
+- Hard rule consistent with desk policy: risk knobs (stop widths, leverage caps, loss limits) are permanently outside the whitelist. A tuner that can widen stops is a martingale generator with extra steps.
+
+**Safety posture.** Proposal-only for its entire v1/v2 life. No order paths, no keys, no direct config writes. Any future autopilot bounded to pre-approved ranges per key, gated behind a default-false DB flag, with meta_controller-style decision audit rows.
+
+### 11. `intent_solver` — CoW Protocol solver / UniswapX filler
+
+**Verdict up front: documented to explain why NOT to build it now.** Solving/filling intent auctions (CoW, UniswapX) is the natural endgame of the bot's routing + inventory + MEV skills, and winners earn real, market-neutral spread. But the competitive reality is brutal: top solvers run colocated infrastructure, private market-maker inventory, sub-100ms quoting across every venue simultaneously, and operate at single-digit-bps margins where one mispriced fill erases a day. CoW additionally requires a staked bond (six figures) and a vetting process; UniswapX filling without exclusive order flow means competing on pure latency against firms whose entire business this is. The bot has none of these advantages and the deficit is structural, not a build-size problem.
+
+**Feasibility: LOW. Build size: XL.** **Decision: park it.** Revisit only if (a) the execution_gateway + TCA stack demonstrates top-decile internal execution quality for 6+ months, and (b) a niche emerges where the bot has genuinely private edge (e.g., long-tail Solana routes via its Jupiter/pump.fun infrastructure). Listed so future ideation waves don't re-litigate it from scratch.
+
+---
+
+## PRIORITIZED TABLE
+
+Impact = expected contribution to fleet survivability + net P&L. Effort = build + migration + operational burden. Risk = probability the module loses money, misleads decisions, or rots unused.
+
+| # | Module | Type | Impact | Effort | Risk | Score (I×/E×R) | Verdict |
+|---|--------|------|--------|--------|------|------------------|---------|
+| 1 | `execution_quality` (TCA) | Measurement | HIGH | M | LOW | **Best** | BUILD NEXT |
+| 2 | `treasury` (Phase 1 observe → Phase 2 act) | Capital ops | HIGH | S→M | LOW→MED | **Best** | BUILD NEXT |
+| 3 | `sentinel` (anomaly/auto-freeze) | Safety | HIGH | S–M | LOW | **Best** | BUILD NEXT |
+| 4 | `market_data_warehouse` | Data infra | MED-HIGH (compounding) | M | LOW | Strong | Start ingestion early (cheap), grow with consumers |
+| 5 | `catalyst_calendar` | Data feed | MED | S | LOW | Strong | Quick win after Tier-1 core |
+| 8 | `execution_gateway` (MEV-aware send) | Execution infra | MED-HIGH | M | MED (migration) | Good | After TCA quantifies the leak |
+| 6 | `options_vol` (hedge-first) | New P&L/hedge | MED-HIGH | L | MED | Good | First *new market* to add; hedge leg only at first |
+| 7 | `yield_treasury` (LST/lending) | Carry | LOW-MED | S–M | MED (SC risk) | Moderate | Only after treasury Phase 2 proven |
+| 9 | `clmm_lp` | New P&L | MED | L | HIGH (IL, measurement trap) | Weak now | Defer until warehouse + TCA exist |
+| 10 | `param_tuner` (bandit, proposal-only) | Meta | MED | L | HIGH (overfit, controller conflict) | Weak now | Defer until meta_controller + regime_allocator stable live |
+| 11 | `intent_solver` | New P&L | HIGH (if it worked) | XL | VERY HIGH | Reject | PARKED — structural competitive deficit |
+
+## TOP-3 RECOMMENDATION & SEQUENCING
+
+1. **`execution_quality` (TCA)** — build first. The whole fleet is at the live-flip boundary with thin per-trade edges; nothing else proposed (gateway, options sizing, meta scoring, regime weights) can be sized honestly until quoted-vs-realized costs are measured. It is read-only, so it can ship while live flips proceed, and its scorecards are the acceptance test for idea #8 later.
+2. **`treasury` (Phase 1 observe-only)** — build in parallel (different surface, no contention with TCA). Shared-wallet gas starvation and unswept hot-wallet profits are the two most likely *non-market* loss events of the first live month; the observe/alert phase is small and de-risks live operations immediately. Phase 2 (gas top-up + sweep) follows once Phase 1 reconciliation runs clean for 2 weeks.
+3. **`sentinel`** — build third, immediately after. It is small, reuses meta_controller's pause-file pattern, and covers the correlated/tail failure class (depeg, oracle break, silent module death) that no per-module gate can see. Shipping it before the fleet is fully live means the fleet's first stress event is watched.
+
+Sequencing rationale: all three are measurement/survival infrastructure with near-zero market risk, deliberately ahead of any new P&L surface — the fleet already has nine ways to make (or lose) money and approximately zero ways to know its true costs, manage its shared capital, or catch a fleet-wide anomaly. The warehouse (#4) should start *passive ingestion* (funding + candles) during the same period because data has lead time; the first new *market* (options hedge leg, #6) enters only after Tier-1 is live and TCA has baselined execution. CLMM, param_tuner, and the intent solver are explicitly deferred with revisit conditions stated above.
+
