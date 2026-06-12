@@ -22,7 +22,7 @@ VALUES
     'arbitrage_config',
     'receipt_confirm_timeout_s',
     '90',
-    'integer',
+    'int',
     'LIVE fills only: seconds to wait for the flash-loan tx receipt before booking the trade. Reverted txs (status 0) are recorded as ''tx_reverted'' near-misses — burnt gas, not profit. 0 = book at broadcast without checking the receipt (pre-108 behavior).',
     NOW(), NOW()
 )
