@@ -1221,6 +1221,15 @@ class EVMArbitrageEngine:
         except (TypeError, ValueError):
             self._shadow_record_interval_s = 60.0
         self._shadow_last_recorded: Dict[str, datetime] = {}
+        # LIVE receipt confirmation (mig 108): bounded wait for the tx receipt
+        # before booking a broadcast trade as filled. 0 disables (book at
+        # broadcast — the old fire-and-forget behavior).
+        try:
+            self._receipt_confirm_timeout_s = float(
+                config.get('receipt_confirm_timeout_s', 90)
+            )
+        except (TypeError, ValueError):
+            self._receipt_confirm_timeout_s = 90.0
 
         # Telegram alerts - initialized in initialize() method
         self.telegram_alerts = None
@@ -2940,6 +2949,32 @@ class EVMArbitrageEngine:
                 )
 
             if tx_hash:
+                # LIVE honesty: a broadcast is not a fill. Wait (bounded) for
+                # the receipt; a reverted flash loan is gas burnt with NO fill
+                # and must not be booked as a profitable closed trade.
+                receipt_ok = await self._confirm_receipt(tx_hash)
+                if receipt_ok is False:
+                    self.logger.error(
+                        f"❌ [{self.chain_name.upper()}] Flash loan tx REVERTED "
+                        f"[{token_symbol}]: {tx_hash} — gas burnt, no fill recorded"
+                    )
+                    self._record_near_miss(
+                        'tx_reverted',
+                        pair=token_symbol, buy_dex=buy_dex, sell_dex=sell_dex,
+                        detail=tx_hash[:24],
+                    )
+                    await self._send_error_alert(
+                        error_type="Tx Reverted",
+                        details=f"Flash loan reverted on-chain for {token_symbol}\nTx: {tx_hash}",
+                        token_symbol=token_symbol,
+                        tx_hash=tx_hash,
+                    )
+                    return
+                if receipt_ok is None:
+                    self.logger.warning(
+                        f"⚠️ Receipt unconfirmed after {self._receipt_confirm_timeout_s:.0f}s "
+                        f"— booking trade optimistically; VERIFY {tx_hash} on-chain"
+                    )
                 self.logger.info(f"✅ [{self.chain_name.upper()}] Arbitrage executed [{token_symbol}]: {tx_hash}")
                 await self._log_arb_trade(buy_dex, sell_dex, token_in, amount, gross_spread, tx_hash, token_symbol, token_out_symbol)
             else:
@@ -3202,6 +3237,28 @@ class EVMArbitrageEngine:
         except Exception as e:
             self.logger.error(f"Direct swap execution error: {e}")
             return None
+
+    async def _confirm_receipt(self, tx_hash: str) -> Optional[bool]:
+        """Bounded wait for a live tx receipt.
+
+        Returns True=confirmed (status 1), False=reverted (status 0),
+        None=unknown within the timeout (caller logs and books optimistically).
+        Timeout 0 disables the wait entirely (returns None immediately).
+        """
+        timeout_s = float(getattr(self, '_receipt_confirm_timeout_s', 90.0) or 0.0)
+        if timeout_s <= 0 or not self.w3:
+            return None
+        deadline = asyncio.get_event_loop().time() + timeout_s
+        while asyncio.get_event_loop().time() < deadline:
+            try:
+                receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+                if receipt is not None:
+                    return receipt.status == 1
+            except Exception:
+                # TransactionNotFound until mined; transient RPC errors retry.
+                pass
+            await asyncio.sleep(3.0)
+        return None
 
     async def _log_arb_trade(
         self,
