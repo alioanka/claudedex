@@ -73,6 +73,7 @@ class CowClient(_JsonClient):
 
     def __init__(self, base_url: str = DEFAULT_COW_BASE_URL, **kw):
         super().__init__(base_url, **kw)
+        self._native_price_cache: Dict[str, tuple] = {}  # key -> (at, price|None)
 
     async def fetch_open_orders(self, chain: str, limit: int) -> List[dict]:
         """Raw orders from the current batch auction. [] on any failure."""
@@ -117,6 +118,34 @@ class CowClient(_JsonClient):
             return int(quote["sellAmount"]) + int(quote.get("feeAmount", 0))
         except (KeyError, TypeError, ValueError):
             return None
+
+
+    async def fetch_native_price(self, chain: str, token: str,
+                                 *, cache_ttl_s: float = 120.0) -> Optional[float]:
+        """Token price in native-token ATOM space (atoms-native per atom-token).
+
+        notional_wei = amount_atoms * price — no token-decimals lookup needed.
+        None on any failure.
+        """
+        key = f"{chain}:{token.lower()}"
+        cached = self._native_price_cache.get(key)
+        if cached and (time.monotonic() - cached[0]) < cache_ttl_s:
+            return cached[1]
+        payload = await self.request_json(
+            "GET", f"/{chain}/api/v1/token/{token}/native_price")
+        price: Optional[float] = None
+        try:
+            raw = (payload or {}).get("price")
+            if raw is not None and float(raw) > 0:
+                price = float(raw)
+        except (TypeError, ValueError):
+            price = None
+        self._native_price_cache[key] = (time.monotonic(), price)
+        if len(self._native_price_cache) > 256:
+            oldest = min(self._native_price_cache,
+                         key=lambda k: self._native_price_cache[k][0])
+            self._native_price_cache.pop(oldest, None)
+        return price
 
 
 class UniswapXClient(_JsonClient):
