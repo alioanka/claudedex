@@ -2506,7 +2506,13 @@ class DashboardEndpoints:
     # claim "running" for a dead subprocess or hide a pause/dry-run.
     #   env        — orchestrator enable flag (main.py spawn gate)
     #   port_env   — health-port probe (subprocess liveness, primary)
-    #   heartbeat  — DB runtime-stats freshness fallback (table, max age s)
+    #   heartbeat  — DB runtime-stats freshness fallback (table, max age s);
+    #                queried as `WHERE id = 1` single-heartbeat-row tables.
+    #   heartbeat_sql — alternative freshness probe for modules without an
+    #                id=1 heartbeat table: (sql returning age-in-seconds,
+    #                max age s). Used by ARB (one runtime_stats row per
+    #                chain), COPY (recent-trade proxy) and POLYMARKET
+    #                (signal-stream recency).
     #   pause_keys — logs/.pause_<key> flags; engines read the SHORT key
     #                via should_skip_live(module=...), the dashboard pause
     #                button historically wrote the LONG key — check both.
@@ -2542,26 +2548,79 @@ class DashboardEndpoints:
             'config_type': 'ai_config',
             'pause_keys': ('ai', 'ai_analysis'),
         },
+        # Control-center v4: the remaining trading modules get the same
+        # honest badge. Probes mirror the per-module liveness logic
+        # already used by _fallback_api_modules — port first, then the
+        # module's most reliable DB freshness signal.
+        'sniper': {
+            'env': 'SNIPER_MODULE_ENABLED',
+            'port_env': ('SNIPER_HEALTH_PORT', 8083),
+            'heartbeat': ('sniper_runtime_stats', 120),
+            'config_type': 'sniper_config',
+            'pause_keys': ('sniper',),
+        },
+        'arbitrage': {
+            'env': 'ARBITRAGE_MODULE_ENABLED',
+            'port_env': ('ARBITRAGE_HEALTH_PORT', 8084),
+            'heartbeat': None,
+            # One arbitrage_runtime_stats row per chain (no id=1) —
+            # any fresh row means the subprocess is alive.
+            'heartbeat_sql': (
+                "SELECT MIN(EXTRACT(EPOCH FROM (NOW() - updated_at)))::int "
+                "FROM arbitrage_runtime_stats",
+                120,
+            ),
+            'config_type': 'arbitrage_config',
+            'pause_keys': ('arbitrage',),
+        },
+        'copy_trading': {
+            'env': 'COPY_TRADING_MODULE_ENABLED',
+            'port_env': ('COPYTRADING_HEALTH_PORT', 8088),
+            'heartbeat': None,
+            # COPY writes no runtime_stats yet — a copytrading_trades row
+            # in the last 2h is the most honest cross-process signal
+            # (mirrors api_get_copytrading_stats).
+            'heartbeat_sql': (
+                "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(entry_timestamp)))::int "
+                "FROM copytrading_trades",
+                7200,
+            ),
+            'config_type': 'copytrading_config',
+            'pause_keys': ('copy_trading', 'copytrading'),
+        },
+        'polymarket': {
+            'env': 'POLYMARKET_MODULE_ENABLED',
+            'port_env': ('POLYMARKET_HEALTH_PORT', 8089),
+            'heartbeat': None,
+            # Signal stream recency fallback (poll interval 60s, shadow
+            # record interval 300s — 30 min is a generous liveness bound).
+            'heartbeat_sql': (
+                "SELECT EXTRACT(EPOCH FROM (NOW() - MAX(created_at)))::int "
+                "FROM polymarket_signals",
+                1800,
+            ),
+            # No dry_run key — POLYMARKET's live gate is
+            # shadow_mode=false AND live_execution_enabled=true; resolved
+            # by the special-case below.
+            'config_type': None,
+            'pause_keys': ('polymarket',),
+        },
     }
     # Template URLs use the long module names too — accept both.
     _RUNTIME_STATUS_ALIASES = {
         'dex_trading': 'dex', 'futures_trading': 'futures',
         'solana_strategies': 'solana', 'ai_analysis': 'ai',
+        'copytrading': 'copy_trading', 'copy': 'copy_trading',
     }
 
-    async def _api_module_runtime_status(self, request):
-        """GET /api/modules/{module}/runtime-status — honest
-        enabled/running/paused/dry-run/killswitch badge payload for the
-        per-module dashboards. Fail-soft by construction: every probe
-        degrades to its safe value, never a 500."""
-        raw = (request.match_info.get('module', '') or '').lower()
-        module = self._RUNTIME_STATUS_ALIASES.get(raw, raw)
+    async def _resolve_module_runtime(self, module: str):
+        """Resolve the honest runtime payload for one module, or None if
+        the module is unknown. Shared by the per-module runtime-status
+        endpoint and the control-center batch overview. Fail-soft by
+        construction: every probe degrades to its safe value."""
         spec = self._RUNTIME_STATUS_MODULES.get(module)
         if not spec:
-            return web.json_response(
-                {'success': False, 'error': f'unknown module: {raw}'},
-                status=400,
-            )
+            return None
 
         # 1. enabled — orchestrator spawn gate (missing flag = disabled).
         enabled = str(os.getenv(spec['env'], 'false')).lower().strip() \
@@ -2591,6 +2650,16 @@ class DashboardEndpoints:
                         running = True
             except Exception:
                 pass
+        if not running and spec.get('heartbeat_sql') and self.db \
+                and getattr(self.db, 'pool', None):
+            hb_sql, max_age = spec['heartbeat_sql']
+            try:
+                async with self.db.pool.acquire() as conn:
+                    age = await conn.fetchval(hb_sql)
+                    if age is not None and age <= max_age:
+                        running = True
+            except Exception:
+                pass
 
         # 3. paused — flag files honored by should_skip_live().
         paused = False
@@ -2601,18 +2670,35 @@ class DashboardEndpoints:
             pass
 
         # 4. dry_run — same resolution chain the engine boots with.
+        # POLYMARKET has no dry_run key: its live gate is shadow_mode=false
+        # AND live_execution_enabled=true (mig 101); anything else is
+        # shadow (= dry-run for badge purposes).
         dry_run = True
         try:
-            db_value = None
-            if self.db and getattr(self.db, 'pool', None):
-                async with self.db.pool.acquire() as conn:
-                    db_value = await conn.fetchval(
-                        "SELECT value FROM config_settings "
-                        "WHERE config_type = $1 AND key = 'dry_run'",
-                        spec['config_type'],
+            if module == 'polymarket':
+                if self.db and getattr(self.db, 'pool', None):
+                    async with self.db.pool.acquire() as conn:
+                        rows = await conn.fetch(
+                            "SELECT key, value FROM config_settings "
+                            "WHERE config_type = 'polymarket_config' "
+                            "AND key IN ('shadow_mode', 'live_execution_enabled')"
+                        )
+                    vals = {r['key']: str(r['value']).lower().strip() for r in rows}
+                    dry_run = not (
+                        vals.get('shadow_mode') == 'false'
+                        and vals.get('live_execution_enabled') == 'true'
                     )
-            from core.dry_run import resolve_module_dry_run
-            dry_run = resolve_module_dry_run(module, db_row_value=db_value)
+            elif spec.get('config_type'):
+                db_value = None
+                if self.db and getattr(self.db, 'pool', None):
+                    async with self.db.pool.acquire() as conn:
+                        db_value = await conn.fetchval(
+                            "SELECT value FROM config_settings "
+                            "WHERE config_type = $1 AND key = 'dry_run'",
+                            spec['config_type'],
+                        )
+                from core.dry_run import resolve_module_dry_run
+                dry_run = resolve_module_dry_run(module, db_row_value=db_value)
         except Exception:
             pass  # safe-by-default True
 
@@ -2636,7 +2722,7 @@ class DashboardEndpoints:
         else:
             status = 'live'
 
-        return web.json_response({
+        return {
             'success': True,
             'module': module,
             'enabled': enabled,
@@ -2645,7 +2731,22 @@ class DashboardEndpoints:
             'dry_run': dry_run,
             'killswitch': killswitch,
             'status': status,
-        })
+        }
+
+    async def _api_module_runtime_status(self, request):
+        """GET /api/modules/{module}/runtime-status — honest
+        enabled/running/paused/dry-run/killswitch badge payload for the
+        per-module dashboards. Fail-soft by construction: every probe
+        degrades to its safe value, never a 500."""
+        raw = (request.match_info.get('module', '') or '').lower()
+        module = self._RUNTIME_STATUS_ALIASES.get(raw, raw)
+        payload = await self._resolve_module_runtime(module)
+        if payload is None:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {raw}'},
+                status=400,
+            )
+        return web.json_response(payload)
 
     async def _api_module_set_dry_run(self, request):
         """POST /api/modules/{module}/dry-run {"dry_run": bool} —
@@ -3513,6 +3614,7 @@ class DashboardEndpoints:
         'copytrading': 'copy_trading',
         'ai': 'ai', 'ai_analysis': 'ai',
         'advisor': 'advisor', 'financial_advisor': 'advisor',
+        'polymarket': 'polymarket',
     }
 
     @classmethod
