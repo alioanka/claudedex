@@ -548,6 +548,36 @@ class DexPositionService:
             return {'success': True, 'note': f'already {row["status"]}'}
 
         metadata = self._parse_metadata(row['metadata'])
+
+        # LIVE module + REAL fill: a DB-only close would mark the row closed
+        # while the tokens stay on-chain. Route through the engine's real
+        # on-chain sell instead; REFUSE the DB-only close when that is not
+        # possible (never silently desync DB from holdings). DRY_RUN rows
+        # (metadata.is_dry_run, the engine writes it on every entry) keep the
+        # simulated-close behavior unchanged.
+        row_is_real_fill = metadata.get('is_dry_run') is False
+        if not self.dry_run and row_is_real_fill:
+            eng = self.engine
+            token = row['token_address'] or ''
+            position = None
+            if eng is not None:
+                active = getattr(eng, 'active_positions', None) or {}
+                position = active.get(token) or active.get(token.lower())
+            if position is not None:
+                try:
+                    ok = await eng._close_position(position, 'manual_dashboard')
+                    return {'success': bool(ok), 'live': True}
+                except Exception as e:
+                    logger.error(f"live manual close via engine failed for {pid}: {e}")
+                    return {'success': False, 'error': f'live close failed: {e}'}
+            logger.error(
+                f"manual close {pid}: LIVE fill not present in engine "
+                f"active_positions — refusing DB-only close (tokens would "
+                f"remain on-chain). Restart the module or sell manually."
+            )
+            return {'success': False,
+                    'error': 'live position not tracked by engine; DB-only close refused'}
+
         try:
             entry_price = float(row['entry_price'] or 0)
             amount = float(row['amount'] or 0)

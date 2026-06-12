@@ -507,6 +507,18 @@ class TradingBotApplication:
             self.logger.info(f"Time: {datetime.now().isoformat()}")
             self.logger.info("=" * 80)
 
+            # Kill-switch poller: flips core.dry_run's global gate when
+            # logs/.killswitch appears, so should_skip_live() blocks every
+            # live broadcast in THIS subprocess. Without it the flag file was
+            # only honored by the position-service watchdog, never by the
+            # engine/executor broadcast gates.
+            try:
+                from core.dry_run import start_killswitch_poller
+                start_killswitch_poller()
+                self.logger.info("✅ Kill-switch poller started (logs/.killswitch)")
+            except Exception as e:
+                self.logger.error(f"Could not start kill-switch poller: {e}")
+
             self.logger.info("Loading configuration...")
             await self.config_manager.initialize(os.getenv('ENCRYPTION_KEY'))
             self.config = self.config_manager
@@ -599,6 +611,19 @@ class TradingBotApplication:
                 config_model = self.config.get_config(config_type)
                 if config_model:
                     nested_config[config_type.value] = _model_to_dict(config_model)
+
+            # Wire the RESOLVED module dry-run flag into the keys the engine
+            # actually reads. The engine checks top-level config['dry_run']
+            # (and trading.dry_run for the Solana executor) — neither existed
+            # in nested_config, so they fell back to True and flipping
+            # DRY_RUN=false was a silent no-op: the module could NEVER go
+            # live. self.is_dry_run comes from resolve_module_dry_run('dex').
+            nested_config['dry_run'] = bool(self.is_dry_run)
+            nested_config.setdefault('trading', {})['dry_run'] = bool(self.is_dry_run)
+            if self.is_dry_run:
+                self.logger.info("🔶 DEX module in DRY_RUN mode (no live broadcasts)")
+            else:
+                self.logger.critical("🔥 DEX module in LIVE mode — real funds at risk")
 
             # Update managers with fresh database config
             if hasattr(self, 'portfolio_manager'):
