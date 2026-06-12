@@ -233,6 +233,13 @@ class SniperEngine:
         # Replaces the hardcoded 200.0 from wave-16. Configurable via DB.
         self.sniper_phantom_price_threshold: float = 300.0  # |pnl%| skip ceiling
 
+        # LIVE-readiness (migration 107):
+        # - confirm timeout passed to TradeExecutor (Solana send confirmation)
+        # - restart reconcile: reload mode-matched open sniper_trades rows
+        #   into active_snipes so exits resume after a crash/restart.
+        self.sniper_confirm_timeout_secs: float = 45.0
+        self.sniper_reconcile_on_start: bool = True
+
         # In-memory watchlist: mint -> {target, chain_type, detected_at}
         # Populated by _evaluate_target when token is too young.
         # Consumed by _process_watchlist once the age floor is crossed.
@@ -302,6 +309,11 @@ class SniperEngine:
         from modules.sniper.core.trade_executor import TradeExecutor
         self.executor = TradeExecutor(self.config)
         await self.executor.initialize()
+        # Propagate the DB-configured LIVE confirmation budget.
+        try:
+            self.executor.confirm_timeout_secs = float(self.sniper_confirm_timeout_secs)
+        except Exception:
+            pass
 
         # Initialize Listeners based on enabled chains.
         # EVM listener is further gated by sniper_evm_enabled (DB key loaded in
@@ -448,6 +460,13 @@ class SniperEngine:
                             )
                         elif key == 'sniper_phantom_price_threshold':
                             self.sniper_phantom_price_threshold = float(val) if val else 300.0
+                        # LIVE-readiness knobs (migration 107)
+                        elif key == 'sniper_confirm_timeout_secs':
+                            self.sniper_confirm_timeout_secs = float(val) if val else 45.0
+                        elif key == 'sniper_reconcile_on_start':
+                            self.sniper_reconcile_on_start = (
+                                val.lower() in ('true', '1', 'yes') if val else True
+                            )
 
             # Check for DRY_RUN mode
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
@@ -589,6 +608,15 @@ class SniperEngine:
         except Exception as e:
             logger.debug(f"initial _persist_runtime_stats failed (non-fatal): {e}")
 
+        # Restart reconcile: without this, open DB rows from a previous
+        # process were never re-monitored — in LIVE the held tokens had
+        # no SL/TP and exits were never broadcast again. Fail-soft.
+        if self.sniper_reconcile_on_start:
+            try:
+                await self._reconcile_open_positions()
+            except Exception as e:
+                logger.error(f"startup reconcile failed (continuing): {e}")
+
         self.tasks = [
             asyncio.create_task(self._monitor_new_pairs()),
             asyncio.create_task(self._process_targets()),
@@ -599,6 +627,70 @@ class SniperEngine:
         ]
 
         await asyncio.gather(*self.tasks)
+
+    async def _reconcile_open_positions(self) -> None:
+        """Rebuild active_snipes from open sniper_trades rows after a restart.
+
+        Only rows whose is_simulated matches the current mode are restored:
+        restoring a sim row in LIVE would broadcast a real sell for tokens
+        that were never bought; restoring a LIVE row in DRY_RUN would record
+        a fake exit for a real on-chain position. Mode-mismatched rows are
+        counted and surfaced for operator action. Rows missing entry data
+        (amount/entry_usd <= 0) cannot be monitored and are skipped loudly.
+        Bounded by max_active_positions, newest first.
+        """
+        if not self.db_pool:
+            return
+        sim_mode = bool(self.dry_run)
+        async with self.db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT trade_id, token_address, chain, entry_price, amount, "
+                "entry_usd, is_simulated, entry_timestamp "
+                "FROM sniper_trades WHERE status = 'open' AND side = 'buy' "
+                "ORDER BY entry_timestamp DESC LIMIT $1",
+                int(self.max_active_positions),
+            )
+        restored = 0
+        mode_mismatch = 0
+        unrestorable = 0
+        for row in rows:
+            addr = row['token_address']
+            if not addr or addr in self.active_snipes or addr in self.pending_targets:
+                continue
+            if bool(row['is_simulated']) != sim_mode:
+                mode_mismatch += 1
+                continue
+            amount = float(row['amount'] or 0)
+            entry_usd = float(row['entry_usd'] or 0)
+            if amount <= 0 or entry_usd <= 0:
+                unrestorable += 1
+                continue
+            entry_time = row['entry_timestamp']
+            if entry_time is not None and getattr(entry_time, 'tzinfo', None):
+                # monitor's time-stop compares against naive datetime.now()
+                entry_time = entry_time.astimezone().replace(tzinfo=None)
+            self.active_snipes[addr] = {
+                'target': {'token_address': addr},
+                'chain_type': row['chain'] or 'solana',
+                'status': 'active',
+                'entry_price': float(row['entry_price'] or 0),
+                'amount_bought': amount,
+                'entry_usd': entry_usd,
+                'entry_time': entry_time,
+                'db_trade_id': row['trade_id'],
+                'reconciled': True,
+            }
+            restored += 1
+        if restored or mode_mismatch or unrestorable:
+            log = logger.warning if (mode_mismatch or unrestorable) else logger.info
+            log(
+                f"♻️ Sniper reconcile: restored {restored} open position(s) "
+                f"into monitoring; skipped {mode_mismatch} mode-mismatched "
+                f"(is_simulated != {sim_mode} — operator review needed) and "
+                f"{unrestorable} unrestorable (missing amount/entry_usd) rows"
+            )
+        else:
+            logger.info("♻️ Sniper reconcile: no open rows to restore")
 
     async def _monitor_new_pairs(self):
         """Listen for new pair events"""
@@ -2334,6 +2426,14 @@ class SniperEngine:
         chain = data.get('chain_type', 'solana')
         amount = data.get('amount_bought', 0)
 
+        # Exit-failure backoff: the monitor re-triggers every 1s tick; a
+        # persistently failing LIVE sell (no route, RPC outage) previously
+        # hammered Jupiter/RPC once per second forever. Escalating backoff
+        # (2s..60s) keeps retrying without the spam.
+        next_retry = data.get('_next_exit_retry')
+        if next_retry and datetime.now() < next_retry:
+            return
+
         logger.debug(f"💰 Exiting position: {token_address} | Reason: {reason}")
 
         try:
@@ -2350,6 +2450,8 @@ class SniperEngine:
             )
 
             if result.success:
+                data.pop('_exit_fail_count', None)
+                data.pop('_next_exit_retry', None)
                 logger.debug(f"✅ EXIT SUCCESS: {token_address}")
                 logger.debug(f"   TX: {result.tx_hash} | Received: {result.amount_out}")
 
@@ -2366,10 +2468,23 @@ class SniperEngine:
                 # Log exit to database
                 await self._log_exit_to_db(data, result, reason)
             else:
-                logger.error(f"❌ EXIT FAILED: {result.error}")
+                self._record_exit_failure(data, token_address, reason, result.error)
 
         except Exception as e:
-            logger.error(f"Error exiting position: {e}")
+            self._record_exit_failure(data, token_address, reason, str(e))
+
+    def _record_exit_failure(self, data: Dict, token_address: str,
+                             reason: str, error: Optional[str]) -> None:
+        """Escalating exit-retry backoff + loud, counted failure logging."""
+        fails = int(data.get('_exit_fail_count', 0)) + 1
+        data['_exit_fail_count'] = fails
+        backoff_s = min(2 ** min(fails, 6), 60)
+        data['_next_exit_retry'] = datetime.now() + timedelta(seconds=backoff_s)
+        logger.error(
+            f"❌ EXIT FAILED ({fails}x) for {token_address} "
+            f"[{reason}]: {error} — next retry in {backoff_s}s"
+            + (" — MANUAL ACTION may be required" if fails >= 10 else "")
+        )
 
     async def _log_exit_to_db(self, data: Dict, result, reason: str):
         """Update sniper_trades record with exit data"""
