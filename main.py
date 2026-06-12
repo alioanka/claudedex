@@ -316,7 +316,7 @@ class ModuleProcess:
                 errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
 
         # Check database credentials (required for most modules, including dashboard)
-        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket')
+        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller')
         if needs_database:
             if not _check_database_credentials():
                 errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
@@ -578,6 +578,19 @@ class TradingBotOrchestrator:
             script_path="modules/orchestrator_ai/main_orchestrator_ai.py",
             enabled_env_var="ORCHESTRATOR_AI_MODULE_ENABLED",
             module_key="orchestrator_ai",
+        )
+
+        # Self-deciding / self-improving META controller (advisory layer).
+        # Reads every module's rolling DRY_RUN + LIVE performance, writes a
+        # transparent ACTIVATE/KEEP/PAUSE decision per module to meta_decisions,
+        # and (only when meta_autopilot_enabled) actuates pause/resume flags with
+        # a dwell guard. Never trades, never touches the killswitch. Default
+        # DISABLED. Health server: port 8090 (META_CONTROLLER_HEALTH_PORT).
+        self.modules['meta_controller'] = ModuleProcess(
+            name="Meta Controller",
+            script_path="modules/meta_controller/main_meta_controller.py",
+            enabled_env_var="META_CONTROLLER_MODULE_ENABLED",
+            module_key="meta_controller",
         )
 
         # Phase 4B: per-module capital allocator (advisory).

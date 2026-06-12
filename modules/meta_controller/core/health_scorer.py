@@ -80,23 +80,37 @@ def max_drawdown(pnls: List[float]) -> tuple:
     """(dd_usd, dd_frac) of the cumulative P&L curve.
 
     `pnls` is most-recent-first (how the engine fetches them); we reverse
-    to chronological order before accumulating. dd_frac is the drawdown
-    normalized by the running peak (or by the drawdown itself when the
-    curve never goes positive — i.e. an all-loss window maps to 1.0).
+    to chronological order before accumulating. dd_frac is the worst
+    peak-to-trough drop normalized by the running peak AT THE TROUGH
+    (standard max-drawdown %), not by the final peak. A window whose
+    cumulative curve never goes positive maps to dd_frac 1.0.
     """
     if not pnls:
         return 0.0, 0.0
     cum = 0.0
     peak = 0.0
+    ever_positive = False
     dd_usd = 0.0
+    dd_frac = 0.0
     for p in reversed(pnls):
         cum += p
-        peak = max(peak, cum)
-        dd_usd = max(dd_usd, peak - cum)
+        if cum > peak:
+            peak = cum
+        if peak > 0:
+            ever_positive = True
+        drawdown = peak - cum
+        if drawdown > dd_usd:
+            dd_usd = drawdown
+        if peak > 0:
+            frac = drawdown / peak
+            if frac > dd_frac:
+                dd_frac = frac
     if dd_usd <= 0:
         return 0.0, 0.0
-    denom = peak if peak > 0 else dd_usd
-    return dd_usd, min(1.0, dd_usd / denom)
+    if not ever_positive:
+        # curve never went positive: an all-loss window maps to 1.0.
+        dd_frac = 1.0
+    return dd_usd, min(1.0, dd_frac)
 
 
 def profit_factor(pnls: List[float]) -> Optional[float]:
