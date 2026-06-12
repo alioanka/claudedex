@@ -77,6 +77,77 @@ claude_logger.setLevel(logging.INFO)
 claude_logger.addHandler(claude_log_handler)
 claude_logger.addHandler(console)
 
+def _build_risk_config(config_manager) -> dict:
+    """Build a POPULATED core.risk_manager.RiskManager config from the
+    operator's DB-backed ConfigManager (live-safety item #5: the AI live
+    risk gate previously ran on an EMPTY config, i.e. code defaults, while
+    DEX feeds nested ConfigManager model dumps and Solana passes the
+    config_manager through).
+
+    Two layers, mirroring what RiskManager.__init__ / check_circuit_breakers
+    / _get_current_metrics actually read:
+      1) Nested model dumps keyed by config_type value — RiskManager reads
+         config['portfolio']['initial_balance'] for the drawdown/daily-loss
+         circuit-breaker baselines. Only risk-relevant, non-sensitive types
+         are included (NOT 'security'/'database'/'api' — those dumps carry
+         private keys and the AI gate never reads them).
+      2) Flat aliases — RiskManager reads flat keys ('max_position_size_pct',
+         'breaker.error_rate_max', ...) that don't match the Pydantic field
+         names ('max_position_size_percent', 'breaker_error_rate_max', ...),
+         so the operator's DB values are mapped onto the exact keys the
+         risk gate consumes. Units match: both sides are percent ints.
+
+    Fail-soft by design: any error at any layer skips that value so the
+    RiskManager code default applies; raising is left to the caller's
+    try/except which falls back to an empty config. Never blocks startup.
+    """
+    from config.config_manager import ConfigType
+
+    def _dump(model):
+        # Pydantic v1/v2 compatible model -> dict (same helper as main_dex).
+        if hasattr(model, 'model_dump'):
+            return model.model_dump()
+        return model.dict()
+
+    cfg: dict = {}
+    # Risk-relevant config types only (see docstring for the exclusions).
+    wanted = {'risk_management', 'portfolio', 'trading', 'position_management'}
+    for config_type in ConfigType:
+        if config_type.value not in wanted:
+            continue
+        try:
+            model = config_manager.get_config(config_type)
+            if model is not None:
+                cfg[config_type.value] = _dump(model)
+        except Exception:
+            continue  # fail-soft: missing section -> RiskManager defaults
+
+    risk = cfg.get('risk_management') or {}
+    portfolio = cfg.get('portfolio') or {}
+
+    # (RiskManager key) <- (source section, ConfigManager field). All are
+    # positive numeric thresholds; non-positive/missing values are skipped
+    # so the RiskManager code default survives a fat-finger DB row.
+    flat_aliases = {
+        'max_position_size_pct': (risk, 'max_position_size_percent'),
+        'max_position_size_usd': (portfolio, 'max_position_size_usd'),
+        'max_positions': (portfolio, 'max_positions'),
+        'breaker.error_rate_max': (risk, 'breaker_error_rate_max'),
+        'breaker.slippage_realized_bps_max': (risk, 'breaker_slippage_realized_bps_max'),
+        'breaker.max_consecutive_losses': (risk, 'breaker_max_consecutive_losses'),
+        'breaker.max_drawdown_pct': (risk, 'breaker_max_drawdown_pct'),
+        'breaker.max_daily_loss_pct': (risk, 'breaker_max_daily_loss_pct'),
+    }
+    for dest, (src, key) in flat_aliases.items():
+        try:
+            val = src.get(key)
+            if isinstance(val, (int, float)) and not isinstance(val, bool) and val > 0:
+                cfg[dest] = val
+        except Exception:
+            continue
+    return cfg
+
+
 async def main():
     logger.info("🧠 AI Analysis Module Starting...")
     logger.info(f"   Working dir: {Path.cwd()}")
@@ -165,12 +236,37 @@ async def main():
         'openai_api_key': openai_key,
         'anthropic_api_key': anthropic_key
     }
-    # P2#5: construct core.risk_manager scaffold and thread through to executor.
-    # validate_trade call sites land in the AI->Futures routing follow-up.
+    # P2#5: construct core.risk_manager and thread through to executor.
+    # Live-safety #5: the gate used to be built with config={} so LIVE
+    # validate_trade ran on code defaults instead of the operator's DB risk
+    # profile. Build a populated config from the already-initialized
+    # ConfigManager (DEX nested-dump pattern + the flat aliases RiskManager
+    # actually reads). Fail-soft at every layer:
+    #   DB/config read fails -> empty config (= previous code defaults);
+    #   populated construction fails -> retry with empty config;
+    #   both fail -> risk_manager stays None and the executor fail-closes
+    #   LIVE entries (see AITradeExecutor's risk_manager-is-None guard).
     risk_manager = None
     try:
         from core.risk_manager import RiskManager
-        risk_manager = RiskManager(config={}, portfolio_manager=None, config_manager=None)
+        risk_config = {}
+        try:
+            risk_config = _build_risk_config(config_manager)
+            logger.info(
+                "   RiskManager config loaded from DB: sections=%s flat_overrides=%s"
+                % (sorted(k for k, v in risk_config.items() if isinstance(v, dict)),
+                   sorted(k for k, v in risk_config.items() if not isinstance(v, dict)))
+            )
+        except Exception as e:
+            logger.warning(f"risk config load failed: {e}; using RiskManager code defaults")
+            risk_config = {}
+        try:
+            risk_manager = RiskManager(config=risk_config,
+                                       portfolio_manager=None,
+                                       config_manager=config_manager)
+        except Exception as e:
+            logger.warning(f"populated RiskManager init failed: {e}; retrying with code defaults")
+            risk_manager = RiskManager(config={}, portfolio_manager=None, config_manager=None)
     except Exception as e:
         logger.warning(f"core.risk_manager wiring failed: {e}; AI will run without it")
     engine = SentimentEngine(config, db_pool, risk_manager=risk_manager)
