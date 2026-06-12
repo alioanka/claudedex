@@ -1123,6 +1123,36 @@ class TradingBotEngine:
             logger.error(f"dry-run gate check failed (failing safe to DRY_RUN): {e}")
             return True
 
+    # Wrapped-native token per chain — used to price the native currency in
+    # USD when converting a USD position size into the executor's native-unit
+    # BUY amount. Mirrors base_executor._get_weth_address.
+    _WRAPPED_NATIVE = {
+        'ethereum': '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
+        'bsc': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c',
+        'polygon': '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270',
+        'arbitrum': '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1',
+        'base': '0x4200000000000000000000000000000000000006',
+        'optimism': '0x4200000000000000000000000000000000000006',
+        'avalanche': '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7',
+    }
+
+    async def _native_usd_price(self, chain: str) -> Optional[float]:
+        """USD price of the chain's native token via the wrapped-native pair.
+        Returns None when unresolvable — live callers must fail CLOSED (skip
+        the trade) rather than guess."""
+        try:
+            wrapped = self._WRAPPED_NATIVE.get((chain or '').lower())
+            if not wrapped:
+                return None
+            price = await self.dex_collector.get_token_price(
+                token_address=wrapped, chain=chain
+            )
+            price = float(price) if price else 0.0
+            return price if price > 0 else None
+        except Exception as e:
+            logger.error(f"native USD price lookup failed for {chain}: {e}")
+            return None
+
     async def _check_daily_entry_budget(self) -> bool:
         """Consumer of `trading.max_trades_per_day` (seeded by migration 095).
 
@@ -1289,15 +1319,19 @@ class TradingBotEngine:
                 logger.error(f"❌ Circuit breaker check failed: {e}")
                 logger.warning(f"⚠️  Aborting trade due to circuit breaker check failure")
                 return
-            #chain = opportunity.chain.lower() 
+            #chain = opportunity.chain.lower()
             # ✅ Define all variables at the beginning
             chain = opportunity.chain.lower()
             position_value = opportunity.recommended_position_size
             eth_price = 4000.0  # Rough estimate for gas calculation
-            
-            
+
+            # Engine-side broadcast gate: module DRY_RUN, global kill-switch
+            # or pause flag all force the simulated branch — so a gated fill
+            # is recorded as simulated, never as live.
+            effective_dry_run = self._effective_dry_run()
+
             # Check wallet balance before trading (skip in DRY_RUN mode)
-            if not self.config.get('dry_run', True):  # ✅ Only check balance in LIVE trading
+            if not effective_dry_run:  # ✅ Only check balance in LIVE trading
                 if chain == 'solana':
                     balance = await self.solana_executor.get_balance()
                     required = position_value + 0.01  # Position + fees
@@ -1332,8 +1366,8 @@ class TradingBotEngine:
                 executor = self.trade_executor
                 logger.info(f"🔶 Using EVM executor for {chain}")
             
-            # Check if in DRY_RUN mode
-            if self.config.get('dry_run', True):
+            # Check if in DRY_RUN mode (module flag OR kill-switch OR pause)
+            if effective_dry_run:
                 logger.info(f"🎯 DRY RUN - SIMULATING TRADE:")
                 logger.info(f"   Token: {token_symbol}")
                 logger.info(f"   Address: {opportunity.token_address}")
@@ -1505,128 +1539,181 @@ class TradingBotEngine:
             
             # REAL EXECUTION
             logger.info(f"💰 EXECUTING REAL TRADE for {token_symbol} on {chain.upper()}")
-            
-            # Create trade order (chain-agnostic)
+
             from trading.orders.order_manager import Order, OrderType
-            
-            # For Solana, token addresses are base58 mints
-            # For EVM, they're hex addresses
-            order = Order(
-                order_id=str(uuid.uuid4()),
-                token_in="So11111111111111111111111111111111111111112" if chain == 'solana' else self.config.get('weth_address'),  # SOL or WETH
-                token_out=opportunity.token_address,
-                amount=Decimal(str(opportunity.recommended_position_size / opportunity.price)),
-                order_type=OrderType.MARKET,
-                slippage=0.05,
-                chain=opportunity.chain,
-                wallet_address=str(self.solana_executor.wallet_keypair.pubkey()) if chain == 'solana' else self.config.get('wallet_address'),
-                metadata={
-                    'opportunity_id': opportunity.metadata.get('opportunity_id'),
-                    'token_symbol': token_symbol,
-                    'score': opportunity.score,
-                    'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
-                }
-            )
-            
-            # ✅ CRITICAL: Final safety checks before real execution
-            is_dry_run = self.config.get('dry_run', True)           # ✅ DEFINE IT!
-            if not is_dry_run:
-                logger.info(f"🔍 FINAL SAFETY CHECKS for {token_symbol}...")
-                
-                # 1. Verify balance
+            from trading.executors.base_executor import TradeOrder
+
+            position_value_usd = float(opportunity.recommended_position_size)
+            trade_id = str(uuid.uuid4())  # generated BEFORE broadcast
+
+            # ✅ RISK GATE (fail-closed): RiskManager.validate_trade before any
+            # live broadcast — circuit breakers, FRESH honeypot/liquidity/dev
+            # risk, position-size cap and the cross-module allocation guard.
+            try:
+                risk_ok, risk_reason = await self.risk_manager.validate_trade(
+                    token_address, position_value_usd
+                )
+            except Exception as e:
+                risk_ok, risk_reason = False, f"validate_trade error: {e}"
+            if not risk_ok:
+                logger.error(f"🛑 RiskManager BLOCKED live entry {token_symbol}: {risk_reason}")
+                await self.alert_manager.send_warning(
+                    f"🛑 Live entry blocked by RiskManager: {token_symbol}\n{risk_reason}"
+                )
+                return
+
+            # ✅ FINAL SAFETY CHECKS before real execution
+            logger.info(f"🔍 FINAL SAFETY CHECKS for {token_symbol}...")
+
+            # 1. Position size against portfolio limits
+            max_position = self.portfolio_manager.get_max_position_size(opportunity.chain)
+            if position_value_usd > max_position:
+                logger.error(
+                    f"❌ POSITION SIZE EXCEEDS LIMIT: "
+                    f"${position_value_usd:.2f} > ${max_position:.2f}"
+                )
+                await self.alert_manager.send_error(
+                    f"Trade cancelled - Position size too large\n"
+                    f"Token: {token_symbol}\n"
+                    f"Requested: ${position_value_usd:.2f}\n"
+                    f"Max allowed: ${max_position:.2f}"
+                )
+                return
+            logger.info(f"  ✅ Position size check passed")
+
+            if chain == 'solana':
+                # Jupiter executor consumes the order_manager Order shape.
+                order = Order(
+                    order_id=trade_id,
+                    token_in="So11111111111111111111111111111111111111112",
+                    token_out=opportunity.token_address,
+                    amount=Decimal(str(position_value_usd / opportunity.price)),
+                    order_type=OrderType.MARKET,
+                    slippage=0.05,
+                    chain=opportunity.chain,
+                    wallet_address=str(self.solana_executor.wallet_keypair.pubkey()),
+                    metadata={
+                        'opportunity_id': opportunity.metadata.get('opportunity_id'),
+                        'token_symbol': token_symbol,
+                        'score': opportunity.score,
+                        'executor_type': 'Jupiter'
+                    }
+                )
+            else:
+                # EVM executor BUY amount is in NATIVE units. Convert the USD
+                # position size via the wrapped-native price; fail CLOSED when
+                # the price cannot be resolved (never guess with live funds).
+                native_usd = await self._native_usd_price(chain)
+                if not native_usd:
+                    logger.error(
+                        f"❌ Cannot resolve native USD price for {chain} — "
+                        f"skipping live entry {token_symbol} (fail-closed)"
+                    )
+                    return
+                amount_native = position_value_usd / native_usd
+
+                # 2. Native balance must cover size + gas headroom
                 try:
-                    balance = await executor.get_balance(order.token_in)
-                    required = order.amount * Decimal('1.1')  # Need 10% buffer for gas
-                    
-                    if balance < required:
-                        logger.error(f"❌ INSUFFICIENT BALANCE: Have {balance}, need {required}")
-                        await self.alert_manager.send_error(
-                            f"Trade cancelled - Insufficient balance\n"
-                            f"Token: {token_symbol}\n"
-                            f"Have: {balance:.4f}\n"
-                            f"Need: {required:.4f}"
-                        )
-                        return
-                    logger.info(f"  ✅ Balance check passed: {balance:.4f} >= {required:.4f}")
-                    
+                    w3 = self.trade_executor.w3
+                    balance_native = float(w3.from_wei(
+                        w3.eth.get_balance(self.trade_executor.wallet_address), 'ether'
+                    ))
                 except Exception as e:
                     logger.error(f"❌ Balance check failed: {e}")
                     return
-                
-                # 2. Verify position size against risk limits
-                max_position = self.portfolio_manager.get_max_position_size(opportunity.chain)
-                if opportunity.recommended_position_size > max_position:
+                if balance_native < amount_native * 1.1:  # 10% gas buffer
                     logger.error(
-                        f"❌ POSITION SIZE EXCEEDS LIMIT: "
-                        f"${opportunity.recommended_position_size:.2f} > ${max_position:.2f}"
+                        f"❌ INSUFFICIENT BALANCE: have {balance_native:.6f}, "
+                        f"need {amount_native * 1.1:.6f} native"
                     )
                     await self.alert_manager.send_error(
-                        f"Trade cancelled - Position size too large\n"
+                        f"Trade cancelled - Insufficient balance\n"
                         f"Token: {token_symbol}\n"
-                        f"Requested: ${opportunity.recommended_position_size:.2f}\n"
-                        f"Max allowed: ${max_position:.2f}"
+                        f"Have: {balance_native:.6f}\n"
+                        f"Need: {amount_native * 1.1:.6f} (native, incl. gas buffer)"
                     )
                     return
-                logger.info(f"  ✅ Position size check passed")
-                
-                # 3. Final confirmation prompt (optional - remove in production)
-                logger.warning(f"⚠️  ABOUT TO EXECUTE REAL TRADE")
-                logger.warning(f"   Token: {token_symbol}")
-                logger.warning(f"   Amount: ${opportunity.recommended_position_size:.2f}")
-                logger.warning(f"   Chain: {chain}")
-                
-            # Now execute the trade
-            result = await executor.execute_trade(order)
-            
-            # Wait for transaction confirmation
-            if not self.config.get('dry_run', True):
-                try:
-                    if chain == 'solana':
-                        # Solana confirmation
-                        confirmation = await self.solana_executor.wait_for_confirmation(
-                            result.tx_hash,
-                            max_wait=30
-                        )
-                        if not confirmation or confirmation.get('err'):
-                            logger.error(f"❌ Solana transaction FAILED: {result.tx_hash}")
-                            await self.db.update_trade(trade_id, {'status': 'failed'})
-                            return
-                    else:
-                        # EVM confirmation
-                        w3 = self.trade_executor.w3
-                        receipt = w3.eth.wait_for_transaction_receipt(
-                            result.tx_hash,
-                            timeout=120
-                        )
-                        
-                        if receipt.status != 1:
-                            logger.error(f"❌ Transaction FAILED: {result.tx_hash}")
-                            # Update database with failed status
-                            await self.db.update_trade(trade_id, {'status': 'failed'})
-                            return
-                        
-                        logger.info(f"✅ Transaction CONFIRMED: {result.tx_hash}")
-                        
-                except Exception as e:
-                    logger.error(f"❌ Transaction confirmation failed: {e}")
-                    return
+                logger.info(f"  ✅ Balance check passed: {balance_native:.6f} native")
 
+                order = TradeOrder(
+                    token_address=opportunity.token_address,
+                    side='buy',
+                    amount=amount_native,
+                    slippage=0.05,
+                    deadline=300,
+                    use_mev_protection=True,
+                    metadata={
+                        'opportunity_id': opportunity.metadata.get('opportunity_id'),
+                        'token_symbol': token_symbol,
+                        'score': opportunity.score,
+                        'trade_id': trade_id,
+                        'executor_type': 'EVM'
+                    }
+                )
+
+            # Re-assert the broadcast gate right before send: the kill-switch
+            # may have tripped between the entry checks and this point.
+            if self._effective_dry_run():
+                logger.warning(
+                    f"🛑 Broadcast gate closed (kill-switch/pause) — dropping "
+                    f"live entry {token_symbol}"
+                )
+                return
+
+            logger.warning(
+                f"⚠️  ABOUT TO EXECUTE REAL TRADE: {token_symbol} "
+                f"${position_value_usd:.2f} on {chain}"
+            )
+
+            # Both executors confirm the receipt internally and return a Dict
+            # (success only when receipt.status == 1) — no second wait needed.
+            result = await executor.execute_trade(order)
+            if not isinstance(result, dict):
+                logger.error(
+                    f"❌ Executor returned unexpected result type "
+                    f"{type(result).__name__} — treating as failed trade"
+                )
+                result = {'success': False, 'error': 'unexpected executor result type'}
+
+            # A fill simulated at the executor boundary (kill-switch race /
+            # executor-level dry-run) must NEVER be recorded as a live one.
+            tx_hash = result.get('tx_hash') or result.get('signature') or result.get('transactionHash')
+            if result.get('success'):
+                if ((result.get('metadata') or {}).get('dry_run')
+                        or str(tx_hash or '').startswith('0xDRYRUN')):
+                    logger.warning(
+                        f"🛑 Executor SIMULATED the fill for {token_symbol} "
+                        f"(kill-switch/pause) — not recording a live position"
+                    )
+                    return
+                if not tx_hash:
+                    logger.error(
+                        f"❌ Executor reported success WITHOUT a tx hash for "
+                        f"{token_symbol} — refusing to record position"
+                    )
+                    result = {'success': False, 'error': 'success without tx hash'}
 
             if result['success']:
-                # Track position
+                # Track position. token_amount fallback: estimated from the
+                # USD size and signal price (NOT order.amount, which is in
+                # native units for the EVM leg).
+                est_token_amount = position_value_usd / opportunity.price if opportunity.price > 0 else 0.0
                 position = {
                     'token_address': opportunity.token_address,
                     'token_symbol': token_symbol,
-                    'entry_price': result.get('execution_price', opportunity.price),
-                    'amount': result.get('token_amount', order.amount),
+                    'entry_price': result.get('execution_price') or opportunity.price,
+                    'amount': Decimal(str(result.get('token_amount') or est_token_amount)),
                     'entry_value': opportunity.recommended_position_size,
-                    'tx_hash': result.get('signature' if chain == 'solana' else 'transactionHash'),
+                    'tx_hash': tx_hash,
                     'chain': opportunity.chain,
                     'strategy': {'name': opportunity.entry_strategy},
                     'risk_score': opportunity.risk_score,
                     'entry_time': datetime.now(),
                     'stop_loss_percentage': sl_pct,
                     'take_profit_percentage': tp_pct,
+                    'max_hold_time': 60,
+                    'is_dry_run': False,
+                    'trade_id': trade_id,
                     'metadata': {
                         **opportunity.metadata,
                         'executor_type': 'Jupiter' if chain == 'solana' else 'EVM'
@@ -1658,8 +1745,8 @@ class TradingBotEngine:
                 })
 
                 # ✅ ADD COMPREHENSIVE LOGGING (NEW)
-                execution_price = result.get('execution_price', opportunity.price)
-                token_amount = result.get('token_amount', order.amount)
+                execution_price = float(result.get('execution_price') or opportunity.price)
+                token_amount = float(result.get('token_amount') or est_token_amount)
                 actual_value = float(execution_price * token_amount)
                 slippage_pct = ((execution_price - opportunity.price) / opportunity.price * 100) if opportunity.price > 0 else 0
                 
@@ -1673,18 +1760,13 @@ class TradingBotEngine:
                 logger.info(f"   Amount: {token_amount:.4f} tokens")
                 logger.info(f"   Target Value: ${opportunity.recommended_position_size:.2f}")
                 logger.info(f"   Actual Value: ${actual_value:.2f}")
-                logger.info(f"   TX Hash: {result.get('signature' if chain == 'solana' else 'transactionHash', 'N/A')}")
+                logger.info(f"   TX Hash: {tx_hash or 'N/A'}")
                 logger.info(f"   Gas Used: ${result.get('gas_fee', 0):.4f}")
-                
-                # Send success alert
 
-                # ✅ LOG REAL TRADE TO DATABASE (NEW)
+                # ✅ LOG REAL TRADE TO DATABASE — trade_id was generated
+                # BEFORE broadcast so the position and the row always agree.
                 try:
-                    trade_id = str(uuid.uuid4())
-                    execution_price = result.get('execution_price', opportunity.price)
-                    token_amount = result.get('token_amount', order.amount)
-                    actual_value = float(execution_price * token_amount)
-                    
+
                     trade_data = {
                         'trade_id': trade_id,
                         'token_address': token_address,
@@ -1695,7 +1777,11 @@ class TradingBotEngine:
                         'amount': float(token_amount),
                         'usd_value': actual_value,
                         'gas_fee': float(result.get('gas_fee', 0)),
-                        'slippage': float(result.get('slippage_bps', 0)) / 10000,  # Convert bps to decimal
+                        # Executors report 'slippage_actual' (fraction); some
+                        # legacy paths report 'slippage_bps'.
+                        'slippage': (float(result.get('slippage_bps')) / 10000
+                                     if result.get('slippage_bps') is not None
+                                     else float(result.get('slippage_actual') or 0)),
                         'profit_loss': None,
                         'profit_loss_percentage': None,
                         'strategy': opportunity.entry_strategy,
@@ -1709,7 +1795,7 @@ class TradingBotEngine:
                             'is_dry_run': False,  # ✅ REAL TRADE
                             'opportunity_score': float(opportunity.score),
                             'executor_type': 'Jupiter' if chain == 'solana' else 'EVM',
-                            'tx_hash': result.get('signature' if chain == 'solana' else 'transactionHash'),
+                            'tx_hash': tx_hash,
                             'expected_price': float(opportunity.price),
                             'execution_price': float(execution_price),
                             'slippage_bps': result.get('slippage_bps', 0),
@@ -1720,24 +1806,23 @@ class TradingBotEngine:
                         }
                     }
                     
-                    # Add trade_id to position for later reference
-                    position['trade_id'] = trade_id
-                    
                     await self.db.save_trade(trade_data)
                     logger.info(f"✅ Real trade logged to database: {trade_id}")
-                    
+
                 except Exception as e:
+                    # The position IS live on-chain: keep tracking it in
+                    # memory and alert loudly that the DB row is missing.
                     logger.error(f"❌ Failed to log real trade to database: {e}")
                     import traceback
                     logger.error(traceback.format_exc())
-                
+                    await self.alert_manager.send_critical(
+                        f"🚨 LIVE position OPENED ON-CHAIN but DB write FAILED: "
+                        f"{token_symbol} (tx {tx_hash}). Position tracked "
+                        f"in-memory only — restart will orphan it."
+                    )
+
                 # Send success alert
-                tx_link = result.get('explorer_url', f"Transaction: {result.get('signature' or 'transactionHash', 'N/A')[:10]}...")
-                
-                # Build better alert with actual values
-                execution_price = result.get('execution_price', opportunity.price)
-                token_amount = result.get('token_amount', order.amount)
-                actual_value = float(execution_price * token_amount)
+                tx_link = result.get('explorer_url', f"Transaction: {str(tx_hash or 'N/A')[:10]}...")
                 slippage_pct = ((execution_price - opportunity.price) / opportunity.price * 100) if opportunity.price > 0 else 0
                 
                 await self.alert_manager.send_trade_alert(
