@@ -1527,6 +1527,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/advisor/simulations', self.api_get_advisor_simulations)
         self.app.router.add_post('/api/advisor/simulations/{sim_id}/close', self.api_close_advisor_sim)
         self.app.router.add_post('/api/advisor/simulations/channel/{channel}/close-all', self.api_close_advisor_channel_sims)
+        self.app.router.add_get('/api/advisor/performance', self.api_get_advisor_performance)
         self.app.router.add_get('/api/advisor/portfolio', self.api_get_advisor_portfolio)
         self.app.router.add_post('/api/advisor/portfolio', self.api_save_advisor_portfolio)
         self.app.router.add_post('/api/advisor/portfolio/{holding_id}/delete', self.api_delete_advisor_holding)
@@ -16752,6 +16753,11 @@ class DashboardEndpoints:
         try:
             params = request.rel_url.query
             status_filter = params.get('status', '')  # open | closed | all
+            # Optional row filters (dashboard v2). Summary stats stay GLOBAL
+            # (caps + WR badges describe the whole book, not the filtered view).
+            market_filter = params.get('market', '').strip().lower()
+            channel_filter = params.get('channel', '').strip().lower()
+            horizon_filter = params.get('horizon', '').strip().lower()
             limit = min(int(params.get('limit', 100)), 500)
 
             rows = []
@@ -16787,13 +16793,23 @@ class DashboardEndpoints:
                     except Exception:
                         chan_expr = "market"
 
-                    where = ''
+                    conds = []
                     args = []
                     if status_filter and status_filter != 'all':
-                        where = 'WHERE status = $1'
                         args.append(status_filter)
+                        conds.append(f'status = ${len(args)}')
                     else:
-                        where = "WHERE status IN ('open','closed','expired')"
+                        conds.append("status IN ('open','closed','expired')")
+                    if market_filter and market_filter != 'all':
+                        args.append(market_filter)
+                        conds.append(f'lower(market) = ${len(args)}')
+                    if channel_filter and channel_filter != 'all':
+                        args.append(channel_filter)
+                        conds.append(f'lower({chan_expr}) = ${len(args)}')
+                    if horizon_filter and horizon_filter != 'all':
+                        args.append(horizon_filter)
+                        conds.append(f'lower(horizon) = ${len(args)}')
+                    where = 'WHERE ' + ' AND '.join(conds)
                     db_rows = await conn.fetch(
                         f'''SELECT id, advice_id, symbol, market,
                                    {chan_expr} AS channel,
@@ -16982,6 +16998,127 @@ class DashboardEndpoints:
         except Exception as exc:
             logger.error(f'[advisor] api_close_advisor_channel_sims error: {exc}')
             return web.json_response({'success': False, 'error': str(exc)}, status=500)
+
+    async def api_get_advisor_performance(self, request):
+        """
+        Advisor sim performance panel feed (dashboard v2). Computes overall +
+        per-channel + per-horizon metrics and a realized-PnL equity curve via
+        the PURE helpers in modules/advisor/core/performance.py (stdlib-only,
+        unit self-tested — the SQL here only selects rows; all math is shared).
+
+        Query params (all optional): market, channel, horizon, days
+        (terminal-row lookback over closed_at; 0 = all history; default from
+        advisor_perf_lookback_days config key, seeded by migration 103).
+        OPEN rows are always included regardless of the lookback window.
+
+        FAIL-SOFT: any error returns HTTP 200 with empty zero-state structures
+        (plus an 'error' note) so the panel renders empty instead of a 500.
+        """
+        empty = {
+            'success': True, 'rows_considered': 0, 'overall': {},
+            'by_channel': {}, 'hit_rate_by_horizon': {}, 'equity_curve': [],
+            'lookback_days': None, 'filters': {},
+        }
+        try:
+            from modules.advisor.core.performance import (
+                compute_performance, equity_curve,
+                hit_rate_by_horizon, performance_by_channel,
+            )
+        except Exception as exc:
+            logger.error(f'[advisor] performance helpers unavailable: {exc}')
+            empty['error'] = 'performance helpers unavailable'
+            return web.json_response(empty)
+
+        try:
+            params = request.rel_url.query
+            market_filter = params.get('market', '').strip().lower()
+            channel_filter = params.get('channel', '').strip().lower()
+            horizon_filter = params.get('horizon', '').strip().lower()
+
+            lookback_days = 90
+            max_points = 500
+            if not self.db:
+                empty['lookback_days'] = lookback_days
+                return web.json_response(empty)
+
+            async with self.db.pool.acquire() as conn:
+                # Config-seeded defaults (migration 103); operator override
+                # via ?days= wins. Fail-soft on missing/garbage values.
+                try:
+                    cfg_rows = await conn.fetch(
+                        """SELECT key, value FROM config_settings
+                           WHERE config_type='advisor_config'
+                             AND key IN ('advisor_perf_lookback_days',
+                                         'advisor_perf_equity_max_points')"""
+                    )
+                    for cr in cfg_rows:
+                        if cr['key'] == 'advisor_perf_lookback_days':
+                            lookback_days = int(float(cr['value']))
+                        elif cr['key'] == 'advisor_perf_equity_max_points':
+                            max_points = max(10, int(float(cr['value'])))
+                except Exception:
+                    pass
+                try:
+                    if params.get('days', '') != '':
+                        lookback_days = max(0, int(float(params['days'])))
+                except (TypeError, ValueError):
+                    pass
+
+                # channel expr: pre-077 DBs have no channel column.
+                chan_expr = "COALESCE(channel, market)"
+                try:
+                    await conn.fetchval(
+                        "SELECT channel FROM advisor_sim_positions LIMIT 1")
+                except Exception:
+                    chan_expr = "market"
+
+                conds = []
+                args = []
+                if lookback_days > 0:
+                    args.append(lookback_days)
+                    conds.append(
+                        f"(status = 'open' OR closed_at >= "
+                        f"NOW() - (${len(args)} * INTERVAL '1 day'))"
+                    )
+                if market_filter and market_filter != 'all':
+                    args.append(market_filter)
+                    conds.append(f'lower(market) = ${len(args)}')
+                if channel_filter and channel_filter != 'all':
+                    args.append(channel_filter)
+                    conds.append(f'lower({chan_expr}) = ${len(args)}')
+                if horizon_filter and horizon_filter != 'all':
+                    args.append(horizon_filter)
+                    conds.append(f'lower(horizon) = ${len(args)}')
+                where = ('WHERE ' + ' AND '.join(conds)) if conds else ''
+
+                db_rows = await conn.fetch(
+                    f"""SELECT id, symbol, market, {chan_expr} AS channel,
+                               direction, horizon, pnl_pct, pnl_usd,
+                               status, close_reason, opened_at, closed_at
+                        FROM advisor_sim_positions {where}
+                        ORDER BY opened_at DESC
+                        LIMIT 5000""",
+                    *args,
+                )
+
+            rows = [dict(r) for r in db_rows]
+            payload = {
+                'success': True,
+                'rows_considered': len(rows),
+                'overall': compute_performance(rows),
+                'by_channel': performance_by_channel(rows),
+                'hit_rate_by_horizon': hit_rate_by_horizon(rows),
+                'equity_curve': equity_curve(rows, max_points=max_points),
+                'lookback_days': lookback_days,
+                'filters': {'market': market_filter or 'all',
+                            'channel': channel_filter or 'all',
+                            'horizon': horizon_filter or 'all'},
+            }
+            return web.json_response(payload)
+        except Exception as exc:
+            logger.error(f'[advisor] api_get_advisor_performance error: {exc}')
+            empty['error'] = str(exc)[:200]
+            return web.json_response(empty)
 
     async def api_get_advisor_portfolio(self, request):
         """Return operator-reported holdings."""
