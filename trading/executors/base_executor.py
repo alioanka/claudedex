@@ -473,6 +473,129 @@ class TradeExecutor(BaseExecutor):
             )
             logger.info(f"🔄 Nonce reset to {self.current_nonce}")
 
+    # ── LIVE-safety: idempotent retry. A receipt timeout must never become a
+    #    second on-chain transaction (duplicate buy). ──────────────────────────
+    ERC20_TRANSFER_TOPIC = 'ddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef'
+
+    @staticmethod
+    def _hash_str(tx_hash) -> str:
+        h = tx_hash.hex() if hasattr(tx_hash, 'hex') else str(tx_hash)
+        return h if h.startswith('0x') else '0x' + h
+
+    def _record_broadcast(self, order: TradeOrder, tx_hash, nonce: int, route: str) -> None:
+        """Record an in-flight broadcast so a retry can poll it instead of re-sending."""
+        order.metadata['_pending_broadcast'] = {
+            'tx_hash': self._hash_str(tx_hash),
+            'nonce': int(nonce),
+            'route': route,
+            'sent_at': time.time(),
+        }
+
+    def _clear_broadcast(self, order: TradeOrder) -> None:
+        order.metadata.pop('_pending_broadcast', None)
+
+    def _result_from_receipt(self, order: TradeOrder, pending: Dict, receipt) -> ExecutionResult:
+        """Build a result for a prior attempt that confirmed after its receipt timeout."""
+        token_amount = 0.0
+        execution_price = 0.0
+        try:
+            # Best-effort: decode ERC20 Transfer(s) INTO our wallet from the receipt
+            wallet_word = self.wallet_address[2:].lower().rjust(64, '0')
+            for lg in receipt['logs']:
+                topics = lg.get('topics') or []
+                if len(topics) != 3:
+                    continue
+                t0 = self._hash_str(topics[0])[2:].lower()
+                t2 = self._hash_str(topics[2])[2:].lower()
+                if t0 == self.ERC20_TRANSFER_TOPIC and t2 == wallet_word:
+                    data = lg.get('data')
+                    raw = data.hex() if hasattr(data, 'hex') else str(data)
+                    token_amount += float(int(raw.replace('0x', '') or '0', 16))
+            if order.side == 'buy' and token_amount > 0 and order.amount > 0:
+                execution_price = token_amount / float(Web3.to_wei(order.amount, 'ether'))
+        except Exception as e:
+            logger.debug(f"Late-confirmation log decode failed: {e}")
+        return ExecutionResult(
+            success=True,
+            tx_hash=pending['tx_hash'],
+            execution_price=execution_price,
+            amount=order.amount,
+            token_amount=token_amount if order.side == 'buy' else (order.token_amount or 0),
+            gas_used=receipt.get('gasUsed', 0),
+            gas_price=receipt.get('effectiveGasPrice', 0),
+            slippage_actual=0,
+            execution_time=0,
+            route=pending.get('route', ''),
+            metadata={'late_confirmation': True}
+        )
+
+    async def _resolve_pending_broadcast(self, order: TradeOrder) -> Optional[ExecutionResult]:
+        """Idempotency gate run before every (re)broadcast attempt.
+
+        Returns:
+            None — safe to broadcast (no prior tx in flight, prior tx reverted
+                   on-chain, or prior tx provably dropped with its nonce unused).
+            ExecutionResult(success=True) — prior tx confirmed; use it.
+            ExecutionResult(success=False, metadata['rebroadcast_unsafe']) —
+                   prior tx may still land; caller must NOT broadcast a new tx.
+        """
+        pending = order.metadata.get('_pending_broadcast')
+        if not pending:
+            return None
+        tx_hash = pending['tx_hash']
+
+        receipt = None
+        try:
+            receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+        except Exception:
+            receipt = None
+
+        if receipt is None:
+            # Is the tx still known to the node (pending in mempool)?
+            known = False
+            try:
+                known = self.w3.eth.get_transaction(tx_hash) is not None
+            except Exception:
+                known = False
+            if known:
+                logger.warning(f"⏳ Prior tx {tx_hash} still pending — polling it instead of re-broadcasting")
+                try:
+                    receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
+                except Exception:
+                    receipt = None
+            if receipt is None:
+                if not known:
+                    # Hash unknown — was the nonce consumed anyway (mined under a lagging RPC / replaced)?
+                    chain_nonce = None
+                    try:
+                        chain_nonce = self.w3.eth.get_transaction_count(self.wallet_address, 'latest')
+                    except Exception:
+                        chain_nonce = None
+                    if chain_nonce is not None and chain_nonce <= pending['nonce']:
+                        # Nonce still free and tx gone from the mempool: it cannot land.
+                        logger.warning(f"🗑️ Prior tx {tx_hash} dropped (nonce {pending['nonce']} unused) — safe to re-broadcast")
+                        self._clear_broadcast(order)
+                        await self._reset_nonce()
+                        return None
+                # Still pending, or nonce consumed without a visible receipt, or RPC
+                # errors: state unknown — NEVER risk a duplicate on-chain swap.
+                logger.error(f"🛑 Prior tx {tx_hash} unresolved — refusing to re-broadcast (double-spend guard)")
+                return ExecutionResult(
+                    success=False, tx_hash=tx_hash, execution_price=0, amount=0,
+                    token_amount=0, gas_used=0, gas_price=0, slippage_actual=0,
+                    execution_time=0, route=pending.get('route', ''),
+                    error='Prior broadcast unresolved after receipt timeout - re-broadcast blocked',
+                    metadata={'rebroadcast_unsafe': True}
+                )
+
+        # Mined — terminal either way.
+        self._clear_broadcast(order)
+        if receipt['status'] == 1:
+            logger.warning(f"✅ Prior tx {tx_hash} confirmed after timeout — recovered, no re-broadcast")
+            return self._result_from_receipt(order, pending, receipt)
+        logger.warning(f"❌ Prior tx {tx_hash} reverted on-chain (gas burnt, nonce consumed) — genuine failure")
+        return None
+
     # ✅ FIXED: NEW METHOD - Simulate execution for paper trading
     async def _simulate_execution(self, order: TradeOrder, start_time: float) -> ExecutionResult:
         """Simulate trade execution for paper trading"""
@@ -822,9 +945,23 @@ class TradeExecutor(BaseExecutor):
         return {}
             
     async def _execute_with_retry(self, order: TradeOrder, route: ExecutionRoute) -> ExecutionResult:
-        """Execute trade with retry logic"""
+        """Execute trade with retry logic (idempotent: never re-broadcasts while a prior tx may land)"""
         for attempt in range(self.max_retries):
             try:
+                # Double-spend guard: if a prior attempt already broadcast a tx,
+                # resolve THAT hash/nonce before sending anything new.
+                prior = await self._resolve_pending_broadcast(order)
+                if prior is not None:
+                    if prior.success:
+                        self.stats['routes_used'][route.value] = self.stats['routes_used'].get(route.value, 0) + 1
+                        self.stats['total_gas_spent'] += prior.gas_used * prior.gas_price
+                        return prior
+                    # Prior tx unresolved: keep polling on later attempts, never re-send.
+                    if attempt < self.max_retries - 1:
+                        await asyncio.sleep(self.retry_delay * (attempt + 1))
+                        continue
+                    return prior
+
                 if route == ExecutionRoute.UNISWAP_V2:
                     result = await self._execute_uniswap_v2(order)
                 elif route == ExecutionRoute.UNISWAP_V3:
@@ -960,11 +1097,14 @@ class TradeExecutor(BaseExecutor):
             logger.info(f"📤 Sending transaction...")
             signed_tx = self.account.sign_transaction(tx)
             tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-            
+            # Record the in-flight tx so a receipt timeout cannot trigger a duplicate broadcast
+            self._record_broadcast(order, tx_hash, tx['nonce'], 'uniswap_v2')
+
             # ✅ FIXED: Wait for confirmation with increased timeout (5 minutes)
             logger.info(f"⏳ Waiting for confirmation: {tx_hash.hex()}")
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
-            
+            self._clear_broadcast(order)  # mined (either status) = terminal
+
             if receipt['status'] == 1:
                 # Parse execution details
                 execution_price = amounts_out[-1] / amount_in if order.side == 'buy' else amount_in / amounts_out[-1]
@@ -1071,10 +1211,13 @@ class TradeExecutor(BaseExecutor):
                 # Sign and send transaction
                 signed_tx = self.account.sign_transaction(tx_data)
                 tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-                
+                # Record the in-flight tx so a receipt timeout cannot trigger a duplicate broadcast
+                self._record_broadcast(order, tx_hash, tx_data['nonce'], '1inch')
+
                 # ✅ FIXED: Wait for confirmation with increased timeout
                 receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=300)
-                
+                self._clear_broadcast(order)  # mined (either status) = terminal
+
                 if receipt['status'] == 1:
                     return ExecutionResult(
                         success=True,
