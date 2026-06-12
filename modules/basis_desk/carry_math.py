@@ -66,6 +66,8 @@ class CarryPlan:
     spot_side: str            # BUY | SELL
     funding_bps: float        # signed, per funding interval
     funding_interval_hours: float
+    perp_price: float
+    spot_price: float
     basis_bps: float          # (perp - spot)/spot * 1e4, signed
     adverse_basis_cost_bps: float
     gross_carry_bps_per_interval: float
@@ -181,6 +183,8 @@ def plan_carry(
         perp_side=perp_side, spot_side=spot_side,
         funding_bps=funding_bps,
         funding_interval_hours=funding_interval_hours,
+        perp_price=perp_price,
+        spot_price=spot_price,
         basis_bps=basis_bps,
         adverse_basis_cost_bps=adverse_basis_cost_bps,
         gross_carry_bps_per_interval=abs_funding,
