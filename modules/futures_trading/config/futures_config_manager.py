@@ -159,6 +159,13 @@ class FuturesRiskConfig(BaseModel):
     require_trend_confirmation: bool = False  # Allow trading in sideways markets (was True)
     min_volume_multiplier: float = 0.8  # Allow 80% of average volume (was 1.2)
 
+    # LIVE-flip safety (mig 109): when live orders are blocked (killswitch /
+    # pause / DRY_RUN flipped back on) the engine refuses to paper-close a
+    # LIVE position (which would orphan real exchange exposure). Set True to
+    # instead allow REAL reduce-only closes in that state (risk-reducing
+    # orders only). Default False = no orders while blocked.
+    reduce_only_close_when_paused: bool = False
+
     # FUT-RM-21 (Wave 7): regime gate. The signal stack mixes mean-reversion
     # (RSI extremes scored as STRONG_BUY/SELL) with trend-following (Bollinger
     # breakout, EMA cross) and sums them additively — so the engine happily

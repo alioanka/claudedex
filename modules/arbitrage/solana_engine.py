@@ -411,6 +411,20 @@ class SolanaArbitrageEngine:
         else:
             self.dry_run = os.getenv('DRY_RUN', 'true').lower() in ('true', '1', 'yes')
 
+        # ECON gates (same keys as the EVM engines, migration 097): shadow_mode
+        # default ON, live opt-in default OFF. Fail-safe parsing.
+        def _gate_bool(raw, default):
+            if raw is None:
+                return default
+            if isinstance(raw, bool):
+                return raw
+            return str(raw).strip().lower() in ('true', '1', 'yes', 'on')
+
+        self.shadow_mode = _gate_bool(config.get('shadow_mode'), True)
+        self.live_execution_enabled = _gate_bool(
+            config.get('live_execution_enabled'), False
+        )
+
         # Settings from config (loaded from DB via settings page)
         # Threshold is stored as percentage (0.2 = 0.2%), convert to decimal (0.002)
         self.min_profit_threshold = config.get('sol_arb_threshold', 0.2) / 100.0
@@ -847,7 +861,25 @@ class SolanaArbitrageEngine:
             profit_pct = new_profit_pct
             logger.info(f"✅ Quotes refreshed, profit: {profit_pct:.3%}")
 
-        if self.dry_run:
+        # LIVE gate parity with the EVM engines: this path previously checked
+        # only self.dry_run, bypassing the kill switch / pause flags AND the
+        # shadow_mode + live_execution_enabled opt-ins. Fail-safe: if the gate
+        # itself is unreadable we must NOT broadcast.
+        try:
+            from core.dry_run import should_skip_live
+            skip_live = should_skip_live(self.dry_run, module='arbitrage')
+        except Exception:
+            skip_live = True
+        if not skip_live and self.shadow_mode:
+            logger.info("shadow_mode=true — recording simulated trade only")
+            skip_live = True
+        if not skip_live and not self.live_execution_enabled:
+            logger.info(
+                "live_execution_enabled=false — recording simulated trade only"
+            )
+            skip_live = True
+
+        if skip_live:
             await asyncio.sleep(0.3)
             logger.info(f"✅ Solana Arb Executed (DRY RUN) [{in_symbol}/{out_symbol}]")
             await self._log_trade(
@@ -1505,6 +1537,11 @@ class SolanaArbitrageEngine:
 
             trade_id = f"sol_arb_{uuid.uuid4().hex[:12]}"
 
+            # Honest simulation flag: skip-path rows (tx_hash 'DRY_RUN' via
+            # killswitch/pause/shadow/live-flag gate) are simulated even when
+            # dry_run=false.
+            is_sim = bool(self.dry_run) or tx_hash == "DRY_RUN"
+
             # Get route as string
             route_str = " → ".join([r.get('swapInfo', {}).get('label', 'DEX') for r in route[:5]])
 
@@ -1534,7 +1571,7 @@ class SolanaArbitrageEngine:
                     profit_pct * 100,
                     profit_pct * 100,
                     'closed',
-                    self.dry_run,
+                    is_sim,
                     datetime.now(),
                     datetime.now(),
                     tx_hash,

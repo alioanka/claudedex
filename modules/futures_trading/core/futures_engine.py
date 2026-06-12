@@ -402,6 +402,12 @@ class FuturesTradingEngine:
             self.max_consecutive_losses = int(getattr(
                 risk_config, 'max_consecutive_losses', 5) or 5)
 
+            # LIVE-flip safety (mig 109): allow REAL reduce-only closes of
+            # LIVE positions while live orders are otherwise blocked
+            # (killswitch/pause/DRY_RUN flip). Default False = no orders.
+            self.reduce_only_close_when_paused = bool(getattr(
+                risk_config, 'reduce_only_close_when_paused', False))
+
             self.cooldown_duration = timedelta(minutes=strategy_config.cooldown_minutes)
 
             # Pairs settings
@@ -498,6 +504,8 @@ class FuturesTradingEngine:
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
             self.max_consecutive_losses = 5
+            # LIVE-flip safety fallback (mig 109): no orders while blocked
+            self.reduce_only_close_when_paused = False
             self.symbols = ["BTC/USDT", "ETH/USDT", "SOL/USDT", "BNB/USDT"]
             self.signal_timeframe = "15m"  # 15-minute candles for faster signals
             self.scan_interval_seconds = 30  # Scan every 30 seconds
@@ -2596,7 +2604,18 @@ class FuturesTradingEngine:
             net_pnl = pnl_usd - exit_fee
 
             # Execute partial close (or simulate)
-            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
+            _skip = should_skip_live(self.dry_run, module='futures', account=self.exchange)
+            if _skip and not position.is_simulated and not self.reduce_only_close_when_paused:
+                # LIVE-flip safety: see _close_position — never paper-trim a
+                # LIVE position while live orders are blocked.
+                logger.critical(
+                    f"🚨 Refusing to paper partial-close LIVE position {symbol} ({reason}) "
+                    f"while live orders are blocked (killswitch/pause/DRY_RUN flip). Set "
+                    f"futures_risk.reduce_only_close_when_paused=true to allow reduce-only "
+                    f"closes in this state."
+                )
+                return
+            if _skip and position.is_simulated:
                 logger.info(f"🔵 [DRY_RUN] Partial close {symbol} ({reason})")
                 logger.info(f"   Closed: {close_size:.6f} ({close_pct:.1f}%), PnL: ${net_pnl:.2f}")
             else:
@@ -2903,6 +2922,11 @@ class FuturesTradingEngine:
                     )
                     return
 
+            # Resolve the live gate ONCE so the position's is_simulated flag is
+            # honest: a killswitch/pause skip with dry_run=false must still be
+            # recorded as simulated (it never reached the exchange).
+            _skip_entry = should_skip_live(self.dry_run, module='futures', account=self.exchange)
+
             # Create position object
             position = Position(
                 position_id=str(uuid.uuid4()),
@@ -2917,7 +2941,7 @@ class FuturesTradingEngine:
                 take_profit=take_profit_price,
                 liquidation_price=liquidation_price,
                 fees_paid=estimated_fees / 2,  # Entry fee
-                is_simulated=self.dry_run,
+                is_simulated=self.dry_run or _skip_entry,
                 metadata={
                     'signals': {
                         'rsi': signals.rsi,
@@ -2938,25 +2962,16 @@ class FuturesTradingEngine:
             )
 
             # Execute order (or simulate)
-            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
+            if _skip_entry:
                 logger.info(f"🔵 [DRY_RUN] SIMULATED {side.value.upper()} {symbol}")
                 logger.info(f"   Entry: ${current_price:.2f}, Size: {size:.6f}, Notional: ${notional:.2f}")
                 logger.info(f"   SL: ${stop_loss_price:.2f}, TP: ${take_profit_price:.2f}")
             else:
-                # Execute real order via the ISOLATED-margin + leverage-set helpers
+                # Execute real order via the ISOLATED-margin + leverage-set helper.
+                # LIVE-P0: raw ccxt has no open_long/open_short — see
+                # _exchange_open_market.
                 try:
-                    if side == TradeSide.LONG:
-                        order = await self.exchange_client.open_long(
-                            symbol=symbol,
-                            quantity=size,
-                            leverage=self.leverage,
-                        )
-                    else:
-                        order = await self.exchange_client.open_short(
-                            symbol=symbol,
-                            quantity=size,
-                            leverage=self.leverage,
-                        )
+                    order = await self._exchange_open_market(symbol, side, size)
                     if not order:
                         logger.error(f"❌ Order execution returned empty result for {symbol}")
                         return
@@ -3045,7 +3060,20 @@ class FuturesTradingEngine:
             net_pnl = pnl_usd - total_fees
 
             # Execute close order (or simulate)
-            if should_skip_live(self.dry_run, module='futures', account=self.exchange):
+            _skip = should_skip_live(self.dry_run, module='futures', account=self.exchange)
+            if _skip and not position.is_simulated and not self.reduce_only_close_when_paused:
+                # LIVE-flip safety: paper-closing a LIVE position (killswitch/
+                # pause/DRY_RUN flipped mid-flight) orphans real exchange
+                # exposure while the books say closed. Refuse and keep the
+                # position monitored instead.
+                logger.critical(
+                    f"🚨 Refusing to paper-close LIVE position {symbol} ({reason}) while live "
+                    f"orders are blocked (killswitch/pause/DRY_RUN flip). Position kept. Set "
+                    f"futures_risk.reduce_only_close_when_paused=true to allow reduce-only "
+                    f"closes in this state, or close manually on {self.exchange}."
+                )
+                return
+            if _skip and position.is_simulated:
                 logger.info(f"🔵 [DRY_RUN] SIMULATED CLOSE {symbol} ({reason})")
             else:
                 # Execute real close order
@@ -3503,6 +3531,29 @@ class FuturesTradingEngine:
         except Exception as e:
             logger.debug(f"funding snapshot write failed (non-fatal): {e}")
 
+    async def _exchange_open_market(self, symbol: str, side: 'TradeSide', quantity: float):
+        """LIVE-P0 entry helper: `exchange_client` is a raw ccxt instance which
+        has NO open_long/open_short — the previous calls raised AttributeError
+        on every live entry (swallowed as 'Order execution failed'), so the
+        module could never open a live position. This applies the MB-17 intent
+        inline (ISOLATED margin + leverage), then sends the market order.
+        Exchange 'already set' idempotency errors are expected and skipped;
+        any real order error still raises to the caller."""
+        try:
+            await self.exchange_client.set_margin_mode('isolated', symbol)
+        except Exception as e:
+            msg = str(e).lower()
+            if not any(t in msg for t in ('no need to change', 'not modified', '110026', '-4046')):
+                logger.warning(f"set_margin_mode('isolated', {symbol}) failed: {e}")
+        try:
+            await self.exchange_client.set_leverage(self.leverage, symbol)
+        except Exception as e:
+            msg = str(e).lower()
+            if not any(t in msg for t in ('not modified', '110043', '-4059')):
+                logger.warning(f"set_leverage({self.leverage}, {symbol}) failed: {e}")
+        order_side = 'buy' if side == TradeSide.LONG else 'sell'
+        return await self.exchange_client.create_market_order(symbol, order_side, quantity)
+
     async def _verify_isolated_or_close(self, symbol: str, side: TradeSide) -> None:
         """FUT-RM-07: defense-in-depth on MB-17.
 
@@ -3522,12 +3573,32 @@ class FuturesTradingEngine:
         """
         try:
             executor = self.exchange_client
-            if executor is None or not hasattr(executor, 'get_position'):
+            if executor is None:
+                return
+            if hasattr(executor, 'get_position'):
+                pos = await executor.get_position(symbol)
+            elif hasattr(executor, 'fetch_positions'):
+                # LIVE-P0 fallback: raw ccxt has no get_position, which made
+                # this verify a silent no-op in live. Use unified
+                # fetch_positions and map ccxt marginMode -> margin_type.
+                try:
+                    rows = await executor.fetch_positions([symbol])
+                except Exception:
+                    rows = await executor.fetch_positions()
+                pos = None
+                for row in rows or []:
+                    row_sym = str(row.get('symbol') or '')
+                    if (row_sym == symbol or row_sym.split(':')[0] == symbol) and \
+                            float(row.get('contracts') or 0) != 0:
+                        pos = dict(row)
+                        if pos.get('margin_type') is None and row.get('marginMode'):
+                            pos['margin_type'] = str(row['marginMode']).upper()
+                        break
+            else:
                 logger.warning(
                     f"FUT-RM-07: executor has no get_position(); skipping isolated verify for {symbol}"
                 )
                 return
-            pos = await executor.get_position(symbol)
             if not pos:
                 # No position came back — fill failed silently or fully closed.
                 # Don't open a second order, just log.
