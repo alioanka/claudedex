@@ -316,7 +316,7 @@ class ModuleProcess:
                 errors.append("Missing ENCRYPTION_KEY: No .encryption_key file or ENCRYPTION_KEY env var")
 
         # Check database credentials (required for most modules, including dashboard)
-        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller', 'regime_allocator')
+        needs_database = module_key in ('dashboard', 'dex', 'futures', 'solana', 'sniper', 'copy_trading', 'arbitrage', 'polymarket', 'meta_controller', 'regime_allocator', 'execution_quality', 'treasury', 'sentinel', 'market_data_warehouse', 'catalyst_calendar')
         if needs_database:
             if not _check_database_credentials():
                 errors.append("Missing Database Credentials: No Docker secrets or DATABASE_URL/DB_PASSWORD env var")
@@ -604,6 +604,48 @@ class TradingBotOrchestrator:
             script_path="modules/regime_allocator/main_regime_allocator.py",
             enabled_env_var="REGIME_ALLOCATOR_MODULE_ENABLED",
             module_key="regime_allocator",
+        )
+
+        # ── Tier-1 infrastructure modules (advisory/observe-only, default OFF) ──
+        # execution_quality (TCA): read-only quoted-vs-realized cost measurement
+        # across all trading modules. Never trades. Health port 8092.
+        self.modules['execution_quality'] = ModuleProcess(
+            name="Execution Quality",
+            script_path="modules/execution_quality/main_execution_quality.py",
+            enabled_env_var="EXECUTION_QUALITY_MODULE_ENABLED",
+            module_key="execution_quality",
+        )
+        # treasury (Phase-1 observe-only): wallet/gas/inventory reconciliation +
+        # gas-starvation alerts. Never signs/transfers. Health port 8093.
+        self.modules['treasury'] = ModuleProcess(
+            name="Treasury",
+            script_path="modules/treasury/main_treasury.py",
+            enabled_env_var="TREASURY_MODULE_ENABLED",
+            module_key="treasury",
+        )
+        # sentinel: cross-module anomaly detection (depeg/oracle/silent death) +
+        # pause-file-only auto-freeze (autopilot gated OFF). Health port 8094.
+        self.modules['sentinel'] = ModuleProcess(
+            name="Sentinel",
+            script_path="modules/sentinel/main_sentinel.py",
+            enabled_env_var="SENTINEL_MODULE_ENABLED",
+            module_key="sentinel",
+        )
+        # market_data_warehouse: unified free-source historical store other
+        # modules read. Never trades. Health port 8095.
+        self.modules['market_data_warehouse'] = ModuleProcess(
+            name="Market Data Warehouse",
+            script_path="modules/market_data_warehouse/main_market_data_warehouse.py",
+            enabled_env_var="MARKET_DATA_WAREHOUSE_MODULE_ENABLED",
+            module_key="market_data_warehouse",
+        )
+        # catalyst_calendar: forward unlocks/listings/macro feed (advisory).
+        # Never trades. Health port 8096.
+        self.modules['catalyst_calendar'] = ModuleProcess(
+            name="Catalyst Calendar",
+            script_path="modules/catalyst_calendar/main_catalyst_calendar.py",
+            enabled_env_var="CATALYST_CALENDAR_MODULE_ENABLED",
+            module_key="catalyst_calendar",
         )
 
         # Phase 4B: per-module capital allocator (advisory).
