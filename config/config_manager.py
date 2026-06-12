@@ -133,6 +133,9 @@ class TradingConfig(BaseModel):
     # Executor in-flight retry count. WARNING: a receipt-timeout retry can
     # RE-BROADCAST the swap (duplicate buy); 1 is the safe live setting.
     live_max_execute_retries: int = 3       # current executor default
+    # Startup on-chain vs DB position reconcile (LIVE only, logging +
+    # metadata flag only — never closes anything).
+    live_reconcile_enabled: bool = True
     # Per-chain capital weights (migration 095). 0 disables the chain in
     # discovery AND execution; (0,1] scales position size. Chains absent
     # from the map default to 1.0. Week-1 live data: solana avg -2.24/trade

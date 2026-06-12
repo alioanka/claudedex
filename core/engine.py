@@ -3471,9 +3471,91 @@ class TradingBotEngine:
                 f"active_positions (DB-first refresh still owned by "
                 f"DexPositionService)"
             )
+
+            # LIVE only: verify restored REAL fills against on-chain holdings
+            # (logging + metadata flag only — never auto-closes).
+            if restored and not bool(self.config.get('dry_run', True)):
+                if (self.config.get('trading', {}) or {}).get('live_reconcile_enabled', True):
+                    asyncio.create_task(
+                        self._reconcile_live_positions(),
+                        name='reconcile_live_positions'
+                    )
         except Exception as e:
             # Fail-soft: never block startup on a bad state load.
             logger.warning(f"   _load_state failed (non-fatal): {e}")
+
+    # chain name -> EVM chain id (reconcile guard: the single-chain
+    # TradeExecutor can only read balances on its own chain).
+    _CHAIN_IDS = {
+        'ethereum': 1, 'bsc': 56, 'polygon': 137, 'arbitrum': 42161,
+        'base': 8453, 'optimism': 10, 'avalanche': 43114,
+    }
+
+    async def _reconcile_live_positions(self):
+        """One-shot startup reconcile (LIVE mode, observability-only).
+
+        For every restored REAL position (metadata.is_dry_run == False) on
+        the executor's chain, compare the DB amount against the on-chain
+        ERC20 balance. A shortfall means the row no longer reflects holdings
+        (sold elsewhere / failed buy recorded open) — exits fired from it
+        would revert and burn gas. Flags `metadata.reconcile_onchain_deficit`
+        and alerts; NEVER auto-closes. Fail-soft per position."""
+        try:
+            executor = self.trade_executor
+            exec_chain_id = getattr(executor, 'chain_id', None)
+            async with self.positions_lock:
+                snapshot = list(self.active_positions.items())
+            checked = flagged = 0
+            for token_address, pos in snapshot:
+                try:
+                    meta = pos.get('metadata') or {}
+                    if meta.get('is_dry_run') is not False:
+                        continue  # only REAL fills are reconcilable
+                    chain = (pos.get('chain') or 'ethereum').lower()
+                    if self._CHAIN_IDS.get(chain) != exec_chain_id:
+                        continue
+                    balance = float(await executor._get_token_balance(token_address))
+                    checked += 1
+                    db_amount = float(pos.get('amount') or 0)
+                    if db_amount <= 0:
+                        continue
+                    if balance < db_amount * 0.95:  # 5% tolerance (fees/dust)
+                        flagged += 1
+                        symbol = pos.get('token_symbol', 'UNKNOWN')
+                        logger.critical(
+                            f"🚨 RECONCILE MISMATCH {symbol}: DB amount "
+                            f"{db_amount:.6f} vs on-chain {balance:.6f} — row "
+                            f"does not reflect holdings; live exits from it "
+                            f"would fail. Manual review needed."
+                        )
+                        pos.setdefault('metadata', {})['reconcile_onchain_deficit'] = True
+                        trade_id = pos.get('trade_id')
+                        if trade_id:
+                            try:
+                                await self.db.update_trade(trade_id, {'metadata': {
+                                    **meta,
+                                    'reconcile_onchain_deficit': True,
+                                    'reconcile_onchain_balance': balance,
+                                    'reconcile_checked_at':
+                                        datetime.now(timezone.utc).isoformat(),
+                                }})
+                            except Exception as db_err:
+                                logger.error(f"reconcile flag persist failed: {db_err}")
+                        await self.alert_manager.send_critical(
+                            f"🚨 DEX reconcile mismatch: {symbol}\n"
+                            f"DB amount: {db_amount:.6f}\n"
+                            f"On-chain: {balance:.6f}\n"
+                            f"Row flagged reconcile_onchain_deficit — review before LIVE exits."
+                        )
+                except Exception as pos_err:
+                    logger.warning(f"reconcile skipped for {token_address}: {pos_err}")
+                    continue
+            logger.info(
+                f"🔎 Startup reconcile: {checked} live position(s) checked, "
+                f"{flagged} mismatch(es) flagged"
+            )
+        except Exception as e:
+            logger.warning(f"startup reconcile failed (non-fatal): {e}")
 
     async def _warmup_collectors(self):
         """Warm up data collectors"""

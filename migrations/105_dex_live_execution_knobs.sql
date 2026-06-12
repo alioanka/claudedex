@@ -32,7 +32,13 @@ VALUES
      '3 mirrors the legacy executor behavior. WARNING: the retry loop can '
      'RE-BROADCAST the swap after a receipt-timeout, i.e. a duplicate buy '
      '(double-spend surface) — 1 is the recommended LIVE setting until the '
-     'executor''s retry path is made idempotent.')
+     'executor''s retry path is made idempotent.'),
+
+    ('trading', 'live_reconcile_enabled', 'true', 'bool',
+     'Startup reconcile of restored LIVE positions against on-chain ERC20 '
+     'balances (executor''s chain only). Observability-only: a >5% deficit '
+     'logs CRITICAL, alerts, and flags metadata.reconcile_onchain_deficit — '
+     'it never auto-closes. No effect under DRY_RUN.')
 
 ON CONFLICT (config_type, key) DO NOTHING;
 
