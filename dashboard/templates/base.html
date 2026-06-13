@@ -1143,6 +1143,59 @@
                 </ul>
             </li>
 
+            <!-- Intelligence & Ops modules (Waves 26+): generic data
+                 panels at /module/<key>, settings at /config/<type>. -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="intelops-menu">
+                    <i class="fas fa-brain"></i>
+                    <span>Intelligence &amp; Ops</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="intelops-menu">
+                    {% for mkey, mname in [
+                        ('meta_controller', 'Meta Controller'),
+                        ('regime_allocator', 'Regime Allocator'),
+                        ('param_tuner', 'Param Tuner'),
+                        ('sentinel', 'Sentinel'),
+                        ('execution_quality', 'Execution Quality'),
+                        ('treasury', 'Treasury'),
+                        ('market_data_warehouse', 'Market Data WH'),
+                        ('catalyst_calendar', 'Catalyst Calendar'),
+                        ('smart_money', 'Smart Money'),
+                        ('options_vol', 'Options Vol'),
+                        ('yield_treasury', 'Yield Treasury'),
+                        ('basis_desk', 'Basis Desk'),
+                        ('stat_arb', 'Stat Arb'),
+                        ('clmm_lp', 'CLMM LP'),
+                        ('intent_solver', 'Intent Solver'),
+                        ('execution_gateway', 'Exec Gateway'),
+                    ] %}
+                    <li class="nav-item {% if page == 'module_' + mkey %}active{% endif %}">
+                        <a href="/module/{{ mkey }}">
+                            <i class="fas fa-circle-nodes"></i>
+                            <span>{{ mname }}</span>
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </li>
+
+            <!-- Proposals & approvals (meta / regime / tuner / copy) -->
+            <li class="nav-item {% if page == 'proposals' %}active{% endif %}">
+                <a href="/proposals">
+                    <i class="fas fa-check-double"></i>
+                    <span>Proposals</span>
+                </a>
+            </li>
+
+            <!-- Deploy & use guide -->
+            <li class="nav-item {% if page == 'help' %}active{% endif %}">
+                <a href="/help">
+                    <i class="fas fa-circle-question"></i>
+                    <span>Help</span>
+                </a>
+            </li>
+
             <li class="nav-divider"></li>
 
             <!-- Module Control -->

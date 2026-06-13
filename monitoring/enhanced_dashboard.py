@@ -1737,6 +1737,13 @@ class DashboardEndpoints:
             '/api/modules/{module}/runtime-status',
             self._api_module_runtime_status
         )
+        # Intelligence & Ops modules (Waves 26+): generic data panels +
+        # batched overview, driven by the _AUX_MODULES registry.
+        self.app.router.add_get('/api/aux-modules/overview',
+                                self.api_aux_modules_overview)
+        self.app.router.add_get('/api/module-data/{module}',
+                                self.api_module_data)
+        self.app.router.add_get('/module/{module}', self.module_panel_page)
         # Phase 3 follow-up: explicit per-module restart via the
         # logs/.restart_<module> flag-file pattern (orchestrator
         # main.py polls every 5s). Replaces the operator's manual
@@ -2814,12 +2821,190 @@ class DashboardEndpoints:
         'copytrading': 'copy_trading', 'copy': 'copy_trading',
     }
 
+    # ===== Intelligence & Ops modules (Waves 26+) =====
+    # One registry drives runtime badges, the generic data panels
+    # (/api/module-data/<key> + /module/<key>), the control-center aux
+    # section, pause/resume and the /help page — no per-module dashboard
+    # code. Every probe is fail-soft: a missing table or dead port renders
+    # an empty panel, never a 500.
+    #   tables — whitelisted output tables (first = primary activity feed)
+    #   gate   — True when the module is shadow-first with the standard
+    #            shadow_mode/live_execution_enabled pair in config_type
+    _AUX_MODULES = {
+        'meta_controller': {
+            'name': 'Meta Controller', 'env': 'META_CONTROLLER_MODULE_ENABLED',
+            'port_env': ('META_CONTROLLER_HEALTH_PORT', 8090),
+            'config_type': 'meta_config', 'gate': False,
+            'tables': ('meta_decisions', 'meta_calibration'),
+            'desc': 'Scores every trading module\'s rolling DRY+LIVE performance and writes '
+                    'ACTIVATE/KEEP/PAUSE advisory rows. Autopilot (pause-file-only) is gated '
+                    'behind meta_autopilot_enabled=false.',
+            'category': 'Allocation & Control',
+        },
+        'regime_allocator': {
+            'name': 'Regime Allocator', 'env': 'REGIME_ALLOCATOR_MODULE_ENABLED',
+            'port_env': ('REGIME_ALLOCATOR_HEALTH_PORT', 8091),
+            'config_type': 'regime_allocator', 'gate': False,
+            'tables': ('regime_snapshots', 'regime_allocation_proposals'),
+            'desc': 'Classifies the market regime and proposes per-module capital weights. '
+                    'Proposals require operator approval; the engine never moves capital itself.',
+            'category': 'Allocation & Control',
+        },
+        'execution_quality': {
+            'name': 'Execution Quality', 'env': 'EXECUTION_QUALITY_MODULE_ENABLED',
+            'port_env': ('EXECUTION_QUALITY_HEALTH_PORT', 8092),
+            'config_type': 'execution_quality', 'gate': False,
+            'tables': ('tca_trade_costs', 'tca_scorecards'),
+            'desc': 'Transaction-cost analysis across all trading modules: slippage, fees and '
+                    'venue scorecards. Read-only — never trades.',
+            'category': 'Observability',
+        },
+        'treasury': {
+            'name': 'Treasury', 'env': 'TREASURY_MODULE_ENABLED',
+            'port_env': ('TREASURY_HEALTH_PORT', 8093),
+            'config_type': 'treasury', 'gate': False,
+            'tables': ('treasury_snapshots',),
+            'desc': 'Periodic balance snapshots across wallets/exchanges with gas-starvation '
+                    'alerts. Never signs or transfers.',
+            'category': 'Observability',
+        },
+        'sentinel': {
+            'name': 'Sentinel', 'env': 'SENTINEL_MODULE_ENABLED',
+            'port_env': ('SENTINEL_HEALTH_PORT', 8094),
+            'config_type': 'sentinel', 'gate': False,
+            'tables': ('sentinel_anomalies', 'sentinel_actions'),
+            'desc': 'Cross-module anomaly detector (depeg, price divergence, silent module '
+                    'death, loss velocity). Advisory by default; autopilot may only write '
+                    'pause files, never the killswitch.',
+            'category': 'Observability',
+        },
+        'market_data_warehouse': {
+            'name': 'Market Data Warehouse', 'env': 'MARKET_DATA_WAREHOUSE_MODULE_ENABLED',
+            'port_env': ('MARKET_DATA_WAREHOUSE_HEALTH_PORT', 8095),
+            'config_type': 'market_data_warehouse', 'gate': False,
+            'tables': ('market_candles', 'market_series'),
+            'desc': 'Shared candle/series store other modules read. Never trades.',
+            'category': 'Data & Signals',
+        },
+        'catalyst_calendar': {
+            'name': 'Catalyst Calendar', 'env': 'CATALYST_CALENDAR_MODULE_ENABLED',
+            'port_env': ('CATALYST_CALENDAR_HEALTH_PORT', 8096),
+            'config_type': 'catalyst_calendar', 'gate': False,
+            'tables': ('catalysts',),
+            'desc': 'Upcoming market catalysts (unlocks, listings, macro events) other '
+                    'modules consume as risk context. Never trades.',
+            'category': 'Data & Signals',
+        },
+        'options_vol': {
+            'name': 'Options Vol', 'env': 'OPTIONS_VOL_MODULE_ENABLED',
+            'port_env': ('OPTIONS_VOL_HEALTH_PORT', 8097),
+            'config_type': 'options_vol', 'gate': True,
+            'tables': ('options_vol_suggestions', 'options_vol_surface'),
+            'desc': 'Volatility-surface monitor producing option-structure suggestions. '
+                    'Shadow-first; the live path is BUY-only and gated.',
+            'category': 'Strategy Advisors',
+        },
+        'yield_treasury': {
+            'name': 'Yield Treasury', 'env': 'YIELD_TREASURY_MODULE_ENABLED',
+            'port_env': ('YIELD_TREASURY_HEALTH_PORT', 8098),
+            'config_type': 'yield_treasury', 'gate': True,
+            'tables': ('yield_treasury_advice',),
+            'desc': 'Idle-capital yield advisor (staking/money-market rates). '
+                    'Observe/advise only by default.',
+            'category': 'Strategy Advisors',
+        },
+        'execution_gateway': {
+            'name': 'Execution Gateway', 'env': 'EXECUTION_GATEWAY_MODULE_ENABLED',
+            'port_env': ('EXECUTION_GATEWAY_HEALTH_PORT', 8099),
+            'config_type': 'execution_gateway', 'gate': True,
+            'tables': ('execution_gateway_sends',),
+            'desc': 'Central send/diagnostics path for outbound transactions '
+                    '(health subprocess). Never originates trades.',
+            'category': 'Infrastructure',
+        },
+        'clmm_lp': {
+            'name': 'CLMM LP', 'env': 'CLMM_LP_MODULE_ENABLED',
+            'port_env': ('CLMM_LP_HEALTH_PORT', 8100),
+            'config_type': 'clmm_lp', 'gate': True,
+            'tables': ('clmm_shadow_positions',),
+            'desc': 'Concentrated-liquidity LP range strategy with shadow position '
+                    'accounting. Live mint not implemented.',
+            'category': 'Strategy Advisors',
+        },
+        'param_tuner': {
+            'name': 'Param Tuner', 'env': 'PARAM_TUNER_MODULE_ENABLED',
+            'port_env': ('PARAM_TUNER_HEALTH_PORT', 8101),
+            'config_type': 'param_tuner', 'gate': False,
+            'tables': ('param_proposals', 'param_bandit_state'),
+            'desc': 'Bandit-driven parameter tuning proposals for whitelisted knobs. '
+                    'Auto-apply gated OFF; risk/leverage/killswitch keys hard-blocked.',
+            'category': 'Allocation & Control',
+        },
+        'intent_solver': {
+            'name': 'Intent Solver', 'env': 'INTENT_SOLVER_MODULE_ENABLED',
+            'port_env': ('INTENT_SOLVER_HEALTH_PORT', 8102),
+            'config_type': 'intent_solver', 'gate': True,
+            'tables': ('intent_fill_opportunities',),
+            'desc': 'CoW/UniswapX intent-fill opportunity scanner (experimental shadow '
+                    'scaffold, no live path).',
+            'category': 'Strategy Advisors',
+        },
+        'basis_desk': {
+            'name': 'Basis Desk', 'env': 'BASIS_DESK_MODULE_ENABLED',
+            'port_env': ('BASIS_DESK_HEALTH_PORT', 8103),
+            'config_type': 'basis_desk', 'gate': True,
+            'tables': ('basis_carry_suggestions',),
+            'desc': 'Delta-neutral funding/basis carry advisor (shadow-first).',
+            'category': 'Strategy Advisors',
+        },
+        'stat_arb': {
+            'name': 'Stat Arb', 'env': 'STAT_ARB_MODULE_ENABLED',
+            'port_env': ('STAT_ARB_HEALTH_PORT', 8104),
+            'config_type': 'stat_arb', 'gate': True,
+            'tables': ('stat_arb_trades', 'stat_arb_spread_state'),
+            'desc': 'Market-neutral pairs / mean-reversion with hard z-stops '
+                    '(shadow-first).',
+            'category': 'Strategy Advisors',
+        },
+        'smart_money': {
+            'name': 'Smart Money', 'env': 'SMART_MONEY_MODULE_ENABLED',
+            'port_env': ('SMART_MONEY_HEALTH_PORT', 8105),
+            'config_type': 'smart_money', 'gate': False,
+            'tables': ('smart_money_signals', 'smart_money_wallet_scores',
+                       'smart_money_wallet_events'),
+            'desc': 'On-chain accumulation-cluster signals from scored wallets '
+                    '(advisory, no look-ahead).',
+            'category': 'Data & Signals',
+        },
+    }
+
+    @classmethod
+    def _aux_runtime_spec(cls, key: str):
+        """Synthesize a _RUNTIME_STATUS_MODULES-shaped spec for an aux
+        module so _resolve_module_runtime covers all 16 without 16 bespoke
+        entries. Port probe is authoritative (every aux module binds a
+        health server); shadow-gated modules resolve dry_run from their
+        shadow_mode/live_execution_enabled pair, advisory ones stay
+        dry_run=True (honest: they can never trade)."""
+        m = cls._AUX_MODULES.get(key)
+        if not m:
+            return None
+        return {
+            'env': m['env'],
+            'port_env': m['port_env'],
+            'heartbeat': None,
+            'config_type': None,
+            'gate_config_type': m['config_type'] if m.get('gate') else None,
+            'pause_keys': (key,),
+        }
+
     async def _resolve_module_runtime(self, module: str):
         """Resolve the honest runtime payload for one module, or None if
         the module is unknown. Shared by the per-module runtime-status
         endpoint and the control-center batch overview. Fail-soft by
         construction: every probe degrades to its safe value."""
-        spec = self._RUNTIME_STATUS_MODULES.get(module)
+        spec = self._RUNTIME_STATUS_MODULES.get(module) \
+            or self._aux_runtime_spec(module)
         if not spec:
             return None
 
@@ -2876,13 +3061,19 @@ class DashboardEndpoints:
         # shadow (= dry-run for badge purposes).
         dry_run = True
         try:
-            if module == 'polymarket':
+            gate_ct = spec.get('gate_config_type') or (
+                'polymarket_config' if module == 'polymarket' else None
+            )
+            if gate_ct:
+                # Shadow-first modules: live iff shadow_mode=false AND
+                # live_execution_enabled=true; missing keys = shadow.
                 if self.db and getattr(self.db, 'pool', None):
                     async with self.db.pool.acquire() as conn:
                         rows = await conn.fetch(
                             "SELECT key, value FROM config_settings "
-                            "WHERE config_type = 'polymarket_config' "
-                            "AND key IN ('shadow_mode', 'live_execution_enabled')"
+                            "WHERE config_type = $1 "
+                            "AND key IN ('shadow_mode', 'live_execution_enabled')",
+                            gate_ct,
                         )
                     vals = {r['key']: str(r['value']).lower().strip() for r in rows}
                     dry_run = not (
@@ -2948,6 +3139,163 @@ class DashboardEndpoints:
                 status=400,
             )
         return web.json_response(payload)
+
+    # ===== Intelligence & Ops module panels (generic, fail-soft) =====
+    _TS_COLUMN_CANDIDATES = (
+        'created_at', 'updated_at', 'detected_at', 'proposed_at', 'sent_at',
+        'snapshot_at', 'opened_at', 'recorded_at', 'event_time', 'ts',
+        'timestamp', 'starts_at',
+    )
+
+    @staticmethod
+    def _jsonable_cell(v):
+        """Best-effort JSON-safe conversion for arbitrary table cells."""
+        if v is None or isinstance(v, (bool, int, float, str)):
+            return v
+        if isinstance(v, datetime):
+            try:
+                return _iso_utc(v)
+            except Exception:
+                return str(v)
+        if isinstance(v, Decimal):
+            return float(v)
+        if isinstance(v, (dict, list)):
+            return v
+        return str(v)
+
+    async def _table_panel(self, conn, table: str, limit: int = 20) -> dict:
+        """One output table -> {exists, columns, rows, total, rows_24h}.
+        Fail-soft: any error returns exists=False so the panel hides."""
+        panel = {'table': table, 'exists': False, 'columns': [], 'rows': [],
+                 'total': None, 'rows_24h': None}
+        try:
+            if await conn.fetchval("SELECT to_regclass($1)", table) is None:
+                return panel
+            panel['exists'] = True
+            cols = await conn.fetch("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = $1 AND table_schema = 'public'
+                ORDER BY ordinal_position
+            """, table)
+            colnames = [c['column_name'] for c in cols]
+            ts_col = next((c for c in self._TS_COLUMN_CANDIDATES
+                           if c in colnames), None)
+            order = f' ORDER BY "{ts_col}" DESC NULLS LAST' if ts_col else ''
+            rows = await conn.fetch(
+                f'SELECT * FROM "{table}"{order} LIMIT {int(limit)}'
+            )
+            panel['columns'] = colnames
+            panel['rows'] = [
+                {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                for r in rows
+            ]
+            panel['total'] = await conn.fetchval(f'SELECT COUNT(*) FROM "{table}"')
+            if ts_col:
+                panel['rows_24h'] = await conn.fetchval(
+                    f'SELECT COUNT(*) FROM "{table}" '
+                    f'WHERE "{ts_col}" >= NOW() - INTERVAL \'24 hours\''
+                )
+                panel['ts_column'] = ts_col
+        except Exception as e:
+            logger.debug(f"table panel failed for {table}: {e}")
+            panel.update({'exists': False, 'rows': [], 'columns': []})
+        return panel
+
+    async def api_module_data(self, request):
+        """GET /api/module-data/{module} — read-only recent rows from an
+        Intelligence & Ops module's whitelisted output tables, plus its
+        honest runtime badge. Entirely fail-soft."""
+        key = (request.match_info.get('module', '') or '').lower()
+        meta = self._AUX_MODULES.get(key)
+        if not meta:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {key}'}, status=404)
+        try:
+            limit = max(5, min(int(request.query.get('limit', '20')), 100))
+        except (TypeError, ValueError):
+            limit = 20
+        runtime = None
+        try:
+            runtime = await self._resolve_module_runtime(key)
+        except Exception:
+            pass
+        panels = []
+        if self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    for t in meta['tables']:
+                        panels.append(await self._table_panel(conn, t, limit))
+            except Exception as e:
+                logger.debug(f"module-data DB probe failed for {key}: {e}")
+        return web.json_response({
+            'success': True,
+            'module': key,
+            'name': meta['name'],
+            'description': meta['desc'],
+            'category': meta['category'],
+            'config_type': meta['config_type'],
+            'health_port': int(os.getenv(meta['port_env'][0],
+                                         str(meta['port_env'][1]))),
+            'env_flag': meta['env'],
+            'runtime': runtime,
+            'tables': panels,
+        })
+
+    async def api_aux_modules_overview(self, request):
+        """GET /api/aux-modules/overview — one batched payload: every
+        Intelligence & Ops module's runtime badge + 24h activity on its
+        primary output table. Powers the control-center aux section and
+        the modules hub. Fail-soft per module."""
+        async def one(key, meta):
+            entry = {
+                'key': key, 'name': meta['name'], 'category': meta['category'],
+                'description': meta['desc'], 'config_type': meta['config_type'],
+                'env_flag': meta['env'],
+                'health_port': int(os.getenv(meta['port_env'][0],
+                                             str(meta['port_env'][1]))),
+                'primary_table': meta['tables'][0],
+                'enabled': False, 'running': False, 'paused': False,
+                'dry_run': True, 'status': 'unknown',
+                'rows_24h': None, 'rows_total': None,
+            }
+            try:
+                rt = await self._resolve_module_runtime(key)
+                if rt:
+                    for k in ('enabled', 'running', 'paused', 'dry_run',
+                              'killswitch', 'status'):
+                        entry[k] = rt[k]
+            except Exception:
+                pass
+            if self.db and getattr(self.db, 'pool', None):
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        p = await self._table_panel(conn, meta['tables'][0], 1)
+                    entry['rows_24h'] = p.get('rows_24h')
+                    entry['rows_total'] = p.get('total')
+                except Exception:
+                    pass
+            return entry
+
+        results = await asyncio.gather(
+            *(one(k, m) for k, m in self._AUX_MODULES.items()),
+            return_exceptions=True,
+        )
+        data = [r for r in results if isinstance(r, dict)]
+        return web.json_response({'success': True, 'data': data})
+
+    async def module_panel_page(self, request):
+        """GET /module/{module} — generic read-only data/status panel for
+        an Intelligence & Ops module."""
+        key = (request.match_info.get('module', '') or '').lower()
+        meta = self._AUX_MODULES.get(key)
+        if not meta:
+            return web.HTTPFound('/modules')
+        template = self.jinja_env.get_template('module_panel.html')
+        return web.Response(
+            text=template.render(page='module_' + key, module_key=key,
+                                 module_name=meta['name']),
+            content_type='text/html'
+        )
 
     # ===== Control Center v4 =====
     # One batch endpoint feeds the unified control-center page: per-module
@@ -4232,20 +4580,27 @@ class DashboardEndpoints:
                 status=500,
             )
 
+    def _module_env_flag(self, module: str):
+        """Module name (any spelling) -> orchestrator enable env flag."""
+        legacy = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED',
+        }
+        m = (module or '').lower().strip()
+        if m in legacy:
+            return legacy[m]
+        aux = self._AUX_MODULES.get(m)
+        return aux['env'] if aux else None
+
     async def _api_module_enable(self, request):
         """Enable a module by updating .env"""
         module = request.match_info.get('module', '')
 
-        module_env_map = {
-            'dex_trading': 'DEX_MODULE_ENABLED',
-            'futures_trading': 'FUTURES_MODULE_ENABLED',
-            'solana_strategies': 'SOLANA_MODULE_ENABLED'
-        }
-
-        if module not in module_env_map:
+        env_key = self._module_env_flag(module)
+        if not env_key:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
-        env_key = module_env_map[module]
         if self._set_module_enable_flag(env_key, 'true'):
             logger.info(f"Module {module} enabled via API (in-process only; MB-33)")
             return web.json_response({
@@ -4261,16 +4616,10 @@ class DashboardEndpoints:
         """Disable a module by updating in-process env flag (MB-33: not .env)."""
         module = request.match_info.get('module', '')
 
-        module_env_map = {
-            'dex_trading': 'DEX_MODULE_ENABLED',
-            'futures_trading': 'FUTURES_MODULE_ENABLED',
-            'solana_strategies': 'SOLANA_MODULE_ENABLED'
-        }
-
-        if module not in module_env_map:
+        env_key = self._module_env_flag(module)
+        if not env_key:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
-        env_key = module_env_map[module]
         if self._set_module_enable_flag(env_key, 'false'):
             logger.info(f"Module {module} disabled via API (in-process only; MB-33)")
             return web.json_response({
@@ -4303,6 +4652,24 @@ class DashboardEndpoints:
         'ai': 'ai', 'ai_analysis': 'ai',
         'advisor': 'advisor', 'financial_advisor': 'advisor',
         'polymarket': 'polymarket',
+        # Intelligence & Ops modules: dir name IS the short key the
+        # engines poll (e.g. logs/.pause_stat_arb in stat_arb engine.py).
+        'meta_controller': 'meta_controller',
+        'regime_allocator': 'regime_allocator',
+        'execution_quality': 'execution_quality',
+        'treasury': 'treasury',
+        'sentinel': 'sentinel',
+        'market_data_warehouse': 'market_data_warehouse',
+        'catalyst_calendar': 'catalyst_calendar',
+        'options_vol': 'options_vol',
+        'yield_treasury': 'yield_treasury',
+        'execution_gateway': 'execution_gateway',
+        'clmm_lp': 'clmm_lp',
+        'param_tuner': 'param_tuner',
+        'intent_solver': 'intent_solver',
+        'basis_desk': 'basis_desk',
+        'stat_arb': 'stat_arb',
+        'smart_money': 'smart_money',
     }
 
     @classmethod
@@ -4367,13 +4734,8 @@ class DashboardEndpoints:
             except Exception:
                 pass
 
-        module_env_map = {
-            'dex_trading': 'DEX_MODULE_ENABLED',
-            'futures_trading': 'FUTURES_MODULE_ENABLED',
-            'solana_strategies': 'SOLANA_MODULE_ENABLED'
-        }
-
-        if module not in module_env_map:
+        env_key = self._module_env_flag(module)
+        if not env_key:
             if short:
                 # Known module without an env-flag mapping (sniper/arb/
                 # copy/ai/advisor): the pause-flag clear above IS the
@@ -4389,7 +4751,6 @@ class DashboardEndpoints:
                 })
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
-        env_key = module_env_map[module]
         if self._set_module_enable_flag(env_key, 'true'):
             logger.info(f"Module {module} started via API (in-process only; MB-33)")
             return web.json_response({

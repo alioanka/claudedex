@@ -203,6 +203,72 @@
     </div>
   </div>
 
+  <!-- 2b. Intelligence & Ops modules (Waves 26+) -->
+  <div class="cc-section" id="cc-aux-section" style="display:none;">
+    <h2><i class="fas fa-brain"></i> Intelligence &amp; Ops Modules</h2>
+    <div class="hint">
+      Advisory / data / control-plane modules. Status comes from the same
+      honest probes as the trading grid; 24h activity is rows written to the
+      module's primary output table. Click a name for its data panel.
+    </div>
+    <div class="cc-table-wrap">
+      <table class="cc-table" id="cc-aux-table">
+        <thead>
+          <tr>
+            <th>Module</th><th>Category</th><th>Status</th>
+            <th>24h activity</th><th>Total rows</th><th>Port</th><th></th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+  (function () {
+      'use strict';
+      function esc(s) {
+          return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+              ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+      }
+      const STATUS_CLS = { live: 'cc-b-live', dry_run: 'cc-b-dry', paused: 'cc-b-paused',
+                           offline: 'cc-b-off', disabled: 'cc-b-dis', killswitch: 'cc-b-kill' };
+      async function loadAux() {
+          let data;
+          try {
+              const r = await fetch('/api/aux-modules/overview');
+              data = await r.json();
+          } catch (e) { return; } // fail-soft: section stays hidden
+          const mods = (data && data.data) || [];
+          if (!mods.length) return;
+          const tbody = document.querySelector('#cc-aux-table tbody');
+          tbody.innerHTML = mods.map(m => {
+              const st = esc((m.status || 'unknown').replace('_', ' ').toUpperCase());
+              return '<tr>'
+                  + '<td><a href="/module/' + esc(m.key) + '">' + esc(m.name) + '</a></td>'
+                  + '<td>' + esc(m.category) + '</td>'
+                  + '<td><span class="cc-badge ' + (STATUS_CLS[m.status] || '') + '">' + st + '</span></td>'
+                  + '<td>' + (m.rows_24h == null ? '—' : m.rows_24h) + '</td>'
+                  + '<td>' + (m.rows_total == null ? '—' : m.rows_total) + '</td>'
+                  + '<td>' + esc(m.health_port) + '</td>'
+                  + '<td>' + (m.config_type
+                      ? '<a href="/config/' + esc(m.config_type) + '" title="Settings"><i class="fas fa-sliders-h"></i></a>'
+                      : '') + '</td>'
+                  + '</tr>';
+          }).join('');
+          document.getElementById('cc-aux-section').style.display = '';
+      }
+      document.addEventListener('DOMContentLoaded', loadAux);
+      setInterval(loadAux, 60000);
+  })();
+  </script>
+  <style>
+  .cc-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 700;
+              background: #475569; color: #fff; }
+  .cc-b-live { background: #16a34a; } .cc-b-dry { background: #6366f1; }
+  .cc-b-paused { background: #f59e0b; color: #1a1a1a; } .cc-b-off { background: #64748b; }
+  .cc-b-dis { background: #334155; } .cc-b-kill { background: #dc2626; }
+  </style>
+
   <!-- 3. Meta controller surface (read-only; hidden when absent) -->
   <div class="cc-section" id="cc-meta-section" style="display:none;">
     <h2><i class="fas fa-robot"></i> Meta Controller Decisions</h2>

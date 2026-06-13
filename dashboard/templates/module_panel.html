@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h4 class="mb-0">
+                    <i class="fas fa-microchip me-2"></i>{{ module_name }}
+                    <span class="badge bg-secondary ms-2" id="mp-status" aria-live="polite">loading…</span>
+                </h4>
+                <div class="d-flex gap-2 flex-wrap">
+                    <a class="btn btn-outline-light btn-sm" id="mp-settings-link" href="#" style="display:none;">
+                        <i class="fas fa-sliders-h me-1"></i>Settings
+                    </a>
+                    <button class="btn btn-warning btn-sm" id="mp-pause" style="display:none;">
+                        <i class="fas fa-pause me-1"></i>Pause
+                    </button>
+                    <button class="btn btn-success btn-sm" id="mp-resume" style="display:none;">
+                        <i class="fas fa-play me-1"></i>Resume
+                    </button>
+                    <button class="btn btn-outline-info btn-sm" id="mp-refresh">
+                        <i class="fas fa-rotate me-1"></i>Refresh
+                    </button>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-2" id="mp-desc"></p>
+                <div class="d-flex gap-3 flex-wrap small" id="mp-meta"></div>
+                <div id="mp-alert" role="status" aria-live="polite"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="mp-tables"></div>
+
+<style>
+.mp-table-wrap { overflow-x: auto; }
+.mp-table { font-size: 0.78rem; width: 100%; }
+.mp-table th { white-space: nowrap; color: #9aa4b5; font-weight: 600;
+               border-bottom: 1px solid #313a4d; padding: 6px 10px; text-align: left; }
+.mp-table td { padding: 5px 10px; border-bottom: 1px solid #232a3a;
+               max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mp-empty { color: #9aa4b5; padding: 18px; text-align: center; }
+.badge-live { background: #16a34a; }
+.badge-dry { background: #6366f1; }
+.badge-paused { background: #f59e0b; color: #1a1a1a; }
+.badge-offline { background: #64748b; }
+.badge-disabled { background: #334155; }
+.badge-killswitch { background: #dc2626; }
+.theme-light .mp-table th { color: #475063; border-color: #d7dde8; }
+.theme-light .mp-table td { border-color: #e4e9f2; }
+</style>
+
+<script>
+(function () {
+    'use strict';
+    const KEY = {{ module_key | tojson }};
+    const elStatus = document.getElementById('mp-status');
+    const elTables = document.getElementById('mp-tables');
+    const elAlert = document.getElementById('mp-alert');
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function cell(v) {
+        if (v === null || v === undefined) return '<span class="text-muted">—</span>';
+        if (typeof v === 'object') v = JSON.stringify(v);
+        const s = String(v);
+        return '<span title="' + esc(s) + '">' + esc(s.length > 60 ? s.slice(0, 57) + '…' : s) + '</span>';
+    }
+    function setAlert(msg, cls) {
+        elAlert.innerHTML = msg ? '<div class="alert alert-' + (cls || 'info') + ' py-2 mt-2 mb-0">' + msg + '</div>' : '';
+    }
+
+    function badge(rt) {
+        const map = {
+            live: ['LIVE', 'badge-live'], dry_run: ['DRY RUN', 'badge-dry'],
+            paused: ['PAUSED', 'badge-paused'], offline: ['OFFLINE', 'badge-offline'],
+            disabled: ['DISABLED', 'badge-disabled'], killswitch: ['KILLSWITCH', 'badge-killswitch'],
+        };
+        const [label, cls] = map[rt && rt.status] || ['UNKNOWN', 'badge-offline'];
+        elStatus.textContent = label;
+        elStatus.className = 'badge ms-2 ' + cls;
+    }
+
+    async function load() {
+        let data;
+        try {
+            const r = await fetch('/api/module-data/' + encodeURIComponent(KEY));
+            data = await r.json();
+        } catch (e) {
+            setAlert('Could not load module data (dashboard runs standalone — this panel needs the database).', 'warning');
+            return;
+        }
+        if (!data || !data.success) {
+            setAlert(esc((data && data.error) || 'Unknown module'), 'danger');
+            return;
+        }
+        setAlert('');
+        document.getElementById('mp-desc').textContent = data.description || '';
+        badge(data.runtime);
+
+        const meta = [];
+        meta.push('<span><i class="fas fa-heart-pulse me-1"></i>Health port <code>' + data.health_port + '</code></span>');
+        meta.push('<span><i class="fas fa-flag me-1"></i>Enable flag <code>' + esc(data.env_flag) + '=true</code></span>');
+        if (data.runtime && data.runtime.paused) meta.push('<span class="text-warning">paused via logs/.pause_' + esc(KEY) + '</span>');
+        document.getElementById('mp-meta').innerHTML = meta.join('');
+
+        const sl = document.getElementById('mp-settings-link');
+        if (data.config_type) {
+            sl.href = '/config/' + encodeURIComponent(data.config_type);
+            sl.style.display = '';
+        }
+        const paused = data.runtime && data.runtime.paused;
+        document.getElementById('mp-pause').style.display = paused ? 'none' : '';
+        document.getElementById('mp-resume').style.display = paused ? '' : 'none';
+
+        let html = '';
+        (data.tables || []).forEach(t => {
+            if (!t.exists) return; // fail-soft: hide missing tables entirely
+            const cols = (t.columns || []).slice(0, 10);
+            html += '<div class="row mb-3"><div class="col-md-12"><div class="card bg-dark text-white">'
+                + '<div class="card-header d-flex justify-content-between align-items-center">'
+                + '<h6 class="mb-0"><code>' + esc(t.table) + '</code></h6>'
+                + '<span class="small text-muted">'
+                + (t.rows_24h != null ? t.rows_24h + ' rows / 24h &middot; ' : '')
+                + (t.total != null ? t.total + ' total' : '') + '</span></div>'
+                + '<div class="card-body p-0 mp-table-wrap">';
+            if (!t.rows || !t.rows.length) {
+                html += '<div class="mp-empty">No rows yet — the module writes here once it runs.</div>';
+            } else {
+                html += '<table class="mp-table"><thead><tr>'
+                    + cols.map(c => '<th scope="col">' + esc(c) + '</th>').join('')
+                    + '</tr></thead><tbody>'
+                    + t.rows.map(r => '<tr>' + cols.map(c => '<td>' + cell(r[c]) + '</td>').join('') + '</tr>').join('')
+                    + '</tbody></table>';
+            }
+            html += '</div></div></div></div>';
+        });
+        if (!html) {
+            html = '<div class="row"><div class="col-md-12"><div class="card bg-dark text-white">'
+                + '<div class="card-body mp-empty">No output tables exist yet. Run migrations, enable the module '
+                + '(<code>' + esc(data.env_flag) + '=true</code>) and check back.</div></div></div></div>';
+        }
+        elTables.innerHTML = html;
+    }
+
+    async function act(action) {
+        try {
+            const r = await window.csrfFetch('/api/modules/' + encodeURIComponent(KEY) + '/' + action, { method: 'POST' });
+            const d = await r.json();
+            setAlert(esc(d.message || d.error || 'done'), d.success ? 'success' : 'danger');
+        } catch (e) {
+            setAlert('Action failed: ' + esc(e.message), 'danger');
+        }
+        setTimeout(load, 800);
+    }
+    document.getElementById('mp-pause').addEventListener('click', () => {
+        if (window.confirm('Pause ' + KEY + '? Engines honor logs/.pause_' + KEY + ' within one loop.')) act('pause');
+    });
+    document.getElementById('mp-resume').addEventListener('click', () => act('start'));
+    document.getElementById('mp-refresh').addEventListener('click', load);
+
+    load();
+    setInterval(load, 30000);
+})();
+</script>
+{% endblock %}
