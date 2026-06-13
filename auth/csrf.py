@@ -62,20 +62,35 @@ async def csrf_middleware_factory(app: web.Application, handler: Callable) -> Ca
 
         response = await handler(request)
 
-        # Make sure the client always has a csrf_token cookie. Reuse the
-        # existing one if present so a single tab keeps one token per session.
+        # Make sure the client always has a fresh csrf_token cookie. Reuse the
+        # existing token value when present (one stable token per session) but
+        # REFRESH its expiry on every response so a long-lived tab never starts
+        # 403'ing mid-session (sliding 7-day window).
         existing = request.cookies.get(CSRF_COOKIE)
-        if not existing and hasattr(response, 'set_cookie'):
-            secure = os.getenv('DASHBOARD_HTTPS', 'true').lower() not in (
-                'false', '0', 'no'
-            )
+        if hasattr(response, 'set_cookie'):
+            token = existing or _new_token()
+            # Secure-cookie decision is SCHEME-AWARE. Defaulting Secure=True on a
+            # plain-HTTP deployment (the normal :8080 setup) made browsers
+            # silently drop the cookie -> JS had no token -> every POST 403'd.
+            # 'auto' (default): Secure only when the request is actually HTTPS
+            # (direct or via X-Forwarded-Proto behind a TLS-terminating proxy).
+            # Explicit DASHBOARD_HTTPS=true/false still forces the choice.
+            env = os.getenv('DASHBOARD_HTTPS', 'auto').lower()
+            if env in ('false', '0', 'no'):
+                secure = False
+            elif env in ('true', '1', 'yes'):
+                secure = True
+            else:  # 'auto'
+                fwd = request.headers.get('X-Forwarded-Proto', '').lower()
+                secure = request.scheme == 'https' or fwd == 'https'
             response.set_cookie(
                 CSRF_COOKIE,
-                _new_token(),
+                token,
                 httponly=False,  # JS must read this to echo it in the header
                 secure=secure,
                 samesite='Lax',
-                max_age=3600,
+                max_age=7 * 24 * 3600,
+                path='/',
             )
         return response
 
