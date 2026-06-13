@@ -854,7 +854,82 @@
             </div>
         {% endif %}
     </div>
+
+    <!-- Intelligence & Ops modules (Waves 26+): fail-soft, fed by
+         /api/aux-modules/overview; hidden entirely when the API is down. -->
+    <div id="aux-modules-section" style="display:none; margin-top:24px;">
+        <h3 style="font-size:1.05rem; margin-bottom:4px;">
+            <i class="fas fa-brain"></i> Intelligence &amp; Ops Modules
+        </h3>
+        <p style="font-size:0.78rem; opacity:0.7; margin-bottom:12px;">
+            Advisory, data and control-plane modules. They never trade directly; pause/resume
+            and settings work the same as for trading modules.
+        </p>
+        <div class="modules-grid" id="aux-modules-grid"></div>
+    </div>
 </div>
+
+<script>
+(function () {
+    'use strict';
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+    const CARD_CLS = { live: 'running', dry_run: 'running', paused: 'stopped',
+                       offline: 'stopped', disabled: 'disabled', killswitch: 'error' };
+    async function loadAuxModules() {
+        let data;
+        try {
+            const r = await fetch('/api/aux-modules/overview');
+            if (!r.ok) return;
+            data = await r.json();
+        } catch (e) { return; }
+        const mods = (data && data.data) || [];
+        if (!mods.length) return;
+        const grid = document.getElementById('aux-modules-grid');
+        grid.innerHTML = mods.map(function (m) {
+            const st = (m.status || 'unknown');
+            return '<div class="module-card ' + (CARD_CLS[st] || 'disabled') + '">'
+                + '<div class="module-header"><div class="module-info">'
+                + '<div class="module-name"><a href="/module/' + esc(m.key) + '" style="color:inherit;">' + esc(m.name) + '</a></div>'
+                + '<div class="module-type">' + esc(m.category) + '</div></div>'
+                + '<span class="module-status-badge status-' + (CARD_CLS[st] || 'disabled') + '">'
+                + '<span class="status-dot"></span>' + esc(st.replace('_', ' ').toUpperCase()) + '</span></div>'
+                + '<div class="module-metrics"><div class="metric-item">'
+                + '<div class="metric-label">24h rows</div>'
+                + '<div class="metric-value">' + (m.rows_24h == null ? '—' : m.rows_24h) + '</div></div>'
+                + '<div class="metric-item"><div class="metric-label">Total rows</div>'
+                + '<div class="metric-value">' + (m.rows_total == null ? '—' : m.rows_total) + '</div></div>'
+                + '<div class="metric-item"><div class="metric-label">Port</div>'
+                + '<div class="metric-value">' + esc(m.health_port) + '</div></div></div>'
+                + '<div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px;">'
+                + '<a class="btn btn-sm btn-outline-light" href="/module/' + esc(m.key) + '">Panel</a>'
+                + (m.config_type ? '<a class="btn btn-sm btn-outline-light" href="/config/' + esc(m.config_type) + '">Settings</a>' : '')
+                + (m.paused
+                    ? '<button class="btn btn-sm btn-success" onclick="auxModuleAct(\'' + esc(m.key) + '\',\'start\')">Resume</button>'
+                    : '<button class="btn btn-sm btn-warning" onclick="auxModuleAct(\'' + esc(m.key) + '\',\'pause\')">Pause</button>')
+                + (m.enabled
+                    ? '<button class="btn btn-sm btn-outline-danger" onclick="auxModuleAct(\'' + esc(m.key) + '\',\'disable\')">Disable</button>'
+                    : '<button class="btn btn-sm btn-outline-success" onclick="auxModuleAct(\'' + esc(m.key) + '\',\'enable\')">Enable</button>')
+                + '</div></div>';
+        }).join('');
+        document.getElementById('aux-modules-section').style.display = '';
+    }
+    window.auxModuleAct = async function (key, action) {
+        if (action === 'pause' && !window.confirm('Pause ' + key + '?')) return;
+        try {
+            const r = await window.csrfFetch('/api/modules/' + key + '/' + action, { method: 'POST' });
+            const d = await r.json();
+            if (!d.success && d.error) alert(d.error);
+        } catch (e) { alert('Action failed: ' + e.message); }
+        loadAuxModules();
+    };
+    document.addEventListener('DOMContentLoaded', loadAuxModules);
+    setInterval(loadAuxModules, 60000);
+})();
+</script>
 
 <script>
 function refreshModules() {
