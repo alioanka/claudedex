@@ -38,7 +38,11 @@ import csv
 from config.config_manager import PortfolioConfig
 from pydantic.types import SecretStr
 
-# Authentication imports
+logger = logging.getLogger(__name__)
+
+# Authentication imports. NOTE: logger must already exist — this except
+# branch previously referenced it before definition, turning any auth
+# ImportError into a NameError that crashed the whole dashboard import.
 try:
     from auth.auth_service import AuthService
     from auth.middleware import auth_middleware_factory, require_auth, require_admin
@@ -48,8 +52,6 @@ try:
 except ImportError as e:
     logger.warning(f"Authentication system not available: {e}")
     AUTH_AVAILABLE = False
-
-logger = logging.getLogger(__name__)
 
 
 # ===== Universal settings: value_type normalization =====
