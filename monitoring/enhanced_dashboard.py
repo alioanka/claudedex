@@ -52,6 +52,169 @@ except ImportError as e:
 logger = logging.getLogger(__name__)
 
 
+# ===== Universal settings: value_type normalization =====
+# Migrations seeded value_type with at least 9 spellings ('bool'/'boolean',
+# 'int'/'integer', 'float'/'number', 'str'/'string', 'json'). The settings
+# GET/POST paths previously only understood the canonical four, so rows
+# seeded as 'boolean'/'integer'/'number'/'str' rendered as raw strings and
+# saved back Python reprs ('True' instead of 'true'). Normalize once here
+# and use everywhere.
+_VALUE_TYPE_ALIASES = {
+    'bool': 'bool', 'boolean': 'bool',
+    'int': 'int', 'integer': 'int',
+    'float': 'float', 'number': 'float', 'numeric': 'float', 'decimal': 'float',
+    'json': 'json', 'dict': 'json', 'list': 'json',
+    'string': 'string', 'str': 'string', 'text': 'string',
+}
+
+
+def _norm_value_type(value_type) -> str:
+    """Map any seeded value_type spelling to its canonical form."""
+    return _VALUE_TYPE_ALIASES.get(str(value_type or '').strip().lower(), 'string')
+
+
+def _coerce_db_value(value, value_type):
+    """DB TEXT value -> typed Python value. Raises on malformed input;
+    callers decide whether to fail-soft (GET) or report (POST)."""
+    vt = _norm_value_type(value_type)
+    if value is None:
+        return None
+    if vt == 'bool':
+        return str(value).strip().lower() in ('true', '1', 'yes', 'on')
+    if vt == 'int':
+        return int(str(value).strip())
+    if vt == 'float':
+        return float(str(value).strip())
+    if vt == 'json':
+        return json.loads(value)
+    return value
+
+
+def _serialize_setting_value(value, value_type) -> str:
+    """Typed client value -> canonical DB TEXT. Raises ValueError on
+    type mismatch so the save endpoint can report per-key errors
+    instead of silently storing garbage."""
+    vt = _norm_value_type(value_type)
+    if vt == 'bool':
+        if isinstance(value, bool):
+            return 'true' if value else 'false'
+        s = str(value).strip().lower()
+        if s in ('true', '1', 'yes', 'on'):
+            return 'true'
+        if s in ('false', '0', 'no', 'off', ''):
+            return 'false'
+        raise ValueError(f'not a boolean: {value!r}')
+    if vt == 'int':
+        return str(int(str(value).strip()))
+    if vt == 'float':
+        f = float(str(value).strip())
+        if f != f or f in (float('inf'), float('-inf')):
+            raise ValueError(f'not a finite number: {value!r}')
+        # Avoid '1.0' noise for integral floats that were seeded as '1'.
+        return repr(int(f)) if f.is_integer() and abs(f) < 1e15 else repr(f)
+    if vt == 'json':
+        if isinstance(value, str):
+            json.loads(value)  # validate
+            return value
+        return json.dumps(value)
+    return str(value)
+
+
+# Keys whose flip can enable live capital movement. The generic settings UI
+# styles these as DANGER and requires an explicit confirm dialog.
+_DANGER_KEY_PATTERNS = (
+    'shadow_mode', 'live_execution_enabled', 'autopilot', 'dry_run',
+    'live_enabled', 'pumpfun_live_enabled', 'auto_apply_enabled',
+    'testnet', 'safety_check_enabled',
+)
+
+
+def _is_danger_key(key: str) -> bool:
+    k = (key or '').lower()
+    return any(p in k for p in _DANGER_KEY_PATTERNS)
+
+
+# ===== CSRF (dashboard-local hardening of auth/csrf.py, MB-27) =====
+# Same double-submit-cookie pattern and security floor as
+# auth.csrf.csrf_middleware_factory, with the three operational bugs that
+# broke settings saves ("the token issue") fixed:
+#   1. The old cookie was Secure by default (DASHBOARD_HTTPS default
+#      'true'), so over plain-HTTP deployments the browser NEVER stored
+#      csrf_token -> JS had no token to echo -> every POST 403'd.
+#      Now Secure tracks the actual request scheme (honoring
+#      X-Forwarded-Proto behind TLS proxies), with DASHBOARD_HTTPS as an
+#      explicit opt-in override only when set truthy AND the request is
+#      not plain localhost HTTP.
+#   2. max_age was 3600 and never refreshed while present, so any tab open
+#      longer than an hour started failing saves until a full reload.
+#      Now the cookie slides: every response re-sets it for 7 days.
+#   3. Failures returned an opaque 403; now the body carries
+#      {'code': 'csrf'} and GET /api/auth/csrf mints/echoes a token so the
+#      frontend can transparently recover and retry once.
+_CSRF_COOKIE = 'csrf_token'
+_CSRF_HEADER = 'X-CSRF-Token'
+_CSRF_PROTECTED_METHODS = frozenset(('POST', 'PUT', 'DELETE', 'PATCH'))
+_CSRF_EXEMPT_PATHS = frozenset(('/api/auth/login', '/api/auth/logout'))
+_CSRF_EXEMPT_PREFIXES = ('/socket.io/',)
+_CSRF_MAX_AGE = 7 * 24 * 3600
+
+
+def _csrf_cookie_secure(request: web.Request) -> bool:
+    """Secure flag must match how the operator actually reaches the
+    dashboard, otherwise the browser silently drops the cookie."""
+    try:
+        if request.secure:
+            return True
+        fwd = (request.headers.get('X-Forwarded-Proto') or '').lower()
+        if 'https' in fwd:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def dashboard_csrf_middleware(app: web.Application, handler):
+    async def middleware(request: web.Request):
+        import secrets as _secrets
+        method = request.method.upper()
+        path = request.path
+        is_exempt = (
+            path in _CSRF_EXEMPT_PATHS
+            or any(path.startswith(p) for p in _CSRF_EXEMPT_PREFIXES)
+        )
+        if method in _CSRF_PROTECTED_METHODS and not is_exempt:
+            cookie_token = request.cookies.get(_CSRF_COOKIE)
+            header_token = request.headers.get(_CSRF_HEADER)
+            if not cookie_token or not header_token or not _secrets.compare_digest(
+                cookie_token, header_token
+            ):
+                return web.json_response(
+                    {'error': 'CSRF token missing or invalid', 'code': 'csrf'},
+                    status=403,
+                )
+
+        response = await handler(request)
+
+        # Issue-or-slide: always make sure the client leaves with a live
+        # cookie. Reuse the existing token so concurrent tabs stay valid.
+        try:
+            if hasattr(response, 'set_cookie'):
+                token = request.cookies.get(_CSRF_COOKIE) or _secrets.token_urlsafe(32)
+                response.set_cookie(
+                    _CSRF_COOKIE,
+                    token,
+                    httponly=False,  # JS must read it to echo the header
+                    secure=_csrf_cookie_secure(request),
+                    samesite='Lax',
+                    max_age=_CSRF_MAX_AGE,
+                )
+        except Exception:
+            pass  # never let cookie maintenance break a response
+        return response
+
+    return middleware
+
+
 class _HttpParseNoiseFilter(logging.Filter):
     """
     Drop the ERROR-level tracebacks aiohttp emits when a NON-HTTP client
@@ -899,12 +1062,16 @@ class DashboardEndpoints:
 
             # MB-27: CSRF runs after auth (auth establishes the session; CSRF
             # then validates that mutating requests carry a matching token).
+            # Uses the dashboard-local middleware (scheme-aware Secure flag,
+            # sliding 7-day cookie, recoverable 403s) — see
+            # dashboard_csrf_middleware above for why auth.csrf's factory
+            # broke saves over plain HTTP / long-lived tabs.
             csrf_names = [
                 getattr(m, '__name__', str(m)) for m in self.app.middlewares
             ]
-            if 'csrf_middleware_factory' not in csrf_names:
-                self.app.middlewares.append(csrf_middleware_factory)
-                logger.info("   ✅ CSRF middleware registered")
+            if not any('csrf' in n for n in csrf_names):
+                self.app.middlewares.append(dashboard_csrf_middleware)
+                logger.info("   ✅ CSRF middleware registered (dashboard-local)")
 
             self.auth_enabled = True
 
@@ -1142,6 +1309,7 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/dex/reconcile', self.api_reconcile_dex_positions)
 
         # API - Settings
+        self.app.router.add_get('/api/auth/csrf', self.api_get_csrf_token)
         self.app.router.add_get('/api/settings/all', self.api_get_settings)
         self.app.router.add_post('/api/settings/update', self.api_update_settings)
         self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
@@ -7949,8 +8117,33 @@ class DashboardEndpoints:
             return obj.__dict__
         raise TypeError(f"Type {type(obj)} not serializable")
 
+    async def api_get_csrf_token(self, request):
+        """GET /api/auth/csrf — echo (or mint) the double-submit CSRF token.
+
+        Recovery path for the frontend: when a save 403s with code 'csrf'
+        (cookie expired/never stored), JS calls this, the middleware
+        re-issues the cookie on the response, and the body carries the same
+        token so the very next retry can echo it in X-CSRF-Token even if
+        document.cookie is briefly stale."""
+        import secrets as _secrets
+        token = request.cookies.get(_CSRF_COOKIE) or _secrets.token_urlsafe(32)
+        resp = web.json_response({'success': True, 'token': token})
+        try:
+            resp.set_cookie(
+                _CSRF_COOKIE, token, httponly=False,
+                secure=_csrf_cookie_secure(request), samesite='Lax',
+                max_age=_CSRF_MAX_AGE,
+            )
+        except Exception:
+            pass
+        return resp
+
     async def api_get_settings(self, request):
-        """Get all settings from database config_settings table."""
+        """Get all settings from database config_settings table.
+
+        Fail-soft PER ROW: one malformed value (bad JSON, '' int) used to
+        500 the entire settings surface; now that row degrades to its raw
+        string with parse_error=True and everything else still renders."""
         try:
             # Load settings from database instead of Pydantic models
             if not self.db_pool:
@@ -7959,7 +8152,8 @@ class DashboardEndpoints:
             async with self.db_pool.acquire() as conn:
                 # Get all editable config settings from database
                 rows = await conn.fetch("""
-                    SELECT config_type, key, value, value_type, description, is_editable, requires_restart
+                    SELECT config_type, key, value, value_type, description,
+                           is_editable, requires_restart, updated_at
                     FROM config_settings
                     WHERE is_editable = TRUE
                     ORDER BY config_type, key
@@ -7970,31 +8164,32 @@ class DashboardEndpoints:
                 for row in rows:
                     config_type = row['config_type']
                     key = row['key']
-                    value = row['value']
-                    value_type = row['value_type']
+                    norm_type = _norm_value_type(row['value_type'])
+                    parse_error = False
+                    try:
+                        converted_value = _coerce_db_value(row['value'], norm_type)
+                    except Exception:
+                        converted_value = row['value']
+                        parse_error = True
 
-                    # Convert value based on type
-                    if value_type == 'bool':
-                        converted_value = value.lower() in ('true', '1', 'yes')
-                    elif value_type == 'int':
-                        converted_value = int(value)
-                    elif value_type == 'float':
-                        converted_value = float(value)
-                    elif value_type == 'json':
-                        converted_value = json.loads(value)
-                    else:  # string
-                        converted_value = value
-
-                    # Add to config type group
                     if config_type not in all_configs:
                         all_configs[config_type] = {}
 
-                    all_configs[config_type][key] = {
+                    entry = {
                         'value': converted_value,
                         'description': row['description'],
                         'requires_restart': row['requires_restart'],
-                        'value_type': value_type
+                        'value_type': norm_type,
+                        'danger': _is_danger_key(key),
                     }
+                    if parse_error:
+                        entry['parse_error'] = True
+                    if row['updated_at'] is not None:
+                        try:
+                            entry['updated_at'] = _iso_utc(row['updated_at'])
+                        except Exception:
+                            pass
+                    all_configs[config_type][key] = entry
 
             return web.json_response({
                 'success': True,
@@ -8004,9 +8199,20 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
-    
+
     async def api_update_settings(self, request):
-        """Update settings in database"""
+        """Update settings in database.
+
+        ROOT-CAUSE FIXES for the broken save path:
+          - updated_by / changed_by are VARCHAR(50); the old code bound
+            user.id (int) -> asyncpg DataError -> 500 on EVERY
+            authenticated save through this endpoint. Bind strings.
+          - value serialization now respects normalized value_type
+            ('boolean'/'integer'/'number'/'str' seeds included); dict/list
+            values are json.dumps'd instead of str()-Python-repr'd.
+          - unknown keys and per-key type errors are REPORTED back
+            ({'skipped': [...], 'errors': {...}}) instead of silently
+            dropped, and saved values are re-read so the UI can confirm."""
         try:
             data = await request.json()
             config_type = data.get('config_type')
@@ -8015,53 +8221,83 @@ class DashboardEndpoints:
             if not self.db_pool:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            if not config_type or not updates:
+            if not config_type or not isinstance(updates, dict) or not updates:
                 return web.json_response({'error': 'config_type and updates required'}, status=400)
 
-            # Get user info for audit
+            # Get user info for audit. NOTE: both audit columns are VARCHAR.
             user = request.get('user')
-            user_id = user.id if user else None
-            username = user.username if user else 'unknown'
+            changed_by = str(user.id) if user and getattr(user, 'id', None) is not None else None
+            username = getattr(user, 'username', None) or 'unknown'
 
+            updated, skipped, errors = [], [], {}
             async with self.db_pool.acquire() as conn:
                 async with conn.transaction():
                     for key, value in updates.items():
                         # Get the current value for audit log
                         old_row = await conn.fetchrow("""
-                            SELECT value, value_type FROM config_settings
+                            SELECT value, value_type, is_editable FROM config_settings
                             WHERE config_type = $1 AND key = $2
                         """, config_type, key)
 
                         if not old_row:
                             logger.warning(f"Config {config_type}.{key} not found, skipping")
+                            skipped.append(key)
+                            continue
+                        if old_row['is_editable'] is False:
+                            errors[key] = 'not editable'
                             continue
 
-                        # Convert value to string based on type
-                        value_type = old_row['value_type']
-                        if value_type == 'bool':
-                            new_value_str = 'true' if value else 'false'
-                        else:
-                            new_value_str = str(value)
+                        try:
+                            new_value_str = _serialize_setting_value(
+                                value, old_row['value_type']
+                            )
+                        except (ValueError, TypeError, json.JSONDecodeError) as ve:
+                            errors[key] = f'invalid {_norm_value_type(old_row["value_type"])}: {ve}'
+                            continue
+
+                        if new_value_str == old_row['value']:
+                            continue  # no-op; keep history clean
 
                         # Update the config setting
                         await conn.execute("""
                             UPDATE config_settings
                             SET value = $1, updated_at = NOW(), updated_by = $2
                             WHERE config_type = $3 AND key = $4
-                        """, new_value_str, user_id, config_type, key)
+                        """, new_value_str, username[:50], config_type, key)
 
                         # Log the change in config_history
                         await conn.execute("""
                             INSERT INTO config_history
                             (config_type, key, old_value, new_value, change_source, changed_by, changed_by_username, ip_address)
                             VALUES ($1, $2, $3, $4, 'api', $5, $6, $7)
-                        """, config_type, key, old_row['value'], new_value_str, user_id, username,
-                             request.remote)
+                        """, config_type, key, old_row['value'], new_value_str,
+                             changed_by, username[:50], request.remote)
+                        updated.append(key)
 
+                # Re-read what was persisted so the UI confirms reality,
+                # not its own optimistic state.
+                saved = {}
+                if updated:
+                    rows = await conn.fetch("""
+                        SELECT key, value, value_type FROM config_settings
+                        WHERE config_type = $1 AND key = ANY($2::text[])
+                    """, config_type, updated)
+                    for r in rows:
+                        try:
+                            saved[r['key']] = _coerce_db_value(r['value'], r['value_type'])
+                        except Exception:
+                            saved[r['key']] = r['value']
+
+            ok = not errors
             return web.json_response({
-                'success': True,
-                'message': f'Settings updated: {config_type}'
-            })
+                'success': ok,
+                'message': (f'Settings updated: {config_type}' if ok
+                            else f'Some settings failed: {config_type}'),
+                'updated': updated,
+                'skipped': skipped,
+                'errors': errors,
+                'saved': saved,
+            }, status=200 if ok else 422)
         except Exception as e:
             logger.error(f"Error updating settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
@@ -8222,8 +8458,12 @@ class DashboardEndpoints:
 
             async with self.db_pool.acquire() as conn:
                 for key, value in data.items():
-                    # Remove futures_ prefix if present
-                    clean_key = key.replace('futures_', '') if key.startswith('futures_') else key
+                    # Remove ONE leading futures_ prefix. .replace() stripped
+                    # ALL occurrences, collapsing the UI field
+                    # futures_futures_funding_carry_enabled (DB key
+                    # futures_funding_carry_enabled, mig 102) into
+                    # funding_carry_enabled — saves landed on the wrong row.
+                    clean_key = key[len('futures_'):] if key.startswith('futures_') else key
 
                     # Apply key mapping
                     clean_key = key_mapping.get(clean_key, clean_key)
@@ -8405,7 +8645,8 @@ class DashboardEndpoints:
 
             async with self.db_pool.acquire() as conn:
                 for key, value in data.items():
-                    clean_key = key.replace('solana_', '') if key.startswith('solana_') else key
+                    # Strip ONE leading prefix only (see futures handler note).
+                    clean_key = key[len('solana_'):] if key.startswith('solana_') else key
                     config_type = self._get_solana_config_type(clean_key)
                     if not config_type:
                         continue
