@@ -505,6 +505,70 @@
         </div>
     </div>
 
+    <!-- Copy Trading v3 pipeline (fail-soft: section hides itself when
+         the v3 tables don't exist yet). -->
+    <div class="section-card" id="cv3-section" style="display:none;">
+        <div class="section-title">
+            <i class="fas fa-diagram-project"></i>
+            Copy v3 Pipeline
+            <a href="/proposals" style="font-size:0.75rem; margin-left:10px;">review candidates →</a>
+        </div>
+        <div id="cv3-tables"></div>
+    </div>
+    <script>
+    (function () {
+        'use strict';
+        function esc(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+            });
+        }
+        async function loadV3() {
+            let data;
+            try {
+                const r = await fetch('/api/copytrading/v3-surface');
+                if (!r.ok) return;
+                data = await r.json();
+            } catch (e) { return; }
+            const tables = (data && data.tables) || [];
+            if (!tables.length) return;
+            const host = document.getElementById('cv3-tables');
+            host.innerHTML = tables.map(function (t) {
+                const cols = (t.columns || []).slice(0, 8);
+                let h = '<div style="margin-bottom:14px;">'
+                    + '<div style="font-size:0.85rem; font-weight:600; margin-bottom:4px;">'
+                    + '<code>' + esc(t.table) + '</code>'
+                    + ' <span style="opacity:0.6; font-weight:400;">'
+                    + (t.rows_24h != null ? t.rows_24h + ' rows / 24h · ' : '')
+                    + (t.total != null ? t.total + ' total' : '') + '</span></div>';
+                if (!t.rows || !t.rows.length) {
+                    h += '<div style="opacity:0.6; font-size:0.8rem;">No rows yet.</div>';
+                } else {
+                    h += '<div style="overflow-x:auto;"><table style="width:100%; font-size:0.75rem; border-collapse:collapse;">'
+                        + '<thead><tr>' + cols.map(function (c) {
+                            return '<th style="text-align:left; padding:4px 8px; opacity:0.7;">' + esc(c) + '</th>';
+                        }).join('') + '</tr></thead><tbody>'
+                        + t.rows.map(function (row) {
+                            return '<tr>' + cols.map(function (c) {
+                                let v = row[c];
+                                if (v === null || v === undefined) v = '—';
+                                if (typeof v === 'object') v = JSON.stringify(v);
+                                v = String(v);
+                                return '<td style="padding:3px 8px; max-width:220px; overflow:hidden; '
+                                    + 'text-overflow:ellipsis; white-space:nowrap;" title="' + esc(v) + '">'
+                                    + esc(v.length > 40 ? v.slice(0, 37) + '…' : v) + '</td>';
+                            }).join('') + '</tr>';
+                        }).join('') + '</tbody></table></div>';
+                }
+                return h + '</div>';
+            }).join('');
+            document.getElementById('cv3-section').style.display = '';
+        }
+        document.addEventListener('DOMContentLoaded', loadV3);
+        setInterval(loadV3, 120000);
+    })();
+    </script>
+
     <!-- Info Section -->
     <div class="section-card">
         <div class="section-title">

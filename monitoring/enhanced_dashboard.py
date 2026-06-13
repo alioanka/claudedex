@@ -1254,6 +1254,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
         self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
         self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
+        self.app.router.add_get('/api/copytrading/v3-surface',
+                                self.api_copytrading_v3_surface)
         self.app.router.add_post('/api/copytrading/validate', self.api_validate_wallet)
         self.app.router.add_get('/api/copytrading/discover', self.api_copytrading_discover)
 
@@ -13734,6 +13736,35 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"api_get_copytrading_slippage failed: {e}", exc_info=True)
             return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_copytrading_v3_surface(self, request):
+        """GET /api/copytrading/v3-surface — fail-soft window onto the
+        Copy Trading v3 pipeline tables being built by a parallel effort:
+        copy_leader_candidates, copy_wallet_candidates and any
+        copy_shadow_* tables. Missing tables are simply omitted so the
+        hub section hides itself; this endpoint can never 500 the page."""
+        panels = []
+        if self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    tables = ['copy_leader_candidates', 'copy_wallet_candidates']
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT table_name FROM information_schema.tables
+                            WHERE table_schema = 'public'
+                              AND table_name LIKE 'copy\\_shadow\\_%'
+                            ORDER BY table_name
+                        """)
+                        tables += [r['table_name'] for r in rows]
+                    except Exception:
+                        pass
+                    for t in tables:
+                        p = await self._table_panel(conn, t, 15)
+                        if p.get('exists'):
+                            panels.append(p)
+            except Exception as e:
+                logger.debug(f"copy v3 surface probe failed: {e}")
+        return web.json_response({'success': True, 'tables': panels})
 
     async def api_copytrading_wallet_remove(self, request):
         """Atomically remove a single wallet from copytrading_config.target_wallets.
