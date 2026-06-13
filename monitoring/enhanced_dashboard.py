@@ -38,7 +38,11 @@ import csv
 from config.config_manager import PortfolioConfig
 from pydantic.types import SecretStr
 
-# Authentication imports
+logger = logging.getLogger(__name__)
+
+# Authentication imports. NOTE: logger must already exist — this except
+# branch previously referenced it before definition, turning any auth
+# ImportError into a NameError that crashed the whole dashboard import.
 try:
     from auth.auth_service import AuthService
     from auth.middleware import auth_middleware_factory, require_auth, require_admin
@@ -49,7 +53,168 @@ except ImportError as e:
     logger.warning(f"Authentication system not available: {e}")
     AUTH_AVAILABLE = False
 
-logger = logging.getLogger(__name__)
+
+# ===== Universal settings: value_type normalization =====
+# Migrations seeded value_type with at least 9 spellings ('bool'/'boolean',
+# 'int'/'integer', 'float'/'number', 'str'/'string', 'json'). The settings
+# GET/POST paths previously only understood the canonical four, so rows
+# seeded as 'boolean'/'integer'/'number'/'str' rendered as raw strings and
+# saved back Python reprs ('True' instead of 'true'). Normalize once here
+# and use everywhere.
+_VALUE_TYPE_ALIASES = {
+    'bool': 'bool', 'boolean': 'bool',
+    'int': 'int', 'integer': 'int',
+    'float': 'float', 'number': 'float', 'numeric': 'float', 'decimal': 'float',
+    'json': 'json', 'dict': 'json', 'list': 'json',
+    'string': 'string', 'str': 'string', 'text': 'string',
+}
+
+
+def _norm_value_type(value_type) -> str:
+    """Map any seeded value_type spelling to its canonical form."""
+    return _VALUE_TYPE_ALIASES.get(str(value_type or '').strip().lower(), 'string')
+
+
+def _coerce_db_value(value, value_type):
+    """DB TEXT value -> typed Python value. Raises on malformed input;
+    callers decide whether to fail-soft (GET) or report (POST)."""
+    vt = _norm_value_type(value_type)
+    if value is None:
+        return None
+    if vt == 'bool':
+        return str(value).strip().lower() in ('true', '1', 'yes', 'on')
+    if vt == 'int':
+        return int(str(value).strip())
+    if vt == 'float':
+        return float(str(value).strip())
+    if vt == 'json':
+        return json.loads(value)
+    return value
+
+
+def _serialize_setting_value(value, value_type) -> str:
+    """Typed client value -> canonical DB TEXT. Raises ValueError on
+    type mismatch so the save endpoint can report per-key errors
+    instead of silently storing garbage."""
+    vt = _norm_value_type(value_type)
+    if vt == 'bool':
+        if isinstance(value, bool):
+            return 'true' if value else 'false'
+        s = str(value).strip().lower()
+        if s in ('true', '1', 'yes', 'on'):
+            return 'true'
+        if s in ('false', '0', 'no', 'off', ''):
+            return 'false'
+        raise ValueError(f'not a boolean: {value!r}')
+    if vt == 'int':
+        return str(int(str(value).strip()))
+    if vt == 'float':
+        f = float(str(value).strip())
+        if f != f or f in (float('inf'), float('-inf')):
+            raise ValueError(f'not a finite number: {value!r}')
+        # Avoid '1.0' noise for integral floats that were seeded as '1'.
+        return repr(int(f)) if f.is_integer() and abs(f) < 1e15 else repr(f)
+    if vt == 'json':
+        if isinstance(value, str):
+            json.loads(value)  # validate
+            return value
+        return json.dumps(value)
+    return str(value)
+
+
+# Keys whose flip can enable live capital movement. The generic settings UI
+# styles these as DANGER and requires an explicit confirm dialog.
+_DANGER_KEY_PATTERNS = (
+    'shadow_mode', 'live_execution_enabled', 'autopilot', 'dry_run',
+    'live_enabled', 'pumpfun_live_enabled', 'auto_apply_enabled',
+    'testnet', 'safety_check_enabled',
+)
+
+
+def _is_danger_key(key: str) -> bool:
+    k = (key or '').lower()
+    return any(p in k for p in _DANGER_KEY_PATTERNS)
+
+
+# ===== CSRF (dashboard-local hardening of auth/csrf.py, MB-27) =====
+# Same double-submit-cookie pattern and security floor as
+# auth.csrf.csrf_middleware_factory, with the three operational bugs that
+# broke settings saves ("the token issue") fixed:
+#   1. The old cookie was Secure by default (DASHBOARD_HTTPS default
+#      'true'), so over plain-HTTP deployments the browser NEVER stored
+#      csrf_token -> JS had no token to echo -> every POST 403'd.
+#      Now Secure tracks the actual request scheme (honoring
+#      X-Forwarded-Proto behind TLS proxies), with DASHBOARD_HTTPS as an
+#      explicit opt-in override only when set truthy AND the request is
+#      not plain localhost HTTP.
+#   2. max_age was 3600 and never refreshed while present, so any tab open
+#      longer than an hour started failing saves until a full reload.
+#      Now the cookie slides: every response re-sets it for 7 days.
+#   3. Failures returned an opaque 403; now the body carries
+#      {'code': 'csrf'} and GET /api/auth/csrf mints/echoes a token so the
+#      frontend can transparently recover and retry once.
+_CSRF_COOKIE = 'csrf_token'
+_CSRF_HEADER = 'X-CSRF-Token'
+_CSRF_PROTECTED_METHODS = frozenset(('POST', 'PUT', 'DELETE', 'PATCH'))
+_CSRF_EXEMPT_PATHS = frozenset(('/api/auth/login', '/api/auth/logout'))
+_CSRF_EXEMPT_PREFIXES = ('/socket.io/',)
+_CSRF_MAX_AGE = 7 * 24 * 3600
+
+
+def _csrf_cookie_secure(request: web.Request) -> bool:
+    """Secure flag must match how the operator actually reaches the
+    dashboard, otherwise the browser silently drops the cookie."""
+    try:
+        if request.secure:
+            return True
+        fwd = (request.headers.get('X-Forwarded-Proto') or '').lower()
+        if 'https' in fwd:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+async def dashboard_csrf_middleware(app: web.Application, handler):
+    async def middleware(request: web.Request):
+        import secrets as _secrets
+        method = request.method.upper()
+        path = request.path
+        is_exempt = (
+            path in _CSRF_EXEMPT_PATHS
+            or any(path.startswith(p) for p in _CSRF_EXEMPT_PREFIXES)
+        )
+        if method in _CSRF_PROTECTED_METHODS and not is_exempt:
+            cookie_token = request.cookies.get(_CSRF_COOKIE)
+            header_token = request.headers.get(_CSRF_HEADER)
+            if not cookie_token or not header_token or not _secrets.compare_digest(
+                cookie_token, header_token
+            ):
+                return web.json_response(
+                    {'error': 'CSRF token missing or invalid', 'code': 'csrf'},
+                    status=403,
+                )
+
+        response = await handler(request)
+
+        # Issue-or-slide: always make sure the client leaves with a live
+        # cookie. Reuse the existing token so concurrent tabs stay valid.
+        try:
+            if hasattr(response, 'set_cookie'):
+                token = request.cookies.get(_CSRF_COOKIE) or _secrets.token_urlsafe(32)
+                response.set_cookie(
+                    _CSRF_COOKIE,
+                    token,
+                    httponly=False,  # JS must read it to echo the header
+                    secure=_csrf_cookie_secure(request),
+                    samesite='Lax',
+                    max_age=_CSRF_MAX_AGE,
+                )
+        except Exception:
+            pass  # never let cookie maintenance break a response
+        return response
+
+    return middleware
 
 
 class _HttpParseNoiseFilter(logging.Filter):
@@ -899,12 +1064,16 @@ class DashboardEndpoints:
 
             # MB-27: CSRF runs after auth (auth establishes the session; CSRF
             # then validates that mutating requests carry a matching token).
+            # Uses the dashboard-local middleware (scheme-aware Secure flag,
+            # sliding 7-day cookie, recoverable 403s) — see
+            # dashboard_csrf_middleware above for why auth.csrf's factory
+            # broke saves over plain HTTP / long-lived tabs.
             csrf_names = [
                 getattr(m, '__name__', str(m)) for m in self.app.middlewares
             ]
-            if 'csrf_middleware_factory' not in csrf_names:
-                self.app.middlewares.append(csrf_middleware_factory)
-                logger.info("   ✅ CSRF middleware registered")
+            if not any('csrf' in n for n in csrf_names):
+                self.app.middlewares.append(dashboard_csrf_middleware)
+                logger.info("   ✅ CSRF middleware registered (dashboard-local)")
 
             self.auth_enabled = True
 
@@ -1085,6 +1254,8 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
         self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
         self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
+        self.app.router.add_get('/api/copytrading/v3-surface',
+                                self.api_copytrading_v3_surface)
         self.app.router.add_post('/api/copytrading/validate', self.api_validate_wallet)
         self.app.router.add_get('/api/copytrading/discover', self.api_copytrading_discover)
 
@@ -1142,8 +1313,15 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/dex/reconcile', self.api_reconcile_dex_positions)
 
         # API - Settings
+        self.app.router.add_get('/api/auth/csrf', self.api_get_csrf_token)
         self.app.router.add_get('/api/settings/all', self.api_get_settings)
         self.app.router.add_post('/api/settings/update', self.api_update_settings)
+        # Generic self-documenting settings surface (any config_type)
+        self.app.router.add_get('/api/config/types', self.api_config_types)
+        self.app.router.add_get('/api/config/{config_type}', self.api_config_get)
+        self.app.router.add_post('/api/config/{config_type}', self.api_config_post)
+        self.app.router.add_get('/config', self.generic_settings_page)
+        self.app.router.add_get('/config/{config_type}', self.generic_settings_page)
         self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
         self.app.router.add_get('/api/settings/networks', self.api_get_networks)
@@ -1563,6 +1741,20 @@ class DashboardEndpoints:
             '/api/modules/{module}/runtime-status',
             self._api_module_runtime_status
         )
+        # Intelligence & Ops modules (Waves 26+): generic data panels +
+        # batched overview, driven by the _AUX_MODULES registry.
+        self.app.router.add_get('/api/aux-modules/overview',
+                                self.api_aux_modules_overview)
+        self.app.router.add_get('/api/module-data/{module}',
+                                self.api_module_data)
+        self.app.router.add_get('/module/{module}', self.module_panel_page)
+        # Advisory proposal approvals (meta/regime/param/copy)
+        self.app.router.add_get('/api/proposals/pending',
+                                self.api_proposals_pending)
+        self.app.router.add_post('/api/proposals/{kind}/{id}/{action}',
+                                 self.api_proposal_action)
+        self.app.router.add_get('/proposals', self.proposals_page)
+        self.app.router.add_get('/help', self.help_page)
         # Phase 3 follow-up: explicit per-module restart via the
         # logs/.restart_<module> flag-file pattern (orchestrator
         # main.py polls every 5s). Replaces the operator's manual
@@ -2640,12 +2832,190 @@ class DashboardEndpoints:
         'copytrading': 'copy_trading', 'copy': 'copy_trading',
     }
 
+    # ===== Intelligence & Ops modules (Waves 26+) =====
+    # One registry drives runtime badges, the generic data panels
+    # (/api/module-data/<key> + /module/<key>), the control-center aux
+    # section, pause/resume and the /help page — no per-module dashboard
+    # code. Every probe is fail-soft: a missing table or dead port renders
+    # an empty panel, never a 500.
+    #   tables — whitelisted output tables (first = primary activity feed)
+    #   gate   — True when the module is shadow-first with the standard
+    #            shadow_mode/live_execution_enabled pair in config_type
+    _AUX_MODULES = {
+        'meta_controller': {
+            'name': 'Meta Controller', 'env': 'META_CONTROLLER_MODULE_ENABLED',
+            'port_env': ('META_CONTROLLER_HEALTH_PORT', 8090),
+            'config_type': 'meta_config', 'gate': False,
+            'tables': ('meta_decisions', 'meta_calibration'),
+            'desc': 'Scores every trading module\'s rolling DRY+LIVE performance and writes '
+                    'ACTIVATE/KEEP/PAUSE advisory rows. Autopilot (pause-file-only) is gated '
+                    'behind meta_autopilot_enabled=false.',
+            'category': 'Allocation & Control',
+        },
+        'regime_allocator': {
+            'name': 'Regime Allocator', 'env': 'REGIME_ALLOCATOR_MODULE_ENABLED',
+            'port_env': ('REGIME_ALLOCATOR_HEALTH_PORT', 8091),
+            'config_type': 'regime_allocator', 'gate': False,
+            'tables': ('regime_snapshots', 'regime_allocation_proposals'),
+            'desc': 'Classifies the market regime and proposes per-module capital weights. '
+                    'Proposals require operator approval; the engine never moves capital itself.',
+            'category': 'Allocation & Control',
+        },
+        'execution_quality': {
+            'name': 'Execution Quality', 'env': 'EXECUTION_QUALITY_MODULE_ENABLED',
+            'port_env': ('EXECUTION_QUALITY_HEALTH_PORT', 8092),
+            'config_type': 'execution_quality', 'gate': False,
+            'tables': ('tca_trade_costs', 'tca_scorecards'),
+            'desc': 'Transaction-cost analysis across all trading modules: slippage, fees and '
+                    'venue scorecards. Read-only — never trades.',
+            'category': 'Observability',
+        },
+        'treasury': {
+            'name': 'Treasury', 'env': 'TREASURY_MODULE_ENABLED',
+            'port_env': ('TREASURY_HEALTH_PORT', 8093),
+            'config_type': 'treasury', 'gate': False,
+            'tables': ('treasury_snapshots',),
+            'desc': 'Periodic balance snapshots across wallets/exchanges with gas-starvation '
+                    'alerts. Never signs or transfers.',
+            'category': 'Observability',
+        },
+        'sentinel': {
+            'name': 'Sentinel', 'env': 'SENTINEL_MODULE_ENABLED',
+            'port_env': ('SENTINEL_HEALTH_PORT', 8094),
+            'config_type': 'sentinel', 'gate': False,
+            'tables': ('sentinel_anomalies', 'sentinel_actions'),
+            'desc': 'Cross-module anomaly detector (depeg, price divergence, silent module '
+                    'death, loss velocity). Advisory by default; autopilot may only write '
+                    'pause files, never the killswitch.',
+            'category': 'Observability',
+        },
+        'market_data_warehouse': {
+            'name': 'Market Data Warehouse', 'env': 'MARKET_DATA_WAREHOUSE_MODULE_ENABLED',
+            'port_env': ('MARKET_DATA_WAREHOUSE_HEALTH_PORT', 8095),
+            'config_type': 'market_data_warehouse', 'gate': False,
+            'tables': ('market_candles', 'market_series'),
+            'desc': 'Shared candle/series store other modules read. Never trades.',
+            'category': 'Data & Signals',
+        },
+        'catalyst_calendar': {
+            'name': 'Catalyst Calendar', 'env': 'CATALYST_CALENDAR_MODULE_ENABLED',
+            'port_env': ('CATALYST_CALENDAR_HEALTH_PORT', 8096),
+            'config_type': 'catalyst_calendar', 'gate': False,
+            'tables': ('catalysts',),
+            'desc': 'Upcoming market catalysts (unlocks, listings, macro events) other '
+                    'modules consume as risk context. Never trades.',
+            'category': 'Data & Signals',
+        },
+        'options_vol': {
+            'name': 'Options Vol', 'env': 'OPTIONS_VOL_MODULE_ENABLED',
+            'port_env': ('OPTIONS_VOL_HEALTH_PORT', 8097),
+            'config_type': 'options_vol', 'gate': True,
+            'tables': ('options_vol_suggestions', 'options_vol_surface'),
+            'desc': 'Volatility-surface monitor producing option-structure suggestions. '
+                    'Shadow-first; the live path is BUY-only and gated.',
+            'category': 'Strategy Advisors',
+        },
+        'yield_treasury': {
+            'name': 'Yield Treasury', 'env': 'YIELD_TREASURY_MODULE_ENABLED',
+            'port_env': ('YIELD_TREASURY_HEALTH_PORT', 8098),
+            'config_type': 'yield_treasury', 'gate': True,
+            'tables': ('yield_treasury_advice',),
+            'desc': 'Idle-capital yield advisor (staking/money-market rates). '
+                    'Observe/advise only by default.',
+            'category': 'Strategy Advisors',
+        },
+        'execution_gateway': {
+            'name': 'Execution Gateway', 'env': 'EXECUTION_GATEWAY_MODULE_ENABLED',
+            'port_env': ('EXECUTION_GATEWAY_HEALTH_PORT', 8099),
+            'config_type': 'execution_gateway', 'gate': True,
+            'tables': ('execution_gateway_sends',),
+            'desc': 'Central send/diagnostics path for outbound transactions '
+                    '(health subprocess). Never originates trades.',
+            'category': 'Infrastructure',
+        },
+        'clmm_lp': {
+            'name': 'CLMM LP', 'env': 'CLMM_LP_MODULE_ENABLED',
+            'port_env': ('CLMM_LP_HEALTH_PORT', 8100),
+            'config_type': 'clmm_lp', 'gate': True,
+            'tables': ('clmm_shadow_positions',),
+            'desc': 'Concentrated-liquidity LP range strategy with shadow position '
+                    'accounting. Live mint not implemented.',
+            'category': 'Strategy Advisors',
+        },
+        'param_tuner': {
+            'name': 'Param Tuner', 'env': 'PARAM_TUNER_MODULE_ENABLED',
+            'port_env': ('PARAM_TUNER_HEALTH_PORT', 8101),
+            'config_type': 'param_tuner', 'gate': False,
+            'tables': ('param_proposals', 'param_bandit_state'),
+            'desc': 'Bandit-driven parameter tuning proposals for whitelisted knobs. '
+                    'Auto-apply gated OFF; risk/leverage/killswitch keys hard-blocked.',
+            'category': 'Allocation & Control',
+        },
+        'intent_solver': {
+            'name': 'Intent Solver', 'env': 'INTENT_SOLVER_MODULE_ENABLED',
+            'port_env': ('INTENT_SOLVER_HEALTH_PORT', 8102),
+            'config_type': 'intent_solver', 'gate': True,
+            'tables': ('intent_fill_opportunities',),
+            'desc': 'CoW/UniswapX intent-fill opportunity scanner (experimental shadow '
+                    'scaffold, no live path).',
+            'category': 'Strategy Advisors',
+        },
+        'basis_desk': {
+            'name': 'Basis Desk', 'env': 'BASIS_DESK_MODULE_ENABLED',
+            'port_env': ('BASIS_DESK_HEALTH_PORT', 8103),
+            'config_type': 'basis_desk', 'gate': True,
+            'tables': ('basis_carry_suggestions',),
+            'desc': 'Delta-neutral funding/basis carry advisor (shadow-first).',
+            'category': 'Strategy Advisors',
+        },
+        'stat_arb': {
+            'name': 'Stat Arb', 'env': 'STAT_ARB_MODULE_ENABLED',
+            'port_env': ('STAT_ARB_HEALTH_PORT', 8104),
+            'config_type': 'stat_arb', 'gate': True,
+            'tables': ('stat_arb_trades', 'stat_arb_spread_state'),
+            'desc': 'Market-neutral pairs / mean-reversion with hard z-stops '
+                    '(shadow-first).',
+            'category': 'Strategy Advisors',
+        },
+        'smart_money': {
+            'name': 'Smart Money', 'env': 'SMART_MONEY_MODULE_ENABLED',
+            'port_env': ('SMART_MONEY_HEALTH_PORT', 8105),
+            'config_type': 'smart_money', 'gate': False,
+            'tables': ('smart_money_signals', 'smart_money_wallet_scores',
+                       'smart_money_wallet_events'),
+            'desc': 'On-chain accumulation-cluster signals from scored wallets '
+                    '(advisory, no look-ahead).',
+            'category': 'Data & Signals',
+        },
+    }
+
+    @classmethod
+    def _aux_runtime_spec(cls, key: str):
+        """Synthesize a _RUNTIME_STATUS_MODULES-shaped spec for an aux
+        module so _resolve_module_runtime covers all 16 without 16 bespoke
+        entries. Port probe is authoritative (every aux module binds a
+        health server); shadow-gated modules resolve dry_run from their
+        shadow_mode/live_execution_enabled pair, advisory ones stay
+        dry_run=True (honest: they can never trade)."""
+        m = cls._AUX_MODULES.get(key)
+        if not m:
+            return None
+        return {
+            'env': m['env'],
+            'port_env': m['port_env'],
+            'heartbeat': None,
+            'config_type': None,
+            'gate_config_type': m['config_type'] if m.get('gate') else None,
+            'pause_keys': (key,),
+        }
+
     async def _resolve_module_runtime(self, module: str):
         """Resolve the honest runtime payload for one module, or None if
         the module is unknown. Shared by the per-module runtime-status
         endpoint and the control-center batch overview. Fail-soft by
         construction: every probe degrades to its safe value."""
-        spec = self._RUNTIME_STATUS_MODULES.get(module)
+        spec = self._RUNTIME_STATUS_MODULES.get(module) \
+            or self._aux_runtime_spec(module)
         if not spec:
             return None
 
@@ -2702,13 +3072,19 @@ class DashboardEndpoints:
         # shadow (= dry-run for badge purposes).
         dry_run = True
         try:
-            if module == 'polymarket':
+            gate_ct = spec.get('gate_config_type') or (
+                'polymarket_config' if module == 'polymarket' else None
+            )
+            if gate_ct:
+                # Shadow-first modules: live iff shadow_mode=false AND
+                # live_execution_enabled=true; missing keys = shadow.
                 if self.db and getattr(self.db, 'pool', None):
                     async with self.db.pool.acquire() as conn:
                         rows = await conn.fetch(
                             "SELECT key, value FROM config_settings "
-                            "WHERE config_type = 'polymarket_config' "
-                            "AND key IN ('shadow_mode', 'live_execution_enabled')"
+                            "WHERE config_type = $1 "
+                            "AND key IN ('shadow_mode', 'live_execution_enabled')",
+                            gate_ct,
                         )
                     vals = {r['key']: str(r['value']).lower().strip() for r in rows}
                     dry_run = not (
@@ -2774,6 +3150,467 @@ class DashboardEndpoints:
                 status=400,
             )
         return web.json_response(payload)
+
+    # ===== Intelligence & Ops module panels (generic, fail-soft) =====
+    _TS_COLUMN_CANDIDATES = (
+        'created_at', 'updated_at', 'detected_at', 'proposed_at', 'sent_at',
+        'snapshot_at', 'opened_at', 'recorded_at', 'event_time', 'ts',
+        'timestamp', 'starts_at',
+    )
+
+    @staticmethod
+    def _jsonable_cell(v):
+        """Best-effort JSON-safe conversion for arbitrary table cells."""
+        if v is None or isinstance(v, (bool, int, float, str)):
+            return v
+        if isinstance(v, datetime):
+            try:
+                return _iso_utc(v)
+            except Exception:
+                return str(v)
+        if isinstance(v, Decimal):
+            return float(v)
+        if isinstance(v, (dict, list)):
+            return v
+        return str(v)
+
+    async def _table_panel(self, conn, table: str, limit: int = 20) -> dict:
+        """One output table -> {exists, columns, rows, total, rows_24h}.
+        Fail-soft: any error returns exists=False so the panel hides."""
+        panel = {'table': table, 'exists': False, 'columns': [], 'rows': [],
+                 'total': None, 'rows_24h': None}
+        try:
+            if await conn.fetchval("SELECT to_regclass($1)", table) is None:
+                return panel
+            panel['exists'] = True
+            cols = await conn.fetch("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = $1 AND table_schema = 'public'
+                ORDER BY ordinal_position
+            """, table)
+            colnames = [c['column_name'] for c in cols]
+            ts_col = next((c for c in self._TS_COLUMN_CANDIDATES
+                           if c in colnames), None)
+            order = f' ORDER BY "{ts_col}" DESC NULLS LAST' if ts_col else ''
+            rows = await conn.fetch(
+                f'SELECT * FROM "{table}"{order} LIMIT {int(limit)}'
+            )
+            panel['columns'] = colnames
+            panel['rows'] = [
+                {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                for r in rows
+            ]
+            panel['total'] = await conn.fetchval(f'SELECT COUNT(*) FROM "{table}"')
+            if ts_col:
+                panel['rows_24h'] = await conn.fetchval(
+                    f'SELECT COUNT(*) FROM "{table}" '
+                    f'WHERE "{ts_col}" >= NOW() - INTERVAL \'24 hours\''
+                )
+                panel['ts_column'] = ts_col
+        except Exception as e:
+            logger.debug(f"table panel failed for {table}: {e}")
+            panel.update({'exists': False, 'rows': [], 'columns': []})
+        return panel
+
+    async def api_module_data(self, request):
+        """GET /api/module-data/{module} — read-only recent rows from an
+        Intelligence & Ops module's whitelisted output tables, plus its
+        honest runtime badge. Entirely fail-soft."""
+        key = (request.match_info.get('module', '') or '').lower()
+        meta = self._AUX_MODULES.get(key)
+        if not meta:
+            return web.json_response(
+                {'success': False, 'error': f'unknown module: {key}'}, status=404)
+        try:
+            limit = max(5, min(int(request.query.get('limit', '20')), 100))
+        except (TypeError, ValueError):
+            limit = 20
+        runtime = None
+        try:
+            runtime = await self._resolve_module_runtime(key)
+        except Exception:
+            pass
+        panels = []
+        if self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    for t in meta['tables']:
+                        panels.append(await self._table_panel(conn, t, limit))
+            except Exception as e:
+                logger.debug(f"module-data DB probe failed for {key}: {e}")
+        return web.json_response({
+            'success': True,
+            'module': key,
+            'name': meta['name'],
+            'description': meta['desc'],
+            'category': meta['category'],
+            'config_type': meta['config_type'],
+            'health_port': int(os.getenv(meta['port_env'][0],
+                                         str(meta['port_env'][1]))),
+            'env_flag': meta['env'],
+            'runtime': runtime,
+            'tables': panels,
+        })
+
+    async def api_aux_modules_overview(self, request):
+        """GET /api/aux-modules/overview — one batched payload: every
+        Intelligence & Ops module's runtime badge + 24h activity on its
+        primary output table. Powers the control-center aux section and
+        the modules hub. Fail-soft per module."""
+        async def one(key, meta):
+            entry = {
+                'key': key, 'name': meta['name'], 'category': meta['category'],
+                'description': meta['desc'], 'config_type': meta['config_type'],
+                'env_flag': meta['env'],
+                'health_port': int(os.getenv(meta['port_env'][0],
+                                             str(meta['port_env'][1]))),
+                'primary_table': meta['tables'][0],
+                'enabled': False, 'running': False, 'paused': False,
+                'dry_run': True, 'status': 'unknown',
+                'rows_24h': None, 'rows_total': None,
+            }
+            try:
+                rt = await self._resolve_module_runtime(key)
+                if rt:
+                    for k in ('enabled', 'running', 'paused', 'dry_run',
+                              'killswitch', 'status'):
+                        entry[k] = rt[k]
+            except Exception:
+                pass
+            if self.db and getattr(self.db, 'pool', None):
+                try:
+                    async with self.db.pool.acquire() as conn:
+                        p = await self._table_panel(conn, meta['tables'][0], 1)
+                    entry['rows_24h'] = p.get('rows_24h')
+                    entry['rows_total'] = p.get('total')
+                except Exception:
+                    pass
+            return entry
+
+        results = await asyncio.gather(
+            *(one(k, m) for k, m in self._AUX_MODULES.items()),
+            return_exceptions=True,
+        )
+        data = [r for r in results if isinstance(r, dict)]
+        return web.json_response({'success': True, 'data': data})
+
+    async def module_panel_page(self, request):
+        """GET /module/{module} — generic read-only data/status panel for
+        an Intelligence & Ops module."""
+        key = (request.match_info.get('module', '') or '').lower()
+        meta = self._AUX_MODULES.get(key)
+        if not meta:
+            return web.HTTPFound('/modules')
+        template = self.jinja_env.get_template('module_panel.html')
+        return web.Response(
+            text=template.render(page='module_' + key, module_key=key,
+                                 module_name=meta['name']),
+            content_type='text/html'
+        )
+
+    # ===== Advisory proposal approvals =====
+    # One surface for everything the advisory layers ask the operator to
+    # confirm. Approval routes through the SAME fixed paths the engines
+    # honor: param proposals -> _do_update_settings (typed/audited config
+    # write), meta decisions -> logs/.pause_<module> flag files, regime ->
+    # approved_at stamp the allocator reads, copy candidates -> the atomic
+    # target_wallets writer. All probes fail-soft (missing table = empty).
+
+    async def _table_exists(self, conn, table: str) -> bool:
+        try:
+            return await conn.fetchval("SELECT to_regclass($1)", table) is not None
+        except Exception:
+            return False
+
+    async def api_proposals_pending(self, request):
+        """GET /api/proposals/pending — batched pending advisory items."""
+        out = {'meta': [], 'regime': [], 'param': [], 'copy': [],
+               'copy_wallet': []}
+        if not (self.db and getattr(self.db, 'pool', None)):
+            return web.json_response({'success': True, 'data': out})
+        try:
+            async with self.db.pool.acquire() as conn:
+                if await self._table_exists(conn, 'meta_decisions'):
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT DISTINCT ON (module)
+                                   id, module, decision, health_score,
+                                   confidence, reason, actuated, created_at
+                            FROM meta_decisions
+                            WHERE created_at >= NOW() - INTERVAL '7 days'
+                            ORDER BY module, created_at DESC
+                        """)
+                        out['meta'] = [
+                            {**{k: self._jsonable_cell(v) for k, v in dict(r).items()}}
+                            for r in rows
+                            if r['decision'] in ('activate', 'pause') and not r['actuated']
+                        ]
+                    except Exception as e:
+                        logger.debug(f"meta pending probe failed: {e}")
+                if await self._table_exists(conn, 'regime_allocation_proposals'):
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT id, regime, confidence, module, weight_pct,
+                                   reason, created_at
+                            FROM regime_allocation_proposals
+                            WHERE approved_at IS NULL AND superseded_at IS NULL
+                            ORDER BY created_at DESC, module
+                            LIMIT 50
+                        """)
+                        out['regime'] = [
+                            {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                            for r in rows
+                        ]
+                    except Exception as e:
+                        logger.debug(f"regime pending probe failed: {e}")
+                if await self._table_exists(conn, 'param_proposals'):
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT id, config_type, key, module, current_value,
+                                   proposed_value, bound_min, bound_max, kind,
+                                   reason, created_at
+                            FROM param_proposals
+                            WHERE status = 'pending'
+                            ORDER BY created_at DESC
+                            LIMIT 50
+                        """)
+                        out['param'] = [
+                            {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                            for r in rows
+                        ]
+                    except Exception as e:
+                        logger.debug(f"param pending probe failed: {e}")
+                for table, bucket in (('copy_leader_candidates', 'copy'),
+                                      ('copy_wallet_candidates', 'copy_wallet')):
+                    if await self._table_exists(conn, table):
+                        try:
+                            rows = await conn.fetch(f"""
+                                SELECT id, chain, wallet_address, source, label,
+                                       score, status, proposed_at
+                                FROM "{table}"
+                                WHERE status = 'pending'
+                                ORDER BY score DESC NULLS LAST
+                                LIMIT 50
+                            """)
+                            out[bucket] = [
+                                {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                                for r in rows
+                            ]
+                        except Exception as e:
+                            logger.debug(f"{table} pending probe failed: {e}")
+        except Exception as e:
+            logger.debug(f"proposals pending failed: {e}")
+        return web.json_response({'success': True, 'data': out})
+
+    async def api_proposal_action(self, request):
+        """POST /api/proposals/{kind}/{id}/{action} — approve/dismiss one
+        advisory item, routed through the fixed settings/flag paths."""
+        kind = (request.match_info.get('kind', '') or '').lower()
+        action = (request.match_info.get('action', '') or '').lower()
+        raw_id = request.match_info.get('id', '')
+        if action not in ('approve', 'dismiss'):
+            return web.json_response({'success': False,
+                                      'error': f'unknown action: {action}'}, status=400)
+        if not (self.db and getattr(self.db, 'pool', None)):
+            return web.json_response({'success': False,
+                                      'error': 'database unavailable'}, status=503)
+        user = request.get('user')
+        username = (getattr(user, 'username', None) or 'unknown')[:50]
+        try:
+            async with self.db.pool.acquire() as conn:
+                if kind == 'param':
+                    pid = int(raw_id)
+                    row = await conn.fetchrow(
+                        "SELECT * FROM param_proposals WHERE id = $1 AND status = 'pending'",
+                        pid)
+                    if not row:
+                        return web.json_response({'success': False,
+                                                  'error': 'proposal not found or not pending'}, status=404)
+                    if action == 'dismiss':
+                        await conn.execute(
+                            "UPDATE param_proposals SET status = 'dismissed' WHERE id = $1", pid)
+                        return web.json_response({'success': True, 'status': 'dismissed'})
+                    # approve = apply through the audited typed config writer
+                    result = await self._do_update_settings(
+                        row['config_type'], {row['key']: row['proposed_value']},
+                        user, request.remote)
+                    if result['errors'] or (not result['updated'] and result['skipped']):
+                        return web.json_response({
+                            'success': False,
+                            'error': f"apply failed: {result['errors'] or 'key not found'}",
+                        }, status=422)
+                    await conn.execute(
+                        "UPDATE param_proposals SET status = 'operator_applied', "
+                        "applied_at = NOW() WHERE id = $1", pid)
+                    return web.json_response({'success': True,
+                                              'status': 'operator_applied',
+                                              'saved': result['saved']})
+
+                if kind == 'regime':
+                    pid = int(raw_id)
+                    if action == 'approve':
+                        n = await conn.execute(
+                            "UPDATE regime_allocation_proposals "
+                            "SET approved_at = NOW(), approved_by = $2 "
+                            "WHERE id = $1 AND approved_at IS NULL "
+                            "AND superseded_at IS NULL", pid, username)
+                    else:
+                        n = await conn.execute(
+                            "UPDATE regime_allocation_proposals "
+                            "SET superseded_at = NOW() "
+                            "WHERE id = $1 AND approved_at IS NULL "
+                            "AND superseded_at IS NULL", pid)
+                    ok = n and n.split()[-1] == '1'
+                    return web.json_response(
+                        {'success': bool(ok),
+                         'error': None if ok else 'not found or already handled'},
+                        status=200 if ok else 404)
+
+                if kind == 'meta':
+                    pid = int(raw_id)
+                    row = await conn.fetchrow(
+                        "SELECT id, module, decision FROM meta_decisions "
+                        "WHERE id = $1 AND NOT actuated", pid)
+                    if not row:
+                        return web.json_response({'success': False,
+                                                  'error': 'decision not found or already actuated'}, status=404)
+                    if action == 'dismiss':
+                        # decisions are an append-only stream; dismiss just
+                        # marks it actuated so it leaves the pending list.
+                        await conn.execute(
+                            "UPDATE meta_decisions SET actuated = TRUE WHERE id = $1", pid)
+                        return web.json_response({'success': True, 'status': 'dismissed'})
+                    short = self._resolve_pause_key(row['module']) or row['module']
+                    from core.dry_run import set_module_pause
+                    if row['decision'] == 'pause':
+                        flag_ok = set_module_pause(short, True)
+                    else:  # activate / keep -> clear any pause flag
+                        flag_ok = set_module_pause(short, False)
+                    await conn.execute(
+                        "UPDATE meta_decisions SET actuated = TRUE WHERE id = $1", pid)
+                    return web.json_response({'success': True,
+                                              'actuated': bool(flag_ok),
+                                              'pause_key': short,
+                                              'decision': row['decision']})
+
+                if kind in ('copy', 'copy_wallet'):
+                    table = ('copy_leader_candidates' if kind == 'copy'
+                             else 'copy_wallet_candidates')
+                    if not await self._table_exists(conn, table):
+                        return web.json_response({'success': False,
+                                                  'error': f'{table} not present'}, status=404)
+                    row = await conn.fetchrow(
+                        f'SELECT id, wallet_address FROM "{table}" '
+                        f"WHERE id = $1::uuid AND status = 'pending'", raw_id)
+                    if not row:
+                        return web.json_response({'success': False,
+                                                  'error': 'candidate not found or not pending'}, status=404)
+                    new_status = 'approved' if action == 'approve' else 'rejected'
+                    async with conn.transaction():
+                        await conn.execute(
+                            f'UPDATE "{table}" SET status = $2, reviewed_at = NOW(), '
+                            f'reviewed_by = $3 WHERE id = $1::uuid',
+                            row['id'], new_status, username)
+                        if action == 'approve':
+                            # Route through the same atomic target_wallets
+                            # writer the copy hub uses (idempotent add).
+                            tw = await conn.fetchval(
+                                "SELECT value FROM config_settings "
+                                "WHERE config_type='copytrading_config' "
+                                "AND key='target_wallets' FOR UPDATE")
+                            wallets = []
+                            if tw:
+                                try:
+                                    parsed = json.loads(tw)
+                                    if isinstance(parsed, list):
+                                        wallets = [str(w).strip() for w in parsed if w]
+                                except Exception:
+                                    wallets = [w.strip() for w in str(tw).split(',') if w.strip()]
+                            wa = str(row['wallet_address']).strip()
+                            if not any(w.lower() == wa.lower() for w in wallets):
+                                wallets.append(wa)
+                                await conn.execute(
+                                    "INSERT INTO config_settings (config_type, key, value, value_type) "
+                                    "VALUES ('copytrading_config', 'target_wallets', $1, 'json') "
+                                    "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                                    json.dumps(wallets))
+                    return web.json_response({'success': True, 'status': new_status})
+
+            return web.json_response({'success': False,
+                                      'error': f'unknown kind: {kind}'}, status=400)
+        except (ValueError, TypeError):
+            return web.json_response({'success': False, 'error': 'bad id'}, status=400)
+        except Exception as e:
+            logger.error(f"proposal action {kind}/{raw_id}/{action} failed: {e}",
+                         exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def proposals_page(self, request):
+        """GET /proposals — approval inbox for advisory items."""
+        template = self.jinja_env.get_template('proposals.html')
+        return web.Response(
+            text=template.render(page='proposals'),
+            content_type='text/html'
+        )
+
+    # Trading-module help metadata for /help (the aux modules come from
+    # _AUX_MODULES). Doc links are rendered fail-soft: the page never
+    # depends on files in docs/ actually existing.
+    _HELP_TRADING_MODULES = (
+        {'key': 'dex', 'name': 'DEX Trading', 'env': 'DEX_MODULE_ENABLED',
+         'panel': '/dex/dashboard', 'settings': '/config/dex_config',
+         'desc': 'Multi-chain DEX momentum/scoring strategy with ML ensemble. '
+                 'LIVE path is fail-closed behind RiskManager at broadcast.'},
+        {'key': 'futures', 'name': 'Futures', 'env': 'FUTURES_MODULE_ENABLED',
+         'panel': '/futures/dashboard', 'settings': '/config/futures_general',
+         'desc': 'Bybit V5 perpetuals with per-symbol tiering, rolling gates and '
+                 'funding-carry. Testnet flag controls venue.'},
+        {'key': 'solana', 'name': 'Solana', 'env': 'SOLANA_MODULE_ENABLED',
+         'panel': '/solana/dashboard', 'settings': '/config/solana_config',
+         'desc': 'Jupiter spot strategies + optional pump.fun and Drift '
+                 '(both separately gated).'},
+        {'key': 'sniper', 'name': 'Sniper', 'env': 'SNIPER_MODULE_ENABLED',
+         'panel': '/sniper/dashboard', 'settings': '/config/sniper_config',
+         'desc': 'New-token sniping over WSS with safety filters, active-position '
+                 'caps and confirmed-before-booking sends.'},
+        {'key': 'arbitrage', 'name': 'Arbitrage', 'env': 'ARBITRAGE_MODULE_ENABLED',
+         'panel': '/arbitrage/dashboard', 'settings': '/config/arbitrage_config',
+         'desc': 'Spatial DEX arbitrage with economics gates; LIVE execution '
+                 'default OFF behind live_execution_enabled.'},
+        {'key': 'copy_trading', 'name': 'Copy Trading', 'env': 'COPY_TRADING_MODULE_ENABLED',
+         'panel': '/copytrading/dashboard', 'settings': '/config/copytrading_config',
+         'desc': 'Mirrors wallets in target_wallets only (BUY-only caps, durable '
+                 'idempotency). Leader discovery proposes; you approve on /proposals.'},
+        {'key': 'ai', 'name': 'AI Analysis', 'env': 'AI_MODULE_ENABLED',
+         'panel': '/ai/dashboard', 'settings': '/config/ai_config',
+         'desc': 'LLM-assisted signal generation with budget gate and per-trade '
+                 'notional ceiling.'},
+        {'key': 'polymarket', 'name': 'Polymarket', 'env': 'POLYMARKET_MODULE_ENABLED',
+         'panel': '/module/polymarket', 'settings': '/config/polymarket_config',
+         'desc': 'Shadow-first prediction markets (YES+NO<1 arb + momentum); '
+                 'LIVE CLOB gated behind shadow_mode=false AND live_execution_enabled=true.'},
+        {'key': 'advisor', 'name': 'Financial Advisor', 'env': 'ADVISOR_MODULE_ENABLED',
+         'panel': '/advisor/dashboard', 'settings': '/config/advisor_config',
+         'desc': 'ADVICE-ONLY signals (crypto/US/BIST/FX). Never executes trades.'},
+    )
+
+    async def help_page(self, request):
+        """GET /help — deploy & use guide for every module."""
+        aux = [
+            {'key': k, 'name': m['name'], 'env': m['env'],
+             'desc': m['desc'], 'category': m['category'],
+             'config_type': m['config_type'],
+             'port': int(os.getenv(m['port_env'][0], str(m['port_env'][1]))),
+             'gate': bool(m.get('gate'))}
+            for k, m in self._AUX_MODULES.items()
+        ]
+        template = self.jinja_env.get_template('help.html')
+        return web.Response(
+            text=template.render(page='help',
+                                 trading_modules=self._HELP_TRADING_MODULES,
+                                 aux_modules=aux),
+            content_type='text/html'
+        )
 
     # ===== Control Center v4 =====
     # One batch endpoint feeds the unified control-center page: per-module
@@ -4058,20 +4895,27 @@ class DashboardEndpoints:
                 status=500,
             )
 
+    def _module_env_flag(self, module: str):
+        """Module name (any spelling) -> orchestrator enable env flag."""
+        legacy = {
+            'dex_trading': 'DEX_MODULE_ENABLED',
+            'futures_trading': 'FUTURES_MODULE_ENABLED',
+            'solana_strategies': 'SOLANA_MODULE_ENABLED',
+        }
+        m = (module or '').lower().strip()
+        if m in legacy:
+            return legacy[m]
+        aux = self._AUX_MODULES.get(m)
+        return aux['env'] if aux else None
+
     async def _api_module_enable(self, request):
         """Enable a module by updating .env"""
         module = request.match_info.get('module', '')
 
-        module_env_map = {
-            'dex_trading': 'DEX_MODULE_ENABLED',
-            'futures_trading': 'FUTURES_MODULE_ENABLED',
-            'solana_strategies': 'SOLANA_MODULE_ENABLED'
-        }
-
-        if module not in module_env_map:
+        env_key = self._module_env_flag(module)
+        if not env_key:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
-        env_key = module_env_map[module]
         if self._set_module_enable_flag(env_key, 'true'):
             logger.info(f"Module {module} enabled via API (in-process only; MB-33)")
             return web.json_response({
@@ -4087,16 +4931,10 @@ class DashboardEndpoints:
         """Disable a module by updating in-process env flag (MB-33: not .env)."""
         module = request.match_info.get('module', '')
 
-        module_env_map = {
-            'dex_trading': 'DEX_MODULE_ENABLED',
-            'futures_trading': 'FUTURES_MODULE_ENABLED',
-            'solana_strategies': 'SOLANA_MODULE_ENABLED'
-        }
-
-        if module not in module_env_map:
+        env_key = self._module_env_flag(module)
+        if not env_key:
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
-        env_key = module_env_map[module]
         if self._set_module_enable_flag(env_key, 'false'):
             logger.info(f"Module {module} disabled via API (in-process only; MB-33)")
             return web.json_response({
@@ -4129,6 +4967,24 @@ class DashboardEndpoints:
         'ai': 'ai', 'ai_analysis': 'ai',
         'advisor': 'advisor', 'financial_advisor': 'advisor',
         'polymarket': 'polymarket',
+        # Intelligence & Ops modules: dir name IS the short key the
+        # engines poll (e.g. logs/.pause_stat_arb in stat_arb engine.py).
+        'meta_controller': 'meta_controller',
+        'regime_allocator': 'regime_allocator',
+        'execution_quality': 'execution_quality',
+        'treasury': 'treasury',
+        'sentinel': 'sentinel',
+        'market_data_warehouse': 'market_data_warehouse',
+        'catalyst_calendar': 'catalyst_calendar',
+        'options_vol': 'options_vol',
+        'yield_treasury': 'yield_treasury',
+        'execution_gateway': 'execution_gateway',
+        'clmm_lp': 'clmm_lp',
+        'param_tuner': 'param_tuner',
+        'intent_solver': 'intent_solver',
+        'basis_desk': 'basis_desk',
+        'stat_arb': 'stat_arb',
+        'smart_money': 'smart_money',
     }
 
     @classmethod
@@ -4193,13 +5049,8 @@ class DashboardEndpoints:
             except Exception:
                 pass
 
-        module_env_map = {
-            'dex_trading': 'DEX_MODULE_ENABLED',
-            'futures_trading': 'FUTURES_MODULE_ENABLED',
-            'solana_strategies': 'SOLANA_MODULE_ENABLED'
-        }
-
-        if module not in module_env_map:
+        env_key = self._module_env_flag(module)
+        if not env_key:
             if short:
                 # Known module without an env-flag mapping (sniper/arb/
                 # copy/ai/advisor): the pause-flag clear above IS the
@@ -4215,7 +5066,6 @@ class DashboardEndpoints:
                 })
             return web.json_response({'error': f'Unknown module: {module}'}, status=400)
 
-        env_key = module_env_map[module]
         if self._set_module_enable_flag(env_key, 'true'):
             logger.info(f"Module {module} started via API (in-process only; MB-33)")
             return web.json_response({
@@ -4344,6 +5194,17 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('settings.html')
         return web.Response(
             text=template.render(page='settings'),
+            content_type='text/html'
+        )
+
+    async def generic_settings_page(self, request):
+        """Universal settings editor: /config (index of every config_type)
+        and /config/{config_type} (typed editor for all its rows)."""
+        config_type = request.match_info.get('config_type', '')
+        template = self.jinja_env.get_template('settings_generic.html')
+        return web.Response(
+            text=template.render(page='generic_settings',
+                                 config_type=config_type),
             content_type='text/html'
         )
     
@@ -7949,8 +8810,33 @@ class DashboardEndpoints:
             return obj.__dict__
         raise TypeError(f"Type {type(obj)} not serializable")
 
+    async def api_get_csrf_token(self, request):
+        """GET /api/auth/csrf — echo (or mint) the double-submit CSRF token.
+
+        Recovery path for the frontend: when a save 403s with code 'csrf'
+        (cookie expired/never stored), JS calls this, the middleware
+        re-issues the cookie on the response, and the body carries the same
+        token so the very next retry can echo it in X-CSRF-Token even if
+        document.cookie is briefly stale."""
+        import secrets as _secrets
+        token = request.cookies.get(_CSRF_COOKIE) or _secrets.token_urlsafe(32)
+        resp = web.json_response({'success': True, 'token': token})
+        try:
+            resp.set_cookie(
+                _CSRF_COOKIE, token, httponly=False,
+                secure=_csrf_cookie_secure(request), samesite='Lax',
+                max_age=_CSRF_MAX_AGE,
+            )
+        except Exception:
+            pass
+        return resp
+
     async def api_get_settings(self, request):
-        """Get all settings from database config_settings table."""
+        """Get all settings from database config_settings table.
+
+        Fail-soft PER ROW: one malformed value (bad JSON, '' int) used to
+        500 the entire settings surface; now that row degrades to its raw
+        string with parse_error=True and everything else still renders."""
         try:
             # Load settings from database instead of Pydantic models
             if not self.db_pool:
@@ -7959,7 +8845,8 @@ class DashboardEndpoints:
             async with self.db_pool.acquire() as conn:
                 # Get all editable config settings from database
                 rows = await conn.fetch("""
-                    SELECT config_type, key, value, value_type, description, is_editable, requires_restart
+                    SELECT config_type, key, value, value_type, description,
+                           is_editable, requires_restart, updated_at
                     FROM config_settings
                     WHERE is_editable = TRUE
                     ORDER BY config_type, key
@@ -7970,31 +8857,32 @@ class DashboardEndpoints:
                 for row in rows:
                     config_type = row['config_type']
                     key = row['key']
-                    value = row['value']
-                    value_type = row['value_type']
+                    norm_type = _norm_value_type(row['value_type'])
+                    parse_error = False
+                    try:
+                        converted_value = _coerce_db_value(row['value'], norm_type)
+                    except Exception:
+                        converted_value = row['value']
+                        parse_error = True
 
-                    # Convert value based on type
-                    if value_type == 'bool':
-                        converted_value = value.lower() in ('true', '1', 'yes')
-                    elif value_type == 'int':
-                        converted_value = int(value)
-                    elif value_type == 'float':
-                        converted_value = float(value)
-                    elif value_type == 'json':
-                        converted_value = json.loads(value)
-                    else:  # string
-                        converted_value = value
-
-                    # Add to config type group
                     if config_type not in all_configs:
                         all_configs[config_type] = {}
 
-                    all_configs[config_type][key] = {
+                    entry = {
                         'value': converted_value,
                         'description': row['description'],
                         'requires_restart': row['requires_restart'],
-                        'value_type': value_type
+                        'value_type': norm_type,
+                        'danger': _is_danger_key(key),
                     }
+                    if parse_error:
+                        entry['parse_error'] = True
+                    if row['updated_at'] is not None:
+                        try:
+                            entry['updated_at'] = _iso_utc(row['updated_at'])
+                        except Exception:
+                            pass
+                    all_configs[config_type][key] = entry
 
             return web.json_response({
                 'success': True,
@@ -8004,9 +8892,20 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"Error getting settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
-    
+
     async def api_update_settings(self, request):
-        """Update settings in database"""
+        """Update settings in database.
+
+        ROOT-CAUSE FIXES for the broken save path:
+          - updated_by / changed_by are VARCHAR(50); the old code bound
+            user.id (int) -> asyncpg DataError -> 500 on EVERY
+            authenticated save through this endpoint. Bind strings.
+          - value serialization now respects normalized value_type
+            ('boolean'/'integer'/'number'/'str' seeds included); dict/list
+            values are json.dumps'd instead of str()-Python-repr'd.
+          - unknown keys and per-key type errors are REPORTED back
+            ({'skipped': [...], 'errors': {...}}) instead of silently
+            dropped, and saved values are re-read so the UI can confirm."""
         try:
             data = await request.json()
             config_type = data.get('config_type')
@@ -8015,57 +8914,247 @@ class DashboardEndpoints:
             if not self.db_pool:
                 return web.json_response({'error': 'Database not available'}, status=503)
 
-            if not config_type or not updates:
+            if not config_type or not isinstance(updates, dict) or not updates:
                 return web.json_response({'error': 'config_type and updates required'}, status=400)
 
-            # Get user info for audit
-            user = request.get('user')
-            user_id = user.id if user else None
-            username = user.username if user else 'unknown'
-
-            async with self.db_pool.acquire() as conn:
-                async with conn.transaction():
-                    for key, value in updates.items():
-                        # Get the current value for audit log
-                        old_row = await conn.fetchrow("""
-                            SELECT value, value_type FROM config_settings
-                            WHERE config_type = $1 AND key = $2
-                        """, config_type, key)
-
-                        if not old_row:
-                            logger.warning(f"Config {config_type}.{key} not found, skipping")
-                            continue
-
-                        # Convert value to string based on type
-                        value_type = old_row['value_type']
-                        if value_type == 'bool':
-                            new_value_str = 'true' if value else 'false'
-                        else:
-                            new_value_str = str(value)
-
-                        # Update the config setting
-                        await conn.execute("""
-                            UPDATE config_settings
-                            SET value = $1, updated_at = NOW(), updated_by = $2
-                            WHERE config_type = $3 AND key = $4
-                        """, new_value_str, user_id, config_type, key)
-
-                        # Log the change in config_history
-                        await conn.execute("""
-                            INSERT INTO config_history
-                            (config_type, key, old_value, new_value, change_source, changed_by, changed_by_username, ip_address)
-                            VALUES ($1, $2, $3, $4, 'api', $5, $6, $7)
-                        """, config_type, key, old_row['value'], new_value_str, user_id, username,
-                             request.remote)
-
+            result = await self._do_update_settings(
+                config_type, updates, request.get('user'), request.remote
+            )
+            ok = not result['errors']
             return web.json_response({
-                'success': True,
-                'message': f'Settings updated: {config_type}'
-            })
+                'success': ok,
+                'message': (f'Settings updated: {config_type}' if ok
+                            else f'Some settings failed: {config_type}'),
+                **result,
+            }, status=200 if ok else 422)
         except Exception as e:
             logger.error(f"Error updating settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
-    
+
+    async def _do_update_settings(self, config_type, updates, user, remote):
+        """Shared typed-validated config_settings writer (generic settings
+        endpoints). Returns {'updated': [...], 'skipped': [...],
+        'errors': {...}, 'saved': {...}}; raises only on infra failure."""
+        # NOTE: both audit columns are VARCHAR — bind strings.
+        changed_by = str(user.id) if user and getattr(user, 'id', None) is not None else None
+        username = getattr(user, 'username', None) or 'unknown'
+
+        updated, skipped, errors = [], [], {}
+        saved = {}
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                for key, value in updates.items():
+                    # Get the current value for audit log
+                    old_row = await conn.fetchrow("""
+                        SELECT value, value_type, is_editable FROM config_settings
+                        WHERE config_type = $1 AND key = $2
+                    """, config_type, key)
+
+                    if not old_row:
+                        logger.warning(f"Config {config_type}.{key} not found, skipping")
+                        skipped.append(key)
+                        continue
+                    if old_row['is_editable'] is False:
+                        errors[key] = 'not editable'
+                        continue
+
+                    try:
+                        new_value_str = _serialize_setting_value(
+                            value, old_row['value_type']
+                        )
+                    except (ValueError, TypeError, json.JSONDecodeError) as ve:
+                        errors[key] = f'invalid {_norm_value_type(old_row["value_type"])}: {ve}'
+                        continue
+
+                    if new_value_str == old_row['value']:
+                        continue  # no-op; keep history clean
+
+                    # Update the config setting
+                    await conn.execute("""
+                        UPDATE config_settings
+                        SET value = $1, updated_at = NOW(), updated_by = $2
+                        WHERE config_type = $3 AND key = $4
+                    """, new_value_str, username[:50], config_type, key)
+
+                    # Log the change in config_history
+                    await conn.execute("""
+                        INSERT INTO config_history
+                        (config_type, key, old_value, new_value, change_source, changed_by, changed_by_username, ip_address)
+                        VALUES ($1, $2, $3, $4, 'api', $5, $6, $7)
+                    """, config_type, key, old_row['value'], new_value_str,
+                         changed_by, username[:50], remote)
+                    updated.append(key)
+
+            # Re-read what was persisted so the UI confirms reality,
+            # not its own optimistic state.
+            if updated:
+                rows = await conn.fetch("""
+                    SELECT key, value, value_type FROM config_settings
+                    WHERE config_type = $1 AND key = ANY($2::text[])
+                """, config_type, updated)
+                for r in rows:
+                    try:
+                        saved[r['key']] = _coerce_db_value(r['value'], r['value_type'])
+                    except Exception:
+                        saved[r['key']] = r['value']
+
+        return {'updated': updated, 'skipped': skipped,
+                'errors': errors, 'saved': saved}
+
+    # ===== Generic self-documenting settings surface =====
+    # ONE page + three endpoints make EVERY config_settings row editable
+    # with its DB description as inline help — no per-module settings code,
+    # no key maps to fall out of date. New modules get a working settings
+    # UI the moment their seed migration lands.
+    _CONFIG_TYPE_MODULE_MAP = {
+        # explicit module labels for types whose prefix is not the module
+        'trading': 'DEX', 'risk_management': 'DEX', 'chain': 'DEX',
+        'ml_settings': 'DEX', 'monitoring_alerts': 'Dashboard',
+        'meta_config': 'Meta Controller',
+        'copytrading_config': 'Copy Trading',
+        'allocation_guard_config': 'Orchestrator',
+        'orchestrator_ai': 'Orchestrator',
+    }
+    _CONFIG_PREFIX_MODULE_MAP = {
+        'dex': 'DEX', 'futures': 'Futures', 'solana': 'Solana',
+        'sniper': 'Sniper', 'arbitrage': 'Arbitrage', 'arb': 'Arbitrage',
+        'ai': 'AI Analysis', 'copy': 'Copy Trading',
+        'copytrading': 'Copy Trading', 'advisor': 'Advisor',
+        'polymarket': 'Polymarket', 'meta': 'Meta Controller',
+        'regime': 'Regime Allocator', 'regime_allocator': 'Regime Allocator',
+        'execution_quality': 'Execution Quality', 'treasury': 'Treasury',
+        'sentinel': 'Sentinel', 'market_data_warehouse': 'Market Data Warehouse',
+        'catalyst_calendar': 'Catalyst Calendar', 'options_vol': 'Options Vol',
+        'yield_treasury': 'Yield Treasury', 'execution_gateway': 'Execution Gateway',
+        'clmm_lp': 'CLMM LP', 'param_tuner': 'Param Tuner',
+        'intent_solver': 'Intent Solver', 'basis_desk': 'Basis Desk',
+        'stat_arb': 'Stat Arb', 'smart_money': 'Smart Money',
+        'telegram': 'Notifications', 'pool': 'Infrastructure',
+        'rpc': 'Infrastructure',
+    }
+
+    @classmethod
+    def _config_type_module(cls, config_type: str) -> str:
+        ct = (config_type or '').lower()
+        if ct in cls._CONFIG_TYPE_MODULE_MAP:
+            return cls._CONFIG_TYPE_MODULE_MAP[ct]
+        # longest-prefix match on underscore boundaries
+        parts = ct.split('_')
+        for n in range(len(parts), 0, -1):
+            cand = '_'.join(parts[:n])
+            if cand in cls._CONFIG_PREFIX_MODULE_MAP:
+                return cls._CONFIG_PREFIX_MODULE_MAP[cand]
+        return 'Other'
+
+    async def api_config_types(self, request):
+        """GET /api/config/types — every config_type with row counts and a
+        best-effort module label, for the generic settings index."""
+        if not self.db_pool:
+            return web.json_response({'success': True, 'data': []})
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT config_type,
+                           COUNT(*) AS total,
+                           COUNT(*) FILTER (WHERE is_editable) AS editable,
+                           MAX(updated_at) AS last_updated
+                    FROM config_settings
+                    GROUP BY config_type
+                    ORDER BY config_type
+                """)
+            data = []
+            for r in rows:
+                entry = {
+                    'config_type': r['config_type'],
+                    'total': int(r['total']),
+                    'editable': int(r['editable']),
+                    'module': self._config_type_module(r['config_type']),
+                }
+                if r['last_updated'] is not None:
+                    try:
+                        entry['last_updated'] = _iso_utc(r['last_updated'])
+                    except Exception:
+                        pass
+                data.append(entry)
+            return web.json_response({'success': True, 'data': data})
+        except Exception as e:
+            logger.error(f"config types listing failed: {e}")
+            return web.json_response({'success': True, 'data': [],
+                                      'warning': str(e)})
+
+    async def api_config_get(self, request):
+        """GET /api/config/{config_type} — all rows of one config_type as
+        typed values + the seeded description as inline documentation."""
+        config_type = request.match_info.get('config_type', '')
+        if not self.db_pool:
+            return web.json_response({'success': True, 'config_type': config_type,
+                                      'settings': []})
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT key, value, value_type, description,
+                           is_editable, requires_restart, updated_at, updated_by
+                    FROM config_settings
+                    WHERE config_type = $1
+                    ORDER BY key
+                """, config_type)
+            settings = []
+            for r in rows:
+                norm_type = _norm_value_type(r['value_type'])
+                entry = {
+                    'key': r['key'],
+                    'value_type': norm_type,
+                    'description': r['description'] or '',
+                    'is_editable': bool(r['is_editable']),
+                    'requires_restart': bool(r['requires_restart']),
+                    'updated_by': r['updated_by'],
+                    'danger': _is_danger_key(r['key']),
+                }
+                try:
+                    entry['value'] = _coerce_db_value(r['value'], norm_type)
+                except Exception:
+                    entry['value'] = r['value']
+                    entry['parse_error'] = True
+                if r['updated_at'] is not None:
+                    try:
+                        entry['updated_at'] = _iso_utc(r['updated_at'])
+                    except Exception:
+                        pass
+                settings.append(entry)
+            return web.json_response({
+                'success': True,
+                'config_type': config_type,
+                'module': self._config_type_module(config_type),
+                'settings': settings,
+            })
+        except Exception as e:
+            logger.error(f"config get failed for {config_type}: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_config_post(self, request):
+        """POST /api/config/{config_type} — typed, validated, audited save
+        for ANY config_settings row; same writer as /api/settings/update."""
+        config_type = request.match_info.get('config_type', '')
+        if not self.db_pool:
+            return web.json_response({'error': 'Database not available'}, status=503)
+        try:
+            data = await request.json()
+            updates = data.get('updates', {})
+            if not config_type or not isinstance(updates, dict) or not updates:
+                return web.json_response({'error': 'updates required'}, status=400)
+            result = await self._do_update_settings(
+                config_type, updates, request.get('user'), request.remote
+            )
+            ok = not result['errors']
+            return web.json_response({'success': ok, **result},
+                                     status=200 if ok else 422)
+        except json.JSONDecodeError:
+            return web.json_response({'error': 'invalid JSON body'}, status=400)
+        except Exception as e:
+            logger.error(f"config save failed for {config_type}: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
+
+
     async def api_revert_settings(self, request):
         """Revert settings to previous version"""
         return web.json_response({
@@ -8222,8 +9311,12 @@ class DashboardEndpoints:
 
             async with self.db_pool.acquire() as conn:
                 for key, value in data.items():
-                    # Remove futures_ prefix if present
-                    clean_key = key.replace('futures_', '') if key.startswith('futures_') else key
+                    # Remove ONE leading futures_ prefix. .replace() stripped
+                    # ALL occurrences, collapsing the UI field
+                    # futures_futures_funding_carry_enabled (DB key
+                    # futures_funding_carry_enabled, mig 102) into
+                    # funding_carry_enabled — saves landed on the wrong row.
+                    clean_key = key[len('futures_'):] if key.startswith('futures_') else key
 
                     # Apply key mapping
                     clean_key = key_mapping.get(clean_key, clean_key)
@@ -8405,7 +9498,8 @@ class DashboardEndpoints:
 
             async with self.db_pool.acquire() as conn:
                 for key, value in data.items():
-                    clean_key = key.replace('solana_', '') if key.startswith('solana_') else key
+                    # Strip ONE leading prefix only (see futures handler note).
+                    clean_key = key[len('solana_'):] if key.startswith('solana_') else key
                     config_type = self._get_solana_config_type(clean_key)
                     if not config_type:
                         continue
@@ -12642,6 +13736,35 @@ class DashboardEndpoints:
         except Exception as e:
             logger.error(f"api_get_copytrading_slippage failed: {e}", exc_info=True)
             return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_copytrading_v3_surface(self, request):
+        """GET /api/copytrading/v3-surface — fail-soft window onto the
+        Copy Trading v3 pipeline tables being built by a parallel effort:
+        copy_leader_candidates, copy_wallet_candidates and any
+        copy_shadow_* tables. Missing tables are simply omitted so the
+        hub section hides itself; this endpoint can never 500 the page."""
+        panels = []
+        if self.db and getattr(self.db, 'pool', None):
+            try:
+                async with self.db.pool.acquire() as conn:
+                    tables = ['copy_leader_candidates', 'copy_wallet_candidates']
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT table_name FROM information_schema.tables
+                            WHERE table_schema = 'public'
+                              AND table_name LIKE 'copy\\_shadow\\_%'
+                            ORDER BY table_name
+                        """)
+                        tables += [r['table_name'] for r in rows]
+                    except Exception:
+                        pass
+                    for t in tables:
+                        p = await self._table_panel(conn, t, 15)
+                        if p.get('exists'):
+                            panels.append(p)
+            except Exception as e:
+                logger.debug(f"copy v3 surface probe failed: {e}")
+        return web.json_response({'success': True, 'tables': panels})
 
     async def api_copytrading_wallet_remove(self, request):
         """Atomically remove a single wallet from copytrading_config.target_wallets.

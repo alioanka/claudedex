@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-circle-question me-2"></i>Deploy &amp; Use Guide</h4>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-0">
+                    What each module does, how to shadow-run it, where to read its output, and how to
+                    go live safely. The dashboard itself runs standalone on port 8080 — no trading
+                    module needs to be running for any page here to work.
+                </p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Universal workflow -->
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header"><h6 class="mb-0"><i class="fas fa-route me-2"></i>The universal workflow (applies to every module)</h6></div>
+            <div class="card-body small">
+                <ol class="mb-2">
+                    <li><strong>Enable:</strong> set the module's <code>*_MODULE_ENABLED=true</code> flag in <code>.env</code>, then run <code>python main.py</code> (each module is an independent subprocess) — or use the per-module controls under <a href="/modules">Modules</a> / <a href="/control-center">Control Center</a>.</li>
+                    <li><strong>Shadow-run:</strong> every module starts safe by default — trading modules in <code>DRY_RUN</code>, shadow-first modules with <code>shadow_mode=true</code> and <code>live_execution_enabled=false</code>. Let it run for days; nothing touches capital.</li>
+                    <li><strong>Read its panel:</strong> trading modules have their own dashboards (sidebar); Intelligence &amp; Ops modules have data panels under <em>Intelligence &amp; Ops</em> (<code>/module/&lt;name&gt;</code>). Empty tables just mean the module hasn't produced output yet.</li>
+                    <li><strong>Tune:</strong> every knob of every module is editable with inline documentation at <a href="/config">All Settings</a>. Changes are typed-validated, audited in <code>config_history</code>, and re-read for confirmation.</li>
+                    <li><strong>Approve advice:</strong> advisory layers (meta controller, regime allocator, param tuner, copy discovery) never act alone — review and approve their proposals at <a href="/proposals">Proposals</a>.</li>
+                    <li><strong>Go live (deliberately):</strong> flip the LIVE-gating keys — marked <span class="badge bg-danger">LIVE-GATING</span> in settings — only after reviewing shadow results. Typical pairs: <code>dry_run=false</code>, or <code>shadow_mode=false</code> <em>and</em> <code>live_execution_enabled=true</code>. The UI requires an explicit confirmation for these keys.</li>
+                    <li><strong>Stop instantly:</strong> the red <em>EMERGENCY STOP</em> button (every page) writes <code>logs/.killswitch</code>, which every module polls; per-module <em>Pause</em> writes <code>logs/.pause_&lt;module&gt;</code>. Both are honored inside the engines via <code>should_skip_live()</code>.</li>
+                </ol>
+                <div class="text-muted">Health ports: dashboard 8080, trading modules 8081-8089, meta controller 8090, Intelligence &amp; Ops 8091-8105. Deeper docs live under <code>docs/</code> and each module's <code>CLAUDE.md</code> in the repo (optional reading — this page is self-contained).</div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Trading modules -->
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header"><h6 class="mb-0"><i class="fas fa-chart-line me-2"></i>Trading modules</h6></div>
+            <div class="card-body p-0" style="overflow-x:auto;">
+                <table class="hp-table">
+                    <thead><tr><th>Module</th><th>What it does</th><th>Enable flag</th><th>Panel</th><th>Settings</th></tr></thead>
+                    <tbody>
+                    {% for m in trading_modules %}
+                        <tr>
+                            <td><strong>{{ m.name }}</strong></td>
+                            <td>{{ m.desc }}</td>
+                            <td><code>{{ m.env }}=true</code></td>
+                            <td><a href="{{ m.panel }}">open</a></td>
+                            <td><a href="{{ m.settings }}">edit</a></td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Intelligence & Ops modules -->
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header"><h6 class="mb-0"><i class="fas fa-brain me-2"></i>Intelligence &amp; Ops modules</h6></div>
+            <div class="card-body p-0" style="overflow-x:auto;">
+                <table class="hp-table">
+                    <thead><tr><th>Module</th><th>Category</th><th>What it does</th><th>Enable flag</th><th>Port</th><th>Live path?</th><th>Panel</th><th>Settings</th></tr></thead>
+                    <tbody>
+                    {% for m in aux_modules %}
+                        <tr>
+                            <td><strong>{{ m.name }}</strong></td>
+                            <td>{{ m.category }}</td>
+                            <td>{{ m.desc }}</td>
+                            <td><code>{{ m.env }}=true</code></td>
+                            <td>{{ m.port }}</td>
+                            <td>
+                                {% if m.gate %}
+                                    <span class="badge bg-warning text-dark" title="Has a gated live path: shadow_mode=false AND live_execution_enabled=true">gated</span>
+                                {% else %}
+                                    <span class="badge bg-secondary" title="Advisory/observability only — can never trade">advisory</span>
+                                {% endif %}
+                            </td>
+                            <td><a href="/module/{{ m.key }}">open</a></td>
+                            <td><a href="/config/{{ m.config_type }}">edit</a></td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Safety primitives -->
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header"><h6 class="mb-0"><i class="fas fa-shield-halved me-2"></i>Safety primitives (memorize these)</h6></div>
+            <div class="card-body small">
+                <ul class="mb-0">
+                    <li><code>logs/.killswitch</code> — global stop. Written by EMERGENCY STOP or <code>scripts/emergency_stop.py</code>; polled by every module.</li>
+                    <li><code>logs/.pause_&lt;module&gt;</code> — per-module pause flag (short engine key, e.g. <code>.pause_futures</code>, <code>.pause_stat_arb</code>).</li>
+                    <li><code>DRY_RUN</code> / <code>shadow_mode</code> — per-module simulation modes; the safe default everywhere.</li>
+                    <li><code>RiskManager.validate_trade</code> / <code>FuturesRiskManager.validate_new_position</code> — pre-broadcast gates inside the engines; the dashboard never bypasses them.</li>
+                    <li>No advisory module (meta controller, sentinel, regime allocator, param tuner, advisor) can ever place a trade — at most they write pause files or propose config changes you approve.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+.hp-table { font-size: 0.8rem; width: 100%; }
+.hp-table th { color: #9aa4b5; font-weight: 600; border-bottom: 1px solid #313a4d;
+               padding: 8px 12px; text-align: left; white-space: nowrap; }
+.hp-table td { padding: 7px 12px; border-bottom: 1px solid #232a3a; vertical-align: top; }
+.theme-light .hp-table th { color: #475063; border-color: #d7dde8; }
+.theme-light .hp-table td { border-color: #e4e9f2; }
+</style>
+{% endblock %}

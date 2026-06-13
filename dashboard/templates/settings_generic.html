@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+                <h4 class="mb-0">
+                    <i class="fas fa-sliders-h me-2"></i>
+                    <span id="gs-title">Universal Settings</span>
+                </h4>
+                <div class="d-flex align-items-center gap-2">
+                    <input type="search" id="gs-filter" class="form-control form-control-sm"
+                           placeholder="Filter keys…" style="max-width:220px;" aria-label="Filter settings">
+                    <a href="/config" class="btn btn-outline-light btn-sm" id="gs-back" style="display:none;">
+                        <i class="fas fa-arrow-left me-1"></i>All types
+                    </a>
+                </div>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-3" id="gs-subtitle">
+                    Every <code>config_settings</code> row, rendered from the database with its seeded
+                    description as inline documentation. Saves are typed, validated, audited
+                    (<code>config_history</code>) and re-read for confirmation.
+                </p>
+                <div id="gs-status" role="status" aria-live="polite"></div>
+                <div id="gs-index" style="display:none;"></div>
+                <div id="gs-editor" style="display:none;"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Sticky save bar (editor view only) -->
+<div id="gs-savebar" style="display:none; position:sticky; bottom:0; z-index:1000;
+     background:#1d2330; border-top:2px solid #3b4254; padding:10px 16px;
+     display:none; align-items:center; justify-content:space-between;">
+    <span id="gs-dirty-count" class="text-warning small"></span>
+    <span>
+        <button class="btn btn-outline-secondary btn-sm me-2" id="gs-discard">Discard changes</button>
+        <button class="btn btn-success btn-sm" id="gs-save">
+            <i class="fas fa-save me-1"></i>Save changes
+        </button>
+    </span>
+</div>
+
+<style>
+.gs-row { border: 1px solid #313a4d; border-radius: 8px; padding: 10px 14px; margin-bottom: 10px;
+          background: rgba(255,255,255,0.02); }
+.gs-row.gs-dirty { border-color: #f59e0b; }
+.gs-row.gs-danger { border-color: #b91c1c; background: rgba(185,28,28,0.07); }
+.gs-row.gs-error { border-color: #ef4444; }
+.gs-key { font-family: monospace; font-weight: 600; font-size: 0.9rem; word-break: break-all; }
+.gs-desc { font-size: 0.78rem; color: #9aa4b5; margin-top: 4px; white-space: pre-wrap; }
+.gs-meta .badge { font-size: 0.65rem; margin-left: 4px; }
+.gs-input-error { font-size: 0.75rem; color: #f87171; margin-top: 3px; }
+.gs-json { font-family: monospace; font-size: 0.8rem; min-height: 70px; }
+.gs-type-card { border: 1px solid #313a4d; border-radius: 8px; padding: 12px 16px;
+                display: block; color: inherit; text-decoration: none; height: 100%;
+                background: rgba(255,255,255,0.02); transition: border-color .15s; }
+.gs-type-card:hover { border-color: #6366f1; color: inherit; }
+.gs-module-h { border-bottom: 1px solid #313a4d; padding-bottom: 4px; margin: 18px 0 10px;
+               font-size: 0.95rem; color: #c7d0e0; }
+.theme-light .gs-row { background: #f8fafc; border-color: #d7dde8; }
+.theme-light .gs-desc { color: #5b6472; }
+.theme-light .gs-type-card { background: #f8fafc; border-color: #d7dde8; }
+.theme-light .gs-module-h { color: #2c3444; border-color: #d7dde8; }
+@media (max-width: 768px) {
+    .gs-row .row > [class*='col-'] { margin-bottom: 6px; }
+}
+</style>
+
+<script>
+(function () {
+    'use strict';
+    const CONFIG_TYPE = {{ config_type | tojson }};
+    const elStatus = document.getElementById('gs-status');
+    const elIndex = document.getElementById('gs-index');
+    const elEditor = document.getElementById('gs-editor');
+    const elSaveBar = document.getElementById('gs-savebar');
+    const elDirty = document.getElementById('gs-dirty-count');
+    const elFilter = document.getElementById('gs-filter');
+
+    let rows = [];          // server rows for editor view
+    let dirty = {};         // key -> new typed value
+
+    function setStatus(html, cls) {
+        elStatus.innerHTML = html ? '<div class="alert alert-' + (cls || 'info') + ' py-2">' + html + '</div>' : '';
+    }
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+        });
+    }
+
+    /* ---------- INDEX VIEW (/config) ---------- */
+    async function loadIndex() {
+        document.getElementById('gs-title').textContent = 'Universal Settings';
+        setStatus('Loading configuration types…');
+        let data;
+        try {
+            const r = await fetch('/api/config/types');
+            data = await r.json();
+        } catch (e) {
+            setStatus('Could not load configuration types. Is the database up?', 'warning');
+            return;
+        }
+        setStatus('');
+        const types = (data && data.data) || [];
+        if (!types.length) {
+            setStatus('No configuration rows found. Run the migrations to seed module settings.', 'secondary');
+            return;
+        }
+        const byModule = {};
+        types.forEach(t => { (byModule[t.module] = byModule[t.module] || []).push(t); });
+        const moduleNames = Object.keys(byModule).sort();
+        let html = '';
+        moduleNames.forEach(m => {
+            html += '<div class="gs-module-h">' + esc(m) + '</div><div class="row g-2">';
+            byModule[m].forEach(t => {
+                html += '<div class="col-md-4 col-sm-6 gs-idx-item" data-name="' + esc(t.config_type.toLowerCase()) + '">'
+                    + '<a class="gs-type-card" href="/config/' + encodeURIComponent(t.config_type) + '">'
+                    + '<div class="gs-key">' + esc(t.config_type) + '</div>'
+                    + '<div class="gs-desc">' + t.editable + ' editable / ' + t.total + ' keys'
+                    + (t.last_updated ? ' &middot; updated ' + esc(t.last_updated.slice(0, 10)) : '') + '</div>'
+                    + '</a></div>';
+            });
+            html += '</div>';
+        });
+        elIndex.innerHTML = html;
+        elIndex.style.display = '';
+    }
+
+    /* ---------- EDITOR VIEW (/config/<type>) ---------- */
+    function inputFor(row, idx) {
+        const id = 'gs-in-' + idx;
+        const v = row.value;
+        if (!row.is_editable) {
+            return '<input type="text" class="form-control form-control-sm" id="' + id + '" value="'
+                + esc(typeof v === 'object' ? JSON.stringify(v) : v) + '" disabled aria-label="' + esc(row.key) + '">';
+        }
+        if (row.value_type === 'bool') {
+            return '<div class="form-check form-switch">'
+                + '<input class="form-check-input gs-input" type="checkbox" id="' + id + '" data-key="' + esc(row.key) + '"'
+                + (v ? ' checked' : '') + ' aria-label="' + esc(row.key) + '"></div>';
+        }
+        if (row.value_type === 'int' || row.value_type === 'float') {
+            return '<input type="number" class="form-control form-control-sm gs-input" id="' + id + '"'
+                + ' data-key="' + esc(row.key) + '" value="' + esc(v) + '"'
+                + (row.value_type === 'int' ? ' step="1"' : ' step="any"')
+                + ' aria-label="' + esc(row.key) + '">';
+        }
+        if (row.value_type === 'json') {
+            let txt;
+            try { txt = JSON.stringify(v, null, 2); } catch (e) { txt = String(v); }
+            return '<textarea class="form-control form-control-sm gs-json gs-input" id="' + id + '"'
+                + ' data-key="' + esc(row.key) + '" aria-label="' + esc(row.key) + '">' + esc(txt) + '</textarea>';
+        }
+        return '<input type="text" class="form-control form-control-sm gs-input" id="' + id + '"'
+            + ' data-key="' + esc(row.key) + '" value="' + esc(v) + '" aria-label="' + esc(row.key) + '">';
+    }
+
+    function renderEditor() {
+        const filter = (elFilter.value || '').toLowerCase();
+        let html = '';
+        rows.forEach((row, idx) => {
+            if (filter && row.key.toLowerCase().indexOf(filter) === -1
+                && (row.description || '').toLowerCase().indexOf(filter) === -1) return;
+            const danger = row.danger ? ' gs-danger' : '';
+            const isDirty = Object.prototype.hasOwnProperty.call(dirty, row.key) ? ' gs-dirty' : '';
+            html += '<div class="gs-row' + danger + isDirty + '" id="gs-row-' + idx + '">'
+                + '<div class="row align-items-center">'
+                + '<div class="col-md-5">'
+                + '<span class="gs-key">' + esc(row.key) + '</span>'
+                + '<span class="gs-meta">'
+                + (row.danger ? '<span class="badge bg-danger" title="Flipping this can enable live capital movement">LIVE-GATING</span>' : '')
+                + (row.requires_restart ? '<span class="badge bg-warning text-dark">restart required</span>' : '')
+                + (!row.is_editable ? '<span class="badge bg-secondary">read-only</span>' : '')
+                + (row.parse_error ? '<span class="badge bg-danger">stored value malformed</span>' : '')
+                + '<span class="badge bg-secondary">' + esc(row.value_type) + '</span>'
+                + '</span>'
+                + (row.description ? '<div class="gs-desc">' + esc(row.description) + '</div>' : '')
+                + (row.updated_at ? '<div class="gs-desc">Last change: ' + esc(row.updated_at.replace('T', ' ').slice(0, 16))
+                    + (row.updated_by ? ' by ' + esc(row.updated_by) : '') + '</div>' : '')
+                + '</div>'
+                + '<div class="col-md-7">' + inputFor(row, idx)
+                + '<div class="gs-input-error" id="gs-err-' + idx + '"></div>'
+                + '</div></div></div>';
+        });
+        elEditor.innerHTML = html || '<div class="text-muted">No keys match the filter.</div>';
+        elEditor.style.display = '';
+
+        elEditor.querySelectorAll('.gs-input').forEach(input => {
+            input.addEventListener('input', onInput);
+            input.addEventListener('change', onInput);
+        });
+        updateSaveBar();
+    }
+
+    function rowByKey(key) { return rows.find(r => r.key === key); }
+
+    function onInput(ev) {
+        const input = ev.target;
+        const key = input.getAttribute('data-key');
+        const row = rowByKey(key);
+        if (!row) return;
+        let val, bad = null;
+        if (row.value_type === 'bool') {
+            val = !!input.checked;
+        } else if (row.value_type === 'int') {
+            val = parseInt(input.value, 10);
+            if (input.value.trim() === '' || isNaN(val)) bad = 'Enter a whole number';
+        } else if (row.value_type === 'float') {
+            val = parseFloat(input.value);
+            if (input.value.trim() === '' || isNaN(val)) bad = 'Enter a number';
+        } else if (row.value_type === 'json') {
+            try { val = JSON.parse(input.value); } catch (e) { bad = 'Invalid JSON: ' + e.message; }
+        } else {
+            val = input.value;
+        }
+        const idx = rows.indexOf(row);
+        const errEl = document.getElementById('gs-err-' + idx);
+        const rowEl = document.getElementById('gs-row-' + idx);
+        if (errEl) errEl.textContent = bad || '';
+        if (rowEl) rowEl.classList.toggle('gs-error', !!bad);
+        if (bad) { delete dirty[key]; updateSaveBar(); return; }
+
+        const same = JSON.stringify(val) === JSON.stringify(row.value);
+        if (same) delete dirty[key]; else dirty[key] = val;
+        if (rowEl) rowEl.classList.toggle('gs-dirty', !same);
+        updateSaveBar();
+    }
+
+    function updateSaveBar() {
+        const n = Object.keys(dirty).length;
+        elSaveBar.style.display = n ? 'flex' : 'none';
+        elDirty.textContent = n ? (n + ' unsaved change' + (n > 1 ? 's' : '')) : '';
+    }
+
+    async function save() {
+        const keys = Object.keys(dirty);
+        if (!keys.length) return;
+        const dangerKeys = keys.filter(k => { const r = rowByKey(k); return r && r.danger; });
+        let msg = 'Save ' + keys.length + ' setting(s) to ' + CONFIG_TYPE + '?\n\n' + keys.join('\n');
+        if (dangerKeys.length) {
+            msg = 'WARNING: you are changing LIVE-GATING key(s):\n\n  ' + dangerKeys.join('\n  ')
+                + '\n\nThese can enable real capital movement. Double-check DRY_RUN / kill-switch state first.\n\n' + msg;
+        }
+        if (!window.confirm(msg)) return;
+
+        setStatus('Saving…');
+        let resp, data;
+        try {
+            resp = await window.csrfFetch('/api/config/' + encodeURIComponent(CONFIG_TYPE), {
+                method: 'POST',
+                body: JSON.stringify({ updates: dirty })
+            });
+            data = await resp.json();
+        } catch (e) {
+            setStatus('Save failed: ' + esc(e.message), 'danger');
+            return;
+        }
+        if (data && data.success) {
+            // apply server-confirmed values
+            (data.updated || []).forEach(k => {
+                const r = rowByKey(k);
+                if (r && data.saved && k in data.saved) r.value = data.saved[k];
+            });
+            dirty = {};
+            renderEditor();
+            const skipped = (data.skipped || []).length;
+            setStatus('Saved ' + (data.updated || []).length + ' setting(s).'
+                + (skipped ? ' Skipped unknown keys: ' + esc(data.skipped.join(', ')) : ''), 'success');
+            setTimeout(() => setStatus(''), 4000);
+        } else {
+            const errs = (data && data.errors) || {};
+            Object.keys(errs).forEach(k => {
+                const idx = rows.indexOf(rowByKey(k));
+                const el = document.getElementById('gs-err-' + idx);
+                if (el) el.textContent = errs[k];
+            });
+            // values that DID save should not stay dirty
+            ((data && data.updated) || []).forEach(k => {
+                const r = rowByKey(k);
+                if (r && data.saved && k in data.saved) { r.value = data.saved[k]; delete dirty[k]; }
+            });
+            updateSaveBar();
+            setStatus('Some settings failed to save — see inline errors. '
+                + esc((data && data.error) || ''), 'danger');
+        }
+    }
+
+    async function loadEditor() {
+        document.getElementById('gs-title').textContent = 'Settings: ' + CONFIG_TYPE;
+        document.getElementById('gs-back').style.display = '';
+        setStatus('Loading ' + esc(CONFIG_TYPE) + '…');
+        let data;
+        try {
+            const r = await fetch('/api/config/' + encodeURIComponent(CONFIG_TYPE));
+            data = await r.json();
+        } catch (e) {
+            setStatus('Could not load settings. Is the database up?', 'warning');
+            return;
+        }
+        if (!data || !data.success) {
+            setStatus('Failed to load: ' + esc((data && data.error) || 'unknown error'), 'danger');
+            return;
+        }
+        rows = data.settings || [];
+        setStatus('');
+        if (!rows.length) {
+            setStatus('No rows exist for <code>' + esc(CONFIG_TYPE) + '</code>. Its seed migration may not have run yet.', 'secondary');
+            return;
+        }
+        document.getElementById('gs-subtitle').innerHTML =
+            esc(data.module || '') + ' &middot; ' + rows.length + ' keys &middot; descriptions come from the DB seeds. '
+            + 'Changes are audited in <code>config_history</code>.';
+        renderEditor();
+    }
+
+    document.getElementById('gs-save').addEventListener('click', save);
+    document.getElementById('gs-discard').addEventListener('click', function () {
+        dirty = {};
+        renderEditor();
+        setStatus('');
+    });
+    elFilter.addEventListener('input', function () {
+        if (CONFIG_TYPE) { renderEditor(); return; }
+        const f = (elFilter.value || '').toLowerCase();
+        document.querySelectorAll('.gs-idx-item').forEach(el => {
+            el.style.display = el.getAttribute('data-name').indexOf(f) === -1 ? 'none' : '';
+        });
+    });
+
+    if (CONFIG_TYPE) loadEditor(); else loadIndex();
+})();
+</script>
+{% endblock %}

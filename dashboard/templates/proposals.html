@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="row mb-3">
+    <div class="col-md-12">
+        <div class="card bg-dark text-white">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h4 class="mb-0"><i class="fas fa-check-double me-2"></i>Proposals &amp; Approvals</h4>
+                <button class="btn btn-outline-info btn-sm" id="pr-refresh">
+                    <i class="fas fa-rotate me-1"></i>Refresh
+                </button>
+            </div>
+            <div class="card-body">
+                <p class="text-muted small mb-1">
+                    Everything the advisory layers ask you to confirm. Approving routes through the
+                    same audited paths the engines honor — param changes hit <code>config_settings</code>
+                    (visible in <code>config_history</code>), meta decisions only write/clear
+                    <code>logs/.pause_&lt;module&gt;</code>, copy approvals append to
+                    <code>target_wallets</code>. Nothing here can place a trade directly.
+                </p>
+                <div id="pr-alert" role="status" aria-live="polite"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="pr-sections"></div>
+
+<style>
+.pr-table { font-size: 0.8rem; width: 100%; }
+.pr-table th { color: #9aa4b5; font-weight: 600; border-bottom: 1px solid #313a4d;
+               padding: 6px 10px; text-align: left; white-space: nowrap; }
+.pr-table td { padding: 6px 10px; border-bottom: 1px solid #232a3a; vertical-align: middle; }
+.pr-empty { color: #9aa4b5; padding: 16px; text-align: center; }
+.pr-val { font-family: monospace; }
+.pr-arrow { color: #f59e0b; padding: 0 4px; }
+.theme-light .pr-table th { color: #475063; border-color: #d7dde8; }
+.theme-light .pr-table td { border-color: #e4e9f2; }
+</style>
+
+<script>
+(function () {
+    'use strict';
+    const SECTIONS = [
+        { key: 'param', icon: 'fa-wand-magic-sparkles', title: 'Param Tuner Proposals',
+          hint: 'Approve = the proposed value is written to config_settings through the typed, audited writer. Bounded by the tuner whitelist.',
+          cols: ['module', 'config_type', 'key', 'change', 'kind', 'reason', 'created_at'] },
+        { key: 'regime', icon: 'fa-layer-group', title: 'Regime Allocation Proposals',
+          hint: 'Proposed per-module capital weights for the detected regime. Approve stamps approved_at — the allocator never moves capital without it.',
+          cols: ['module', 'regime', 'weight_pct', 'confidence', 'reason', 'created_at'] },
+        { key: 'meta', icon: 'fa-robot', title: 'Meta Controller Decisions',
+          hint: 'Latest non-actuated ACTIVATE/PAUSE per module (7d). Approve PAUSE writes logs/.pause_<module>; approve ACTIVATE clears it. Never touches the killswitch.',
+          cols: ['module', 'decision', 'health_score', 'confidence', 'reason', 'created_at'] },
+        { key: 'copy', icon: 'fa-people-arrows', title: 'Copy Leader Candidates',
+          hint: 'Auto-discovered leader wallets. Approve adds the wallet to copytrading_config.target_wallets (idempotent); the engine only ever mirrors that list.',
+          cols: ['chain', 'wallet_address', 'source', 'label', 'score', 'proposed_at'] },
+        { key: 'copy_wallet', icon: 'fa-wallet', title: 'Copy Wallet Candidates (v3)',
+          hint: 'Copy Trading v3 discovery pipeline. Hidden unless the table exists.',
+          cols: ['chain', 'wallet_address', 'source', 'label', 'score', 'proposed_at'] },
+    ];
+
+    function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+            ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function setAlert(msg, cls) {
+        document.getElementById('pr-alert').innerHTML =
+            msg ? '<div class="alert alert-' + (cls || 'info') + ' py-2 mt-2 mb-0">' + msg + '</div>' : '';
+    }
+    function fmtCell(item, col) {
+        if (col === 'change') {
+            return '<span class="pr-val">' + esc(item.current_value) + '</span>'
+                + '<span class="pr-arrow">&rarr;</span>'
+                + '<span class="pr-val text-warning">' + esc(item.proposed_value) + '</span>'
+                + (item.bound_min != null ? '<div class="text-muted" style="font-size:0.7rem;">bounds ['
+                    + esc(item.bound_min) + ', ' + esc(item.bound_max) + ']</div>' : '');
+        }
+        let v = item[col];
+        if (v === null || v === undefined) return '<span class="text-muted">—</span>';
+        if (col.endsWith('_at')) v = String(v).replace('T', ' ').slice(0, 16);
+        if (col === 'decision') {
+            const cls = v === 'pause' ? 'bg-warning text-dark' : 'bg-success';
+            return '<span class="badge ' + cls + '">' + esc(String(v).toUpperCase()) + '</span>';
+        }
+        if (typeof v === 'number') v = Math.round(v * 1000) / 1000;
+        const s = String(v);
+        return '<span title="' + esc(s) + '">' + esc(s.length > 50 ? s.slice(0, 47) + '…' : s) + '</span>';
+    }
+
+    async function load() {
+        let data;
+        try {
+            const r = await fetch('/api/proposals/pending');
+            data = await r.json();
+        } catch (e) {
+            setAlert('Could not load proposals (database unavailable).', 'warning');
+            return;
+        }
+        const all = (data && data.data) || {};
+        let html = '';
+        let pending = 0;
+        SECTIONS.forEach(sec => {
+            const items = all[sec.key] || [];
+            if (sec.key === 'copy_wallet' && !items.length) return; // hide when absent
+            pending += items.length;
+            html += '<div class="row mb-3"><div class="col-md-12"><div class="card bg-dark text-white">'
+                + '<div class="card-header"><h6 class="mb-0"><i class="fas ' + sec.icon + ' me-2"></i>'
+                + sec.title + ' <span class="badge bg-secondary ms-1">' + items.length + '</span></h6></div>'
+                + '<div class="card-body p-0">'
+                + '<p class="text-muted small px-3 pt-2 mb-1">' + sec.hint + '</p>';
+            if (!items.length) {
+                html += '<div class="pr-empty">Nothing pending.</div>';
+            } else {
+                html += '<div style="overflow-x:auto;"><table class="pr-table"><thead><tr>'
+                    + sec.cols.map(c => '<th scope="col">' + esc(c.replace(/_/g, ' ')) + '</th>').join('')
+                    + '<th scope="col">Actions</th></tr></thead><tbody>'
+                    + items.map(item => '<tr>'
+                        + sec.cols.map(c => '<td>' + fmtCell(item, c) + '</td>').join('')
+                        + '<td style="white-space:nowrap;">'
+                        + '<button class="btn btn-success btn-sm me-1 pr-act" data-kind="' + sec.key
+                        + '" data-id="' + esc(item.id) + '" data-action="approve" data-label="'
+                        + esc(item.key || item.module || item.wallet_address || '') + '">Approve</button>'
+                        + '<button class="btn btn-outline-secondary btn-sm pr-act" data-kind="' + sec.key
+                        + '" data-id="' + esc(item.id) + '" data-action="dismiss">Dismiss</button>'
+                        + '</td></tr>').join('')
+                    + '</tbody></table></div>';
+            }
+            html += '</div></div></div></div>';
+        });
+        document.getElementById('pr-sections').innerHTML = html;
+        document.querySelectorAll('.pr-act').forEach(btn => btn.addEventListener('click', onAct));
+        if (!pending) setAlert('No pending advisory items. All clear.', 'secondary');
+        else setAlert('');
+    }
+
+    async function onAct(ev) {
+        const b = ev.currentTarget;
+        const kind = b.getAttribute('data-kind');
+        const id = b.getAttribute('data-id');
+        const action = b.getAttribute('data-action');
+        const label = b.getAttribute('data-label') || id;
+        if (action === 'approve'
+            && !window.confirm('Approve this ' + kind + ' item (' + label + ')?\n\n'
+                + 'This writes through the live config/flag path.')) return;
+        b.disabled = true;
+        try {
+            const r = await window.csrfFetch('/api/proposals/' + kind + '/' + encodeURIComponent(id) + '/' + action,
+                { method: 'POST' });
+            const d = await r.json();
+            setAlert(d.success ? (action === 'approve' ? 'Approved.' : 'Dismissed.')
+                : 'Failed: ' + esc(d.error || 'unknown'), d.success ? 'success' : 'danger');
+        } catch (e) {
+            setAlert('Action failed: ' + esc(e.message), 'danger');
+        }
+        load();
+    }
+
+    document.getElementById('pr-refresh').addEventListener('click', load);
+    load();
+    setInterval(load, 60000);
+})();
+</script>
+{% endblock %}

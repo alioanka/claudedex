@@ -591,11 +591,42 @@
         window.withCsrfHeaders = function (method, extra) {
             const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
             const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            const token = m ? decodeURIComponent(m[1]) : (window.__csrfToken || '');
             const mutating = ['POST', 'PUT', 'DELETE', 'PATCH'];
-            if (m && (method === undefined || mutating.indexOf(String(method).toUpperCase()) !== -1)) {
-                headers['X-CSRF-Token'] = decodeURIComponent(m[1]);
+            if (token && (method === undefined || mutating.indexOf(String(method).toUpperCase()) !== -1)) {
+                headers['X-CSRF-Token'] = token;
             }
             return headers;
+        };
+    }
+    // csrfFetch: drop-in fetch wrapper for pages that don't load main.js.
+    // Adds the CSRF header on mutating requests and transparently retries
+    // ONCE after refreshing the token via /api/auth/csrf when the server
+    // answers 403 {'code':'csrf'} (expired/missing double-submit cookie).
+    if (typeof window.csrfFetch !== 'function') {
+        window.csrfFetch = async function (url, options) {
+            options = options || {};
+            const build = () => Object.assign({}, options, {
+                headers: window.withCsrfHeaders(options.method, options.headers)
+            });
+            let resp = await fetch(url, build());
+            if (resp.status === 403) {
+                let body = null;
+                try { body = await resp.clone().json(); } catch (e) { /* not JSON */ }
+                if (body && (body.code === 'csrf' || /csrf/i.test(body.error || ''))) {
+                    try {
+                        const r = await fetch('/api/auth/csrf');
+                        if (r.ok) {
+                            const d = await r.json();
+                            if (d && d.token) {
+                                window.__csrfToken = d.token;
+                                resp = await fetch(url, build());
+                            }
+                        }
+                    } catch (e) { /* keep original 403 */ }
+                }
+            }
+            return resp;
         };
     }
     </script>
@@ -1112,6 +1143,59 @@
                 </ul>
             </li>
 
+            <!-- Intelligence & Ops modules (Waves 26+): generic data
+                 panels at /module/<key>, settings at /config/<type>. -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="intelops-menu">
+                    <i class="fas fa-brain"></i>
+                    <span>Intelligence &amp; Ops</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="intelops-menu">
+                    {% for mkey, mname in [
+                        ('meta_controller', 'Meta Controller'),
+                        ('regime_allocator', 'Regime Allocator'),
+                        ('param_tuner', 'Param Tuner'),
+                        ('sentinel', 'Sentinel'),
+                        ('execution_quality', 'Execution Quality'),
+                        ('treasury', 'Treasury'),
+                        ('market_data_warehouse', 'Market Data WH'),
+                        ('catalyst_calendar', 'Catalyst Calendar'),
+                        ('smart_money', 'Smart Money'),
+                        ('options_vol', 'Options Vol'),
+                        ('yield_treasury', 'Yield Treasury'),
+                        ('basis_desk', 'Basis Desk'),
+                        ('stat_arb', 'Stat Arb'),
+                        ('clmm_lp', 'CLMM LP'),
+                        ('intent_solver', 'Intent Solver'),
+                        ('execution_gateway', 'Exec Gateway'),
+                    ] %}
+                    <li class="nav-item {% if page == 'module_' + mkey %}active{% endif %}">
+                        <a href="/module/{{ mkey }}">
+                            <i class="fas fa-circle-nodes"></i>
+                            <span>{{ mname }}</span>
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </li>
+
+            <!-- Proposals & approvals (meta / regime / tuner / copy) -->
+            <li class="nav-item {% if page == 'proposals' %}active{% endif %}">
+                <a href="/proposals">
+                    <i class="fas fa-check-double"></i>
+                    <span>Proposals</span>
+                </a>
+            </li>
+
+            <!-- Deploy & use guide -->
+            <li class="nav-item {% if page == 'help' %}active{% endif %}">
+                <a href="/help">
+                    <i class="fas fa-circle-question"></i>
+                    <span>Help</span>
+                </a>
+            </li>
+
             <li class="nav-divider"></li>
 
             <!-- Module Control -->
@@ -1135,6 +1219,14 @@
                 <a href="/global-settings">
                     <i class="fas fa-globe"></i>
                     <span>Global Settings</span>
+                </a>
+            </li>
+
+            <!-- Universal Settings (every config_type, self-documenting) -->
+            <li class="nav-item {% if page == 'generic_settings' %}active{% endif %}">
+                <a href="/config">
+                    <i class="fas fa-list-check"></i>
+                    <span>All Settings</span>
                 </a>
             </li>
 
