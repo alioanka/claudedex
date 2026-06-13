@@ -527,7 +527,8 @@ async function closeAllPositions() {
 
     try {
         const response = await fetch('/api/sniper/positions/close-all', {
-            method: 'POST'
+            method: 'POST',
+            headers: window.withCsrfHeaders('POST')
         });
 
         const data = await response.json();

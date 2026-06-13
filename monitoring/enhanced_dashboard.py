@@ -4169,6 +4169,25 @@ class DashboardEndpoints:
         'dex': 'dex_trading',
         'dex_trading': 'dex_trading',
         'orchestrator_ai': 'orchestrator_ai',
+        # New advisory/infra/strategy modules (restart flag = logs/.restart_<key>;
+        # main.py._restart_flag_monitor matches the module_key/dir name).
+        'polymarket': 'polymarket',
+        'meta_controller': 'meta_controller',
+        'regime_allocator': 'regime_allocator',
+        'execution_quality': 'execution_quality',
+        'treasury': 'treasury',
+        'sentinel': 'sentinel',
+        'market_data_warehouse': 'market_data_warehouse',
+        'catalyst_calendar': 'catalyst_calendar',
+        'options_vol': 'options_vol',
+        'yield_treasury': 'yield_treasury',
+        'execution_gateway': 'execution_gateway',
+        'clmm_lp': 'clmm_lp',
+        'param_tuner': 'param_tuner',
+        'intent_solver': 'intent_solver',
+        'basis_desk': 'basis_desk',
+        'stat_arb': 'stat_arb',
+        'smart_money': 'smart_money',
     }
 
     async def _api_module_restart(self, request):
