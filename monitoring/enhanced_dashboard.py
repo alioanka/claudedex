@@ -1744,6 +1744,12 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/module-data/{module}',
                                 self.api_module_data)
         self.app.router.add_get('/module/{module}', self.module_panel_page)
+        # Advisory proposal approvals (meta/regime/param/copy)
+        self.app.router.add_get('/api/proposals/pending',
+                                self.api_proposals_pending)
+        self.app.router.add_post('/api/proposals/{kind}/{id}/{action}',
+                                 self.api_proposal_action)
+        self.app.router.add_get('/proposals', self.proposals_page)
         # Phase 3 follow-up: explicit per-module restart via the
         # logs/.restart_<module> flag-file pattern (orchestrator
         # main.py polls every 5s). Replaces the operator's manual
@@ -3294,6 +3300,251 @@ class DashboardEndpoints:
         return web.Response(
             text=template.render(page='module_' + key, module_key=key,
                                  module_name=meta['name']),
+            content_type='text/html'
+        )
+
+    # ===== Advisory proposal approvals =====
+    # One surface for everything the advisory layers ask the operator to
+    # confirm. Approval routes through the SAME fixed paths the engines
+    # honor: param proposals -> _do_update_settings (typed/audited config
+    # write), meta decisions -> logs/.pause_<module> flag files, regime ->
+    # approved_at stamp the allocator reads, copy candidates -> the atomic
+    # target_wallets writer. All probes fail-soft (missing table = empty).
+
+    async def _table_exists(self, conn, table: str) -> bool:
+        try:
+            return await conn.fetchval("SELECT to_regclass($1)", table) is not None
+        except Exception:
+            return False
+
+    async def api_proposals_pending(self, request):
+        """GET /api/proposals/pending — batched pending advisory items."""
+        out = {'meta': [], 'regime': [], 'param': [], 'copy': [],
+               'copy_wallet': []}
+        if not (self.db and getattr(self.db, 'pool', None)):
+            return web.json_response({'success': True, 'data': out})
+        try:
+            async with self.db.pool.acquire() as conn:
+                if await self._table_exists(conn, 'meta_decisions'):
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT DISTINCT ON (module)
+                                   id, module, decision, health_score,
+                                   confidence, reason, actuated, created_at
+                            FROM meta_decisions
+                            WHERE created_at >= NOW() - INTERVAL '7 days'
+                            ORDER BY module, created_at DESC
+                        """)
+                        out['meta'] = [
+                            {**{k: self._jsonable_cell(v) for k, v in dict(r).items()}}
+                            for r in rows
+                            if r['decision'] in ('activate', 'pause') and not r['actuated']
+                        ]
+                    except Exception as e:
+                        logger.debug(f"meta pending probe failed: {e}")
+                if await self._table_exists(conn, 'regime_allocation_proposals'):
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT id, regime, confidence, module, weight_pct,
+                                   reason, created_at
+                            FROM regime_allocation_proposals
+                            WHERE approved_at IS NULL AND superseded_at IS NULL
+                            ORDER BY created_at DESC, module
+                            LIMIT 50
+                        """)
+                        out['regime'] = [
+                            {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                            for r in rows
+                        ]
+                    except Exception as e:
+                        logger.debug(f"regime pending probe failed: {e}")
+                if await self._table_exists(conn, 'param_proposals'):
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT id, config_type, key, module, current_value,
+                                   proposed_value, bound_min, bound_max, kind,
+                                   reason, created_at
+                            FROM param_proposals
+                            WHERE status = 'pending'
+                            ORDER BY created_at DESC
+                            LIMIT 50
+                        """)
+                        out['param'] = [
+                            {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                            for r in rows
+                        ]
+                    except Exception as e:
+                        logger.debug(f"param pending probe failed: {e}")
+                for table, bucket in (('copy_leader_candidates', 'copy'),
+                                      ('copy_wallet_candidates', 'copy_wallet')):
+                    if await self._table_exists(conn, table):
+                        try:
+                            rows = await conn.fetch(f"""
+                                SELECT id, chain, wallet_address, source, label,
+                                       score, status, proposed_at
+                                FROM "{table}"
+                                WHERE status = 'pending'
+                                ORDER BY score DESC NULLS LAST
+                                LIMIT 50
+                            """)
+                            out[bucket] = [
+                                {k: self._jsonable_cell(v) for k, v in dict(r).items()}
+                                for r in rows
+                            ]
+                        except Exception as e:
+                            logger.debug(f"{table} pending probe failed: {e}")
+        except Exception as e:
+            logger.debug(f"proposals pending failed: {e}")
+        return web.json_response({'success': True, 'data': out})
+
+    async def api_proposal_action(self, request):
+        """POST /api/proposals/{kind}/{id}/{action} — approve/dismiss one
+        advisory item, routed through the fixed settings/flag paths."""
+        kind = (request.match_info.get('kind', '') or '').lower()
+        action = (request.match_info.get('action', '') or '').lower()
+        raw_id = request.match_info.get('id', '')
+        if action not in ('approve', 'dismiss'):
+            return web.json_response({'success': False,
+                                      'error': f'unknown action: {action}'}, status=400)
+        if not (self.db and getattr(self.db, 'pool', None)):
+            return web.json_response({'success': False,
+                                      'error': 'database unavailable'}, status=503)
+        user = request.get('user')
+        username = (getattr(user, 'username', None) or 'unknown')[:50]
+        try:
+            async with self.db.pool.acquire() as conn:
+                if kind == 'param':
+                    pid = int(raw_id)
+                    row = await conn.fetchrow(
+                        "SELECT * FROM param_proposals WHERE id = $1 AND status = 'pending'",
+                        pid)
+                    if not row:
+                        return web.json_response({'success': False,
+                                                  'error': 'proposal not found or not pending'}, status=404)
+                    if action == 'dismiss':
+                        await conn.execute(
+                            "UPDATE param_proposals SET status = 'dismissed' WHERE id = $1", pid)
+                        return web.json_response({'success': True, 'status': 'dismissed'})
+                    # approve = apply through the audited typed config writer
+                    result = await self._do_update_settings(
+                        row['config_type'], {row['key']: row['proposed_value']},
+                        user, request.remote)
+                    if result['errors'] or (not result['updated'] and result['skipped']):
+                        return web.json_response({
+                            'success': False,
+                            'error': f"apply failed: {result['errors'] or 'key not found'}",
+                        }, status=422)
+                    await conn.execute(
+                        "UPDATE param_proposals SET status = 'operator_applied', "
+                        "applied_at = NOW() WHERE id = $1", pid)
+                    return web.json_response({'success': True,
+                                              'status': 'operator_applied',
+                                              'saved': result['saved']})
+
+                if kind == 'regime':
+                    pid = int(raw_id)
+                    if action == 'approve':
+                        n = await conn.execute(
+                            "UPDATE regime_allocation_proposals "
+                            "SET approved_at = NOW(), approved_by = $2 "
+                            "WHERE id = $1 AND approved_at IS NULL "
+                            "AND superseded_at IS NULL", pid, username)
+                    else:
+                        n = await conn.execute(
+                            "UPDATE regime_allocation_proposals "
+                            "SET superseded_at = NOW() "
+                            "WHERE id = $1 AND approved_at IS NULL "
+                            "AND superseded_at IS NULL", pid)
+                    ok = n and n.split()[-1] == '1'
+                    return web.json_response(
+                        {'success': bool(ok),
+                         'error': None if ok else 'not found or already handled'},
+                        status=200 if ok else 404)
+
+                if kind == 'meta':
+                    pid = int(raw_id)
+                    row = await conn.fetchrow(
+                        "SELECT id, module, decision FROM meta_decisions "
+                        "WHERE id = $1 AND NOT actuated", pid)
+                    if not row:
+                        return web.json_response({'success': False,
+                                                  'error': 'decision not found or already actuated'}, status=404)
+                    if action == 'dismiss':
+                        # decisions are an append-only stream; dismiss just
+                        # marks it actuated so it leaves the pending list.
+                        await conn.execute(
+                            "UPDATE meta_decisions SET actuated = TRUE WHERE id = $1", pid)
+                        return web.json_response({'success': True, 'status': 'dismissed'})
+                    short = self._resolve_pause_key(row['module']) or row['module']
+                    from core.dry_run import set_module_pause
+                    if row['decision'] == 'pause':
+                        flag_ok = set_module_pause(short, True)
+                    else:  # activate / keep -> clear any pause flag
+                        flag_ok = set_module_pause(short, False)
+                    await conn.execute(
+                        "UPDATE meta_decisions SET actuated = TRUE WHERE id = $1", pid)
+                    return web.json_response({'success': True,
+                                              'actuated': bool(flag_ok),
+                                              'pause_key': short,
+                                              'decision': row['decision']})
+
+                if kind in ('copy', 'copy_wallet'):
+                    table = ('copy_leader_candidates' if kind == 'copy'
+                             else 'copy_wallet_candidates')
+                    if not await self._table_exists(conn, table):
+                        return web.json_response({'success': False,
+                                                  'error': f'{table} not present'}, status=404)
+                    row = await conn.fetchrow(
+                        f'SELECT id, wallet_address FROM "{table}" '
+                        f"WHERE id = $1::uuid AND status = 'pending'", raw_id)
+                    if not row:
+                        return web.json_response({'success': False,
+                                                  'error': 'candidate not found or not pending'}, status=404)
+                    new_status = 'approved' if action == 'approve' else 'rejected'
+                    async with conn.transaction():
+                        await conn.execute(
+                            f'UPDATE "{table}" SET status = $2, reviewed_at = NOW(), '
+                            f'reviewed_by = $3 WHERE id = $1::uuid',
+                            row['id'], new_status, username)
+                        if action == 'approve':
+                            # Route through the same atomic target_wallets
+                            # writer the copy hub uses (idempotent add).
+                            tw = await conn.fetchval(
+                                "SELECT value FROM config_settings "
+                                "WHERE config_type='copytrading_config' "
+                                "AND key='target_wallets' FOR UPDATE")
+                            wallets = []
+                            if tw:
+                                try:
+                                    parsed = json.loads(tw)
+                                    if isinstance(parsed, list):
+                                        wallets = [str(w).strip() for w in parsed if w]
+                                except Exception:
+                                    wallets = [w.strip() for w in str(tw).split(',') if w.strip()]
+                            wa = str(row['wallet_address']).strip()
+                            if not any(w.lower() == wa.lower() for w in wallets):
+                                wallets.append(wa)
+                                await conn.execute(
+                                    "INSERT INTO config_settings (config_type, key, value, value_type) "
+                                    "VALUES ('copytrading_config', 'target_wallets', $1, 'json') "
+                                    "ON CONFLICT (config_type, key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()",
+                                    json.dumps(wallets))
+                    return web.json_response({'success': True, 'status': new_status})
+
+            return web.json_response({'success': False,
+                                      'error': f'unknown kind: {kind}'}, status=400)
+        except (ValueError, TypeError):
+            return web.json_response({'success': False, 'error': 'bad id'}, status=400)
+        except Exception as e:
+            logger.error(f"proposal action {kind}/{raw_id}/{action} failed: {e}",
+                         exc_info=True)
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def proposals_page(self, request):
+        """GET /proposals — approval inbox for advisory items."""
+        template = self.jinja_env.get_template('proposals.html')
+        return web.Response(
+            text=template.render(page='proposals'),
             content_type='text/html'
         )
 
