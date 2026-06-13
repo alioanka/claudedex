@@ -1750,6 +1750,7 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/proposals/{kind}/{id}/{action}',
                                  self.api_proposal_action)
         self.app.router.add_get('/proposals', self.proposals_page)
+        self.app.router.add_get('/help', self.help_page)
         # Phase 3 follow-up: explicit per-module restart via the
         # logs/.restart_<module> flag-file pattern (orchestrator
         # main.py polls every 5s). Replaces the operator's manual
@@ -3545,6 +3546,65 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('proposals.html')
         return web.Response(
             text=template.render(page='proposals'),
+            content_type='text/html'
+        )
+
+    # Trading-module help metadata for /help (the aux modules come from
+    # _AUX_MODULES). Doc links are rendered fail-soft: the page never
+    # depends on files in docs/ actually existing.
+    _HELP_TRADING_MODULES = (
+        {'key': 'dex', 'name': 'DEX Trading', 'env': 'DEX_MODULE_ENABLED',
+         'panel': '/dex/dashboard', 'settings': '/config/dex_config',
+         'desc': 'Multi-chain DEX momentum/scoring strategy with ML ensemble. '
+                 'LIVE path is fail-closed behind RiskManager at broadcast.'},
+        {'key': 'futures', 'name': 'Futures', 'env': 'FUTURES_MODULE_ENABLED',
+         'panel': '/futures/dashboard', 'settings': '/config/futures_general',
+         'desc': 'Bybit V5 perpetuals with per-symbol tiering, rolling gates and '
+                 'funding-carry. Testnet flag controls venue.'},
+        {'key': 'solana', 'name': 'Solana', 'env': 'SOLANA_MODULE_ENABLED',
+         'panel': '/solana/dashboard', 'settings': '/config/solana_config',
+         'desc': 'Jupiter spot strategies + optional pump.fun and Drift '
+                 '(both separately gated).'},
+        {'key': 'sniper', 'name': 'Sniper', 'env': 'SNIPER_MODULE_ENABLED',
+         'panel': '/sniper/dashboard', 'settings': '/config/sniper_config',
+         'desc': 'New-token sniping over WSS with safety filters, active-position '
+                 'caps and confirmed-before-booking sends.'},
+        {'key': 'arbitrage', 'name': 'Arbitrage', 'env': 'ARBITRAGE_MODULE_ENABLED',
+         'panel': '/arbitrage/dashboard', 'settings': '/config/arbitrage_config',
+         'desc': 'Spatial DEX arbitrage with economics gates; LIVE execution '
+                 'default OFF behind live_execution_enabled.'},
+        {'key': 'copy_trading', 'name': 'Copy Trading', 'env': 'COPY_TRADING_MODULE_ENABLED',
+         'panel': '/copytrading/dashboard', 'settings': '/config/copytrading_config',
+         'desc': 'Mirrors wallets in target_wallets only (BUY-only caps, durable '
+                 'idempotency). Leader discovery proposes; you approve on /proposals.'},
+        {'key': 'ai', 'name': 'AI Analysis', 'env': 'AI_MODULE_ENABLED',
+         'panel': '/ai/dashboard', 'settings': '/config/ai_config',
+         'desc': 'LLM-assisted signal generation with budget gate and per-trade '
+                 'notional ceiling.'},
+        {'key': 'polymarket', 'name': 'Polymarket', 'env': 'POLYMARKET_MODULE_ENABLED',
+         'panel': '/module/polymarket', 'settings': '/config/polymarket_config',
+         'desc': 'Shadow-first prediction markets (YES+NO<1 arb + momentum); '
+                 'LIVE CLOB gated behind shadow_mode=false AND live_execution_enabled=true.'},
+        {'key': 'advisor', 'name': 'Financial Advisor', 'env': 'ADVISOR_MODULE_ENABLED',
+         'panel': '/advisor/dashboard', 'settings': '/config/advisor_config',
+         'desc': 'ADVICE-ONLY signals (crypto/US/BIST/FX). Never executes trades.'},
+    )
+
+    async def help_page(self, request):
+        """GET /help — deploy & use guide for every module."""
+        aux = [
+            {'key': k, 'name': m['name'], 'env': m['env'],
+             'desc': m['desc'], 'category': m['category'],
+             'config_type': m['config_type'],
+             'port': int(os.getenv(m['port_env'][0], str(m['port_env'][1]))),
+             'gate': bool(m.get('gate'))}
+            for k, m in self._AUX_MODULES.items()
+        ]
+        template = self.jinja_env.get_template('help.html')
+        return web.Response(
+            text=template.render(page='help',
+                                 trading_modules=self._HELP_TRADING_MODULES,
+                                 aux_modules=aux),
             content_type='text/html'
         )
 
