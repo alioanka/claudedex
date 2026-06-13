@@ -2,7 +2,9 @@
 
 Operator guide for promoting modules from paper-trading to live capital.
 Pairs with `docs/runbook.md` (incident response) and `docs/engines.md`
-(engine API).
+(engine API). See also `docs/OPERATIONS_GUIDE.md` (shadow → DRY_RUN → LIVE
+path for ALL modules incl. the expansion wave) and `docs/DEPLOYMENT_GUIDE.md`
+section 9 (pre-LIVE punch-list).
 
 ## 0. Three-stage promotion path
 

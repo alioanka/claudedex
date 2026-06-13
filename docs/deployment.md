@@ -1,7 +1,11 @@
 # ClaudeDex Production Deployment
 
 How to deploy the bot stack. Pairs with `docs/staging.md` (promotion
-workflow) and `docs/runbook.md` (operational procedures).
+workflow) and `docs/runbook.md` (operational procedures). For the
+step-by-step clean-host walkthrough (secrets, build, migrations,
+health-port map 8080-8105, pre-LIVE punch-list) see
+`docs/DEPLOYMENT_GUIDE.md`; for day-to-day use see `docs/OPERATIONS_GUIDE.md`;
+for the per-module index see `docs/MODULE_CATALOG.md`.
 
 ## 1. Topology
 
