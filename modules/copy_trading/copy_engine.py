@@ -1338,6 +1338,29 @@ class CopyTradingEngine(BaseModule):
         self._last_leader_refresh: float = 0.0
         self._monitor_started_at: float = 0.0
 
+        # COPY v3 (migration 135) — all default-OFF so behavior is unchanged
+        # until the operator opts in.
+        #   copy_auto_discovery_enabled (mig 092 seed, default false) now
+        #     actually drives the in-engine discovery_v3 sweep.
+        #   copy_shadow_sim_enabled gates the paper-copy simulator tick
+        #     (writes is_simulated=true rows only; never trades).
+        #   copy_score_sizing_enabled multiplies the size cap by a
+        #     confidence multiplier clamped to [floor, 1.0] — it can only
+        #     SHRINK size, never exceed the existing caps.
+        #   copy_score_decay_demotion_enabled benches (existing probation
+        #     mechanism) leaders whose score decayed >= decay_pct from peak.
+        self.copy_auto_discovery_enabled = False
+        self.copy_auto_discovery_interval_hours = 24.0
+        self.copy_shadow_sim_enabled = False
+        self.copy_shadow_sim_interval_s = 300.0
+        self.copy_score_sizing_enabled = False
+        self.copy_score_sizing_floor = 0.25
+        self.copy_score_decay_demotion_enabled = False
+        self.copy_score_decay_pct = 40.0
+        self.copy_score_decay_min_trades = 10
+        self._last_discovery_sweep: float = 0.0
+        self._last_shadow_tick: float = 0.0
+
         # Statistics
         self._stats = {
             'cycles': 0,
@@ -1442,6 +1465,19 @@ class CopyTradingEngine(BaseModule):
                     await self._maybe_refresh_leaders()
                 except Exception as e:
                     logger.error(f"leader refresh failed: {e}")
+
+                # COPY v3 (both default-OFF, fail-soft): discovery sweep +
+                # shadow-copy simulator tick. Neither path can trade — the
+                # sweep only writes candidates (operator approval gate);
+                # the simulator only writes is_simulated=true paper rows.
+                try:
+                    await self._maybe_run_discovery_v3()
+                except Exception as e:
+                    logger.error(f"discovery v3 sweep failed: {e}")
+                try:
+                    await self._maybe_tick_shadow_sim()
+                except Exception as e:
+                    logger.error(f"shadow sim tick failed: {e}")
 
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
@@ -1561,6 +1597,14 @@ class CopyTradingEngine(BaseModule):
                     probation_days=self.probation_days,
                 )
 
+                # COPY v3: track the historical peak score and (optionally)
+                # bench leaders whose edge decayed. Uses the EXISTING
+                # probation mechanism — no new gate, no weakened gate.
+                try:
+                    await self._track_peak_and_decay(chain, addr, m)
+                except Exception as e:
+                    logger.debug(f"peak/decay tracking {addr[:8]}: {e}")
+
                 # 2. Persist newest observed activity (monotone via GREATEST).
                 epoch = self._wallet_last_activity.get(target)
                 async with self.db_pool.acquire() as conn:
@@ -1640,6 +1684,151 @@ class CopyTradingEngine(BaseModule):
             f"{len(self.targets)} targets (dead threshold "
             f"{self.copy_dead_leader_days:.0f}d; see copy_leader_scores.is_dead)"
         )
+
+    # ------------------------------------------------------------------
+    # COPY v3 (migration 135): discovery sweep + shadow sim + score sizing
+    # ------------------------------------------------------------------
+
+    async def _track_peak_and_decay(self, chain: str, addr: str, m) -> None:
+        """Persist peak_score = GREATEST(peak, current) and, when the
+        decay-demotion flag is ON, bench a leader whose current score fell
+        >= copy_score_decay_pct below its peak (sample-gated). Benching
+        reuses the existing probation columns, so SELLs stay ungated and
+        re-entry is automatic on expiry. Default OFF."""
+        if not self.db_pool or m.score is None:
+            return
+        async with self.db_pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE copy_leader_scores
+                   SET peak_score = GREATEST(COALESCE(peak_score, 0), $3)
+                 WHERE chain = $1 AND lower(wallet_address) = lower($2)
+                 RETURNING peak_score
+                """,
+                chain, addr, float(m.score),
+            )
+            if (
+                not self.copy_score_decay_demotion_enabled
+                or row is None or row['peak_score'] is None
+                or int(m.trade_count_30d) < int(self.copy_score_decay_min_trades)
+            ):
+                return
+            peak = float(row['peak_score'])
+            if peak <= 0:
+                return
+            decay_floor = peak * (1.0 - float(self.copy_score_decay_pct) / 100.0)
+            if float(m.score) >= decay_floor:
+                return
+            d = max(1.0, min(365.0, float(self.probation_days)))
+            await conn.execute(
+                """
+                UPDATE copy_leader_scores
+                   SET on_probation     = TRUE,
+                       probation_until  = GREATEST(
+                           COALESCE(probation_until, NOW()),
+                           NOW() + ($3 || ' days')::INTERVAL
+                       ),
+                       probation_reason = $4,
+                       probation_set_at = NOW()
+                 WHERE chain = $1 AND lower(wallet_address) = lower($2)
+                """,
+                chain, addr, str(int(d)),
+                f"score_decay_{float(m.score):.1f}_from_peak_{peak:.1f}",
+            )
+            logger.warning(
+                f"[v3] score-decay demotion: {addr[:12]}... ({chain}) "
+                f"score {float(m.score):.1f} < {decay_floor:.1f} "
+                f"({self.copy_score_decay_pct:.0f}% off peak {peak:.1f}) — "
+                f"benched {d:.0f}d via probation (SELLs never gated)"
+            )
+
+    async def _get_score_multiplier(self, chain: str, wallet: str) -> float:
+        """COPY v3 confidence-weighted sizing. Returns a multiplier in
+        [copy_score_sizing_floor, 1.0] derived from the leader's composite
+        score (score/100). Disabled (default) -> 1.0 so behavior is
+        unchanged. By construction this can only SHRINK the existing
+        operator cap — never exceed it. Fail-soft to 1.0 on lookup errors
+        (the static caps remain the safety net, mirroring kelly posture)."""
+        if not getattr(self, 'copy_score_sizing_enabled', False):
+            return 1.0
+        if not self.db_pool or not chain or not wallet:
+            return 1.0
+        try:
+            async with self.db_pool.acquire() as conn:
+                score = await conn.fetchval(
+                    "SELECT score FROM copy_leader_scores "
+                    "WHERE chain = $1 AND lower(wallet_address) = lower($2)",
+                    chain, wallet,
+                )
+        except Exception as e:
+            logger.debug(f"_get_score_multiplier lookup failed: {e}")
+            return 1.0
+        floor = float(getattr(self, 'copy_score_sizing_floor', 0.25))
+        if score is None:
+            # Unscored leader sizes at the floor — unknown != trusted.
+            return floor
+        return max(floor, min(1.0, float(score) / 100.0))
+
+    async def _maybe_run_discovery_v3(self) -> None:
+        """Run the discovery_v3 sweep every copy_auto_discovery_interval_hours
+        when copy_auto_discovery_enabled (mig 092 seed, default false). The
+        sweep only writes copy_discovered_wallets + PENDING candidates; live
+        promotion stays behind operator approval / the double-gated
+        auto-promote flag inside discovery_v3."""
+        if not self.copy_auto_discovery_enabled or not self.db_pool:
+            return
+        import time as _t
+        interval_s = max(1.0, float(self.copy_auto_discovery_interval_hours)) * 3600.0
+        now = _t.monotonic()
+        if self._last_discovery_sweep and (now - self._last_discovery_sweep) < interval_s:
+            return
+        self._last_discovery_sweep = now
+        from modules.copy_trading import discovery_v3
+        cfg = await discovery_v3.load_config(self.db_pool)
+        # Helius key enables the bounded Solana enrichment source.
+        cfg.helius_api_key = (
+            getattr(self, 'helius_api_key', None)
+            or getattr(self.executor, 'helius_api_key', None)
+            or None
+        )
+        if cfg.helius_api_key and 'rpc_solana' not in cfg.sources:
+            cfg.sources = tuple(cfg.sources) + ('rpc_solana',)
+        await discovery_v3.run_discovery_sweep(self.db_pool, cfg)
+
+    async def _maybe_tick_shadow_sim(self) -> None:
+        """Shadow-copy simulator tick every copy_shadow_sim_interval_s when
+        copy_shadow_sim_enabled (default false). Paper rows only
+        (is_simulated=true); cannot trade, cannot gate."""
+        if not self.copy_shadow_sim_enabled or not self.db_pool:
+            return
+        import time as _t
+        now = _t.monotonic()
+        if self._last_shadow_tick and (now - self._last_shadow_tick) < float(
+                self.copy_shadow_sim_interval_s):
+            return
+        self._last_shadow_tick = now
+        from modules.copy_trading.shadow_simulator import ShadowConfig, tick
+        cfg = ShadowConfig()
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT key, value FROM config_settings "
+                    "WHERE config_type = 'copytrading_config' "
+                    "  AND key LIKE 'copy_shadow_%'")
+            kv = {r['key']: r['value'] for r in rows}
+            cfg.sim_notional_usd = max(1.0, min(1e5, float(
+                kv.get('copy_shadow_sim_notional_usd') or 100.0)))
+            cfg.fee_bps = max(0.0, min(1000.0, float(
+                kv.get('copy_shadow_fee_bps') or 30.0)))
+            cfg.slippage_bps = max(0.0, min(5000.0, float(
+                kv.get('copy_shadow_slippage_bps') or 50.0)))
+            cfg.max_adds_per_position = int(max(1, min(20, float(
+                kv.get('copy_shadow_max_adds_per_position') or 3))))
+            cfg.max_wallets = int(max(1, min(200, float(
+                kv.get('copy_shadow_max_wallets') or 40))))
+        except Exception as e:
+            logger.debug(f"shadow cfg load failed (defaults used): {e}")
+        await tick(self.db_pool, cfg)
 
     async def _load_settings(self):
         """Load Copy Trading settings from database"""
@@ -1897,6 +2086,59 @@ class CopyTradingEngine(BaseModule):
                         try:
                             v = int(float(val)) if val else 0
                             self.copy_max_open_per_leader = max(0, min(100, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_auto_discovery_enabled':
+                        # COPY v3: in-engine discovery_v3 sweep gate (the mig
+                        # 092 seed defaults false; previously unconsumed).
+                        self.copy_auto_discovery_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key == 'copy_auto_discovery_interval_hours':
+                        try:
+                            v = float(val) if val else 24.0
+                            self.copy_auto_discovery_interval_hours = max(1.0, min(168.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_shadow_sim_enabled':
+                        # COPY v3: paper-copy simulator (is_simulated rows only).
+                        self.copy_shadow_sim_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key == 'copy_shadow_sim_interval_s':
+                        try:
+                            v = float(val) if val else 300.0
+                            self.copy_shadow_sim_interval_s = max(30.0, min(3600.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_score_sizing_enabled':
+                        # COPY v3: confidence-weighted sizing. The multiplier
+                        # is clamped to [floor, 1.0] in _get_score_multiplier
+                        # — it can only SHRINK below the existing caps.
+                        self.copy_score_sizing_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key == 'copy_score_sizing_floor':
+                        try:
+                            v = float(val) if val else 0.25
+                            self.copy_score_sizing_floor = max(0.05, min(1.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_score_decay_demotion_enabled':
+                        self.copy_score_decay_demotion_enabled = str(val).strip().lower() in (
+                            '1', 'true', 'yes', 'on',
+                        )
+                    elif key == 'copy_score_decay_pct':
+                        try:
+                            v = float(val) if val else 40.0
+                            # Floor 10 so jitter can't bench everyone; cap 90.
+                            self.copy_score_decay_pct = max(10.0, min(90.0, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_score_decay_min_trades':
+                        try:
+                            v = int(float(val)) if val else 10
+                            self.copy_score_decay_min_trades = max(1, min(1000, v))
                         except (TypeError, ValueError):
                             pass
 
@@ -3040,9 +3282,14 @@ class CopyTradingEngine(BaseModule):
             kelly_mult = await self._get_leader_kelly(
                 chain_name, source_tx.get('from', '')
             )
+            # COPY v3: confidence multiplier in [floor, 1.0] — only ever
+            # shrinks below the cap; 1.0 when the feature is disabled.
+            score_mult = await self._get_score_multiplier(
+                chain_name, source_tx.get('from', '')
+            )
             copy_amount = min(
                 original_value * self.copy_ratio // 100,
-                int(max_copy_wei * kelly_mult),
+                int(max_copy_wei * kelly_mult * score_mult),
             )
 
             # LIVE-READY exit-mirroring fix: the amount_too_small check is
@@ -3699,7 +3946,11 @@ class CopyTradingEngine(BaseModule):
             # is preserved as a final fuse so a mis-scored leader can
             # never blow past the operator-visible per-trade limit.
             kelly_mult = await self._get_leader_kelly('solana', wallet)
-            usd_cap = self.max_copy_amount * kelly_mult
+            # COPY v3: confidence multiplier in [floor, 1.0] — only ever
+            # shrinks below the cap; 1.0 when the feature is disabled. The
+            # hard 0.1-SOL ceiling below stays the final fuse either way.
+            score_mult = await self._get_score_multiplier('solana', wallet)
+            usd_cap = self.max_copy_amount * kelly_mult * score_mult
             copy_lamports = int(min(usd_cap / sol_price, 0.1) * 1e9)
 
             if is_buy:
