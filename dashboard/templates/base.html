@@ -591,11 +591,42 @@
         window.withCsrfHeaders = function (method, extra) {
             const headers = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
             const m = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
+            const token = m ? decodeURIComponent(m[1]) : (window.__csrfToken || '');
             const mutating = ['POST', 'PUT', 'DELETE', 'PATCH'];
-            if (m && (method === undefined || mutating.indexOf(String(method).toUpperCase()) !== -1)) {
-                headers['X-CSRF-Token'] = decodeURIComponent(m[1]);
+            if (token && (method === undefined || mutating.indexOf(String(method).toUpperCase()) !== -1)) {
+                headers['X-CSRF-Token'] = token;
             }
             return headers;
+        };
+    }
+    // csrfFetch: drop-in fetch wrapper for pages that don't load main.js.
+    // Adds the CSRF header on mutating requests and transparently retries
+    // ONCE after refreshing the token via /api/auth/csrf when the server
+    // answers 403 {'code':'csrf'} (expired/missing double-submit cookie).
+    if (typeof window.csrfFetch !== 'function') {
+        window.csrfFetch = async function (url, options) {
+            options = options || {};
+            const build = () => Object.assign({}, options, {
+                headers: window.withCsrfHeaders(options.method, options.headers)
+            });
+            let resp = await fetch(url, build());
+            if (resp.status === 403) {
+                let body = null;
+                try { body = await resp.clone().json(); } catch (e) { /* not JSON */ }
+                if (body && (body.code === 'csrf' || /csrf/i.test(body.error || ''))) {
+                    try {
+                        const r = await fetch('/api/auth/csrf');
+                        if (r.ok) {
+                            const d = await r.json();
+                            if (d && d.token) {
+                                window.__csrfToken = d.token;
+                                resp = await fetch(url, build());
+                            }
+                        }
+                    } catch (e) { /* keep original 403 */ }
+                }
+            }
+            return resp;
         };
     }
     </script>

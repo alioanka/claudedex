@@ -679,9 +679,28 @@ function timeAgo(timestamp) {
 
 // MB-27: read csrf_token cookie set by the server's CSRF middleware so we
 // can echo it back in X-CSRF-Token on every state-changing request.
+// Falls back to the last token fetched from /api/auth/csrf for the rare
+// case where the cookie is not readable yet (recovery path below).
 function getCsrfToken() {
     const match = document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/);
-    return match ? decodeURIComponent(match[1]) : '';
+    if (match) return decodeURIComponent(match[1]);
+    return window.__csrfToken || '';
+}
+
+// Recovery: ask the server to (re)mint the double-submit token. The
+// response both sets the cookie and returns the token in the body, so the
+// very next request can succeed even if document.cookie is stale.
+async function refreshCsrfToken() {
+    try {
+        const r = await fetch('/api/auth/csrf');
+        if (!r.ok) return '';
+        const data = await r.json();
+        if (data && data.token) {
+            window.__csrfToken = data.token;
+            return data.token;
+        }
+    } catch (e) { /* fail-soft: caller surfaces the original 403 */ }
+    return '';
 }
 
 function withCsrfHeaders(method, headers) {
@@ -696,10 +715,25 @@ function withCsrfHeaders(method, headers) {
 // API helpers
 async function apiRequest(url, options = {}) {
     try {
-        const response = await fetch(url, {
+        let response = await fetch(url, {
             ...options,
             headers: withCsrfHeaders(options.method, options.headers),
         });
+
+        // Transparent one-shot recovery from an expired/missing CSRF
+        // cookie: refresh the token, replay the request once.
+        if (response.status === 403) {
+            let body = null;
+            try { body = await response.clone().json(); } catch (e) { /* not JSON */ }
+            const isCsrf = body && (body.code === 'csrf' ||
+                /csrf/i.test(body.error || ''));
+            if (isCsrf && await refreshCsrfToken()) {
+                response = await fetch(url, {
+                    ...options,
+                    headers: withCsrfHeaders(options.method, options.headers),
+                });
+            }
+        }
 
         const data = await response.json();
         return data;
@@ -852,6 +886,9 @@ window.formatTime = formatTime;
 window.timeAgo = timeAgo;
 window.apiGet = apiGet;
 window.apiPost = apiPost;
+window.apiRequest = apiRequest;
+window.getCsrfToken = getCsrfToken;
+window.refreshCsrfToken = refreshCsrfToken;
 window.createChart = createChart;
 window.updateChart = updateChart;
 window.exportData = exportData;
