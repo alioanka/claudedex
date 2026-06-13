@@ -1312,6 +1312,12 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/auth/csrf', self.api_get_csrf_token)
         self.app.router.add_get('/api/settings/all', self.api_get_settings)
         self.app.router.add_post('/api/settings/update', self.api_update_settings)
+        # Generic self-documenting settings surface (any config_type)
+        self.app.router.add_get('/api/config/types', self.api_config_types)
+        self.app.router.add_get('/api/config/{config_type}', self.api_config_get)
+        self.app.router.add_post('/api/config/{config_type}', self.api_config_post)
+        self.app.router.add_get('/config', self.generic_settings_page)
+        self.app.router.add_get('/config/{config_type}', self.generic_settings_page)
         self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
         self.app.router.add_get('/api/settings/networks', self.api_get_networks)
@@ -4512,6 +4518,17 @@ class DashboardEndpoints:
         template = self.jinja_env.get_template('settings.html')
         return web.Response(
             text=template.render(page='settings'),
+            content_type='text/html'
+        )
+
+    async def generic_settings_page(self, request):
+        """Universal settings editor: /config (index of every config_type)
+        and /config/{config_type} (typed editor for all its rows)."""
+        config_type = request.match_info.get('config_type', '')
+        template = self.jinja_env.get_template('settings_generic.html')
+        return web.Response(
+            text=template.render(page='generic_settings',
+                                 config_type=config_type),
             content_type='text/html'
         )
     
@@ -8224,84 +8241,244 @@ class DashboardEndpoints:
             if not config_type or not isinstance(updates, dict) or not updates:
                 return web.json_response({'error': 'config_type and updates required'}, status=400)
 
-            # Get user info for audit. NOTE: both audit columns are VARCHAR.
-            user = request.get('user')
-            changed_by = str(user.id) if user and getattr(user, 'id', None) is not None else None
-            username = getattr(user, 'username', None) or 'unknown'
-
-            updated, skipped, errors = [], [], {}
-            async with self.db_pool.acquire() as conn:
-                async with conn.transaction():
-                    for key, value in updates.items():
-                        # Get the current value for audit log
-                        old_row = await conn.fetchrow("""
-                            SELECT value, value_type, is_editable FROM config_settings
-                            WHERE config_type = $1 AND key = $2
-                        """, config_type, key)
-
-                        if not old_row:
-                            logger.warning(f"Config {config_type}.{key} not found, skipping")
-                            skipped.append(key)
-                            continue
-                        if old_row['is_editable'] is False:
-                            errors[key] = 'not editable'
-                            continue
-
-                        try:
-                            new_value_str = _serialize_setting_value(
-                                value, old_row['value_type']
-                            )
-                        except (ValueError, TypeError, json.JSONDecodeError) as ve:
-                            errors[key] = f'invalid {_norm_value_type(old_row["value_type"])}: {ve}'
-                            continue
-
-                        if new_value_str == old_row['value']:
-                            continue  # no-op; keep history clean
-
-                        # Update the config setting
-                        await conn.execute("""
-                            UPDATE config_settings
-                            SET value = $1, updated_at = NOW(), updated_by = $2
-                            WHERE config_type = $3 AND key = $4
-                        """, new_value_str, username[:50], config_type, key)
-
-                        # Log the change in config_history
-                        await conn.execute("""
-                            INSERT INTO config_history
-                            (config_type, key, old_value, new_value, change_source, changed_by, changed_by_username, ip_address)
-                            VALUES ($1, $2, $3, $4, 'api', $5, $6, $7)
-                        """, config_type, key, old_row['value'], new_value_str,
-                             changed_by, username[:50], request.remote)
-                        updated.append(key)
-
-                # Re-read what was persisted so the UI confirms reality,
-                # not its own optimistic state.
-                saved = {}
-                if updated:
-                    rows = await conn.fetch("""
-                        SELECT key, value, value_type FROM config_settings
-                        WHERE config_type = $1 AND key = ANY($2::text[])
-                    """, config_type, updated)
-                    for r in rows:
-                        try:
-                            saved[r['key']] = _coerce_db_value(r['value'], r['value_type'])
-                        except Exception:
-                            saved[r['key']] = r['value']
-
-            ok = not errors
+            result = await self._do_update_settings(
+                config_type, updates, request.get('user'), request.remote
+            )
+            ok = not result['errors']
             return web.json_response({
                 'success': ok,
                 'message': (f'Settings updated: {config_type}' if ok
                             else f'Some settings failed: {config_type}'),
-                'updated': updated,
-                'skipped': skipped,
-                'errors': errors,
-                'saved': saved,
+                **result,
             }, status=200 if ok else 422)
         except Exception as e:
             logger.error(f"Error updating settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
-    
+
+    async def _do_update_settings(self, config_type, updates, user, remote):
+        """Shared typed-validated config_settings writer (generic settings
+        endpoints). Returns {'updated': [...], 'skipped': [...],
+        'errors': {...}, 'saved': {...}}; raises only on infra failure."""
+        # NOTE: both audit columns are VARCHAR — bind strings.
+        changed_by = str(user.id) if user and getattr(user, 'id', None) is not None else None
+        username = getattr(user, 'username', None) or 'unknown'
+
+        updated, skipped, errors = [], [], {}
+        saved = {}
+        async with self.db_pool.acquire() as conn:
+            async with conn.transaction():
+                for key, value in updates.items():
+                    # Get the current value for audit log
+                    old_row = await conn.fetchrow("""
+                        SELECT value, value_type, is_editable FROM config_settings
+                        WHERE config_type = $1 AND key = $2
+                    """, config_type, key)
+
+                    if not old_row:
+                        logger.warning(f"Config {config_type}.{key} not found, skipping")
+                        skipped.append(key)
+                        continue
+                    if old_row['is_editable'] is False:
+                        errors[key] = 'not editable'
+                        continue
+
+                    try:
+                        new_value_str = _serialize_setting_value(
+                            value, old_row['value_type']
+                        )
+                    except (ValueError, TypeError, json.JSONDecodeError) as ve:
+                        errors[key] = f'invalid {_norm_value_type(old_row["value_type"])}: {ve}'
+                        continue
+
+                    if new_value_str == old_row['value']:
+                        continue  # no-op; keep history clean
+
+                    # Update the config setting
+                    await conn.execute("""
+                        UPDATE config_settings
+                        SET value = $1, updated_at = NOW(), updated_by = $2
+                        WHERE config_type = $3 AND key = $4
+                    """, new_value_str, username[:50], config_type, key)
+
+                    # Log the change in config_history
+                    await conn.execute("""
+                        INSERT INTO config_history
+                        (config_type, key, old_value, new_value, change_source, changed_by, changed_by_username, ip_address)
+                        VALUES ($1, $2, $3, $4, 'api', $5, $6, $7)
+                    """, config_type, key, old_row['value'], new_value_str,
+                         changed_by, username[:50], remote)
+                    updated.append(key)
+
+            # Re-read what was persisted so the UI confirms reality,
+            # not its own optimistic state.
+            if updated:
+                rows = await conn.fetch("""
+                    SELECT key, value, value_type FROM config_settings
+                    WHERE config_type = $1 AND key = ANY($2::text[])
+                """, config_type, updated)
+                for r in rows:
+                    try:
+                        saved[r['key']] = _coerce_db_value(r['value'], r['value_type'])
+                    except Exception:
+                        saved[r['key']] = r['value']
+
+        return {'updated': updated, 'skipped': skipped,
+                'errors': errors, 'saved': saved}
+
+    # ===== Generic self-documenting settings surface =====
+    # ONE page + three endpoints make EVERY config_settings row editable
+    # with its DB description as inline help — no per-module settings code,
+    # no key maps to fall out of date. New modules get a working settings
+    # UI the moment their seed migration lands.
+    _CONFIG_TYPE_MODULE_MAP = {
+        # explicit module labels for types whose prefix is not the module
+        'trading': 'DEX', 'risk_management': 'DEX', 'chain': 'DEX',
+        'ml_settings': 'DEX', 'monitoring_alerts': 'Dashboard',
+        'meta_config': 'Meta Controller',
+        'copytrading_config': 'Copy Trading',
+        'allocation_guard_config': 'Orchestrator',
+        'orchestrator_ai': 'Orchestrator',
+    }
+    _CONFIG_PREFIX_MODULE_MAP = {
+        'dex': 'DEX', 'futures': 'Futures', 'solana': 'Solana',
+        'sniper': 'Sniper', 'arbitrage': 'Arbitrage', 'arb': 'Arbitrage',
+        'ai': 'AI Analysis', 'copy': 'Copy Trading',
+        'copytrading': 'Copy Trading', 'advisor': 'Advisor',
+        'polymarket': 'Polymarket', 'meta': 'Meta Controller',
+        'regime': 'Regime Allocator', 'regime_allocator': 'Regime Allocator',
+        'execution_quality': 'Execution Quality', 'treasury': 'Treasury',
+        'sentinel': 'Sentinel', 'market_data_warehouse': 'Market Data Warehouse',
+        'catalyst_calendar': 'Catalyst Calendar', 'options_vol': 'Options Vol',
+        'yield_treasury': 'Yield Treasury', 'execution_gateway': 'Execution Gateway',
+        'clmm_lp': 'CLMM LP', 'param_tuner': 'Param Tuner',
+        'intent_solver': 'Intent Solver', 'basis_desk': 'Basis Desk',
+        'stat_arb': 'Stat Arb', 'smart_money': 'Smart Money',
+        'telegram': 'Notifications', 'pool': 'Infrastructure',
+        'rpc': 'Infrastructure',
+    }
+
+    @classmethod
+    def _config_type_module(cls, config_type: str) -> str:
+        ct = (config_type or '').lower()
+        if ct in cls._CONFIG_TYPE_MODULE_MAP:
+            return cls._CONFIG_TYPE_MODULE_MAP[ct]
+        # longest-prefix match on underscore boundaries
+        parts = ct.split('_')
+        for n in range(len(parts), 0, -1):
+            cand = '_'.join(parts[:n])
+            if cand in cls._CONFIG_PREFIX_MODULE_MAP:
+                return cls._CONFIG_PREFIX_MODULE_MAP[cand]
+        return 'Other'
+
+    async def api_config_types(self, request):
+        """GET /api/config/types — every config_type with row counts and a
+        best-effort module label, for the generic settings index."""
+        if not self.db_pool:
+            return web.json_response({'success': True, 'data': []})
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT config_type,
+                           COUNT(*) AS total,
+                           COUNT(*) FILTER (WHERE is_editable) AS editable,
+                           MAX(updated_at) AS last_updated
+                    FROM config_settings
+                    GROUP BY config_type
+                    ORDER BY config_type
+                """)
+            data = []
+            for r in rows:
+                entry = {
+                    'config_type': r['config_type'],
+                    'total': int(r['total']),
+                    'editable': int(r['editable']),
+                    'module': self._config_type_module(r['config_type']),
+                }
+                if r['last_updated'] is not None:
+                    try:
+                        entry['last_updated'] = _iso_utc(r['last_updated'])
+                    except Exception:
+                        pass
+                data.append(entry)
+            return web.json_response({'success': True, 'data': data})
+        except Exception as e:
+            logger.error(f"config types listing failed: {e}")
+            return web.json_response({'success': True, 'data': [],
+                                      'warning': str(e)})
+
+    async def api_config_get(self, request):
+        """GET /api/config/{config_type} — all rows of one config_type as
+        typed values + the seeded description as inline documentation."""
+        config_type = request.match_info.get('config_type', '')
+        if not self.db_pool:
+            return web.json_response({'success': True, 'config_type': config_type,
+                                      'settings': []})
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch("""
+                    SELECT key, value, value_type, description,
+                           is_editable, requires_restart, updated_at, updated_by
+                    FROM config_settings
+                    WHERE config_type = $1
+                    ORDER BY key
+                """, config_type)
+            settings = []
+            for r in rows:
+                norm_type = _norm_value_type(r['value_type'])
+                entry = {
+                    'key': r['key'],
+                    'value_type': norm_type,
+                    'description': r['description'] or '',
+                    'is_editable': bool(r['is_editable']),
+                    'requires_restart': bool(r['requires_restart']),
+                    'updated_by': r['updated_by'],
+                    'danger': _is_danger_key(r['key']),
+                }
+                try:
+                    entry['value'] = _coerce_db_value(r['value'], norm_type)
+                except Exception:
+                    entry['value'] = r['value']
+                    entry['parse_error'] = True
+                if r['updated_at'] is not None:
+                    try:
+                        entry['updated_at'] = _iso_utc(r['updated_at'])
+                    except Exception:
+                        pass
+                settings.append(entry)
+            return web.json_response({
+                'success': True,
+                'config_type': config_type,
+                'module': self._config_type_module(config_type),
+                'settings': settings,
+            })
+        except Exception as e:
+            logger.error(f"config get failed for {config_type}: {e}")
+            return web.json_response({'success': False, 'error': str(e)}, status=500)
+
+    async def api_config_post(self, request):
+        """POST /api/config/{config_type} — typed, validated, audited save
+        for ANY config_settings row; same writer as /api/settings/update."""
+        config_type = request.match_info.get('config_type', '')
+        if not self.db_pool:
+            return web.json_response({'error': 'Database not available'}, status=503)
+        try:
+            data = await request.json()
+            updates = data.get('updates', {})
+            if not config_type or not isinstance(updates, dict) or not updates:
+                return web.json_response({'error': 'updates required'}, status=400)
+            result = await self._do_update_settings(
+                config_type, updates, request.get('user'), request.remote
+            )
+            ok = not result['errors']
+            return web.json_response({'success': ok, **result},
+                                     status=200 if ok else 422)
+        except json.JSONDecodeError:
+            return web.json_response({'error': 'invalid JSON body'}, status=400)
+        except Exception as e:
+            logger.error(f"config save failed for {config_type}: {e}", exc_info=True)
+            return web.json_response({'error': str(e)}, status=500)
+
+
     async def api_revert_settings(self, request):
         """Revert settings to previous version"""
         return web.json_response({
