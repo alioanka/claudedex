@@ -17,13 +17,18 @@ Engine: `core/treasury_engine.py` (self-tested:
 `core/balance_reader.py` (self-tested:
 `python -m modules.treasury.core.balance_reader`).
 
-## Wallets observed (addresses from env, set by the operator next to the encrypted keys)
-| Group | Source | Chains |
-|---|---|---|
-| `evm` | `WALLET_ADDRESS` (shared EVM EOA: DEX/Arb/AI) | `evm_chains` config (default ethereum,arbitrum,base) |
-| `dex_solana` | `SOLANA_WALLET` (DEX module's Solana wallet) | solana |
-| `solana_module` | `SOLANA_MODULE_WALLET` (Solana module wallet) | solana |
-| custom | `extra_wallets` DB config (label, chain, address) | any |
+## Wallets observed (PUBLIC addresses DERIVED from the secrets-managed private keys)
+Each address is computed from its private key (resolved via `security/secrets_manager`)
+so the observed wallet can never drift from the actual signer. The key is read
+ONLY to derive its public address — this module never signs, never transfers,
+never persists the key. The env address column is a **fallback only** (fresh
+install / key not yet loaded).
+| Group | Derived from (secrets_manager) | Env fallback | Chains |
+|---|---|---|---|
+| `evm` | `PRIVATE_KEY` → `eth_account` address (shared EVM EOA: DEX/Arb/AI) | `WALLET_ADDRESS` | `evm_chains` config (default ethereum,arbitrum,base) |
+| `dex_solana` | `SOLANA_PRIVATE_KEY` → solders pubkey | `SOLANA_WALLET` | solana |
+| `solana_module` | `SOLANA_MODULE_PRIVATE_KEY` → solders pubkey | `SOLANA_MODULE_WALLET` | solana |
+| custom | — | `extra_wallets` DB config (label, chain, address) | any |
 
 RPC URLs come ONLY from `config/pool_engine.PoolEngine.get_endpoint('<CHAIN>_RPC')`
 with `report_success` / `report_failure` / `report_rate_limit` after every read
@@ -76,11 +81,12 @@ treasury ALERTS land there, not only failures).
 Fail-soft everywhere: RPC error/429 → that chain is skipped and reported to
 pool_engine; missing ledger table/column → that table is skipped; missing
 config → observe-safe code defaults. No paid LLM. Writes ONLY
-`treasury_snapshots` and its own logs. Never imports an executor, never reads
-`PRIVATE_KEY`/`SOLANA_PRIVATE_KEY`/`SOLANA_MODULE_PRIVATE_KEY`, never calls
-`security/encryption` decrypt paths.
+`treasury_snapshots` and its own logs. Never imports an executor. It resolves
+`PRIVATE_KEY`/`SOLANA_PRIVATE_KEY`/`SOLANA_MODULE_PRIVATE_KEY` via
+`security/secrets_manager` ONLY to DERIVE the public address (`eth_account` /
+solders pubkey) — it never signs, never transfers, and never persists the key.
 
-## Orchestrator wiring still needed (NOT done here — file ownership)
-- `main.py`: launch `modules/treasury/main_treasury.py` when `TREASURY_MODULE_ENABLED=true`.
+## Orchestrator wiring (DONE)
+- `main.py`: registered — launches `modules/treasury/main_treasury.py` when `TREASURY_MODULE_ENABLED=true` (module_key `treasury`, in `needs_database`).
 - `.env.example`: `TREASURY_MODULE_ENABLED=false`, `TREASURY_HEALTH_PORT=8093`.
-- Root `CLAUDE.md` module table + health-port map (8093 = treasury); dashboard module controls/heartbeat are optional follow-ups.
+- Root `CLAUDE.md` module table + health-port map (8093 = treasury) updated.

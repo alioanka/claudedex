@@ -108,6 +108,18 @@ async def main() -> None:
             user=db_user, password=db_pass, min_size=1, max_size=2,
         )
         logger.info("   DB pool connected")
+        # Initialize the shared PoolEngine with this DB pool so the public-RPC
+        # fallback resolves from the DB rpc_api_pool table (dashboard
+        # /settings/rpc-api), not .env. In caller processes the gateway reuses
+        # the caller's already-initialized singleton; this covers direct use.
+        try:
+            from config.pool_engine import PoolEngine
+            rpc = await PoolEngine.get_instance()
+            if not rpc.initialized:
+                await rpc.initialize(pool)
+            logger.info("   PoolEngine connected (DB-sourced RPC)")
+        except Exception as pe:
+            logger.warning("PoolEngine init failed (fail-soft to .env RPC): %s", pe)
     except Exception as exc:
         logger.warning("asyncpg unavailable — liveness-only mode: %s", exc)
 

@@ -131,6 +131,19 @@ async def main():
         logger.error(f"   Database connection failed: {e}. Exiting.")
         return
 
+    # Connect the shared PoolEngine ONCE with this subprocess's DB pool so
+    # get_endpoint() reads RPC URLs from the DB rpc_api_pool table (set via the
+    # dashboard /settings/rpc-api page). Without this the engine would fall back
+    # to .env RPC URLs. READ-ONLY use (endpoint selection + health reports).
+    try:
+        from config.pool_engine import PoolEngine
+        rpc = await PoolEngine.get_instance()
+        if not rpc.initialized:
+            await rpc.initialize(db_pool)
+        logger.info("   PoolEngine connected (DB-sourced RPC) for clmm_lp")
+    except Exception as exc:
+        logger.warning("PoolEngine init failed (fail-soft to .env RPC): %s", exc)
+
     config = await load_config(db_pool)
     logger.info(f"   Loaded {len(config)} clmm_lp settings from database")
     # DB dry_run row (if present) takes precedence over env resolution.

@@ -104,23 +104,80 @@ def gas_floor_for(cfg: dict, chain: str) -> float:
 
 # ───────────────────────────── wallet discovery ─────────────────────────────
 
+def _derive_evm_address() -> Optional[str]:
+    """Public EVM address DERIVED from the secrets-managed PRIVATE_KEY. Reads the
+    key only to compute its public address — never signs, never persists it.
+    Fail-soft -> None."""
+    try:
+        from security.secrets_manager import secrets
+        pk = (secrets.get('PRIVATE_KEY') or '').strip()
+        if not pk or pk.lower().startswith('your'):
+            return None
+        from eth_account import Account
+        return Account.from_key(pk).address
+    except Exception as exc:
+        logger.debug("EVM address derivation failed (fail-soft): %s", exc)
+        return None
+
+
+def _solana_pubkey_from_secret(raw: str) -> Optional[str]:
+    """Derive a Solana pubkey string from a secret in base58 or JSON-array form."""
+    raw = (raw or '').strip()
+    if not raw or raw.lower().startswith('your'):
+        return None
+    from solders.keypair import Keypair
+    if raw.startswith('['):
+        kp = Keypair.from_bytes(bytes(json.loads(raw)))
+    else:
+        import base58
+        kp = Keypair.from_bytes(base58.b58decode(raw))
+    return str(kp.pubkey())
+
+
+def _derive_solana_address(secret_key_name: str) -> Optional[str]:
+    """Public Solana address DERIVED from a secrets-managed private key. Fail-soft."""
+    try:
+        from security.secrets_manager import secrets
+        return _solana_pubkey_from_secret(secrets.get(secret_key_name) or '')
+    except Exception as exc:
+        logger.debug("Solana address derivation (%s) failed (fail-soft): %s",
+                     secret_key_name, exc)
+        return None
+
+
 def discover_wallets(cfg: dict) -> List[dict]:
-    """Public addresses from env (set by the operator next to the encrypted
-    keys) + cfg extra_wallets. We only ever READ addresses — never keys."""
+    """Wallet PUBLIC addresses are DERIVED from the secrets-managed private keys
+    (PRIVATE_KEY / SOLANA_PRIVATE_KEY / SOLANA_MODULE_PRIVATE_KEY) so the observed
+    address can never drift from the actual signer. The key is read ONLY to
+    compute its public address — this module never signs, never transfers, never
+    persists the key. A stored env address is used ONLY as a fallback when the PK
+    is unavailable (fresh install / key not yet loaded). + cfg extra_wallets."""
     wallets: List[dict] = []
     chains = cfg.get("evm_chains", "ethereum,arbitrum,base")
     if isinstance(chains, str):
         chains = [c.strip().lower() for c in chains.split(",") if c.strip()]
 
-    evm_addr = (os.getenv("WALLET_ADDRESS") or "").strip()
-    if evm_addr.startswith("0x") and len(evm_addr) == 42:
+    # EVM: derive from PRIVATE_KEY; env WALLET_ADDRESS is fallback only.
+    evm_addr = _derive_evm_address()
+    if not evm_addr:
+        fb = (os.getenv("WALLET_ADDRESS") or "").strip()
+        if fb.startswith("0x") and len(fb) == 42 and not fb.lower().startswith("your"):
+            evm_addr = fb
+    if evm_addr:
         for chain in chains:
             wallets.append({"group": "evm", "chain": chain, "address": evm_addr})
 
-    for group, env_var in (("dex_solana", "SOLANA_WALLET"),
-                           ("solana_module", "SOLANA_MODULE_WALLET")):
-        addr = (os.getenv(env_var) or "").strip()
-        if addr and not addr.lower().startswith("your") and 32 <= len(addr) <= 44:
+    # Solana: derive from each private key; env address is fallback only.
+    for group, secret_name, env_var in (
+        ("dex_solana", "SOLANA_PRIVATE_KEY", "SOLANA_WALLET"),
+        ("solana_module", "SOLANA_MODULE_PRIVATE_KEY", "SOLANA_MODULE_WALLET"),
+    ):
+        addr = _derive_solana_address(secret_name)
+        if not addr:
+            fb = (os.getenv(env_var) or "").strip()
+            if fb and not fb.lower().startswith("your") and 32 <= len(fb) <= 44:
+                addr = fb
+        if addr:
             wallets.append({"group": group, "chain": "solana", "address": addr})
 
     extra = cfg.get("extra_wallets", [])
