@@ -769,6 +769,14 @@ class TradingBotApplication:
             except Exception as e:
                 self.logger.warning(f"Could not pre-load credentials: {e}")
 
+            # The shared TradingBotEngine re-instantiates StructuredLogger in
+            # its __init__ (core/engine.py), which RESETS the root logger's file
+            # handlers. Without a log_dir it defaults to repo-root logs/, so the
+            # engine's logs (the bulk) split away from main_dex's logs/dex_trading
+            # setup and TradingBot_errors.log lands at the root. Pass the DEX log
+            # dir through so the engine writes alongside the rest of this module.
+            nested_config.setdefault('logging', {})['log_dir'] = 'logs/dex_trading'
+
             # --- Pass ConfigManager and RPC URLs to the engine ---
             # Reuse the PoolEngine-first chain_rpc_urls dict built earlier
             # (around L500-525) rather than re-scanning os.environ here.

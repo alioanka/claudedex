@@ -102,9 +102,12 @@ class PredictionResult:
 class LSTMPricePredictor(nn.Module):
     """LSTM model for price movement prediction"""
     
-    def __init__(self, input_dim: int = 150, hidden_dim: int = 256, num_layers: int = 3, dropout: float = 0.3):
+    def __init__(self, input_dim: int = 82, hidden_dim: int = 256, num_layers: int = 3, dropout: float = 0.3):
+        # input_dim defaults to the canonical 82-feature contract
+        # (ENSEMBLE_FEATURE_NAMES). Must match extract_features() / the fitted
+        # scaler width, or load_state_dict on a trained checkpoint mismatches.
         super().__init__()
-        
+
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         
@@ -159,9 +162,11 @@ class LSTMPricePredictor(nn.Module):
 class TransformerPredictor(nn.Module):
     """Transformer model for pattern recognition"""
     
-    def __init__(self, input_dim: int = 150, d_model: int = 256, nhead: int = 8, num_layers: int = 4):
+    def __init__(self, input_dim: int = 82, d_model: int = 256, nhead: int = 8, num_layers: int = 4):
+        # input_dim defaults to the canonical 82-feature contract — see
+        # LSTMPricePredictor note above.
         super().__init__()
-        
+
         self.input_projection = nn.Linear(input_dim, d_model)
         self.positional_encoding = nn.Parameter(torch.randn(1, 100, d_model))
         
@@ -347,23 +352,29 @@ class EnsemblePredictor:
             else:
                 self.models['gradient_boosting'] = self._create_gradient_boosting_model()
                 
-            # LSTM
+            # LSTM — a stale/incompatible checkpoint (e.g. trained on a
+            # different feature width) must NOT crash the whole ensemble load.
+            # Fall back to a freshly-initialized model and keep going.
+            self.models['lstm'] = LSTMPricePredictor()
             lstm_path = self.model_dir / "lstm_model.pt"
             if lstm_path.exists():
-                self.models['lstm'] = LSTMPricePredictor()
-                self.models['lstm'].load_state_dict(torch.load(lstm_path))
-                self.models['lstm'].eval()
-            else:
-                self.models['lstm'] = LSTMPricePredictor()
-                
-            # Transformer
+                try:
+                    self.models['lstm'].load_state_dict(torch.load(lstm_path))
+                    self.models['lstm'].eval()
+                except Exception as e:
+                    print(f"LSTM checkpoint incompatible ({e}); using fresh LSTM")
+                    self.models['lstm'] = LSTMPricePredictor()
+
+            # Transformer — same fail-soft policy.
+            self.models['transformer'] = TransformerPredictor()
             transformer_path = self.model_dir / "transformer_model.pt"
             if transformer_path.exists():
-                self.models['transformer'] = TransformerPredictor()
-                self.models['transformer'].load_state_dict(torch.load(transformer_path))
-                self.models['transformer'].eval()
-            else:
-                self.models['transformer'] = TransformerPredictor()
+                try:
+                    self.models['transformer'].load_state_dict(torch.load(transformer_path))
+                    self.models['transformer'].eval()
+                except Exception as e:
+                    print(f"Transformer checkpoint incompatible ({e}); using fresh Transformer")
+                    self.models['transformer'] = TransformerPredictor()
                 
             # Isolation Forest for anomaly detection
             iso_path = self.model_dir / "isolation_forest.pkl"
@@ -395,6 +406,30 @@ class EnsemblePredictor:
             print(f"Error loading models: {e}")
             # Initialize with default models if loading fails
             self._initialize_default_models()
+
+    def _initialize_default_models(self) -> None:
+        """Fail-soft fallback: build every model fresh (untrained) so the
+        ensemble object is structurally complete even when artifacts are
+        missing or unreadable. The scaler stays an unfitted RobustScaler — at
+        inference `_predict_from_features` raises NotFittedError, which
+        `predict_decoupled` catches and degrades to the neutral result, so the
+        engine's `_is_trustworthy_ml_result` rejects it and uses the heuristic
+        fallback (see ml/CLAUDE.md). No crash, no fabricated confident signal.
+        """
+        self.models['xgboost_rug'] = self._create_xgboost_model()
+        self.models['xgboost_pump'] = self._create_xgboost_model()
+        self.models['lightgbm_rug'] = self._create_lightgbm_model()
+        self.models['lightgbm_pump'] = self._create_lightgbm_model()
+        self.models['random_forest'] = self._create_random_forest_model()
+        self.models['gradient_boosting'] = self._create_gradient_boosting_model()
+        self.models['lstm'] = LSTMPricePredictor()
+        self.models['transformer'] = TransformerPredictor()
+        self.models['isolation_forest'] = IsolationForest(
+            contamination=0.1, random_state=42
+        )
+        # Unfitted scaler -> inference degrades to heuristic fallback safely.
+        self.scaler = RobustScaler()
+        self.feature_names = []
 
     # Eligible model names for AI-Q-05 calibration. Class-level so the
     # loader / persist helper / inference path stay in sync.
