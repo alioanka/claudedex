@@ -2989,8 +2989,34 @@ class DashboardEndpoints:
         },
     }
 
+    # ===== Trading modules that reuse the GENERIC data panel =====
+    # Some trading modules have no bespoke dashboard and intentionally point
+    # their sidebar "panel" link at /module/<key> (the same generic panel the
+    # aux modules use). They must NOT live in _AUX_MODULES — that registry
+    # drives the "Intelligence & Ops" aux overview and the /help aux list, and
+    # these modules are already listed as TRADING modules (_HELP_TRADING_MODULES
+    # / _RUNTIME_STATUS_MODULES). Keep them here so /module/<key> and
+    # /api/module-data/<key> resolve without double-listing them as aux.
+    _PANEL_TRADING_MODULES = {
+        'polymarket': {
+            'name': 'Polymarket', 'env': 'POLYMARKET_MODULE_ENABLED',
+            'port_env': ('POLYMARKET_HEALTH_PORT', 8089),
+            'config_type': 'polymarket_config', 'gate': True,
+            'tables': ('polymarket_signals', 'polymarket_trades'),
+            'desc': 'Shadow-first prediction markets (YES+NO<1 arb + momentum); '
+                    'LIVE CLOB gated behind shadow_mode=false AND '
+                    'live_execution_enabled=true.',
+            'category': 'Trading',
+        },
+    }
+
     @classmethod
-    def _aux_runtime_spec(cls, key: str):
+    def _panel_module_meta(cls, key: str):
+        """Lookup for the generic data panel: aux modules first, then the
+        trading modules that reuse the generic panel. Returns None if unknown.
+        """
+        return cls._AUX_MODULES.get(key) or cls._PANEL_TRADING_MODULES.get(key)
+
         """Synthesize a _RUNTIME_STATUS_MODULES-shaped spec for an aux
         module so _resolve_module_runtime covers all 16 without 16 bespoke
         entries. Port probe is authoritative (every aux module binds a
@@ -3217,7 +3243,7 @@ class DashboardEndpoints:
         Intelligence & Ops module's whitelisted output tables, plus its
         honest runtime badge. Entirely fail-soft."""
         key = (request.match_info.get('module', '') or '').lower()
-        meta = self._AUX_MODULES.get(key)
+        meta = self._panel_module_meta(key)
         if not meta:
             return web.json_response(
                 {'success': False, 'error': f'unknown module: {key}'}, status=404)
@@ -3298,7 +3324,7 @@ class DashboardEndpoints:
         """GET /module/{module} — generic read-only data/status panel for
         an Intelligence & Ops module."""
         key = (request.match_info.get('module', '') or '').lower()
-        meta = self._AUX_MODULES.get(key)
+        meta = self._panel_module_meta(key)
         if not meta:
             return web.HTTPFound('/modules')
         template = self.jinja_env.get_template('module_panel.html')
