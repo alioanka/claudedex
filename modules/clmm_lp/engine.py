@@ -100,8 +100,16 @@ class ClmmLpEngine:
         # Never trust a realized vol BELOW the default with sparse data —
         # underestimating vol overstates net APR (the doc's measurement trap).
         floor = float(self.config.get('default_annual_vol', 0.8))
+        # Cap absurd readings: a noisy/erroneous price series (e.g. a thin Solana
+        # pool whose DexScreener price jumps) can yield vol > 20 (2000%+),
+        # producing nonsense net-APR like -192417%. Clamp to a sane ceiling so
+        # the rejection reason stays interpretable. Default 5.0 = 500% annualized
+        # (already extreme); operator-tunable via max_annual_vol.
+        ceiling = float(self.config.get('max_annual_vol', 5.0))
         if len(self._vol_samples.get(key, [])) < 100 and vol < floor:
             return {'vol': floor, 'source': 'default_floor'}
+        if vol > ceiling:
+            return {'vol': ceiling, 'source': 'realized_capped'}
         return {'vol': vol, 'source': 'realized'}
 
     async def _open_count(self) -> int:

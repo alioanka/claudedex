@@ -38,6 +38,10 @@ class HttpFetcher:
         self._request_times: List[float] = []
         self.last_error: Optional[str] = None
         self.last_fetch_at: Optional[float] = None
+        # URLs that returned a HARD-unavailable status (payment/forbidden/gone):
+        # warn ONCE, then skip + log at DEBUG so a dead free source (e.g.
+        # DefiLlama emissions now 402) can't spam the log every cycle.
+        self._dead_urls: set = set()
 
     async def _throttle(self) -> None:
         now = time.monotonic()
@@ -55,6 +59,13 @@ class HttpFetcher:
         except ImportError:
             self.last_error = "aiohttp not installed"
             return None
+        # Skip URLs already known to be hard-unavailable (don't spend the request
+        # or re-warn every cycle). Operator can re-enable by restarting once the
+        # source is back, or disable the source via its config flag.
+        if url in self._dead_urls:
+            self.last_error = f"skipped (previously hard-unavailable): {url}"
+            logger.debug("skip dead source %s", url)
+            return None
         await self._throttle()
         try:
             timeout = aiohttp.ClientTimeout(total=self.timeout_s)
@@ -64,7 +75,19 @@ class HttpFetcher:
                 async with session.get(url, params=params or {}) as resp:
                     if resp.status != 200:
                         self.last_error = f"HTTP {resp.status} on {url}"
-                        logger.warning("fetch %s -> HTTP %s", url, resp.status)
+                        # 402/403/404/410 = the source won't recover on retry
+                        # (payment/forbidden/gone) — warn ONCE then go quiet.
+                        if resp.status in (401, 402, 403, 404, 410):
+                            if url not in self._dead_urls:
+                                self._dead_urls.add(url)
+                                logger.warning(
+                                    "fetch %s -> HTTP %s (hard-unavailable; "
+                                    "suppressing further attempts this run)",
+                                    url, resp.status)
+                            else:
+                                logger.debug("fetch %s -> HTTP %s", url, resp.status)
+                        else:
+                            logger.warning("fetch %s -> HTTP %s", url, resp.status)
                         return None
                     payload = await resp.json(content_type=None)
         except asyncio.CancelledError:

@@ -80,7 +80,14 @@ def detect_stable_depeg(symbol: str, prices: List[float],
     sev = _grade(dev_bps, warn_bps, critical_bps)
     if sev is None:
         return None
-    if len(clean) < 2 and sev == SEVERITY_CRITICAL:
+    # SINGLE-SOURCE noise filter: with only one feed, a small deviation
+    # (e.g. an illiquid Coinbase DAI-USD print 75bps off) is far more likely a
+    # feed artifact than a real depeg, and it WARN-spammed every tick. Require a
+    # single source to clear the CRITICAL threshold before it fires at all, and
+    # still cap it at WARN (one feed alone never escalates to CRITICAL).
+    if len(clean) < 2:
+        if dev_bps < critical_bps:
+            return None
         sev = SEVERITY_WARN
     return Anomaly(
         detector=DETECTOR_STABLE_DEPEG, subject=symbol, severity=sev,

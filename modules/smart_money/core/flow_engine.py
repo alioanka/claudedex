@@ -102,6 +102,14 @@ async def _ingest(conn, session, rpc_pool, cfg: dict) -> int:
                 session, rpc_pool, chain, pairs, _CURSORS.get(chain), cfg)
             if cursor is not None:
                 _CURSORS[chain] = cursor
+            # Diagnostic: surface WHERE a zero comes from — 0 pairs means the
+            # DexScreener liquidity/volume filter is too tight (or the search
+            # returned nothing); pairs>0 but 0 events usually means the RPC
+            # rejects/limits eth_getLogs (free Ankr caps log ranges) — point
+            # smart_money at a getLogs-capable RPC (Alchemy/dRPC) in /settings/rpc-api.
+            logger.info("ingest[%s]: pairs=%d swaps=%d (>= $%s)",
+                        chain, len(pairs), len(events),
+                        cfg.get("min_event_usd", 2000))
             for e in events:
                 res = await conn.execute(
                     "INSERT INTO smart_money_wallet_events "
