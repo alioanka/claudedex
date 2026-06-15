@@ -3430,10 +3430,12 @@ class DashboardEndpoints:
                         await conn.execute(
                             "UPDATE param_proposals SET status = 'dismissed' WHERE id = $1", pid)
                         return web.json_response({'success': True, 'status': 'dismissed'})
-                    # approve = apply through the audited typed config writer
+                    # approve = apply through the audited typed config writer.
+                    # Reuse THIS handler's connection (conn) so we don't nest a
+                    # second pool.acquire() — that nesting 500'd under DB pressure.
                     result = await self._do_update_settings(
                         row['config_type'], {row['key']: row['proposed_value']},
-                        user, request.remote)
+                        user, request.remote, conn=conn)
                     if result['errors'] or (not result['updated'] and result['skipped']):
                         return web.json_response({
                             'success': False,
@@ -8950,17 +8952,24 @@ class DashboardEndpoints:
             logger.error(f"Error updating settings: {e}", exc_info=True)
             return web.json_response({'error': str(e)}, status=500)
 
-    async def _do_update_settings(self, config_type, updates, user, remote):
+    async def _do_update_settings(self, config_type, updates, user, remote, conn=None):
         """Shared typed-validated config_settings writer (generic settings
         endpoints). Returns {'updated': [...], 'skipped': [...],
-        'errors': {...}, 'saved': {...}}; raises only on infra failure."""
+        'errors': {...}, 'saved': {...}}; raises only on infra failure.
+
+        When `conn` is provided, the caller's existing pooled connection is
+        reused instead of acquiring a new one — this avoids a nested
+        pool.acquire() (which can deadlock a small pool / fail under connection
+        pressure) when a handler that already holds a connection (e.g. the
+        proposal-approval path) calls this writer."""
         # NOTE: both audit columns are VARCHAR — bind strings.
         changed_by = str(user.id) if user and getattr(user, 'id', None) is not None else None
         username = getattr(user, 'username', None) or 'unknown'
 
         updated, skipped, errors = [], [], {}
         saved = {}
-        async with self.db_pool.acquire() as conn:
+
+        async def _run(conn):
             async with conn.transaction():
                 for key, value in updates.items():
                     # Get the current value for audit log
@@ -9016,6 +9025,12 @@ class DashboardEndpoints:
                         saved[r['key']] = _coerce_db_value(r['value'], r['value_type'])
                     except Exception:
                         saved[r['key']] = r['value']
+
+        if conn is not None:
+            await _run(conn)
+        else:
+            async with self.db_pool.acquire() as own_conn:
+                await _run(own_conn)
 
         return {'updated': updated, 'skipped': skipped,
                 'errors': errors, 'saved': saved}

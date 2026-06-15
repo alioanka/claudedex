@@ -1055,6 +1055,29 @@
                 </ul>
             </li>
 
+            <!-- Polymarket Module (prediction markets; shadow-first) -->
+            <li class="nav-item nav-group">
+                <a href="#" class="nav-group-toggle" data-target="polymarket-menu">
+                    <i class="fas fa-chart-line"></i>
+                    <span>Polymarket</span>
+                    <i class="fas fa-chevron-down group-arrow"></i>
+                </a>
+                <ul class="nav-submenu" id="polymarket-menu">
+                    <li class="nav-item {% if page == 'module_polymarket' %}active{% endif %}">
+                        <a href="/module/polymarket">
+                            <i class="fas fa-tachometer-alt"></i>
+                            <span>Signals &amp; Trades</span>
+                        </a>
+                    </li>
+                    <li class="nav-item {% if page == 'config_polymarket_config' %}active{% endif %}">
+                        <a href="/config/polymarket_config">
+                            <i class="fas fa-cog"></i>
+                            <span>Settings</span>
+                        </a>
+                    </li>
+                </ul>
+            </li>
+
             <!-- Financial Advisor Module -->
             <li class="nav-item nav-group">
                 <a href="#" class="nav-group-toggle" data-target="advisor-menu">

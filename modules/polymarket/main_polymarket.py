@@ -295,7 +295,7 @@ async def main():
         return
     try:
         import asyncpg
-        db_pool = await asyncpg.create_pool(db_url)
+        db_pool = await asyncpg.create_pool(db_url, min_size=1, max_size=3)
         logger.info("   Database connected")
     except Exception as e:
         logger.error(f"   Database connection failed: {e}. Exiting.")

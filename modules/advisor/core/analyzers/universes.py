@@ -39,9 +39,22 @@ Self-test: python -m modules.advisor.core.analyzers.universes
 from __future__ import annotations
 
 import logging
+import re
 from typing import List
 
 logger = logging.getLogger("advisor.universes")
+
+# A well-formed BIST equity ticker: letter-led, 3-6 chars, uppercase
+# letters/digits only (THYAO, SASA, GARAN, A1CAP). This deliberately rejects the
+# non-equity rows Fonoloji's /stocks/list returns — option codes (030E0626P1600,
+# digit-led + long), ISINs (0K0060615755), Bloomberg codes (1211 HK EQUITY),
+# and fund names (100 TL PORSFOY) — which all start with a digit or contain a
+# space/symbol. (Fonoloji support flagged ~70% of chart calls were 404 from these.)
+_BIST_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,5}$")
+
+
+def _valid_bist_ticker(sym: str) -> bool:
+    return bool(_BIST_TICKER_RE.match((sym or "").strip().upper()))
 
 # ---------------------------------------------------------------------------
 # BIST constituent lists — bare tickers (no .IS). Snapshot 2026-06; maintained.
@@ -146,7 +159,18 @@ def _fonoloji_bist_list(config: dict) -> List[str]:
                 s = s[:-3]
             if s:
                 out.append(s)
-    return out
+    # Fonoloji's /stocks/list returns the WHOLE TEFAS/BIST universe — funds,
+    # warrants, option codes (030E0626P1600), ISINs (0K0060615755), and broken
+    # fund names (100 TL PORSFOY) — which 404 the per-stock chart endpoint and
+    # flood the BIST analyzer (~70% of calls per Fonoloji's own advice). Keep
+    # only well-formed equity tickers: a letter-led short alnum code (THYAO,
+    # A1CAP). Everything garbage starts with a digit or has spaces/symbols.
+    cleaned = [s for s in out if _valid_bist_ticker(s)]
+    if len(cleaned) != len(out):
+        logger.info("[universes] Fonoloji list: kept %d valid BIST tickers, "
+                    "dropped %d non-equity rows (funds/options/ISINs).",
+                    len(cleaned), len(out) - len(cleaned))
+    return cleaned
 
 
 def expand_bist_universe(config: dict, watchlist: List[str]) -> List[str]:

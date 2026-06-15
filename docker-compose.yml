@@ -22,6 +22,7 @@ services:
     image: timescale/timescaledb:latest-pg14
     container_name: trading-postgres
     restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
     environment:
       POSTGRES_DB: tradingbot
       POSTGRES_USER_FILE: /run/secrets/db_user

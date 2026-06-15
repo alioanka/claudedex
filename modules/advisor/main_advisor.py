@@ -195,7 +195,7 @@ class AdvisorApplication:
             return
 
         try:
-            self.db_pool = await asyncpg.create_pool(db_url)
+            self.db_pool = await asyncpg.create_pool(db_url, min_size=1, max_size=3)
             logger.info("  DB connected.")
         except Exception as exc:
             logger.error(f"  DB connection failed: {exc}. Exiting.")

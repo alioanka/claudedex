@@ -109,9 +109,11 @@ class BaseAnalyzer(ABC):
         """
         Convenience factory for a runtime ERROR result.
         """
-        self.logger.error(
-            f"Analyzer error for {symbol}/{horizon.value}: {exc}",
-            exc_info=True,
+        # These are fail-soft DATA-availability errors (e.g. a symbol with no
+        # data on any source), not code bugs — log a one-line WARNING without
+        # the useless 'NoneType: None' traceback that flooded advisor_errors.log.
+        self.logger.warning(
+            f"Analyzer data error for {symbol}/{horizon.value}: {exc}"
         )
         return AdviceResult(
             market=self.market,

@@ -431,7 +431,7 @@ class SolanaTradingApplication:
                 self.logger.warning("⚠️ No database credentials found - trades will NOT persist across restarts!")
                 return False
 
-            self.db_pool = await asyncpg.create_pool(db_url, min_size=2, max_size=10)
+            self.db_pool = await asyncpg.create_pool(db_url, min_size=1, max_size=5)
             self.logger.info("✅ Database pool initialized")
 
             # Initialize secrets manager with database pool (before any config managers)
