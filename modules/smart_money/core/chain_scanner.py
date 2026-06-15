@@ -33,6 +33,19 @@ BLOCK_SECONDS = {"ethereum": 12.0, "base": 2.0, "arbitrum": 0.3, "bsc": 3.0,
 DEFAULT_SEARCH_QUERY = {"ethereum": "WETH", "base": "WETH", "arbitrum": "WETH",
                         "bsc": "WBNB", "polygon": "WMATIC"}
 
+# Canonical wrapped-native token per chain — the DexScreener token-pools
+# endpoint (/latest/dex/tokens/{addr}) returns the REAL high-liquidity pools for
+# a known token deterministically, unlike the relevance-ranked text /search
+# (which surfaced obscure low-liq "WETH"-named pairs that all failed the
+# liquidity filter -> pairs=0). Operator-overridable via anchor_token_<chain>.
+DEFAULT_ANCHOR_TOKEN = {
+    "ethereum": "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",  # WETH
+    "base":     "0x4200000000000000000000000000000000000006",  # WETH
+    "arbitrum": "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",  # WETH
+    "bsc":      "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",  # WBNB
+    "polygon":  "0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270",  # WMATIC (POL)
+}
+
 _GETLOGS_CHUNK_BLOCKS = 450          # stay under public-RPC getLogs range caps
 _DECIMALS_SELECTOR = "0x313ce567"    # decimals()
 
@@ -56,25 +69,23 @@ def _words(data: str) -> List[str]:
 
 # ───────────────────────────── DexScreener ──────────────────────────────────
 
-async def discover_pairs(session, chain: str, cfg: dict) -> List[dict]:
-    """Top watched pairs for a chain by 24h volume, liquidity-filtered."""
-    query = str(cfg.get(f"search_query_{chain}",
-                        DEFAULT_SEARCH_QUERY.get(chain, "WETH")))
-    min_liq = float(cfg.get("min_pair_liquidity_usd", 100000))
-    min_vol = float(cfg.get("min_pair_volume_24h_usd", 250000))
-    cap = int(cfg.get("watch_pairs_per_chain", 12))
+async def _dexscreener_pairs(session, url: str) -> Tuple[list, Optional[int]]:
+    """GET a DexScreener endpoint; return (pairs_list, http_status_or_None).
+    Fail-soft: ([], status) on non-200, ([], None) on exception."""
     try:
-        async with session.get(f"{DEXSCREENER_BASE}/latest/dex/search",
-                               params={"q": query}, timeout=15) as resp:
+        async with session.get(url, timeout=15) as resp:
             if resp.status != 200:
-                logger.warning("dexscreener search %s -> HTTP %d", chain, resp.status)
-                return []
-            payload = await resp.json()
+                return [], resp.status
+            payload = await resp.json(content_type=None)
     except Exception as exc:
-        logger.warning("dexscreener search %s fail-soft: %s", chain, exc)
-        return []
+        logger.warning("dexscreener fetch fail-soft (%s): %s", url, exc)
+        return [], None
+    return ((payload or {}).get("pairs") or []), 200
+
+
+def _filter_pairs(raw: list, chain: str, min_liq: float, min_vol: float) -> list:
     out = []
-    for p in (payload or {}).get("pairs") or []:
+    for p in raw:
         try:
             if p.get("chainId") != chain:
                 continue
@@ -93,6 +104,45 @@ async def discover_pairs(session, chain: str, cfg: dict) -> List[dict]:
         except Exception:
             continue
     out.sort(key=lambda x: x["volume_h24"], reverse=True)
+    return out
+
+
+async def discover_pairs(session, chain: str, cfg: dict) -> List[dict]:
+    """Top watched pairs for a chain by 24h volume, liquidity-filtered.
+
+    PRIMARY: the token-pools endpoint for the chain's wrapped-native anchor
+    (/latest/dex/tokens/{addr}) — deterministic, returns the real high-liquidity
+    pools. FALLBACK: the relevance-ranked text /search (kept for chains without
+    a configured anchor). The previous search-only path returned pairs=0 because
+    the search surfaced obscure low-liq pairs that all failed the liq filter."""
+    min_liq = float(cfg.get("min_pair_liquidity_usd", 100000))
+    min_vol = float(cfg.get("min_pair_volume_24h_usd", 250000))
+    cap = int(cfg.get("watch_pairs_per_chain", 12))
+
+    anchor = str(cfg.get(f"anchor_token_{chain}",
+                         DEFAULT_ANCHOR_TOKEN.get(chain, ""))).strip()
+    out: list = []
+    if anchor:
+        raw, status = await _dexscreener_pairs(
+            session, f"{DEXSCREENER_BASE}/latest/dex/tokens/{anchor}")
+        if status not in (200, None):
+            logger.warning("dexscreener tokens %s -> HTTP %d", chain, status)
+        out = _filter_pairs(raw, chain, min_liq, min_vol)
+        if out:
+            logger.debug("discover_pairs[%s]: %d raw -> %d kept (anchor)",
+                         chain, len(raw), len(out))
+            return out[:cap]
+
+    # Fallback: text search (no anchor, or anchor yielded nothing).
+    query = str(cfg.get(f"search_query_{chain}",
+                        DEFAULT_SEARCH_QUERY.get(chain, "WETH")))
+    raw, status = await _dexscreener_pairs(
+        session, f"{DEXSCREENER_BASE}/latest/dex/search?q={query}")
+    if status not in (200, None):
+        logger.warning("dexscreener search %s -> HTTP %d", chain, status)
+    out = _filter_pairs(raw, chain, min_liq, min_vol)
+    logger.debug("discover_pairs[%s]: %d raw -> %d kept (search fallback)",
+                 chain, len(raw), len(out))
     return out[:cap]
 
 
