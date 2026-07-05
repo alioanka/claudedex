@@ -1,0 +1,4 @@
+2026-06-15 21:48:46,634 - ExecutionGatewayModule - INFO - Execution Gateway diagnostics starting (library lives in modules/execution_gateway/gateway.py; this process never sends)
+2026-06-15 21:48:47,624 - ExecutionGatewayModule - INFO -    DB pool connected
+2026-06-15 21:48:49,065 - ExecutionGatewayModule - INFO -    PoolEngine connected (DB-sourced RPC)
+2026-06-15 21:48:49,505 - ExecutionGatewayModule - INFO -    Health server on :8099

@@ -1,0 +1,1230 @@
+2026-06-16 00:04:06,647 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Hyperliquid loses Anthropic, OpenAI markets as creator shuts down project
+If America wants to lead in crypto, it must protect the people who build it
+‘Crypto spring’ is here, says one analyst after bitcoin's key signals turn bullish
+Kraken debuts U.S. perpetual futures as crypto derivatives move onshore
+Coinbase's Brian Armstrong says bitcoin may have bottomed at $60,000
+XRP rockets 8% above $1.20 in first major breakout since June selloff
+CoinDesk 20 performance update: Bittensor (TAO) surges 31.9%, leading index higher
+Bitmine adds another $136 million of ether after raising $274 million in preferred stock sale
+Michael Saylor's Strategy acquires another 1,587 bitcoin for $100 million
+
+Respond with valid JSON only.
+2026-06-16 00:04:08,887 - Claude_API - INFO - ✅ Claude API Response (200) | 2.24s | tokens in=410 out=146
+   Raw response: ```json
+{
+  "sentiment": 0.72,
+  "confidence": 0.78,
+  "reasoning": "Mixed signals with net bullish tilt. Positive: Bitcoin technicals turning bullish, major institutional accumulation (Saylor, Bitmine), regulatory progress (Kraken futures), strong altcoin performance (XRP +8%, TAO +31.9%), and optimistic analyst commentary on 'crypto spring.' Negative: Project shutdown (Hyperliquid) signals some market weakness. Strong institutional buying and technical improvements outweigh isolated negative events, supporting moderate-to-strong bullish outlook."
+}
+```
+2026-06-16 00:19:10,222 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Hyperliquid loses Anthropic, OpenAI markets as creator shuts down project
+If America wants to lead in crypto, it must protect the people who build it
+‘Crypto spring’ is here, says one analyst after bitcoin's key signals turn bullish
+Kraken debuts U.S. perpetual futures as crypto derivatives move onshore
+Coinbase's Brian Armstrong says bitcoin may have bottomed at $60,000
+XRP rockets 8% above $1.20 in first major breakout since June selloff
+CoinDesk 20 performance update: Bittensor (TAO) surges 31.9%, leading index higher
+Bitmine adds another $136 million of ether after raising $274 million in preferred stock sale
+Michael Saylor's Strategy acquires another 1,587 bitcoin for $100 million
+
+Respond with valid JSON only.
+2026-06-16 00:19:14,766 - Claude_API - INFO - ✅ Claude API Response (200) | 4.54s | tokens in=410 out=140
+   Raw response: ```json
+{
+  "sentiment": 0.72,
+  "confidence": 0.78,
+  "reasoning": "Mixed signals with net bullish lean. Positive catalysts include bitcoin's technical breakout signals, major institutional accumulation (Saylor, Bitmine), regulatory progress (Kraken futures, onshore movement), and strong altcoin performance (XRP +8%, TAO +31.9%). Negative factor: Hyperliquid project shutdown. Strong institutional buying and technical bullish signals outweigh concerns, suggesting medium-term optimism, though some volatility risks remain."
+}
+```
+2026-06-17 00:04:32,005 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Here is why Strategy's dividend-paying crypto stock is crashing to near-historic lows
+Bitcoin miners' AI pivot faces $50 billion reality check, says VanEck
+U.S. senators urge Treasury not to leave states out of GENIUS Act stablecoin process
+Hyperliquid, Uniswap and Worldcoin buck crypto slump as traders chase AI, DeFi trends
+Coinbase intoduces AI advisor, stock options, and pre-IPO markets in finance push
+Ripple invests in Flutterwave, pushing its stablecoin and XRP Ledger into payments across Africa
+Coinbase to join tokenized stock race with onchain shares, dividend payments
+Binance says its European regulatory application is compliant despite report of Greek rejection
+Ethereum’s biggest protocol overhaul in years moves into its final development stage
+
+Respond with valid JSON only.
+2026-06-17 00:04:34,249 - Claude_API - INFO - ✅ Claude API Response (200) | 2.23s | tokens in=416 out=134
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals dominate. Bullish catalysts include Ethereum's protocol upgrade, Coinbase's expansion into AI/tokenized stocks, Ripple's Africa payments push, and select altcoins outperforming. However, bearish pressures include crypto stock crashes, miners facing AI economics challenges, and regulatory uncertainty (Binance EU issues). Near-term sentiment slightly positive on innovation, but underlying market weakness and regulatory headwinds limit upside conviction."
+}
+```
+2026-06-17 00:19:34,636 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Here is why Strategy's dividend-paying crypto stock is crashing to near-historic lows
+Bitcoin miners' AI pivot faces $50 billion reality check, says VanEck
+U.S. senators urge Treasury not to leave states out of GENIUS Act stablecoin process
+Hyperliquid, Uniswap and Worldcoin buck crypto slump as traders chase AI, DeFi trends
+Coinbase intoduces AI advisor, stock options, and pre-IPO markets in finance push
+Ripple invests in Flutterwave, pushing its stablecoin and XRP Ledger into payments across Africa
+Coinbase to join tokenized stock race with onchain shares, dividend payments
+Binance says its European regulatory application is compliant despite report of Greek rejection
+Ethereum’s biggest protocol overhaul in years moves into its final development stage
+
+Respond with valid JSON only.
+2026-06-17 00:19:36,474 - Claude_API - INFO - ✅ Claude API Response (200) | 1.83s | tokens in=416 out=133
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Bullish catalysts include Ethereum's protocol upgrade progress, institutional adoption (Coinbase's tokenized stocks, Ripple's Africa expansion), and emerging opportunities (AI integration, DeFi trends). However, bearish headwinds include miner profitability concerns ($50B reality check), dividend stock crashes, and regulatory uncertainties (Binance Greek rejection). Overall, moderate optimism tempered by fundamental challenges and regulatory risks."
+}
+```
+2026-06-17 00:34:36,708 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Here is why Strategy's dividend-paying crypto stock is crashing to near-historic lows
+Bitcoin miners' AI pivot faces $50 billion reality check, says VanEck
+U.S. senators urge Treasury not to leave states out of GENIUS Act stablecoin process
+Hyperliquid, Uniswap and Worldcoin buck crypto slump as traders chase AI, DeFi trends
+Coinbase intoduces AI advisor, stock options, and pre-IPO markets in finance push
+Ripple invests in Flutterwave, pushing its stablecoin and XRP Ledger into payments across Africa
+Coinbase to join tokenized stock race with onchain shares, dividend payments
+Binance says its European regulatory application is compliant despite report of Greek rejection
+Ethereum’s biggest protocol overhaul in years moves into its final development stage
+
+Respond with valid JSON only.
+2026-06-17 00:34:38,902 - Claude_API - INFO - ✅ Claude API Response (200) | 2.19s | tokens in=416 out=140
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Positive: Major protocol upgrades (Ethereum), institutional adoption (Coinbase tokenized stocks, AI integration), regulatory progress (Ripple expansion, Binance compliance efforts), and sector rotation into AI/DeFi. Negative: Miner profitability concerns, dividend stock crashes, regulatory scrutiny. Net sentiment leans slightly bullish due to innovation momentum and mainstream integration, but tempered by macroeconomic headwinds and profitability challenges."
+}
+```
+2026-06-18 00:05:09,340 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Kentucky targets prediction markets, puts red state in potential clash with Trump team
+Fidelity joins Wall Street's race to manage stablecoin reserves
+Here is how Coinbase plan to survive the crypto downturn by ditching its reliance on trading fees
+Bitcoin layer-2s face a bear-market reality check
+FIFA wanted Avalanche's blockchain to help curb World Cup ticket scalping. Here's how it's going
+Fed holds rates steady in first decision under new Chairman Kevin Warsh
+Crypto industry aghast at Illinois' new tax on holding or transferring digital assets in state budget
+Crypto Long & Short: The measure of a maturing market
+Moody’s rolls out credit ratings on Solana in tokenized asset push
+
+Respond with valid JSON only.
+2026-06-18 00:05:11,637 - Claude_API - INFO - ✅ Claude API Response (200) | 2.29s | tokens in=383 out=133
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with moderate bullish lean. Positive: Fidelity stablecoin entry signals institutional adoption; Moody's Solana ratings indicate market maturation; Coinbase diversification strategy shows resilience. Negative: Layer-2 bear reality, Illinois tax unfavorable regulation, potential Trump team clash on prediction markets. Fed rate hold neutral. Overall, institutional interest outweighs regulatory headwinds, supporting modest bullish outlook."
+}
+```
+2026-06-19 00:05:39,715 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Ex-Celsius CEO Mashinsky gets U.S. CFTC ban in final resolution with regulator
+U.S. agencies seek stablecoin customer-ID rules akin to banks in new GENIUS Act pitch
+Ethereum Foundation loses another key leader as co-executive director Hsiao-Wei Wang resigns
+Crypto for Advisors: Trading the bitcoin cycle
+Algorand unveils roadmap to achieve quantum resistance by 2028
+CoinDesk 20 performance update: Stellar (XLM) jumps 10% while index declines
+Alchemy's AI-driven identity and payment service gains access to Visa network
+Hive shares jumps 10% on $220m Canada sovereign AI infrastructure deal
+The great rotation: Investors desert the Magnificent 7, crypto for AI bottlenecks
+
+Respond with valid JSON only.
+2026-06-19 00:05:41,793 - Claude_API - INFO - ✅ Claude API Response (200) | 2.07s | tokens in=405 out=130
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with bearish bias. Negative: regulatory pressure (CFTC ban, GENIUS Act stablecoin rules), key leadership loss at Ethereum Foundation, investor rotation away from crypto toward AI. Positive: Algorand quantum roadmap, Alchemy-Visa integration, isolated gains (XLM, Hive). Regulatory scrutiny and talent departure outweigh positive developments. Medium-term outlook cautious."
+}
+```
+2026-06-19 00:20:44,003 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Ex-Celsius CEO Mashinsky gets U.S. CFTC ban in final resolution with regulator
+U.S. agencies seek stablecoin customer-ID rules akin to banks in new GENIUS Act pitch
+Ethereum Foundation loses another key leader as co-executive director Hsiao-Wei Wang resigns
+Crypto for Advisors: Trading the bitcoin cycle
+Algorand unveils roadmap to achieve quantum resistance by 2028
+CoinDesk 20 performance update: Stellar (XLM) jumps 10% while index declines
+Alchemy's AI-driven identity and payment service gains access to Visa network
+Hive shares jumps 10% on $220m Canada sovereign AI infrastructure deal
+The great rotation: Investors desert the Magnificent 7, crypto for AI bottlenecks
+
+Respond with valid JSON only.
+2026-06-19 00:20:46,169 - Claude_API - INFO - ✅ Claude API Response (200) | 2.16s | tokens in=405 out=140
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals dominate. Bearish: regulatory pressure (CFTC ban, stablecoin ID rules), key leadership loss at Ethereum Foundation, and investor rotation away from crypto toward AI. Bullish: positive price action (XLM +10%, Hive +10%), technical innovation (quantum resistance, Alchemy-Visa partnership). Regulatory headwinds and talent departures outweigh gains, suggesting cautious near-term outlook with medium-term uncertainty."
+}
+```
+2026-06-19 00:35:46,415 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Ex-Celsius CEO Mashinsky gets U.S. CFTC ban in final resolution with regulator
+U.S. agencies seek stablecoin customer-ID rules akin to banks in new GENIUS Act pitch
+Ethereum Foundation loses another key leader as co-executive director Hsiao-Wei Wang resigns
+Crypto for Advisors: Trading the bitcoin cycle
+Algorand unveils roadmap to achieve quantum resistance by 2028
+CoinDesk 20 performance update: Stellar (XLM) jumps 10% while index declines
+Alchemy's AI-driven identity and payment service gains access to Visa network
+Hive shares jumps 10% on $220m Canada sovereign AI infrastructure deal
+The great rotation: Investors desert the Magnificent 7, crypto for AI bottlenecks
+
+Respond with valid JSON only.
+2026-06-19 00:35:49,088 - Claude_API - INFO - ✅ Claude API Response (200) | 2.66s | tokens in=405 out=134
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with slight bearish lean. Regulatory pressures (CFTC ban, stablecoin rules) and leadership departures (Ethereum Foundation) create headwinds. However, positive developments in Algorand's quantum roadmap, Alchemy's Visa integration, and selective asset gains (XLM, Hive) provide moderate support. The mention of investor rotation away from crypto toward AI suggests near-term weakness but not fundamental collapse."
+}
+```
+2026-06-20 00:06:15,647 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Schwab to join prediction markets race with S&P 500 event-based options: WSJ
+GoMining challenges Jack Dorsey's Square with payments system designed around bitcoin
+Franklin Templeton proposes new ETFs that turn corporate dividends into bitcoin
+Smart-contract and DeFi coins lead losses as bitcoin wilts for 4th straight day
+Digital credit market hit by huge selloff as Strive CEO blames leverage liquidations
+Microsoft found malware that hijacks crypto wallets and spreads through USB sticks
+XRP falls 3% after losing $1.15 support as breakout attempt fades
+Live markets: Bitcoin under pressure as Saylor comments on STRC selloff
+Bitcoin traders load up on bearish bets all the way down to $52,000
+
+Respond with valid JSON only.
+2026-06-20 00:06:17,583 - Claude_API - INFO - ✅ Claude API Response (200) | 1.93s | tokens in=394 out=128
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with bearish momentum dominating near-term. Negative: Bitcoin's 4-day decline, wallet malware threat, digital credit selloff, and bearish trader positioning create downward pressure. Positive: Institutional adoption (Schwab, Franklin Templeton, Microsoft integration) and payment innovation suggest long-term bullish infrastructure development. Overall, short-term weakness outweighs medium-term positive fundamentals."
+}
+```
+2026-06-20 00:21:17,971 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Schwab to join prediction markets race with S&P 500 event-based options: WSJ
+GoMining challenges Jack Dorsey's Square with payments system designed around bitcoin
+Franklin Templeton proposes new ETFs that turn corporate dividends into bitcoin
+Smart-contract and DeFi coins lead losses as bitcoin wilts for 4th straight day
+Digital credit market hit by huge selloff as Strive CEO blames leverage liquidations
+Microsoft found malware that hijacks crypto wallets and spreads through USB sticks
+XRP falls 3% after losing $1.15 support as breakout attempt fades
+Live markets: Bitcoin under pressure as Saylor comments on STRC selloff
+Bitcoin traders load up on bearish bets all the way down to $52,000
+
+Respond with valid JSON only.
+2026-06-20 00:21:19,982 - Claude_API - INFO - ✅ Claude API Response (200) | 2.01s | tokens in=394 out=148
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with net bearish tilt. Negative: Bitcoin declining 4 days, major selloff in digital credit, malware threats, bearish trader positioning, and XRP breakdown. Positive: Institutional adoption (Schwab, Franklin Templeton, Microsoft interest) and innovation (GoMining, DeFi). However, short-term price weakness and liquidation cascades outweigh long-term bullish catalysts. Medium-term institutional interest is credible but overshadowed by immediate bearish momentum."
+}
+```
+2026-06-20 00:36:20,303 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Schwab to join prediction markets race with S&P 500 event-based options: WSJ
+GoMining challenges Jack Dorsey's Square with payments system designed around bitcoin
+Franklin Templeton proposes new ETFs that turn corporate dividends into bitcoin
+Smart-contract and DeFi coins lead losses as bitcoin wilts for 4th straight day
+Digital credit market hit by huge selloff as Strive CEO blames leverage liquidations
+Microsoft found malware that hijacks crypto wallets and spreads through USB sticks
+XRP falls 3% after losing $1.15 support as breakout attempt fades
+Live markets: Bitcoin under pressure as Saylor comments on STRC selloff
+Bitcoin traders load up on bearish bets all the way down to $52,000
+
+Respond with valid JSON only.
+2026-06-20 00:36:22,227 - Claude_API - INFO - ✅ Claude API Response (200) | 1.92s | tokens in=394 out=130
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with moderate bearish tilt. Negative: Bitcoin's 4-day decline, wallet malware threat, digital credit selloff, XRP breakdown, and bearish trader positioning are concerning. Positive: Institutional adoption (Schwab, Franklin Templeton, Microsoft integration interest) and Bitcoin payment innovations show long-term confidence. Near-term technical weakness outweighs bullish fundamentals, creating cautious bearish outlook."
+}
+```
+2026-06-21 00:06:53,367 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+AI is making crypto security cheaper, faster and harder to ignore
+How STRC lost its par: The timeline behind Strategy's preferred-stock meltdown
+Schwab to join prediction markets race with S&P 500 event-based options: WSJ
+GoMining challenges Jack Dorsey's Square with payments system designed around bitcoin
+Franklin Templeton proposes new ETFs that turn corporate dividends into bitcoin
+Smart-contract and DeFi coins lead losses as bitcoin wilts for 4th straight day
+Digital credit market hit by huge selloff as Strive CEO blames leverage liquidations
+Microsoft found malware that hijacks crypto wallets and spreads through USB sticks
+XRP falls 3% after losing $1.15 support as breakout attempt fades
+
+Respond with valid JSON only.
+2026-06-21 00:06:55,494 - Claude_API - INFO - ✅ Claude API Response (200) | 2.11s | tokens in=390 out=147
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Bullish factors: AI security improvements, major institutional adoption (Schwab, Franklin Templeton ETFs), innovation in payments and DeFi. Bearish factors: Bitcoin's 4th consecutive down day, DeFi/smart-contract coin losses, digital credit market selloff from liquidations, security concerns (Microsoft malware discovery), XRP breakdown. Overall, negative price action and leverage liquidations outweigh positive institutional developments. Near-term momentum appears bearish despite bullish structural trends."
+}
+```
+2026-06-22 00:07:21,659 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Are perps swaps? A quick look at that CME suit: State of Crypto
+Ethereum's biggest 'sandwich' bot drained of $7.5 million in ironic exploit
+Bitcoin holds near $64,000 as a renewed Hormuz threat clouds US-Iran ceasefire talks
+AI is making crypto security cheaper, faster and harder to ignore
+How STRC lost its par: The timeline behind Strategy's preferred-stock meltdown
+Schwab to join prediction markets race with S&P 500 event-based options: WSJ
+GoMining challenges Jack Dorsey's Square with payments system designed around bitcoin
+Franklin Templeton proposes new ETFs that turn corporate dividends into bitcoin
+Smart-contract and DeFi coins lead losses as bitcoin wilts for 4th straight day
+
+Respond with valid JSON only.
+2026-06-22 00:07:23,843 - Claude_API - INFO - ✅ Claude API Response (200) | 2.18s | tokens in=399 out=142
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with slight bearish bias. Negative technical momentum (Bitcoin down 4 days, 'bitcoin wilts') and security exploits ($7.5M drain) weigh heavily. However, institutional adoption news (Franklin Templeton ETFs, Schwab, Schwab prediction markets) and innovation developments (AI security, payments systems) provide bullish counterweight. Geopolitical risk (Iran-US tensions) adds uncertainty. Overall moderate bearish lean tempered by institutional interest."
+}
+```
+2026-06-22 00:22:24,209 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Are perps swaps? A quick look at that CME suit: State of Crypto
+Ethereum's biggest 'sandwich' bot drained of $7.5 million in ironic exploit
+Bitcoin holds near $64,000 as a renewed Hormuz threat clouds US-Iran ceasefire talks
+AI is making crypto security cheaper, faster and harder to ignore
+How STRC lost its par: The timeline behind Strategy's preferred-stock meltdown
+Schwab to join prediction markets race with S&P 500 event-based options: WSJ
+GoMining challenges Jack Dorsey's Square with payments system designed around bitcoin
+Franklin Templeton proposes new ETFs that turn corporate dividends into bitcoin
+Smart-contract and DeFi coins lead losses as bitcoin wilts for 4th straight day
+
+Respond with valid JSON only.
+2026-06-22 00:22:27,936 - Claude_API - INFO - ✅ Claude API Response (200) | 3.73s | tokens in=399 out=140
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with slight bearish tilt. Negative: Bitcoin's 4-day decline, $7.5M exploit, STRC meltdown, and geopolitical tensions near $64K support. Positive: Institutional adoption (Schwab, Franklin Templeton ETF proposals), AI security improvements, and alternative payment systems. Institutional interest provides medium-term support, but short-term price weakness and security concerns dominate sentiment. Credible sources strengthen analysis confidence."
+}
+```
+2026-06-22 00:37:28,304 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Are perps swaps? A quick look at that CME suit: State of Crypto
+Ethereum's biggest 'sandwich' bot drained of $7.5 million in ironic exploit
+Bitcoin holds near $64,000 as a renewed Hormuz threat clouds US-Iran ceasefire talks
+AI is making crypto security cheaper, faster and harder to ignore
+How STRC lost its par: The timeline behind Strategy's preferred-stock meltdown
+Schwab to join prediction markets race with S&P 500 event-based options: WSJ
+GoMining challenges Jack Dorsey's Square with payments system designed around bitcoin
+Franklin Templeton proposes new ETFs that turn corporate dividends into bitcoin
+Smart-contract and DeFi coins lead losses as bitcoin wilts for 4th straight day
+
+Respond with valid JSON only.
+2026-06-22 00:37:32,786 - Claude_API - INFO - ✅ Claude API Response (200) | 4.48s | tokens in=399 out=133
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with slight bearish lean. Negative: Bitcoin's 4-day decline, sandwich bot exploit ($7.5M loss), geopolitical tensions (Hormuz), and STRC meltdown indicate weakness. Positive: Institutional adoption (Franklin Templeton ETFs, Schwab, GoMining), AI security improvements. However, bearish technical pressure and security vulnerabilities outweigh bullish institutional news in the near term."
+}
+```
+2026-06-23 00:08:07,955 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+U.S. Senate passes housing bill that carries four-year ban on a Fed CBDC
+Securitize and tZERO clash over patents as race to bring Wall Street onchain heats up
+Ric Edelman says crypto’s biggest growth story is happening off the price chart
+21Shares co-founder warns tokenization hype is outrunning Wall Street reality
+Strive says digital credit selloff was a liquidation event, not a credit crisis
+Ether’s biggest corporate holders back new Ethereum research hub
+Ethereum Foundation talent exodus sparks fresh debate over leadership
+Crypto's second U.S. lobbying front — tax policy — sees industry push on mining, staking
+Anchorage aims to bring banks onchain with new tokenized deposit platform
+
+Respond with valid JSON only.
+2026-06-23 00:08:10,267 - Claude_API - INFO - ✅ Claude API Response (200) | 2.31s | tokens in=390 out=128
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Positive: institutional adoption accelerating (tokenization platforms, bank onchain initiatives, corporate ETH backing, lobbying gains). Negative: regulatory headwinds (CBDC ban suggests caution), Ethereum leadership concerns, reality-check warnings on tokenization hype. Overall moderately bullish on long-term adoption trajectory, but near-term caution warranted due to regulatory uncertainty and overheated expectations."
+}
+```
+2026-06-25 00:09:16,680 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Upheaval at the Ethereum Foundation has some of crypto’s biggest names feeling bullish
+Kalshi targets a massive $40 billion valuation, widening lead over rival Polymarket
+Binance withdraws Greek MiCA bid but vows to remain in Europe
+Bitcoin falls below $60,000 as AI trade continues to draw investor interest and capital
+Crypto Long & Short: Infrastructure is the prevailing currency in digital assets
+SecondFi loses $2.4 million in Cardano wallet exploit
+Trump's refusal to sign housing bill could delay Congress and imperil Clarity Act
+Ex-FCA policy insider explains the ‘great divide’ in the UK’s crypto ambition
+Bitcoin just broke below the floor of its famous Rainbow Chart into the ‘BTC is dead’ zone
+
+Respond with valid JSON only.
+2026-06-25 00:09:19,051 - Claude_API - INFO - ✅ Claude API Response (200) | 2.37s | tokens in=395 out=150
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with bearish dominance. Bitcoin's break below $60,000 and entry into historically weak technical levels is concerning. Security exploits (SecondFi) and regulatory uncertainty (Binance's MiCA withdrawal, UK crypto ambition divide) add downward pressure. However, some bullish elements exist: Ethereum Foundation upheaval attracting institutional interest, Kalshi's growth, and infrastructure development. Timing and credible sources (CoinDesk) suggest near-term weakness despite longer-term ecosystem building."
+}
+```
+2026-06-25 00:24:20,515 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Upheaval at the Ethereum Foundation has some of crypto’s biggest names feeling bullish
+Kalshi targets a massive $40 billion valuation, widening lead over rival Polymarket
+Binance withdraws Greek MiCA bid but vows to remain in Europe
+Bitcoin falls below $60,000 as AI trade continues to draw investor interest and capital
+Crypto Long & Short: Infrastructure is the prevailing currency in digital assets
+SecondFi loses $2.4 million in Cardano wallet exploit
+Trump's refusal to sign housing bill could delay Congress and imperil Clarity Act
+Ex-FCA policy insider explains the ‘great divide’ in the UK’s crypto ambition
+Bitcoin just broke below the floor of its famous Rainbow Chart into the ‘BTC is dead’ zone
+
+Respond with valid JSON only.
+2026-06-25 00:24:22,703 - Claude_API - INFO - ✅ Claude API Response (200) | 2.18s | tokens in=395 out=135
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with bearish bias. Bitcoin's drop below $60,000 and Rainbow Chart breakdown are significant negative indicators. However, bullish sentiment around Ethereum Foundation changes and infrastructure development provides some upside. Security exploits (SecondFi) and regulatory uncertainty (Binance/UK) add bearish pressure. Kalshi's valuation growth is positive but limited in market impact. Overall, short-term technical weakness outweighs positive sentiment catalysts."
+}
+```
+2026-06-26 00:09:45,256 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Asset management giant Invesco files for tokenized fund targeting stablecoin reserve market
+Coinbase's Base blockchain resumes after two-hour outage disrupted network
+Strategy's yield-generating STRC stock is more correlated with BTC than ever
+Kraken in talks to buy 15% stake in DeFi lender Aave at $385 million valuation
+a16z-backed crypto firm rebrands, shifts focus to solving AI’s global copyright headache
+BlackBerry is making a massive comeback as an 'uncrashable' software layer for AI and robotics
+Strategy has a 10-month cash runway for dividends, but retail investors are losing faith
+Quant fund says bitcoin is near a major inflection point as rare onchain signals align
+Bitcoin tumbles to new multi-year low of $58,000, but a short-squeeze setup emerges
+
+Respond with valid JSON only.
+2026-06-26 00:09:49,416 - Claude_API - INFO - ✅ Claude API Response (200) | 4.15s | tokens in=416 out=144
+   Raw response: ```json
+{
+  "sentiment": 0.15,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present conflicting momentum. Bullish: institutional adoption (Invesco tokenized fund, Kraken-Aave deal), technical setup indicators (short-squeeze potential, rare onchain signals), and infrastructure expansion (Base, AI-related developments). Bearish: Bitcoin multi-year low at $58k, network outages undermining reliability, retail investor confidence erosion, and dividend sustainability concerns. Net-neutral bias with slight optimism from institutional inflows offsetting price weakness and technical concerns."
+}
+```
+2026-06-27 00:10:18,858 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Aave, Solana ecosystem tokens lead crypto rebound as bitcoin steadies near $60,000
+U.S. House Democrat, who may soon run key committee, condemns crypto in 401(k)s
+Former Ethereum Foundation leader warns of funding gap as governance shifts
+Anti-trafficking group says Clarity Act's Section 604 could weaken accountability
+Virtuals' Jansen Teng says AI agents are evolving into autonomous economic actors
+Securitize expects to raise $400 million as tokenization firm nears public debut
+CoinDesk 20 performance update: AAVE jumps 8.9%, leading index higher
+Wall Street's IPO revival hasn't reached dot-com euphoria levels, Goldman Sachs says
+With crypto ending the first half in the red, bitcoin's solace is it beat Strategy
+
+Respond with valid JSON only.
+2026-06-27 00:10:21,087 - Claude_API - INFO - ✅ Claude API Response (200) | 2.23s | tokens in=406 out=138
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Positive: Bitcoin stabilizing near $60k, strong altcoin rebounds (AAVE +8.9%), institutional adoption through tokenization ($400M raise), and emerging AI agent narrative. Negative: Regulatory headwinds (House Democrat opposition to crypto in 401ks), governance concerns (Ethereum Foundation funding gap), and H1 underperformance. Overall cautiously optimistic on price action but tempered by regulatory risks and structural concerns."
+}
+```
+2026-06-27 00:25:22,428 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Aave, Solana ecosystem tokens lead crypto rebound as bitcoin steadies near $60,000
+U.S. House Democrat, who may soon run key committee, condemns crypto in 401(k)s
+Former Ethereum Foundation leader warns of funding gap as governance shifts
+Anti-trafficking group says Clarity Act's Section 604 could weaken accountability
+Virtuals' Jansen Teng says AI agents are evolving into autonomous economic actors
+Securitize expects to raise $400 million as tokenization firm nears public debut
+CoinDesk 20 performance update: AAVE jumps 8.9%, leading index higher
+Wall Street's IPO revival hasn't reached dot-com euphoria levels, Goldman Sachs says
+With crypto ending the first half in the red, bitcoin's solace is it beat Strategy
+
+Respond with valid JSON only.
+2026-06-27 00:25:24,476 - Claude_API - INFO - ✅ Claude API Response (200) | 2.05s | tokens in=406 out=141
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Positive drivers include ecosystem token rebounds (AAVE +8.9%), Bitcoin stabilization near $60K, tokenization momentum (Securitize $400M raise), and AI agent innovation. However, bearish headwinds include regulatory concerns (401(k) criticism, Clarity Act accountability issues), governance uncertainty (Ethereum Foundation funding gap), and H1 crypto market decline. Overall, short-term recovery momentum partially offset by medium-term regulatory and structural risks."
+}
+```
+2026-06-27 00:40:24,634 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Aave, Solana ecosystem tokens lead crypto rebound as bitcoin steadies near $60,000
+U.S. House Democrat, who may soon run key committee, condemns crypto in 401(k)s
+Former Ethereum Foundation leader warns of funding gap as governance shifts
+Anti-trafficking group says Clarity Act's Section 604 could weaken accountability
+Virtuals' Jansen Teng says AI agents are evolving into autonomous economic actors
+Securitize expects to raise $400 million as tokenization firm nears public debut
+CoinDesk 20 performance update: AAVE jumps 8.9%, leading index higher
+Wall Street's IPO revival hasn't reached dot-com euphoria levels, Goldman Sachs says
+With crypto ending the first half in the red, bitcoin's solace is it beat Strategy
+
+Respond with valid JSON only.
+2026-06-27 00:40:26,806 - Claude_API - INFO - ✅ Claude API Response (200) | 2.17s | tokens in=406 out=148
+   Raw response: ```json
+{
+  "sentiment": 0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Positive: Bitcoin steadying near $60k, strong altcoin rebounds (AAVE +8.9%), institutional adoption via tokenization (Securitize $400M IPO), and AI agent innovation narrative. Negative: Political headwinds (House Democrat opposition to crypto in 401ks), governance concerns (Ethereum Foundation funding gap), regulatory scrutiny (anti-trafficking accountability), and H1 performance weakness. Near-term recovery momentum offset by medium-term regulatory and institutional confidence risks."
+}
+```
+2026-06-29 00:11:15,636 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+CZ wants to make the U.S. the 'capital of crypto': State of Crypto
+Samson Mow says bitcoin bottom is in despite skepticism from analysts
+Michael Saylor teases more bitcoin buying even as Strategy stock continues to fall
+SBI's $289 million Bitbank deal is symptomatic of Japan's crypto consolidation: Architect Partners
+Crypto's next frontier isn't crypto, it's financing AI and robotics, Framework's Anderson says
+Bitcoin falls below $60,000, on track for a rare back-to-back quarterly loss
+Why a selloff in gold and silver is dragging bitcoin down
+What Robinhood’s recent layoffs say about the current state of crypto investments
+Tether putting $23 billion gold stockpile to work with bullion-backed loans
+
+Respond with valid JSON only.
+2026-06-29 00:11:17,661 - Claude_API - INFO - ✅ Claude API Response (200) | 2.02s | tokens in=399 out=153
+   Raw response: ```json
+{
+  "sentiment": 0.15,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Bullish factors: institutional interest (Saylor, Mow), major deals (SBI-Bitbank $289M), Tether's gold initiatives, and sector expansion into AI/robotics. Bearish factors: Bitcoin below $60k with rare back-to-back quarterly losses, gold/silver selloff contagion, and Robinhood layoffs indicating weakening retail momentum. Regulatory optimism (CZ, U.S. capital positioning) partially offset by price weakness and analyst skepticism."
+}
+```
+2026-06-29 00:26:17,951 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+CZ wants to make the U.S. the 'capital of crypto': State of Crypto
+Samson Mow says bitcoin bottom is in despite skepticism from analysts
+Michael Saylor teases more bitcoin buying even as Strategy stock continues to fall
+SBI's $289 million Bitbank deal is symptomatic of Japan's crypto consolidation: Architect Partners
+Crypto's next frontier isn't crypto, it's financing AI and robotics, Framework's Anderson says
+Bitcoin falls below $60,000, on track for a rare back-to-back quarterly loss
+Why a selloff in gold and silver is dragging bitcoin down
+What Robinhood’s recent layoffs say about the current state of crypto investments
+Tether putting $23 billion gold stockpile to work with bullion-backed loans
+
+Respond with valid JSON only.
+2026-06-29 00:26:19,944 - Claude_API - INFO - ✅ Claude API Response (200) | 1.99s | tokens in=399 out=150
+   Raw response: ```json
+{
+  "sentiment": 0.15,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Bullish factors: institutional interest (Saylor, SBI deal), regulatory optimism (CZ's U.S. focus), Tether's gold initiative, and contrarian calls on Bitcoin bottom. Bearish headwinds: BTC below $60k with rare back-to-back quarterly losses, gold/silver selloff contagion, and Robinhood layoffs signaling weakened retail confidence. Net effect is cautiously positive but with significant near-term price pressure and analyst skepticism."
+}
+```
+2026-07-01 00:12:28,067 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+U.S. senators seek to block foreign adversaries from AI technology in new bill
+Trump pocketed more than $1 billion from crypto ties as industry headed toward slump
+Phantom doubles down on perpetual futures with hire of Hyperliquid market builders
+Companies spending the most on AI are growing jobs, Ramp study finds
+Why OpenUSD's 'real threat' that tanked Circle stock still faces a steep uphill battle for adoption
+SEC giving novel ETFs a rethink as it opens comment period on overhauling U.S. rules
+Chinese exile once linked to Trump strategist gets 30-year sentence in $1 billion fraud
+Jefferies warns of crypto market volatility as Clarity Act faces Senate test
+Circle craters 17% as Stripe, Coinbase and BlackRock back rival stablecoin network
+
+Respond with valid JSON only.
+2026-07-01 00:12:30,239 - Claude_API - INFO - ✅ Claude API Response (200) | 2.17s | tokens in=407 out=126
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with bearish lean. Negative: Circle's 17% crash, Trump's $1B crypto extraction suggesting profit-taking, fraud case, and volatility warnings. Neutral: regulatory developments (SEC ETF review, Clarity Act). Positive: job growth in AI, Phantom's expansion. Overall, profit-taking, competitive stablecoin pressures, and regulatory uncertainty outweigh modest positive developments."
+}
+```
+2026-07-01 00:27:32,137 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+U.S. senators seek to block foreign adversaries from AI technology in new bill
+Trump pocketed more than $1 billion from crypto ties as industry headed toward slump
+Phantom doubles down on perpetual futures with hire of Hyperliquid market builders
+Companies spending the most on AI are growing jobs, Ramp study finds
+Why OpenUSD's 'real threat' that tanked Circle stock still faces a steep uphill battle for adoption
+SEC giving novel ETFs a rethink as it opens comment period on overhauling U.S. rules
+Chinese exile once linked to Trump strategist gets 30-year sentence in $1 billion fraud
+Jefferies warns of crypto market volatility as Clarity Act faces Senate test
+Circle craters 17% as Stripe, Coinbase and BlackRock back rival stablecoin network
+
+Respond with valid JSON only.
+2026-07-01 00:27:34,302 - Claude_API - INFO - ✅ Claude API Response (200) | 2.16s | tokens in=407 out=130
+   Raw response: ```json
+{
+  "sentiment": -0.35,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals with bearish tilt. Negative headlines dominate: Circle's 17% crash, stablecoin competition, regulatory uncertainty (SEC ETF review), and fraud concerns. Trump's billion-dollar crypto profits and job growth provide minor bullish notes. Volatility warning and Clarity Act Senate test create uncertainty. Regulatory scrutiny and competitive pressures outweigh positive developments, suggesting cautious to slightly negative near-term outlook."
+}
+```
+2026-07-03 00:13:32,758 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Securitize tokenizes $295 million of its own stock on Solana and Avalanche amid NYSE debut
+EToro invests in onchain derivatives platform Extended as brokers race into DeFi
+Bitwise says STRC selloff signals crypto cycle nearing a bottom, not Strategy’s breaking point
+US Treasury sanctions over 100 ISIS-K crypto addresses that moved over $1.4 million
+SBI Crypto to shut down mining pool that holds roughly 2% of Bitcoin's hashrate
+Ondo Finance debuts SEC-aligned tokenized stock model with BlackRock ETF, Micron shares
+JPMorgan says Strategy's bitcoin sales policy adds 'two-way risk' to crypto markets
+U.S. payroll growth slowed sharply in June, with only 57,000 jobs added
+A struggling Nasdaq-listed company that tried to copy Saylor's Bitcoin playbook is completely dumping crypto for AI
+
+Respond with valid JSON only.
+2026-07-03 00:13:34,904 - Claude_API - INFO - ✅ Claude API Response (200) | 2.14s | tokens in=428 out=140
+   Raw response: ```json
+{
+  "sentiment": 0.15,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Bullish: institutional adoption accelerating (Securitize, Ondo Finance with BlackRock), regulatory clarity improving, potential cycle bottom per Bitwise. Bearish: major mining pool shutdown reducing Bitcoin decentralization, ISIS-K sanctions underscore regulatory scrutiny, weak macroeconomic data (57k jobs), JPMorgan's risk warning on Strategy's bitcoin sales. Institutional interest partially offset by macro headwinds and hashrate concentration concerns."
+}
+```
+2026-07-03 00:28:35,181 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Securitize tokenizes $295 million of its own stock on Solana and Avalanche amid NYSE debut
+EToro invests in onchain derivatives platform Extended as brokers race into DeFi
+Bitwise says STRC selloff signals crypto cycle nearing a bottom, not Strategy’s breaking point
+US Treasury sanctions over 100 ISIS-K crypto addresses that moved over $1.4 million
+SBI Crypto to shut down mining pool that holds roughly 2% of Bitcoin's hashrate
+Ondo Finance debuts SEC-aligned tokenized stock model with BlackRock ETF, Micron shares
+JPMorgan says Strategy's bitcoin sales policy adds 'two-way risk' to crypto markets
+U.S. payroll growth slowed sharply in June, with only 57,000 jobs added
+A struggling Nasdaq-listed company that tried to copy Saylor's Bitcoin playbook is completely dumping crypto for AI
+
+Respond with valid JSON only.
+2026-07-03 00:28:37,246 - Claude_API - INFO - ✅ Claude API Response (200) | 2.06s | tokens in=428 out=138
+   Raw response: ```json
+{
+  "sentiment": 0.15,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Positive: institutional adoption (Securitize tokenization, Ondo Finance SEC compliance, BlackRock integration, JPMorgan engagement) and regulatory clarity suggest maturing market. Negative: US payroll weakness signals economic slowdown; major miner shutdowns and strategy selloffs indicate capital constraints; Bitwise's 'bottom' comment suggests prior weakness. Overall: cautious optimism tempered by macro headwinds and some profit-taking activity."
+}
+```
+2026-07-05 00:14:38,143 - Claude_API - INFO - 🧠 Claude API Request | model=claude-haiku-4-5-20251001 max_tokens=1024
+   Prompt: You are a cryptocurrency market sentiment analyst. Analyze the following market information and provide a sentiment score.
+
+INSTRUCTIONS:
+1. Analyze the text for bullish or bearish signals
+2. Consider market impact, credibility, and timing
+3. Return a JSON response with exactly these fields:
+   - sentiment: float from -1.0 (extremely bearish) to 1.0 (extremely bullish)
+   - confidence: float from 0.0 (no confidence) to 1.0 (very confident)
+   - reasoning: brief explanation of your analysis (max 100 words)
+
+IMPORTANT:
+- Be objective and data-driven
+- Consider both short-term and medium-term implications
+- Weight major news more heavily than minor updates
+- Consider the source credibility
+
+
+CONTEXT: Cryptocurrency market news headlines
+
+TEXT TO ANALYZE:
+CoinDesk: Bitcoin, Ethereum, Crypto News and Price Data
+Tokenization's next use case is personalized portfolios, NYLIM executive says
+Bitcoin jumps above $63,000, reversing end-June losses
+Bitcoin experts split over plan to freeze Satoshi's 1.1 million bitcoin as quantum threat grows
+How ethical hackers with just a $3,000 server found a flaw that could've put $70 billion in crypto at risk
+Why bitcoin's disconnect from record-high stocks won't last
+Trump's crypto token buyers are down $3.8 billion, blockchain data shows
+Europe led on crypto regulation. Now implementation must match ambition
+EU moves to block retail investors from explosive boom of multibillion-dollar prediction markets
+UK's bold new crypto rules promise to unlock global trading, but huge compliance hurdles still threaten the rollout
+
+Respond with valid JSON only.
+2026-07-05 00:14:40,129 - Claude_API - INFO - ✅ Claude API Response (200) | 1.98s | tokens in=396 out=128
+   Raw response: ```json
+{
+  "sentiment": 0.15,
+  "confidence": 0.72,
+  "reasoning": "Mixed signals present. Bullish: Bitcoin price recovery above $63k, tokenization innovation, regulatory progress in UK/EU. Bearish: Trump token losses ($3.8B), security vulnerabilities ($70B at risk), retail investor restrictions, implementation challenges. Regulatory uncertainty and losses offset price gains. Near-term recovery bullish, but medium-term headwinds from compliance hurdles and market losses create cautious outlook."
+}
+```

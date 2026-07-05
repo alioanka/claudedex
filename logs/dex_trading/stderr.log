@@ -1,0 +1,252 @@
+2026-06-15 21:49:13.707 | INFO     | ml.optimization.hyperparameter:__init__:43 - HyperparameterOptimizer initialized
+2026-06-15 21:49:13.707 | INFO     | ml.optimization.reinforcement:__init__:70 - RLOptimizer initialized
+2026-06-15 21:49:16.528 | INFO     | data.collectors.social_data:initialize:125 - Initializing Social Data Collector...
+2026-06-15 21:49:16.529 | INFO     | data.collectors.social_data:initialize:133 - Social Data Collector initialized
+/app/ml/models/ensemble_model.py:181: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+2026-06-15 21:49:17.283 | INFO     | trading.strategies.base_strategy:__init__:139 - Initialized strategy: MomentumStrategy
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781560164.129858      13 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781560173.082812      13 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+2026-06-15 21:49:35.220 | INFO     | trading.strategies.base_strategy:__init__:139 - Initialized strategy: AIStrategy
+2026-06-15 21:49:35.222 | WARNING  | trading.strategies.ai_strategy:_load_scaler:323 - AI strategy: scaler file models/ai_strategy_scaler.pkl not found. Strategy will return no signals until a trained scaler is provided. Train via the (forthcoming) scripts/train_ai_strategy_scaler.py utility.
+2026-06-15 21:49:35.223 | INFO     | trading.strategies.ai_strategy:__init__:133 - Initialized AI Strategy: AIStrategy
+2026-06-15 21:49:35.223 | INFO     | trading.strategies.ai_strategy:initialize:137 - Initializing AI Strategy components...
+E0000 00:00:1781560175.318697      13 cuda_platform.cc:52] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+/usr/local/lib/python3.11/site-packages/keras/src/layers/rnn/rnn.py:199: UserWarning: Do not pass an `input_shape`/`input_dim` argument to a layer. When using Sequential models, prefer using an `Input(shape)` object as the first layer in the model instead.
+  super().__init__(**kwargs)
+2026-06-15 21:49:36.059 | INFO     | trading.strategies.ai_strategy:_load_models:1181 - Loading pre-trained AI models...
+2026-06-15 21:49:36.060 | WARNING  | trading.strategies.ai_strategy:_load_models:1200 - ⚠️ AI Strategy: No trained models found! Using higher thresholds for safety. Train models on historical data for better performance.
+2026-06-15 21:49:36.060 | INFO     | trading.strategies.ai_strategy:initialize:148 - AI Strategy initialization complete
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+2026-06-15 21:51:02.742 | INFO     | ml.optimization.hyperparameter:__init__:43 - HyperparameterOptimizer initialized
+2026-06-15 21:51:02.743 | INFO     | ml.optimization.reinforcement:__init__:70 - RLOptimizer initialized
+2026-06-15 21:51:04.926 | INFO     | data.collectors.social_data:initialize:125 - Initializing Social Data Collector...
+2026-06-15 21:51:04.926 | INFO     | data.collectors.social_data:initialize:133 - Social Data Collector initialized
+/app/ml/models/ensemble_model.py:181: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+2026-06-15 21:51:05.731 | INFO     | trading.strategies.base_strategy:__init__:139 - Initialized strategy: MomentumStrategy
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781560270.056237     225 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781560275.856858     225 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+2026-06-15 21:51:17.749 | INFO     | trading.strategies.base_strategy:__init__:139 - Initialized strategy: AIStrategy
+2026-06-15 21:51:17.750 | WARNING  | trading.strategies.ai_strategy:_load_scaler:323 - AI strategy: scaler file models/ai_strategy_scaler.pkl not found. Strategy will return no signals until a trained scaler is provided. Train via the (forthcoming) scripts/train_ai_strategy_scaler.py utility.
+2026-06-15 21:51:17.750 | INFO     | trading.strategies.ai_strategy:__init__:133 - Initialized AI Strategy: AIStrategy
+2026-06-15 21:51:17.750 | INFO     | trading.strategies.ai_strategy:initialize:137 - Initializing AI Strategy components...
+E0000 00:00:1781560277.873792     225 cuda_platform.cc:52] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+/usr/local/lib/python3.11/site-packages/keras/src/layers/rnn/rnn.py:199: UserWarning: Do not pass an `input_shape`/`input_dim` argument to a layer. When using Sequential models, prefer using an `Input(shape)` object as the first layer in the model instead.
+  super().__init__(**kwargs)
+2026-06-15 21:51:18.459 | INFO     | trading.strategies.ai_strategy:_load_models:1181 - Loading pre-trained AI models...
+2026-06-15 21:51:18.460 | WARNING  | trading.strategies.ai_strategy:_load_models:1200 - ⚠️ AI Strategy: No trained models found! Using higher thresholds for safety. Train models on historical data for better performance.
+2026-06-15 21:51:18.460 | INFO     | trading.strategies.ai_strategy:initialize:148 - AI Strategy initialization complete
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+2026-06-15 21:53:13.973 | INFO     | ml.optimization.hyperparameter:__init__:43 - HyperparameterOptimizer initialized
+2026-06-15 21:53:13.977 | INFO     | ml.optimization.reinforcement:__init__:70 - RLOptimizer initialized
+2026-06-15 21:53:16.173 | INFO     | data.collectors.social_data:initialize:125 - Initializing Social Data Collector...
+2026-06-15 21:53:16.173 | INFO     | data.collectors.social_data:initialize:133 - Social Data Collector initialized
+/app/ml/models/ensemble_model.py:181: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+2026-06-15 21:53:16.943 | INFO     | trading.strategies.base_strategy:__init__:139 - Initialized strategy: MomentumStrategy
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781560401.166949     355 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781560407.549531     355 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.
+2026-06-15 21:53:29.210 | INFO     | trading.strategies.base_strategy:__init__:139 - Initialized strategy: AIStrategy
+2026-06-15 21:53:29.210 | WARNING  | trading.strategies.ai_strategy:_load_scaler:323 - AI strategy: scaler file models/ai_strategy_scaler.pkl not found. Strategy will return no signals until a trained scaler is provided. Train via the (forthcoming) scripts/train_ai_strategy_scaler.py utility.
+2026-06-15 21:53:29.211 | INFO     | trading.strategies.ai_strategy:__init__:133 - Initialized AI Strategy: AIStrategy
+2026-06-15 21:53:29.211 | INFO     | trading.strategies.ai_strategy:initialize:137 - Initializing AI Strategy components...
+E0000 00:00:1781560409.328373     355 cuda_platform.cc:52] failed call to cuInit: INTERNAL: CUDA error: Failed call to cuInit: UNKNOWN ERROR (303)
+/usr/local/lib/python3.11/site-packages/keras/src/layers/rnn/rnn.py:199: UserWarning: Do not pass an `input_shape`/`input_dim` argument to a layer. When using Sequential models, prefer using an `Input(shape)` object as the first layer in the model instead.
+  super().__init__(**kwargs)
+2026-06-15 21:53:29.933 | INFO     | trading.strategies.ai_strategy:_load_models:1181 - Loading pre-trained AI models...
+2026-06-15 21:53:29.934 | WARNING  | trading.strategies.ai_strategy:_load_models:1200 - ⚠️ AI Strategy: No trained models found! Using higher thresholds for safety. Train models on historical data for better performance.
+2026-06-15 21:53:29.934 | INFO     | trading.strategies.ai_strategy:initialize:148 - AI Strategy initialization complete
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+/usr/local/lib/python3.11/site-packages/sklearn/base.py:493: UserWarning: X does not have valid feature names, but RobustScaler was fitted with feature names
+  warnings.warn(
+2026-06-15 22:53:18.475 | INFO     | ml.optimization.hyperparameter:__init__:43 - HyperparameterOptimizer initialized
+2026-06-15 22:53:18.477 | INFO     | ml.optimization.reinforcement:__init__:70 - RLOptimizer initialized
+2026-06-15 22:53:28.739 | INFO     | data.collectors.social_data:initialize:125 - Initializing Social Data Collector...
+2026-06-15 22:53:28.739 | INFO     | data.collectors.social_data:initialize:133 - Social Data Collector initialized
+/app/ml/models/ensemble_model.py:181: UserWarning: enable_nested_tensor is True, but self.use_nested_tensor is False because encoder_layer.self_attn.batch_first was not True(use batch_first for better inference performance)
+  self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+2026-06-15 22:53:29.665 | INFO     | trading.strategies.base_strategy:__init__:139 - Initialized strategy: MomentumStrategy
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781564017.302438    1692 cpu_feature_guard.cc:227] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+WARNING: All log messages before absl::InitializeLog() is called are written to STDERR
+I0000 00:00:1781564027.315860    1692 cudart_stub.cc:31] Could not find cuda drivers on your machine, GPU will not be used.

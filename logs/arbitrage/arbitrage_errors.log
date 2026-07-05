@@ -1,0 +1,2 @@
+2026-06-19 13:31:43,228 - ETHArbitrageEngine - ERROR -    ❌ RPC connection may be dead: 401 Client Error: Unauthorized for url: https://rpc.ankr.com/eth/47ce353adffc712b9c500c3ba195d4252fce4a222b95bc92048b2e22c444a3f2
+2026-07-04 11:44:19,784 - ETHArbitrageEngine - ERROR -    ❌ RPC connection may be dead: 401 Client Error: Unauthorized for url: https://rpc.ankr.com/eth/47ce353adffc712b9c500c3ba195d4252fce4a222b95bc92048b2e22c444a3f2

@@ -1,0 +1,960 @@
+2026-06-15 21:48:46,460 - RegimeAllocatorModule - INFO - 🌡️ Regime Allocator Module Starting...
+2026-06-15 21:48:46,460 - RegimeAllocatorModule - INFO -    Working dir: /app
+2026-06-15 21:48:47,504 - RegimeAllocatorModule - INFO -    DB pool connected to postgres:5432/tradingbot
+2026-06-15 21:48:49,580 - RegimeAllocatorModule - INFO -    Health server on :8091
+2026-06-15 21:48:50,574 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.32). BTC: vol_ratio=0.74 (compression), ER=0.18 (range); ETH: vol_ratio=0.91 (neutral), ER=0.19 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-15 21:48:50,668 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.321 proposals=7 mirrored=0 skipped=None
+2026-06-15 22:48:51,360 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.36). BTC: vol_ratio=0.74 (compression), ER=0.17 (range); ETH: vol_ratio=0.95 (neutral), ER=0.15 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-15 22:48:51,411 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.356 proposals=7 mirrored=0 skipped=None
+2026-06-15 23:48:52,080 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.35). BTC: vol_ratio=0.74 (compression), ER=0.17 (range); ETH: vol_ratio=0.95 (neutral), ER=0.15 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-15 23:48:52,128 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.355 proposals=7 mirrored=0 skipped=None
+2026-06-16 00:48:52,832 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.31). BTC: vol_ratio=0.74 (compression), ER=0.19 (range); ETH: vol_ratio=0.94 (neutral), ER=0.19 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 00:48:52,880 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.307 proposals=7 mirrored=0 skipped=None
+2026-06-16 01:48:53,543 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.31). BTC: vol_ratio=0.74 (compression), ER=0.19 (range); ETH: vol_ratio=0.94 (neutral), ER=0.19 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 01:48:53,594 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.308 proposals=7 mirrored=0 skipped=None
+2026-06-16 02:48:54,186 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.36). BTC: vol_ratio=0.76 (compression), ER=0.16 (range); ETH: vol_ratio=0.96 (neutral), ER=0.16 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 02:48:54,227 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.358 proposals=7 mirrored=0 skipped=None
+2026-06-16 03:48:54,845 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.34). BTC: vol_ratio=0.74 (compression), ER=0.17 (range); ETH: vol_ratio=0.95 (neutral), ER=0.16 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 03:48:54,884 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.34 proposals=7 mirrored=0 skipped=None
+2026-06-16 04:48:55,473 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.40). BTC: vol_ratio=0.74 (compression), ER=0.14 (range); ETH: vol_ratio=0.96 (neutral), ER=0.12 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 04:48:55,511 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.404 proposals=7 mirrored=0 skipped=None
+2026-06-16 05:48:56,122 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.39). BTC: vol_ratio=0.73 (compression), ER=0.15 (range); ETH: vol_ratio=0.96 (neutral), ER=0.12 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 05:48:56,163 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.393 proposals=7 mirrored=0 skipped=None
+2026-06-16 06:48:56,774 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.36). BTC: vol_ratio=0.73 (compression), ER=0.17 (range); ETH: vol_ratio=0.95 (neutral), ER=0.14 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 06:48:56,816 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.362 proposals=7 mirrored=0 skipped=None
+2026-06-16 07:48:57,429 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.37). BTC: vol_ratio=0.73 (compression), ER=0.17 (range); ETH: vol_ratio=0.95 (neutral), ER=0.14 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-16 07:48:57,461 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.368 proposals=7 mirrored=0 skipped=None
+2026-06-16 08:48:58,151 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.07). BTC: vol_ratio=0.71 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.17 (range). vol_vote=-0.60, trend_vote=-0.40.
+2026-06-16 08:48:58,199 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.071 proposals=7 mirrored=0 skipped=None
+2026-06-16 09:48:58,809 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.07). BTC: vol_ratio=0.71 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.18 (range). vol_vote=-0.60, trend_vote=-0.40.
+2026-06-16 09:48:58,846 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.068 proposals=7 mirrored=0 skipped=None
+2026-06-16 10:48:59,543 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.06). BTC: vol_ratio=0.71 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.18 (range). vol_vote=-0.60, trend_vote=-0.40.
+2026-06-16 10:48:59,638 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.064 proposals=7 mirrored=0 skipped=None
+2026-06-16 11:49:00,281 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.06). BTC: vol_ratio=0.71 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.18 (range). vol_vote=-0.60, trend_vote=-0.40.
+2026-06-16 11:49:00,321 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.064 proposals=7 mirrored=0 skipped=None
+2026-06-16 12:49:00,961 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.30). BTC: vol_ratio=0.70 (compression), ER=0.32 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.27 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 12:49:01,058 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.304 proposals=7 mirrored=0 skipped=None
+2026-06-16 13:49:01,696 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.30). BTC: vol_ratio=0.71 (compression), ER=0.30 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.26 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 13:49:01,756 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.301 proposals=7 mirrored=0 skipped=None
+2026-06-16 14:49:02,501 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.75 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.21 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 14:49:02,657 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.288 proposals=7 mirrored=0 skipped=None
+2026-06-16 15:49:03,364 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.74 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.21 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 15:49:03,435 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.291 proposals=7 mirrored=0 skipped=None
+2026-06-16 16:49:04,133 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.05). BTC: vol_ratio=0.73 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.18 (range). vol_vote=-0.60, trend_vote=-0.40.
+2026-06-16 16:49:04,201 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.054 proposals=7 mirrored=0 skipped=None
+2026-06-16 17:49:05,705 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.21 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 17:49:05,745 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.295 proposals=7 mirrored=0 skipped=None
+2026-06-16 18:49:06,809 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.22 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 18:49:06,840 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.295 proposals=7 mirrored=0 skipped=None
+2026-06-16 19:49:07,452 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.74 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.21 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 19:49:07,503 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.293 proposals=7 mirrored=0 skipped=None
+2026-06-16 20:49:08,146 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.25 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.25 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 20:49:08,190 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-06-16 21:49:08,787 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.25 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.24 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 21:49:08,821 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-06-16 22:49:09,425 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.24 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.24 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 22:49:09,473 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.293 proposals=7 mirrored=0 skipped=None
+2026-06-16 23:49:10,114 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.24 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.24 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-16 23:49:10,165 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.293 proposals=7 mirrored=0 skipped=None
+2026-06-17 00:49:10,772 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.26 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 00:49:10,809 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-06-17 01:49:11,480 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.26 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 01:49:11,518 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-06-17 02:49:12,567 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.27 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.26 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 02:49:12,609 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-06-17 03:49:13,226 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.73 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.26 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 03:49:13,260 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-06-17 04:49:13,886 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.74 (compression), ER=0.27 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.25 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 04:49:13,926 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.293 proposals=7 mirrored=0 skipped=None
+2026-06-17 05:49:14,537 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.74 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.25 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 05:49:14,573 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.293 proposals=7 mirrored=0 skipped=None
+2026-06-17 06:49:15,223 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.74 (compression), ER=0.24 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.24 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 06:49:15,285 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.292 proposals=7 mirrored=0 skipped=None
+2026-06-17 07:49:15,924 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.75 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.23 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 07:49:15,971 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.289 proposals=7 mirrored=0 skipped=None
+2026-06-17 08:49:16,601 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.28). BTC: vol_ratio=0.76 (compression), ER=0.24 (neutral); ETH: vol_ratio=0.98 (neutral), ER=0.23 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 08:49:16,643 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.283 proposals=7 mirrored=0 skipped=None
+2026-06-17 09:49:17,293 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.28). BTC: vol_ratio=0.76 (compression), ER=0.24 (neutral); ETH: vol_ratio=0.97 (neutral), ER=0.25 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 09:49:17,343 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.283 proposals=7 mirrored=0 skipped=None
+2026-06-17 10:49:17,967 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.28). BTC: vol_ratio=0.77 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.97 (neutral), ER=0.24 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 10:49:18,032 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.28 proposals=7 mirrored=0 skipped=None
+2026-06-17 11:49:18,649 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.28). BTC: vol_ratio=0.77 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.98 (neutral), ER=0.23 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 11:49:18,696 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.28 proposals=7 mirrored=0 skipped=None
+2026-06-17 12:49:19,330 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.34). BTC: vol_ratio=0.78 (compression), ER=0.16 (range); ETH: vol_ratio=0.99 (neutral), ER=0.17 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-17 12:49:19,404 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.34 proposals=7 mirrored=0 skipped=None
+2026-06-17 13:49:20,028 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.31). BTC: vol_ratio=0.79 (compression), ER=0.17 (range); ETH: vol_ratio=0.98 (neutral), ER=0.19 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-17 13:49:20,131 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.308 proposals=7 mirrored=0 skipped=None
+2026-06-17 14:49:20,746 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.35). BTC: vol_ratio=0.78 (compression), ER=0.16 (range); ETH: vol_ratio=0.99 (neutral), ER=0.15 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-17 14:49:20,817 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.349 proposals=7 mirrored=0 skipped=None
+2026-06-17 15:49:21,476 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.28). BTC: vol_ratio=0.80 (compression), ER=0.19 (range); ETH: vol_ratio=0.98 (neutral), ER=0.19 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-17 15:49:21,562 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.283 proposals=7 mirrored=0 skipped=None
+2026-06-17 16:49:22,195 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.26). BTC: vol_ratio=0.81 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.99 (neutral), ER=0.25 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 16:49:22,312 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.264 proposals=7 mirrored=0 skipped=None
+2026-06-17 17:49:22,933 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.26). BTC: vol_ratio=0.81 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.99 (neutral), ER=0.25 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 17:49:22,979 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.264 proposals=7 mirrored=0 skipped=None
+2026-06-17 18:49:23,769 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.26). BTC: vol_ratio=0.81 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.99 (neutral), ER=0.26 (neutral). vol_vote=-0.60, trend_vote=+0.00.
+2026-06-17 18:49:23,829 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.264 proposals=7 mirrored=0 skipped=None
+2026-06-17 19:49:24,880 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.14 (range); ETH: vol_ratio=1.03 (neutral), ER=0.17 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-17 19:49:24,924 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-17 20:49:30,682 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.90 (neutral), ER=0.17 (range); ETH: vol_ratio=1.03 (neutral), ER=0.19 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-17 20:49:30,738 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-17 21:49:31,378 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.90 (neutral), ER=0.17 (range); ETH: vol_ratio=1.03 (neutral), ER=0.19 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-17 21:49:31,429 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-17 22:49:32,209 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.90 (neutral), ER=0.18 (range); ETH: vol_ratio=1.04 (neutral), ER=0.20 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-06-17 22:49:32,307 - regime_allocator - INFO - regime tick: regime=neutral conf=0.272 proposals=7 mirrored=0 skipped=None
+2026-06-17 23:49:33,392 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.90 (neutral), ER=0.18 (range); ETH: vol_ratio=1.04 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-06-17 23:49:33,430 - regime_allocator - INFO - regime tick: regime=neutral conf=0.267 proposals=7 mirrored=0 skipped=None
+2026-06-18 00:49:34,049 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.90 (neutral), ER=0.13 (range); ETH: vol_ratio=1.04 (neutral), ER=0.17 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 00:49:34,098 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 01:49:34,695 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.90 (neutral), ER=0.12 (range); ETH: vol_ratio=1.04 (neutral), ER=0.17 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 01:49:34,740 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 02:49:35,399 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.90 (neutral), ER=0.13 (range); ETH: vol_ratio=1.04 (neutral), ER=0.17 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 02:49:35,463 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 03:49:36,065 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.90 (neutral), ER=0.11 (range); ETH: vol_ratio=1.04 (neutral), ER=0.15 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 03:49:36,098 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 04:49:36,705 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.07 (range); ETH: vol_ratio=1.05 (neutral), ER=0.13 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 04:49:36,752 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 05:49:37,382 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.08 (range); ETH: vol_ratio=1.05 (neutral), ER=0.12 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 05:49:37,444 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 06:49:38,082 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.09 (range); ETH: vol_ratio=1.04 (neutral), ER=0.13 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 06:49:38,128 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 07:49:43,784 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.11 (range); ETH: vol_ratio=1.04 (neutral), ER=0.16 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 07:49:43,822 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 08:49:44,446 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.09 (range); ETH: vol_ratio=1.04 (neutral), ER=0.14 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 08:49:44,491 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 09:49:45,187 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.08 (range); ETH: vol_ratio=1.04 (neutral), ER=0.14 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 09:49:45,229 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 10:49:45,827 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.92 (neutral), ER=0.06 (range); ETH: vol_ratio=1.04 (neutral), ER=0.13 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 10:49:45,855 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 11:49:46,489 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.92 (neutral), ER=0.05 (range); ETH: vol_ratio=1.04 (neutral), ER=0.12 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 11:49:46,527 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 12:49:47,572 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.95 (neutral), ER=0.10 (range); ETH: vol_ratio=1.06 (neutral), ER=0.18 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 12:49:47,613 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 13:49:48,235 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.95 (neutral), ER=0.08 (range); ETH: vol_ratio=1.06 (neutral), ER=0.16 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 13:49:48,264 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 14:49:48,879 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.95 (neutral), ER=0.08 (range); ETH: vol_ratio=1.06 (neutral), ER=0.17 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 14:49:48,940 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 15:49:49,532 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.00 (neutral), ER=0.00 (range); ETH: vol_ratio=1.12 (neutral), ER=0.08 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 15:49:49,575 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 16:49:50,228 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.03 (neutral), ER=0.05 (range); ETH: vol_ratio=1.15 (neutral), ER=0.01 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 16:49:50,267 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 17:49:50,881 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.03 (neutral), ER=0.06 (range); ETH: vol_ratio=1.15 (neutral), ER=0.00 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 17:49:50,941 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 18:49:51,909 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.04 (neutral), ER=0.05 (range); ETH: vol_ratio=1.15 (neutral), ER=0.01 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 18:49:52,033 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 19:49:52,647 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.04 (neutral), ER=0.04 (range); ETH: vol_ratio=1.15 (expansion), ER=0.03 (range). vol_vote=+0.40, trend_vote=-1.00.
+2026-06-18 19:49:52,725 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 20:49:53,347 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.03 (range); ETH: vol_ratio=1.07 (neutral), ER=0.06 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 20:49:53,399 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 21:49:54,066 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.04 (range); ETH: vol_ratio=1.07 (neutral), ER=0.05 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 21:49:54,114 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 22:49:54,780 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.05 (range); ETH: vol_ratio=1.07 (neutral), ER=0.05 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 22:49:54,850 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-18 23:49:55,494 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.05 (range); ETH: vol_ratio=1.07 (neutral), ER=0.06 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-18 23:49:55,544 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 00:49:56,304 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.03 (range); ETH: vol_ratio=1.08 (neutral), ER=0.07 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 00:49:56,382 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 01:49:57,128 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.04 (range); ETH: vol_ratio=1.08 (neutral), ER=0.06 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 01:49:57,191 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 02:49:57,867 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.04 (range); ETH: vol_ratio=1.08 (neutral), ER=0.05 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 02:49:57,918 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 03:49:58,520 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.05 (range); ETH: vol_ratio=1.08 (neutral), ER=0.03 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 03:49:58,575 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 04:49:59,714 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.03 (range); ETH: vol_ratio=1.10 (neutral), ER=0.05 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 04:49:59,773 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 05:50:00,426 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.02 (range); ETH: vol_ratio=1.10 (neutral), ER=0.05 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 05:50:00,523 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 06:50:01,875 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.02 (range); ETH: vol_ratio=1.10 (neutral), ER=0.06 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 06:50:02,032 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 07:50:04,319 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.03 (range); ETH: vol_ratio=1.10 (neutral), ER=0.05 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 07:50:05,282 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 08:50:07,106 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.07 (range); ETH: vol_ratio=1.02 (neutral), ER=0.04 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 08:50:07,450 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 09:50:08,172 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.09 (range); ETH: vol_ratio=1.02 (neutral), ER=0.03 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 09:50:08,565 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 10:50:09,296 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.08 (range); ETH: vol_ratio=1.02 (neutral), ER=0.03 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 10:50:09,378 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 11:50:10,354 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.07 (range); ETH: vol_ratio=1.02 (neutral), ER=0.03 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-19 11:50:10,662 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-19 12:50:11,815 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.80 (compression), ER=0.07 (range); ETH: vol_ratio=0.77 (compression), ER=0.04 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 12:50:11,956 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.766 proposals=7 mirrored=0 skipped=None
+2026-06-19 13:50:12,636 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.76). BTC: vol_ratio=0.83 (compression), ER=0.02 (range); ETH: vol_ratio=0.78 (compression), ER=0.07 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 13:50:12,898 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.759 proposals=7 mirrored=0 skipped=None
+2026-06-19 14:50:13,899 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.75). BTC: vol_ratio=0.84 (compression), ER=0.02 (range); ETH: vol_ratio=0.79 (compression), ER=0.08 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 14:50:14,144 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.752 proposals=7 mirrored=0 skipped=None
+2026-06-19 15:50:14,855 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.75). BTC: vol_ratio=0.83 (compression), ER=0.02 (range); ETH: vol_ratio=0.79 (compression), ER=0.08 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 15:50:14,904 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.755 proposals=7 mirrored=0 skipped=None
+2026-06-19 16:50:15,979 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.82 (compression), ER=0.03 (range); ETH: vol_ratio=0.78 (compression), ER=0.06 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 16:50:16,130 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.773 proposals=7 mirrored=0 skipped=None
+2026-06-19 17:50:16,749 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.82 (compression), ER=0.03 (range); ETH: vol_ratio=0.78 (compression), ER=0.06 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 17:50:16,810 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.77 proposals=7 mirrored=0 skipped=None
+2026-06-19 18:50:17,616 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.82 (compression), ER=0.03 (range); ETH: vol_ratio=0.78 (compression), ER=0.06 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 18:50:17,688 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.773 proposals=7 mirrored=0 skipped=None
+2026-06-19 19:50:18,447 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.82 (compression), ER=0.03 (range); ETH: vol_ratio=0.78 (compression), ER=0.06 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 19:50:18,614 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.773 proposals=7 mirrored=0 skipped=None
+2026-06-19 20:50:19,339 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.84 (compression), ER=0.02 (range); ETH: vol_ratio=0.77 (compression), ER=0.06 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 20:50:19,504 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.766 proposals=7 mirrored=0 skipped=None
+2026-06-19 21:50:20,339 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.84 (compression), ER=0.03 (range); ETH: vol_ratio=0.77 (compression), ER=0.06 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 21:50:20,425 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.769 proposals=7 mirrored=0 skipped=None
+2026-06-19 22:50:21,096 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.76). BTC: vol_ratio=0.84 (compression), ER=0.01 (range); ETH: vol_ratio=0.77 (compression), ER=0.07 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 22:50:21,232 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.761 proposals=7 mirrored=0 skipped=None
+2026-06-19 23:50:22,094 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.76). BTC: vol_ratio=0.84 (compression), ER=0.02 (range); ETH: vol_ratio=0.77 (compression), ER=0.06 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-19 23:50:22,170 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.763 proposals=7 mirrored=0 skipped=None
+2026-06-20 00:50:22,789 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.86 (neutral), ER=0.00 (range); ETH: vol_ratio=0.77 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 00:50:22,823 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 01:50:23,488 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.86 (neutral), ER=0.00 (range); ETH: vol_ratio=0.77 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 01:50:23,561 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 02:50:24,263 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.85 (neutral), ER=0.01 (range); ETH: vol_ratio=0.77 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 02:50:24,319 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 03:50:25,039 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.85 (neutral), ER=0.00 (range); ETH: vol_ratio=0.77 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 03:50:25,140 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 04:50:25,867 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.86 (neutral), ER=0.02 (range); ETH: vol_ratio=0.78 (compression), ER=0.06 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 04:50:25,938 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 05:50:26,615 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.86 (neutral), ER=0.01 (range); ETH: vol_ratio=0.78 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 05:50:26,662 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 06:50:27,360 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.86 (neutral), ER=0.01 (range); ETH: vol_ratio=0.79 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 06:50:27,415 - regime_allocator - INFO - regime tick: regime=neutral conf=0.496 proposals=7 mirrored=0 skipped=None
+2026-06-20 07:50:28,076 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.86 (neutral), ER=0.01 (range); ETH: vol_ratio=0.79 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 07:50:28,118 - regime_allocator - INFO - regime tick: regime=neutral conf=0.496 proposals=7 mirrored=0 skipped=None
+2026-06-20 08:50:28,727 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.03 (range); ETH: vol_ratio=0.76 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 08:50:28,858 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 09:50:29,524 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.02 (range); ETH: vol_ratio=0.76 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 09:50:29,614 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 10:50:30,244 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.02 (range); ETH: vol_ratio=0.76 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 10:50:30,302 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 11:50:30,923 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.01 (range); ETH: vol_ratio=0.76 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 11:50:30,974 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 12:50:31,639 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.88 (neutral), ER=0.04 (range); ETH: vol_ratio=0.75 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 12:50:31,731 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 13:50:32,392 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.88 (neutral), ER=0.05 (range); ETH: vol_ratio=0.76 (compression), ER=0.06 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 13:50:32,518 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 14:50:33,724 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.88 (neutral), ER=0.03 (range); ETH: vol_ratio=0.76 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 14:50:33,769 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 15:50:34,910 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.01 (range); ETH: vol_ratio=0.76 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 15:50:34,958 - regime_allocator - INFO - regime tick: regime=neutral conf=0.496 proposals=7 mirrored=0 skipped=None
+2026-06-20 16:50:35,657 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.02 (range); ETH: vol_ratio=0.76 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 16:50:35,794 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 17:50:36,545 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.03 (range); ETH: vol_ratio=0.76 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 17:50:36,605 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 18:50:37,271 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.03 (range); ETH: vol_ratio=0.76 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 18:50:37,421 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 19:50:38,330 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.02 (range); ETH: vol_ratio=0.76 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 19:50:38,458 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 20:50:39,150 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.03 (range); ETH: vol_ratio=0.76 (compression), ER=0.07 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 20:50:39,206 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 21:50:39,950 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.02 (range); ETH: vol_ratio=0.76 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 21:50:40,092 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-20 22:50:40,787 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.90 (neutral), ER=0.01 (range); ETH: vol_ratio=0.77 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 22:50:40,871 - regime_allocator - INFO - regime tick: regime=neutral conf=0.492 proposals=7 mirrored=0 skipped=None
+2026-06-20 23:50:41,527 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.90 (neutral), ER=0.01 (range); ETH: vol_ratio=0.77 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-20 23:50:41,606 - regime_allocator - INFO - regime tick: regime=neutral conf=0.494 proposals=7 mirrored=0 skipped=None
+2026-06-21 00:50:42,757 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.01 (range); ETH: vol_ratio=0.78 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 00:50:42,849 - regime_allocator - INFO - regime tick: regime=neutral conf=0.495 proposals=7 mirrored=0 skipped=None
+2026-06-21 01:50:43,590 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.02 (range); ETH: vol_ratio=0.78 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 01:50:43,657 - regime_allocator - INFO - regime tick: regime=neutral conf=0.495 proposals=7 mirrored=0 skipped=None
+2026-06-21 02:50:44,322 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.02 (range); ETH: vol_ratio=0.78 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 02:50:44,368 - regime_allocator - INFO - regime tick: regime=neutral conf=0.496 proposals=7 mirrored=0 skipped=None
+2026-06-21 03:50:45,069 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.92 (neutral), ER=0.01 (range); ETH: vol_ratio=0.78 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 03:50:45,121 - regime_allocator - INFO - regime tick: regime=neutral conf=0.494 proposals=7 mirrored=0 skipped=None
+2026-06-21 04:50:45,715 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.00 (range); ETH: vol_ratio=0.80 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 04:50:45,752 - regime_allocator - INFO - regime tick: regime=neutral conf=0.486 proposals=7 mirrored=0 skipped=None
+2026-06-21 05:50:46,386 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.01 (range); ETH: vol_ratio=0.80 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 05:50:46,423 - regime_allocator - INFO - regime tick: regime=neutral conf=0.489 proposals=7 mirrored=0 skipped=None
+2026-06-21 06:50:47,142 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.01 (range); ETH: vol_ratio=0.80 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 06:50:47,191 - regime_allocator - INFO - regime tick: regime=neutral conf=0.486 proposals=7 mirrored=0 skipped=None
+2026-06-21 07:50:47,953 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.01 (range); ETH: vol_ratio=0.80 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 07:50:48,058 - regime_allocator - INFO - regime tick: regime=neutral conf=0.489 proposals=7 mirrored=0 skipped=None
+2026-06-21 08:50:48,702 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.03 (range); ETH: vol_ratio=0.78 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 08:50:48,810 - regime_allocator - INFO - regime tick: regime=neutral conf=0.497 proposals=7 mirrored=0 skipped=None
+2026-06-21 09:50:49,445 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.02 (range); ETH: vol_ratio=0.78 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 09:50:49,516 - regime_allocator - INFO - regime tick: regime=neutral conf=0.491 proposals=7 mirrored=0 skipped=None
+2026-06-21 10:50:50,287 - regime_allocator - INFO - regime: NEUTRAL (conf 0.49). BTC: vol_ratio=0.91 (neutral), ER=0.01 (range); ETH: vol_ratio=0.78 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 10:50:50,464 - regime_allocator - INFO - regime tick: regime=neutral conf=0.49 proposals=7 mirrored=0 skipped=None
+2026-06-21 11:50:51,094 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.02 (range); ETH: vol_ratio=0.78 (compression), ER=0.08 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 11:50:51,152 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-21 12:50:51,813 - regime_allocator - INFO - regime: NEUTRAL (conf 0.48). BTC: vol_ratio=0.88 (neutral), ER=0.00 (range); ETH: vol_ratio=0.84 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 12:50:52,045 - regime_allocator - INFO - regime tick: regime=neutral conf=0.477 proposals=7 mirrored=0 skipped=None
+2026-06-21 13:50:52,736 - regime_allocator - INFO - regime: NEUTRAL (conf 0.47). BTC: vol_ratio=0.88 (neutral), ER=0.00 (range); ETH: vol_ratio=0.84 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 13:50:52,853 - regime_allocator - INFO - regime tick: regime=neutral conf=0.475 proposals=7 mirrored=0 skipped=None
+2026-06-21 14:50:53,506 - regime_allocator - INFO - regime: NEUTRAL (conf 0.47). BTC: vol_ratio=0.88 (neutral), ER=0.00 (range); ETH: vol_ratio=0.84 (compression), ER=0.09 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 14:50:53,559 - regime_allocator - INFO - regime tick: regime=neutral conf=0.473 proposals=7 mirrored=0 skipped=None
+2026-06-21 15:50:54,446 - regime_allocator - INFO - regime: NEUTRAL (conf 0.47). BTC: vol_ratio=0.88 (neutral), ER=0.01 (range); ETH: vol_ratio=0.84 (compression), ER=0.10 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-21 15:50:54,520 - regime_allocator - INFO - regime tick: regime=neutral conf=0.467 proposals=7 mirrored=0 skipped=None
+2026-06-21 16:50:55,214 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.78). BTC: vol_ratio=0.74 (compression), ER=0.02 (range); ETH: vol_ratio=0.76 (compression), ER=0.09 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 16:50:55,316 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.783 proposals=7 mirrored=0 skipped=None
+2026-06-21 17:50:55,986 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.78). BTC: vol_ratio=0.74 (compression), ER=0.02 (range); ETH: vol_ratio=0.76 (compression), ER=0.09 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 17:50:56,056 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.783 proposals=7 mirrored=0 skipped=None
+2026-06-21 18:50:56,725 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.74 (compression), ER=0.02 (range); ETH: vol_ratio=0.77 (compression), ER=0.11 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 18:50:56,862 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.774 proposals=7 mirrored=0 skipped=None
+2026-06-21 19:50:57,625 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.74 (compression), ER=0.03 (range); ETH: vol_ratio=0.77 (compression), ER=0.11 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 19:50:57,678 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.775 proposals=7 mirrored=0 skipped=None
+2026-06-21 20:50:58,416 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.73). BTC: vol_ratio=0.76 (compression), ER=0.13 (range); ETH: vol_ratio=0.76 (compression), ER=0.01 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 20:50:58,561 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.726 proposals=7 mirrored=0 skipped=None
+2026-06-21 21:50:59,363 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.73). BTC: vol_ratio=0.75 (compression), ER=0.13 (range); ETH: vol_ratio=0.76 (compression), ER=0.01 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 21:50:59,555 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.735 proposals=7 mirrored=0 skipped=None
+2026-06-21 22:51:00,236 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.72). BTC: vol_ratio=0.76 (compression), ER=0.13 (range); ETH: vol_ratio=0.76 (compression), ER=0.02 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 22:51:00,297 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.725 proposals=7 mirrored=0 skipped=None
+2026-06-21 23:51:01,008 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.78 (compression), ER=0.15 (range); ETH: vol_ratio=0.78 (compression), ER=0.03 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-21 23:51:01,198 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.69 proposals=7 mirrored=0 skipped=None
+2026-06-22 00:51:01,867 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.81 (compression), ER=0.14 (range); ETH: vol_ratio=0.80 (compression), ER=0.00 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 00:51:02,042 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.693 proposals=7 mirrored=0 skipped=None
+2026-06-22 01:51:03,292 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.08 (range); ETH: vol_ratio=0.86 (neutral), ER=0.04 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-22 01:51:03,395 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-22 02:51:04,219 - regime_allocator - INFO - regime: NEUTRAL (conf 0.45). BTC: vol_ratio=0.85 (neutral), ER=0.10 (range); ETH: vol_ratio=0.84 (compression), ER=0.03 (range). vol_vote=-0.40, trend_vote=-1.00.
+2026-06-22 02:51:04,278 - regime_allocator - INFO - regime tick: regime=neutral conf=0.454 proposals=7 mirrored=0 skipped=None
+2026-06-22 03:51:05,072 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.70). BTC: vol_ratio=0.83 (compression), ER=0.11 (range); ETH: vol_ratio=0.82 (compression), ER=0.02 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 03:51:05,145 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.702 proposals=7 mirrored=0 skipped=None
+2026-06-22 04:51:05,880 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.72). BTC: vol_ratio=0.82 (compression), ER=0.10 (range); ETH: vol_ratio=0.82 (compression), ER=0.03 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 04:51:05,955 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.72 proposals=7 mirrored=0 skipped=None
+2026-06-22 05:51:06,661 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.73). BTC: vol_ratio=0.82 (compression), ER=0.09 (range); ETH: vol_ratio=0.82 (compression), ER=0.03 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 05:51:06,714 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.727 proposals=7 mirrored=0 skipped=None
+2026-06-22 06:51:07,330 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.71). BTC: vol_ratio=0.82 (compression), ER=0.11 (range); ETH: vol_ratio=0.82 (compression), ER=0.03 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 06:51:07,443 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.715 proposals=7 mirrored=0 skipped=None
+2026-06-22 07:51:08,274 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.73). BTC: vol_ratio=0.82 (compression), ER=0.09 (range); ETH: vol_ratio=0.83 (compression), ER=0.05 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 07:51:08,331 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.726 proposals=7 mirrored=0 skipped=None
+2026-06-22 08:51:09,072 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.80 (compression), ER=0.13 (range); ETH: vol_ratio=0.83 (compression), ER=0.03 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 08:51:09,132 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.69 proposals=7 mirrored=0 skipped=None
+2026-06-22 09:51:09,784 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.80 (compression), ER=0.14 (range); ETH: vol_ratio=0.83 (compression), ER=0.03 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 09:51:09,834 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.687 proposals=7 mirrored=0 skipped=None
+2026-06-22 10:51:10,528 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.80 (compression), ER=0.13 (range); ETH: vol_ratio=0.83 (compression), ER=0.02 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 10:51:10,606 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.69 proposals=7 mirrored=0 skipped=None
+2026-06-22 11:51:11,231 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.47). BTC: vol_ratio=0.81 (compression), ER=0.10 (range); ETH: vol_ratio=0.85 (neutral), ER=0.01 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-06-22 11:51:11,298 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.466 proposals=7 mirrored=0 skipped=None
+2026-06-22 12:51:11,970 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.76). BTC: vol_ratio=0.59 (compression), ER=0.14 (range); ETH: vol_ratio=0.59 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 12:51:12,033 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.763 proposals=7 mirrored=0 skipped=None
+2026-06-22 13:51:12,698 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.79). BTC: vol_ratio=0.62 (compression), ER=0.11 (range); ETH: vol_ratio=0.59 (compression), ER=0.13 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 13:51:12,822 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.788 proposals=7 mirrored=0 skipped=None
+2026-06-22 14:51:13,562 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.74). BTC: vol_ratio=0.58 (compression), ER=0.15 (range); ETH: vol_ratio=0.60 (compression), ER=0.16 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 14:51:13,639 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.741 proposals=7 mirrored=0 skipped=None
+2026-06-22 15:51:14,297 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.71). BTC: vol_ratio=0.58 (compression), ER=0.16 (range); ETH: vol_ratio=0.64 (compression), ER=0.18 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 15:51:14,334 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.71 proposals=7 mirrored=0 skipped=None
+2026-06-22 16:51:15,156 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.56 (compression), ER=0.13 (range); ETH: vol_ratio=0.60 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 16:51:15,253 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.772 proposals=7 mirrored=0 skipped=None
+2026-06-22 17:51:15,920 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.76). BTC: vol_ratio=0.57 (compression), ER=0.14 (range); ETH: vol_ratio=0.61 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 17:51:16,028 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.758 proposals=7 mirrored=0 skipped=None
+2026-06-22 18:51:16,685 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.75). BTC: vol_ratio=0.57 (compression), ER=0.15 (range); ETH: vol_ratio=0.61 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 18:51:16,739 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.749 proposals=7 mirrored=0 skipped=None
+2026-06-22 19:51:17,530 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.74). BTC: vol_ratio=0.58 (compression), ER=0.15 (range); ETH: vol_ratio=0.61 (compression), ER=0.16 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 19:51:17,580 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.741 proposals=7 mirrored=0 skipped=None
+2026-06-22 20:51:18,254 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.79). BTC: vol_ratio=0.57 (compression), ER=0.13 (range); ETH: vol_ratio=0.61 (compression), ER=0.11 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 20:51:18,315 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.793 proposals=7 mirrored=0 skipped=None
+2026-06-22 21:51:18,960 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.78). BTC: vol_ratio=0.58 (compression), ER=0.14 (range); ETH: vol_ratio=0.61 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 21:51:19,014 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.775 proposals=7 mirrored=0 skipped=None
+2026-06-22 22:51:19,667 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.73). BTC: vol_ratio=0.60 (compression), ER=0.16 (range); ETH: vol_ratio=0.62 (compression), ER=0.13 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 22:51:19,836 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.734 proposals=7 mirrored=0 skipped=None
+2026-06-22 23:51:20,531 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.74). BTC: vol_ratio=0.60 (compression), ER=0.16 (range); ETH: vol_ratio=0.62 (compression), ER=0.13 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-22 23:51:20,595 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.743 proposals=7 mirrored=0 skipped=None
+2026-06-23 00:51:21,261 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.79). BTC: vol_ratio=0.59 (compression), ER=0.14 (range); ETH: vol_ratio=0.60 (compression), ER=0.09 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-23 00:51:21,320 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.79 proposals=7 mirrored=0 skipped=None
+2026-06-23 01:51:21,978 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.77). BTC: vol_ratio=0.59 (compression), ER=0.15 (range); ETH: vol_ratio=0.60 (compression), ER=0.11 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-23 01:51:22,071 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.77 proposals=7 mirrored=0 skipped=None
+2026-06-23 02:51:22,714 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.80). BTC: vol_ratio=0.59 (compression), ER=0.13 (range); ETH: vol_ratio=0.60 (compression), ER=0.09 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-23 02:51:22,760 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.803 proposals=7 mirrored=0 skipped=None
+2026-06-23 03:51:23,451 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.79). BTC: vol_ratio=0.59 (compression), ER=0.14 (range); ETH: vol_ratio=0.60 (compression), ER=0.09 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-23 03:51:23,513 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.788 proposals=7 mirrored=0 skipped=None
+2026-06-23 04:51:24,172 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.74). BTC: vol_ratio=0.61 (compression), ER=0.18 (range); ETH: vol_ratio=0.61 (compression), ER=0.10 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-23 04:51:24,213 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.739 proposals=7 mirrored=0 skipped=None
+2026-06-23 05:51:24,885 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.70). BTC: vol_ratio=0.63 (compression), ER=0.19 (range); ETH: vol_ratio=0.62 (compression), ER=0.11 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-23 05:51:24,944 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.704 proposals=7 mirrored=0 skipped=None
+2026-06-23 06:51:25,685 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.38). BTC: vol_ratio=0.70 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.70 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-23 06:51:25,756 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.377 proposals=7 mirrored=0 skipped=None
+2026-06-23 07:51:26,477 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.37). BTC: vol_ratio=0.70 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.72 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-23 07:51:26,550 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.369 proposals=7 mirrored=0 skipped=None
+2026-06-23 08:51:27,266 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.56). BTC: vol_ratio=0.73 (compression), ER=0.25 (neutral); ETH: vol_ratio=0.80 (compression), ER=0.26 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 08:51:27,344 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.557 proposals=7 mirrored=0 skipped=None
+2026-06-23 09:51:28,028 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.56). BTC: vol_ratio=0.73 (compression), ER=0.25 (neutral); ETH: vol_ratio=0.79 (compression), ER=0.26 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 09:51:28,082 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.559 proposals=7 mirrored=0 skipped=None
+2026-06-23 10:51:28,920 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.56). BTC: vol_ratio=0.74 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.79 (compression), ER=0.26 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 10:51:29,102 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.556 proposals=7 mirrored=0 skipped=None
+2026-06-23 11:51:30,795 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.57). BTC: vol_ratio=0.73 (compression), ER=0.25 (neutral); ETH: vol_ratio=0.77 (compression), ER=0.25 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 11:51:30,903 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.566 proposals=7 mirrored=0 skipped=None
+2026-06-23 12:51:31,677 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.23 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 12:51:31,811 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.582 proposals=7 mirrored=0 skipped=None
+2026-06-23 13:51:32,985 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.22 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 13:51:33,133 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.583 proposals=7 mirrored=0 skipped=None
+2026-06-23 14:51:33,795 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.21 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 14:51:33,841 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.583 proposals=7 mirrored=0 skipped=None
+2026-06-23 15:51:34,464 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.23 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 15:51:34,538 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.582 proposals=7 mirrored=0 skipped=None
+2026-06-23 16:51:35,181 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.25 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 16:51:35,254 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.581 proposals=7 mirrored=0 skipped=None
+2026-06-23 17:51:35,935 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.25 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 17:51:36,045 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.582 proposals=7 mirrored=0 skipped=None
+2026-06-23 18:51:36,679 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.26 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 18:51:36,841 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.58 proposals=7 mirrored=0 skipped=None
+2026-06-23 19:51:37,535 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.70 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.75 (compression), ER=0.25 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 19:51:37,600 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.581 proposals=7 mirrored=0 skipped=None
+2026-06-23 20:51:38,329 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.56). BTC: vol_ratio=0.72 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.80 (compression), ER=0.24 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 20:51:38,411 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.561 proposals=7 mirrored=0 skipped=None
+2026-06-23 21:51:39,592 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.31). BTC: vol_ratio=0.73 (compression), ER=0.19 (range); ETH: vol_ratio=0.80 (compression), ER=0.23 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-23 21:51:39,658 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.314 proposals=7 mirrored=0 skipped=None
+2026-06-23 22:51:40,331 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.56). BTC: vol_ratio=0.72 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.80 (compression), ER=0.24 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-23 22:51:40,396 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.56 proposals=7 mirrored=0 skipped=None
+2026-06-23 23:51:41,115 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.32). BTC: vol_ratio=0.73 (compression), ER=0.19 (range); ETH: vol_ratio=0.80 (compression), ER=0.23 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-23 23:51:41,173 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.319 proposals=7 mirrored=0 skipped=None
+2026-06-24 00:51:41,861 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.32). BTC: vol_ratio=0.74 (compression), ER=0.18 (range); ETH: vol_ratio=0.81 (compression), ER=0.22 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-24 00:51:41,933 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.32 proposals=7 mirrored=0 skipped=None
+2026-06-24 01:51:42,680 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.32). BTC: vol_ratio=0.74 (compression), ER=0.18 (range); ETH: vol_ratio=0.81 (compression), ER=0.21 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-24 01:51:42,758 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.321 proposals=7 mirrored=0 skipped=None
+2026-06-24 02:51:43,382 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.56). BTC: vol_ratio=0.73 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.80 (compression), ER=0.23 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-24 02:51:43,429 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.555 proposals=7 mirrored=0 skipped=None
+2026-06-24 03:51:44,046 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.31). BTC: vol_ratio=0.73 (compression), ER=0.20 (range); ETH: vol_ratio=0.81 (compression), ER=0.23 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-24 03:51:44,127 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.308 proposals=7 mirrored=0 skipped=None
+2026-06-24 04:51:44,859 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.33). BTC: vol_ratio=0.73 (compression), ER=0.18 (range); ETH: vol_ratio=0.78 (compression), ER=0.21 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-24 04:51:44,941 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.331 proposals=7 mirrored=0 skipped=None
+2026-06-24 05:51:45,605 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.34). BTC: vol_ratio=0.73 (compression), ER=0.17 (range); ETH: vol_ratio=0.78 (compression), ER=0.21 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-24 05:51:45,661 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.339 proposals=7 mirrored=0 skipped=None
+2026-06-24 06:51:46,321 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.33). BTC: vol_ratio=0.73 (compression), ER=0.18 (range); ETH: vol_ratio=0.79 (compression), ER=0.20 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-24 06:51:46,384 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.33 proposals=7 mirrored=0 skipped=None
+2026-06-24 07:51:47,116 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.32). BTC: vol_ratio=0.73 (compression), ER=0.19 (range); ETH: vol_ratio=0.78 (compression), ER=0.21 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-06-24 07:51:47,153 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.325 proposals=7 mirrored=0 skipped=None
+2026-06-24 08:51:48,016 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.64). BTC: vol_ratio=0.73 (compression), ER=0.14 (range); ETH: vol_ratio=0.78 (compression), ER=0.17 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-24 08:51:48,208 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.638 proposals=7 mirrored=0 skipped=None
+2026-06-24 09:51:48,869 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.63). BTC: vol_ratio=0.73 (compression), ER=0.15 (range); ETH: vol_ratio=0.78 (compression), ER=0.18 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-24 09:51:49,075 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.627 proposals=7 mirrored=0 skipped=None
+2026-06-24 10:51:49,947 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.61). BTC: vol_ratio=0.73 (compression), ER=0.16 (range); ETH: vol_ratio=0.79 (compression), ER=0.19 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-24 10:51:50,025 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.611 proposals=7 mirrored=0 skipped=None
+2026-06-24 11:51:50,674 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.66). BTC: vol_ratio=0.74 (compression), ER=0.13 (range); ETH: vol_ratio=0.79 (compression), ER=0.16 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-24 11:51:50,850 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.659 proposals=7 mirrored=0 skipped=None
+2026-06-24 12:51:51,562 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.32). BTC: vol_ratio=0.72 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.78 (compression), ER=0.19 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-24 12:51:51,658 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.322 proposals=7 mirrored=0 skipped=None
+2026-06-24 13:51:52,309 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.52). BTC: vol_ratio=0.82 (compression), ER=0.27 (neutral); ETH: vol_ratio=0.80 (compression), ER=0.22 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-24 13:51:52,346 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.523 proposals=7 mirrored=0 skipped=None
+2026-06-24 14:51:53,416 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.91 (neutral), ER=0.29 (neutral); ETH: vol_ratio=0.81 (compression), ER=0.23 (neutral). vol_vote=-0.40, trend_vote=+0.00.
+2026-06-24 14:51:53,520 - regime_allocator - INFO - regime tick: regime=neutral conf=0.259 proposals=7 mirrored=0 skipped=None
+2026-06-24 15:51:54,180 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.03 (neutral), ER=0.32 (neutral); ETH: vol_ratio=0.92 (neutral), ER=0.26 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 15:51:54,386 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 16:51:55,100 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.08 (neutral), ER=0.30 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.26 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 16:51:55,168 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 17:51:55,851 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.09 (neutral), ER=0.30 (neutral); ETH: vol_ratio=1.03 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 17:51:55,908 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 18:51:56,560 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.09 (neutral), ER=0.30 (neutral); ETH: vol_ratio=1.00 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 18:51:56,620 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 19:51:57,230 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.08 (neutral), ER=0.28 (neutral); ETH: vol_ratio=0.97 (neutral), ER=0.26 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 19:51:57,311 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 20:51:57,932 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.13 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.01 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 20:51:57,991 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 21:51:58,632 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.13 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.02 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 21:51:58,680 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 22:51:59,323 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.11 (neutral), ER=0.23 (neutral); ETH: vol_ratio=1.01 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 22:51:59,541 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-24 23:52:00,342 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.12 (neutral), ER=0.22 (neutral); ETH: vol_ratio=1.02 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-24 23:52:00,451 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-25 00:52:01,111 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.13 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.04 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-25 00:52:01,254 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-25 01:52:01,970 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.13 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.04 (neutral), ER=0.20 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-25 01:52:02,239 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-25 02:52:02,886 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.13 (neutral), ER=0.22 (neutral); ETH: vol_ratio=1.04 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-25 02:52:02,959 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-25 03:52:03,591 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.13 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.04 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-25 03:52:03,643 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-25 04:52:04,362 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.13 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.05 (neutral), ER=0.20 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-25 04:52:04,503 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-25 05:52:05,286 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.31). BTC: vol_ratio=1.16 (expansion), ER=0.17 (range); ETH: vol_ratio=1.08 (neutral), ER=0.17 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 05:52:05,322 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.307 proposals=7 mirrored=0 skipped=None
+2026-06-25 06:52:05,996 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.32). BTC: vol_ratio=1.17 (expansion), ER=0.16 (range); ETH: vol_ratio=1.09 (neutral), ER=0.16 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 06:52:06,040 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.324 proposals=7 mirrored=0 skipped=None
+2026-06-25 07:52:06,679 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.17 (expansion), ER=0.16 (range); ETH: vol_ratio=1.09 (neutral), ER=0.15 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 07:52:06,775 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.33 proposals=7 mirrored=0 skipped=None
+2026-06-25 08:52:07,493 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.18 (expansion), ER=0.13 (range); ETH: vol_ratio=1.10 (neutral), ER=0.14 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 08:52:07,553 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.364 proposals=7 mirrored=0 skipped=None
+2026-06-25 09:52:08,206 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.18 (expansion), ER=0.13 (range); ETH: vol_ratio=1.10 (neutral), ER=0.15 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 09:52:08,276 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.358 proposals=7 mirrored=0 skipped=None
+2026-06-25 10:52:08,975 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.18 (expansion), ER=0.15 (range); ETH: vol_ratio=1.10 (neutral), ER=0.16 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 10:52:09,041 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.33 proposals=7 mirrored=0 skipped=None
+2026-06-25 11:52:09,685 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.32). BTC: vol_ratio=1.19 (expansion), ER=0.16 (range); ETH: vol_ratio=1.11 (neutral), ER=0.18 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 11:52:09,759 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.316 proposals=7 mirrored=0 skipped=None
+2026-06-25 12:52:10,583 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.49). BTC: vol_ratio=1.22 (expansion), ER=0.06 (range); ETH: vol_ratio=1.13 (neutral), ER=0.07 (range). vol_vote=+0.60, trend_vote=-1.00.
+2026-06-25 12:52:10,719 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.494 proposals=7 mirrored=0 skipped=None
+2026-06-25 13:52:11,635 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.30 (expansion), ER=0.17 (range); ETH: vol_ratio=1.20 (expansion), ER=0.17 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-25 13:52:11,856 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.601 proposals=7 mirrored=0 skipped=None
+2026-06-25 14:52:13,416 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.61). BTC: vol_ratio=1.27 (expansion), ER=0.16 (range); ETH: vol_ratio=1.19 (expansion), ER=0.17 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-25 14:52:13,611 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.612 proposals=7 mirrored=0 skipped=None
+2026-06-25 15:52:14,334 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.30 (expansion), ER=0.17 (range); ETH: vol_ratio=1.23 (expansion), ER=0.18 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-25 15:52:14,642 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.597 proposals=7 mirrored=0 skipped=None
+2026-06-25 16:52:15,335 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.56). BTC: vol_ratio=1.30 (expansion), ER=0.22 (neutral); ETH: vol_ratio=1.21 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-25 16:52:15,506 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.556 proposals=7 mirrored=0 skipped=None
+2026-06-25 17:52:16,261 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.56). BTC: vol_ratio=1.30 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.21 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-25 17:52:16,439 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.556 proposals=7 mirrored=0 skipped=None
+2026-06-25 18:52:17,403 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.56). BTC: vol_ratio=1.30 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.21 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-25 18:52:17,462 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.556 proposals=7 mirrored=0 skipped=None
+2026-06-25 19:52:18,569 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.56). BTC: vol_ratio=1.30 (expansion), ER=0.22 (neutral); ETH: vol_ratio=1.21 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-25 19:52:18,626 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.556 proposals=7 mirrored=0 skipped=None
+2026-06-25 20:52:19,328 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.55). BTC: vol_ratio=1.28 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.20 (expansion), ER=0.24 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-25 20:52:19,407 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.55 proposals=7 mirrored=0 skipped=None
+2026-06-25 21:52:20,046 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.34). BTC: vol_ratio=1.30 (expansion), ER=0.17 (range); ETH: vol_ratio=1.21 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-25 21:52:20,145 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.342 proposals=7 mirrored=0 skipped=None
+2026-06-25 22:52:20,762 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.32). BTC: vol_ratio=1.29 (expansion), ER=0.18 (range); ETH: vol_ratio=1.21 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-25 22:52:20,813 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.324 proposals=7 mirrored=0 skipped=None
+2026-06-25 23:52:21,423 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.32). BTC: vol_ratio=1.29 (expansion), ER=0.18 (range); ETH: vol_ratio=1.20 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-25 23:52:21,464 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.324 proposals=7 mirrored=0 skipped=None
+2026-06-26 00:52:22,056 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.32). BTC: vol_ratio=1.27 (expansion), ER=0.17 (range); ETH: vol_ratio=1.18 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 00:52:22,090 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.318 proposals=7 mirrored=0 skipped=None
+2026-06-26 01:52:22,709 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.30). BTC: vol_ratio=1.27 (expansion), ER=0.19 (range); ETH: vol_ratio=1.18 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 01:52:22,744 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.299 proposals=7 mirrored=0 skipped=None
+2026-06-26 02:52:23,362 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.55). BTC: vol_ratio=1.28 (expansion), ER=0.23 (neutral); ETH: vol_ratio=1.20 (expansion), ER=0.26 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-26 02:52:23,402 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.55 proposals=7 mirrored=0 skipped=None
+2026-06-26 03:52:24,045 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.31). BTC: vol_ratio=1.27 (expansion), ER=0.18 (range); ETH: vol_ratio=1.18 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 03:52:24,083 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.314 proposals=7 mirrored=0 skipped=None
+2026-06-26 04:52:24,730 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.27 (expansion), ER=0.16 (range); ETH: vol_ratio=1.16 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 04:52:24,771 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.33 proposals=7 mirrored=0 skipped=None
+2026-06-26 05:52:25,392 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.27 (expansion), ER=0.16 (range); ETH: vol_ratio=1.16 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 05:52:25,437 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.327 proposals=7 mirrored=0 skipped=None
+2026-06-26 06:52:26,051 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.61). BTC: vol_ratio=1.27 (expansion), ER=0.13 (range); ETH: vol_ratio=1.17 (expansion), ER=0.20 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 06:52:26,115 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.607 proposals=7 mirrored=0 skipped=None
+2026-06-26 07:52:26,780 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.64). BTC: vol_ratio=1.28 (expansion), ER=0.12 (range); ETH: vol_ratio=1.18 (expansion), ER=0.18 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 07:52:26,906 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.642 proposals=7 mirrored=0 skipped=None
+2026-06-26 08:52:27,550 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.61). BTC: vol_ratio=1.27 (expansion), ER=0.13 (range); ETH: vol_ratio=1.16 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 08:52:27,608 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.612 proposals=7 mirrored=0 skipped=None
+2026-06-26 09:52:28,218 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.28 (expansion), ER=0.16 (range); ETH: vol_ratio=1.17 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 09:52:28,277 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.332 proposals=7 mirrored=0 skipped=None
+2026-06-26 10:52:28,894 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.29 (expansion), ER=0.17 (range); ETH: vol_ratio=1.17 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 10:52:28,937 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.326 proposals=7 mirrored=0 skipped=None
+2026-06-26 11:52:29,547 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.29 (expansion), ER=0.17 (range); ETH: vol_ratio=1.18 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 11:52:29,587 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.327 proposals=7 mirrored=0 skipped=None
+2026-06-26 12:52:30,213 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.56). BTC: vol_ratio=1.33 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.19 (expansion), ER=0.25 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-26 12:52:30,251 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.562 proposals=7 mirrored=0 skipped=None
+2026-06-26 13:52:30,848 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.32). BTC: vol_ratio=1.34 (expansion), ER=0.19 (range); ETH: vol_ratio=1.20 (expansion), ER=0.24 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 13:52:30,890 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.322 proposals=7 mirrored=0 skipped=None
+2026-06-26 14:52:31,538 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.33). BTC: vol_ratio=1.34 (expansion), ER=0.19 (range); ETH: vol_ratio=1.21 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 14:52:31,580 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.33 proposals=7 mirrored=0 skipped=None
+2026-06-26 15:52:32,219 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.63). BTC: vol_ratio=1.36 (expansion), ER=0.16 (range); ETH: vol_ratio=1.24 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 15:52:32,271 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.634 proposals=7 mirrored=0 skipped=None
+2026-06-26 16:52:32,925 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.65). BTC: vol_ratio=1.37 (expansion), ER=0.15 (range); ETH: vol_ratio=1.25 (expansion), ER=0.18 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 16:52:32,968 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.649 proposals=7 mirrored=0 skipped=None
+2026-06-26 17:52:33,623 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.65). BTC: vol_ratio=1.37 (expansion), ER=0.15 (range); ETH: vol_ratio=1.26 (expansion), ER=0.17 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 17:52:33,685 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.655 proposals=7 mirrored=0 skipped=None
+2026-06-26 18:52:34,280 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.63). BTC: vol_ratio=1.37 (expansion), ER=0.17 (range); ETH: vol_ratio=1.25 (expansion), ER=0.18 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 18:52:34,324 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.63 proposals=7 mirrored=0 skipped=None
+2026-06-26 19:52:34,946 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.64). BTC: vol_ratio=1.37 (expansion), ER=0.16 (range); ETH: vol_ratio=1.25 (expansion), ER=0.17 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 19:52:34,995 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.644 proposals=7 mirrored=0 skipped=None
+2026-06-26 20:52:35,610 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.34). BTC: vol_ratio=1.38 (expansion), ER=0.20 (range); ETH: vol_ratio=1.25 (expansion), ER=0.20 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-26 20:52:35,659 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.342 proposals=7 mirrored=0 skipped=None
+2026-06-26 21:52:36,266 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.61). BTC: vol_ratio=1.38 (expansion), ER=0.19 (range); ETH: vol_ratio=1.26 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 21:52:36,305 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.608 proposals=7 mirrored=0 skipped=None
+2026-06-26 22:52:36,927 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.61). BTC: vol_ratio=1.38 (expansion), ER=0.18 (range); ETH: vol_ratio=1.26 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 22:52:36,969 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.613 proposals=7 mirrored=0 skipped=None
+2026-06-26 23:52:37,615 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.62). BTC: vol_ratio=1.38 (expansion), ER=0.18 (range); ETH: vol_ratio=1.26 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-26 23:52:37,676 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.618 proposals=7 mirrored=0 skipped=None
+2026-06-27 00:52:38,301 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.63). BTC: vol_ratio=1.41 (expansion), ER=0.18 (range); ETH: vol_ratio=1.27 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 00:52:38,355 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.634 proposals=7 mirrored=0 skipped=None
+2026-06-27 01:52:38,978 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.63). BTC: vol_ratio=1.41 (expansion), ER=0.18 (range); ETH: vol_ratio=1.27 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 01:52:39,015 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.628 proposals=7 mirrored=0 skipped=None
+2026-06-27 02:52:39,607 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.66). BTC: vol_ratio=1.41 (expansion), ER=0.16 (range); ETH: vol_ratio=1.28 (expansion), ER=0.18 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 02:52:39,647 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.661 proposals=7 mirrored=0 skipped=None
+2026-06-27 03:52:40,277 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.65). BTC: vol_ratio=1.41 (expansion), ER=0.16 (range); ETH: vol_ratio=1.27 (expansion), ER=0.19 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 03:52:40,325 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.65 proposals=7 mirrored=0 skipped=None
+2026-06-27 04:52:40,941 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.37 (expansion), ER=0.17 (range); ETH: vol_ratio=1.22 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 04:52:40,982 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.357 proposals=7 mirrored=0 skipped=None
+2026-06-27 05:52:41,618 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.37 (expansion), ER=0.17 (range); ETH: vol_ratio=1.22 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 05:52:41,663 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.356 proposals=7 mirrored=0 skipped=None
+2026-06-27 06:52:42,269 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.37 (expansion), ER=0.17 (range); ETH: vol_ratio=1.22 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 06:52:42,307 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.36 proposals=7 mirrored=0 skipped=None
+2026-06-27 07:52:42,944 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.37). BTC: vol_ratio=1.37 (expansion), ER=0.16 (range); ETH: vol_ratio=1.22 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 07:52:43,053 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.369 proposals=7 mirrored=0 skipped=None
+2026-06-27 08:52:43,678 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.37). BTC: vol_ratio=1.37 (expansion), ER=0.16 (range); ETH: vol_ratio=1.21 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 08:52:43,718 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.367 proposals=7 mirrored=0 skipped=None
+2026-06-27 09:52:44,337 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.37 (expansion), ER=0.17 (range); ETH: vol_ratio=1.21 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 09:52:44,399 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.363 proposals=7 mirrored=0 skipped=None
+2026-06-27 10:52:45,053 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.37 (expansion), ER=0.17 (range); ETH: vol_ratio=1.21 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 10:52:45,115 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.362 proposals=7 mirrored=0 skipped=None
+2026-06-27 11:52:45,746 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.37 (expansion), ER=0.17 (range); ETH: vol_ratio=1.21 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 11:52:45,801 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.36 proposals=7 mirrored=0 skipped=None
+2026-06-27 12:52:46,486 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.34). BTC: vol_ratio=1.38 (expansion), ER=0.20 (range); ETH: vol_ratio=1.22 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 12:52:46,568 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.336 proposals=7 mirrored=0 skipped=None
+2026-06-27 13:52:47,192 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.35). BTC: vol_ratio=1.38 (expansion), ER=0.18 (range); ETH: vol_ratio=1.22 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 13:52:47,236 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.349 proposals=7 mirrored=0 skipped=None
+2026-06-27 14:52:47,944 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.35). BTC: vol_ratio=1.38 (expansion), ER=0.18 (range); ETH: vol_ratio=1.22 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 14:52:47,993 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.352 proposals=7 mirrored=0 skipped=None
+2026-06-27 15:52:48,633 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.62). BTC: vol_ratio=1.38 (expansion), ER=0.17 (range); ETH: vol_ratio=1.23 (expansion), ER=0.20 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 15:52:48,698 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.617 proposals=7 mirrored=0 skipped=None
+2026-06-27 16:52:49,406 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.65). BTC: vol_ratio=1.40 (expansion), ER=0.16 (range); ETH: vol_ratio=1.25 (expansion), ER=0.18 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 16:52:49,534 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.649 proposals=7 mirrored=0 skipped=None
+2026-06-27 17:52:50,139 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.63). BTC: vol_ratio=1.40 (expansion), ER=0.17 (range); ETH: vol_ratio=1.25 (expansion), ER=0.20 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 17:52:50,192 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.63 proposals=7 mirrored=0 skipped=None
+2026-06-27 18:52:50,815 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.63). BTC: vol_ratio=1.40 (expansion), ER=0.17 (range); ETH: vol_ratio=1.25 (expansion), ER=0.20 (range). vol_vote=+1.00, trend_vote=-1.00.
+2026-06-27 18:52:50,904 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.626 proposals=7 mirrored=0 skipped=None
+2026-06-27 19:52:51,588 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.40 (expansion), ER=0.18 (range); ETH: vol_ratio=1.26 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 19:52:51,673 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.363 proposals=7 mirrored=0 skipped=None
+2026-06-27 20:52:52,277 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.35). BTC: vol_ratio=1.40 (expansion), ER=0.20 (range); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-27 20:52:52,331 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.347 proposals=7 mirrored=0 skipped=None
+2026-06-27 21:52:53,010 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.24 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-27 21:52:53,053 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.596 proposals=7 mirrored=0 skipped=None
+2026-06-27 22:52:53,679 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.20 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-27 22:52:53,770 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.596 proposals=7 mirrored=0 skipped=None
+2026-06-27 23:52:54,443 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.24 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-27 23:52:54,601 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.596 proposals=7 mirrored=0 skipped=None
+2026-06-28 00:52:55,224 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 00:52:55,286 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.596 proposals=7 mirrored=0 skipped=None
+2026-06-28 01:52:55,910 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 01:52:55,968 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.597 proposals=7 mirrored=0 skipped=None
+2026-06-28 02:52:56,649 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.24 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 02:52:56,717 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.596 proposals=7 mirrored=0 skipped=None
+2026-06-28 03:52:57,358 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.24 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 03:52:57,409 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.596 proposals=7 mirrored=0 skipped=None
+2026-06-28 04:52:58,043 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.20 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 04:52:58,087 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.597 proposals=7 mirrored=0 skipped=None
+2026-06-28 05:52:58,695 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 05:52:58,731 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.597 proposals=7 mirrored=0 skipped=None
+2026-06-28 06:52:59,352 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.40 (expansion), ER=0.21 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 06:52:59,390 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.597 proposals=7 mirrored=0 skipped=None
+2026-06-28 07:53:00,006 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.35). BTC: vol_ratio=1.40 (expansion), ER=0.20 (range); ETH: vol_ratio=1.26 (expansion), ER=0.23 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-28 07:53:00,058 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.347 proposals=7 mirrored=0 skipped=None
+2026-06-28 08:53:00,692 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.36). BTC: vol_ratio=1.41 (expansion), ER=0.19 (range); ETH: vol_ratio=1.26 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-28 08:53:00,734 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.361 proposals=7 mirrored=0 skipped=None
+2026-06-28 09:53:01,356 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.35). BTC: vol_ratio=1.41 (expansion), ER=0.19 (range); ETH: vol_ratio=1.26 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-28 09:53:01,398 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.355 proposals=7 mirrored=0 skipped=None
+2026-06-28 10:53:02,461 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.60). BTC: vol_ratio=1.41 (expansion), ER=0.20 (neutral); ETH: vol_ratio=1.26 (expansion), ER=0.22 (neutral). vol_vote=+1.00, trend_vote=+0.00.
+2026-06-28 10:53:02,520 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.598 proposals=7 mirrored=0 skipped=None
+2026-06-28 11:53:03,204 - regime_allocator - INFO - regime: CHOP_EXPANSION (conf 0.35). BTC: vol_ratio=1.41 (expansion), ER=0.19 (range); ETH: vol_ratio=1.26 (expansion), ER=0.21 (neutral). vol_vote=+1.00, trend_vote=-0.60.
+2026-06-28 11:53:03,261 - regime_allocator - INFO - regime tick: regime=chop_expansion conf=0.354 proposals=7 mirrored=0 skipped=None
+2026-06-28 12:53:03,924 - regime_allocator - INFO - regime: NEUTRAL (conf 0.25). BTC: vol_ratio=1.09 (neutral), ER=0.20 (range); ETH: vol_ratio=1.13 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-06-28 12:53:03,976 - regime_allocator - INFO - regime tick: regime=neutral conf=0.253 proposals=7 mirrored=0 skipped=None
+2026-06-28 13:53:04,722 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.09 (neutral), ER=0.20 (neutral); ETH: vol_ratio=1.13 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 13:53:04,775 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 14:53:05,382 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.09 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.13 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 14:53:05,421 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 15:53:06,492 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.09 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.13 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 15:53:06,562 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 16:53:07,192 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.09 (neutral), ER=0.22 (neutral); ETH: vol_ratio=1.09 (neutral), ER=0.24 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 16:53:07,271 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 17:53:07,903 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.10 (neutral), ER=0.22 (neutral); ETH: vol_ratio=1.09 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 17:53:07,979 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 18:53:08,596 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.10 (neutral), ER=0.22 (neutral); ETH: vol_ratio=1.09 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 18:53:08,652 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 19:53:09,266 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.10 (neutral), ER=0.23 (neutral); ETH: vol_ratio=1.10 (neutral), ER=0.25 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 19:53:09,307 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 20:53:09,998 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.03 (neutral), ER=0.18 (range); ETH: vol_ratio=1.03 (neutral), ER=0.20 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-28 20:53:10,041 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 21:53:10,642 - regime_allocator - INFO - regime: NEUTRAL (conf 0.25). BTC: vol_ratio=1.02 (neutral), ER=0.20 (range); ETH: vol_ratio=1.02 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-06-28 21:53:10,688 - regime_allocator - INFO - regime tick: regime=neutral conf=0.254 proposals=7 mirrored=0 skipped=None
+2026-06-28 22:53:11,344 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.03 (neutral), ER=0.21 (neutral); ETH: vol_ratio=1.02 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-28 22:53:11,409 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-28 23:53:12,014 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.03 (neutral), ER=0.18 (range); ETH: vol_ratio=1.03 (neutral), ER=0.19 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-06-28 23:53:12,053 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 00:53:12,807 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.02 (neutral), ER=0.23 (neutral); ETH: vol_ratio=1.03 (neutral), ER=0.25 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 00:53:12,884 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 01:53:13,487 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.02 (neutral), ER=0.23 (neutral); ETH: vol_ratio=1.03 (neutral), ER=0.24 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 01:53:13,524 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 02:53:14,137 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=1.02 (neutral), ER=0.22 (neutral); ETH: vol_ratio=1.03 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 02:53:14,184 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 03:53:14,830 - regime_allocator - INFO - regime: NEUTRAL (conf 0.25). BTC: vol_ratio=1.04 (neutral), ER=0.20 (range); ETH: vol_ratio=1.03 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-06-29 03:53:14,879 - regime_allocator - INFO - regime tick: regime=neutral conf=0.253 proposals=7 mirrored=0 skipped=None
+2026-06-29 04:53:15,539 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.97 (neutral), ER=0.22 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.25 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 04:53:15,596 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 05:53:16,332 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.97 (neutral), ER=0.22 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.25 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 05:53:16,477 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 06:53:18,198 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.97 (neutral), ER=0.21 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.25 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 06:53:18,343 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 07:53:19,030 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.97 (neutral), ER=0.21 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.25 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 07:53:19,112 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 08:53:19,746 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.95 (neutral), ER=0.25 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 08:53:19,796 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 09:53:20,411 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.95 (neutral), ER=0.24 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 09:53:20,460 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 10:53:21,081 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.95 (neutral), ER=0.24 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 10:53:21,155 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 11:53:21,781 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.95 (neutral), ER=0.25 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=+0.00.
+2026-06-29 11:53:21,915 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-06-29 12:53:22,620 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.57). BTC: vol_ratio=0.75 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.72 (compression), ER=0.27 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-29 12:53:22,661 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.571 proposals=7 mirrored=0 skipped=None
+2026-06-29 13:53:23,280 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.57). BTC: vol_ratio=0.76 (compression), ER=0.27 (neutral); ETH: vol_ratio=0.72 (compression), ER=0.28 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-29 13:53:23,332 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.565 proposals=7 mirrored=0 skipped=None
+2026-06-29 14:53:23,946 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.56). BTC: vol_ratio=0.77 (compression), ER=0.28 (neutral); ETH: vol_ratio=0.72 (compression), ER=0.28 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-29 14:53:23,990 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.564 proposals=7 mirrored=0 skipped=None
+2026-06-29 15:53:24,619 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.57). BTC: vol_ratio=0.75 (compression), ER=0.26 (neutral); ETH: vol_ratio=0.72 (compression), ER=0.26 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-29 15:53:24,660 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.571 proposals=7 mirrored=0 skipped=None
+2026-06-29 16:53:25,715 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.57). BTC: vol_ratio=0.74 (compression), ER=0.25 (neutral); ETH: vol_ratio=0.71 (compression), ER=0.25 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-29 16:53:25,759 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.574 proposals=7 mirrored=0 skipped=None
+2026-06-29 17:53:26,386 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.31). BTC: vol_ratio=0.77 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.84 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-29 17:53:26,433 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.313 proposals=7 mirrored=0 skipped=None
+2026-06-29 18:53:27,060 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.32). BTC: vol_ratio=0.75 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.79 (compression), ER=0.17 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-29 18:53:27,099 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.319 proposals=7 mirrored=0 skipped=None
+2026-06-29 19:53:28,158 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.31). BTC: vol_ratio=0.77 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.81 (compression), ER=0.16 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-29 19:53:28,204 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.313 proposals=7 mirrored=0 skipped=None
+2026-06-29 20:53:28,905 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.58). BTC: vol_ratio=0.75 (compression), ER=0.19 (range); ETH: vol_ratio=0.81 (compression), ER=0.16 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-29 20:53:28,957 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.577 proposals=7 mirrored=0 skipped=None
+2026-06-29 21:53:29,580 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.59). BTC: vol_ratio=0.75 (compression), ER=0.19 (range); ETH: vol_ratio=0.81 (compression), ER=0.16 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-29 21:53:29,626 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.587 proposals=7 mirrored=0 skipped=None
+2026-06-29 22:53:30,283 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.57). BTC: vol_ratio=0.75 (compression), ER=0.19 (range); ETH: vol_ratio=0.82 (compression), ER=0.17 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-29 22:53:30,334 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.574 proposals=7 mirrored=0 skipped=None
+2026-06-29 23:53:31,031 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.57). BTC: vol_ratio=0.75 (compression), ER=0.20 (range); ETH: vol_ratio=0.82 (compression), ER=0.17 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-29 23:53:31,078 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.566 proposals=7 mirrored=0 skipped=None
+2026-06-30 00:53:32,594 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.76 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.83 (compression), ER=0.19 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 00:53:32,628 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-06-30 01:53:33,307 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.76 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.83 (compression), ER=0.20 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 01:53:33,369 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.289 proposals=7 mirrored=0 skipped=None
+2026-06-30 02:53:33,978 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.29). BTC: vol_ratio=0.75 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.83 (compression), ER=0.20 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 02:53:34,036 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.291 proposals=7 mirrored=0 skipped=None
+2026-06-30 03:53:34,646 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.53). BTC: vol_ratio=0.78 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.85 (compression), ER=0.21 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-06-30 03:53:34,682 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.529 proposals=7 mirrored=0 skipped=None
+2026-06-30 04:53:35,298 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.60). BTC: vol_ratio=0.75 (compression), ER=0.18 (range); ETH: vol_ratio=0.82 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 04:53:35,386 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.6 proposals=7 mirrored=0 skipped=None
+2026-06-30 05:53:36,008 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.60). BTC: vol_ratio=0.75 (compression), ER=0.18 (range); ETH: vol_ratio=0.82 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 05:53:36,057 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.604 proposals=7 mirrored=0 skipped=None
+2026-06-30 06:53:36,673 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.61). BTC: vol_ratio=0.75 (compression), ER=0.18 (range); ETH: vol_ratio=0.82 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 06:53:36,709 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.606 proposals=7 mirrored=0 skipped=None
+2026-06-30 07:53:37,312 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.60). BTC: vol_ratio=0.76 (compression), ER=0.18 (range); ETH: vol_ratio=0.82 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 07:53:37,352 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.602 proposals=7 mirrored=0 skipped=None
+2026-06-30 08:53:37,988 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.68). BTC: vol_ratio=0.66 (compression), ER=0.17 (range); ETH: vol_ratio=0.74 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 08:53:38,044 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.676 proposals=7 mirrored=0 skipped=None
+2026-06-30 09:53:38,711 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.65 (compression), ER=0.17 (range); ETH: vol_ratio=0.74 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 09:53:38,795 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.687 proposals=7 mirrored=0 skipped=None
+2026-06-30 10:53:39,884 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.68). BTC: vol_ratio=0.66 (compression), ER=0.17 (range); ETH: vol_ratio=0.74 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 10:53:39,926 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.682 proposals=7 mirrored=0 skipped=None
+2026-06-30 11:53:40,550 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.68). BTC: vol_ratio=0.66 (compression), ER=0.17 (range); ETH: vol_ratio=0.74 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 11:53:40,599 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.676 proposals=7 mirrored=0 skipped=None
+2026-06-30 12:53:41,215 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.42). BTC: vol_ratio=0.60 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.69 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 12:53:41,270 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.417 proposals=7 mirrored=0 skipped=None
+2026-06-30 13:53:42,033 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.67). BTC: vol_ratio=0.60 (compression), ER=0.20 (range); ETH: vol_ratio=0.68 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 13:53:42,123 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.674 proposals=7 mirrored=0 skipped=None
+2026-06-30 14:53:42,728 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.42). BTC: vol_ratio=0.60 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.68 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 14:53:42,778 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.42 proposals=7 mirrored=0 skipped=None
+2026-06-30 15:53:43,417 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.42). BTC: vol_ratio=0.61 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.68 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 15:53:43,476 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.424 proposals=7 mirrored=0 skipped=None
+2026-06-30 16:53:44,077 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.42). BTC: vol_ratio=0.61 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.68 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 16:53:44,122 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.424 proposals=7 mirrored=0 skipped=None
+2026-06-30 17:53:44,751 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.42). BTC: vol_ratio=0.61 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.68 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 17:53:44,791 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.424 proposals=7 mirrored=0 skipped=None
+2026-06-30 18:53:45,398 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.61 (compression), ER=0.19 (range); ETH: vol_ratio=0.69 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 18:53:45,426 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.687 proposals=7 mirrored=0 skipped=None
+2026-06-30 19:53:46,032 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.62 (compression), ER=0.18 (range); ETH: vol_ratio=0.69 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-06-30 19:53:46,084 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.691 proposals=7 mirrored=0 skipped=None
+2026-06-30 20:53:46,705 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.40). BTC: vol_ratio=0.65 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.72 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 20:53:46,746 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.4 proposals=7 mirrored=0 skipped=None
+2026-06-30 21:53:47,419 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.40). BTC: vol_ratio=0.65 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.73 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 21:53:47,474 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.396 proposals=7 mirrored=0 skipped=None
+2026-06-30 22:53:48,159 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.39). BTC: vol_ratio=0.65 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.73 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 22:53:48,305 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.39 proposals=7 mirrored=0 skipped=None
+2026-06-30 23:53:48,983 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.40). BTC: vol_ratio=0.65 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.73 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-06-30 23:53:49,051 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.396 proposals=7 mirrored=0 skipped=None
+2026-07-01 00:53:49,704 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.40). BTC: vol_ratio=0.64 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.73 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-07-01 00:53:49,811 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.403 proposals=7 mirrored=0 skipped=None
+2026-07-01 01:53:50,417 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.66). BTC: vol_ratio=0.65 (compression), ER=0.20 (range); ETH: vol_ratio=0.73 (compression), ER=0.13 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 01:53:50,467 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.657 proposals=7 mirrored=0 skipped=None
+2026-07-01 02:53:51,072 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.67). BTC: vol_ratio=0.66 (compression), ER=0.18 (range); ETH: vol_ratio=0.74 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 02:53:51,128 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.67 proposals=7 mirrored=0 skipped=None
+2026-07-01 03:53:52,162 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.68). BTC: vol_ratio=0.68 (compression), ER=0.17 (range); ETH: vol_ratio=0.76 (compression), ER=0.10 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 03:53:52,195 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.679 proposals=7 mirrored=0 skipped=None
+2026-07-01 04:53:52,833 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.69). BTC: vol_ratio=0.67 (compression), ER=0.17 (range); ETH: vol_ratio=0.75 (compression), ER=0.11 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 04:53:52,869 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.687 proposals=7 mirrored=0 skipped=None
+2026-07-01 05:53:53,592 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.67). BTC: vol_ratio=0.67 (compression), ER=0.17 (range); ETH: vol_ratio=0.75 (compression), ER=0.12 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 05:53:53,640 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.672 proposals=7 mirrored=0 skipped=None
+2026-07-01 06:53:54,259 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.63). BTC: vol_ratio=0.68 (compression), ER=0.19 (range); ETH: vol_ratio=0.77 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 06:53:54,321 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.635 proposals=7 mirrored=0 skipped=None
+2026-07-01 07:53:54,990 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.64). BTC: vol_ratio=0.68 (compression), ER=0.19 (range); ETH: vol_ratio=0.77 (compression), ER=0.13 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 07:53:55,163 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.638 proposals=7 mirrored=0 skipped=None
+2026-07-01 08:53:55,777 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.36). BTC: vol_ratio=0.68 (compression), ER=0.20 (neutral); ETH: vol_ratio=0.79 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-07-01 08:53:55,822 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.363 proposals=7 mirrored=0 skipped=None
+2026-07-01 09:53:56,437 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.62). BTC: vol_ratio=0.69 (compression), ER=0.20 (range); ETH: vol_ratio=0.79 (compression), ER=0.14 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 09:53:56,496 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.621 proposals=7 mirrored=0 skipped=None
+2026-07-01 10:53:57,149 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.36). BTC: vol_ratio=0.68 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.79 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-07-01 10:53:57,203 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.362 proposals=7 mirrored=0 skipped=None
+2026-07-01 11:53:57,863 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.36). BTC: vol_ratio=0.68 (compression), ER=0.21 (neutral); ETH: vol_ratio=0.79 (compression), ER=0.15 (range). vol_vote=-1.00, trend_vote=-0.40.
+2026-07-01 11:53:57,904 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.358 proposals=7 mirrored=0 skipped=None
+2026-07-01 12:53:58,555 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.75). BTC: vol_ratio=0.67 (compression), ER=0.10 (range); ETH: vol_ratio=0.81 (compression), ER=0.08 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 12:53:58,606 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.752 proposals=7 mirrored=0 skipped=None
+2026-07-01 13:53:59,210 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.80). BTC: vol_ratio=0.72 (compression), ER=0.05 (range); ETH: vol_ratio=0.85 (compression), ER=0.04 (range). vol_vote=-1.00, trend_vote=-1.00.
+2026-07-01 13:53:59,249 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.798 proposals=7 mirrored=0 skipped=None
+2026-07-01 14:53:59,864 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.53). BTC: vol_ratio=0.78 (compression), ER=0.03 (range); ETH: vol_ratio=0.87 (neutral), ER=0.02 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 14:53:59,916 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.527 proposals=7 mirrored=0 skipped=None
+2026-07-01 15:54:00,550 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.50). BTC: vol_ratio=0.85 (compression), ER=0.01 (range); ETH: vol_ratio=0.94 (neutral), ER=0.00 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 15:54:00,634 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.501 proposals=7 mirrored=0 skipped=None
+2026-07-01 16:54:01,278 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.51). BTC: vol_ratio=0.83 (compression), ER=0.00 (range); ETH: vol_ratio=0.90 (neutral), ER=0.05 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 16:54:01,376 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.509 proposals=7 mirrored=0 skipped=None
+2026-07-01 17:54:02,192 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.50). BTC: vol_ratio=0.82 (compression), ER=0.01 (range); ETH: vol_ratio=0.90 (neutral), ER=0.06 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 17:54:02,312 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.504 proposals=7 mirrored=0 skipped=None
+2026-07-01 18:54:03,414 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.51). BTC: vol_ratio=0.82 (compression), ER=0.01 (range); ETH: vol_ratio=0.90 (neutral), ER=0.04 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 18:54:03,477 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.51 proposals=7 mirrored=0 skipped=None
+2026-07-01 19:54:04,147 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.51). BTC: vol_ratio=0.82 (compression), ER=0.01 (range); ETH: vol_ratio=0.90 (neutral), ER=0.05 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 19:54:04,205 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.509 proposals=7 mirrored=0 skipped=None
+2026-07-01 20:54:04,843 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.51). BTC: vol_ratio=0.82 (compression), ER=0.05 (range); ETH: vol_ratio=0.90 (neutral), ER=0.01 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 20:54:04,950 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.507 proposals=7 mirrored=0 skipped=None
+2026-07-01 21:54:05,684 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.86 (neutral), ER=0.01 (range); ETH: vol_ratio=0.91 (neutral), ER=0.02 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-01 21:54:05,748 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-01 22:54:06,363 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.51). BTC: vol_ratio=0.83 (compression), ER=0.04 (range); ETH: vol_ratio=0.90 (neutral), ER=0.00 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 22:54:06,415 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.507 proposals=7 mirrored=0 skipped=None
+2026-07-01 23:54:07,029 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.50). BTC: vol_ratio=0.82 (compression), ER=0.06 (range); ETH: vol_ratio=0.91 (neutral), ER=0.02 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-01 23:54:07,070 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.504 proposals=7 mirrored=0 skipped=None
+2026-07-02 00:54:07,716 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.50). BTC: vol_ratio=0.82 (compression), ER=0.06 (range); ETH: vol_ratio=0.91 (neutral), ER=0.02 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-02 00:54:07,793 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.497 proposals=7 mirrored=0 skipped=None
+2026-07-02 01:54:08,873 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.51). BTC: vol_ratio=0.82 (compression), ER=0.04 (range); ETH: vol_ratio=0.91 (neutral), ER=0.00 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-02 01:54:08,960 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.511 proposals=7 mirrored=0 skipped=None
+2026-07-02 02:54:09,594 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.51). BTC: vol_ratio=0.83 (compression), ER=0.03 (range); ETH: vol_ratio=0.91 (neutral), ER=0.00 (range). vol_vote=-0.60, trend_vote=-1.00.
+2026-07-02 02:54:09,637 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.508 proposals=7 mirrored=0 skipped=None
+2026-07-02 03:54:10,286 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.87 (neutral), ER=0.00 (range); ETH: vol_ratio=0.94 (neutral), ER=0.03 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 03:54:10,344 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 04:54:10,988 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.88 (neutral), ER=0.06 (range); ETH: vol_ratio=0.94 (neutral), ER=0.04 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 04:54:11,103 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 05:54:11,760 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.89 (neutral), ER=0.07 (range); ETH: vol_ratio=0.95 (neutral), ER=0.05 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 05:54:11,844 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 06:54:17,681 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.91 (neutral), ER=0.09 (range); ETH: vol_ratio=0.96 (neutral), ER=0.06 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 06:54:17,725 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 07:54:18,379 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.92 (neutral), ER=0.09 (range); ETH: vol_ratio=0.97 (neutral), ER=0.06 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 07:54:18,452 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 08:54:19,063 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.93 (neutral), ER=0.04 (range); ETH: vol_ratio=0.98 (neutral), ER=0.01 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 08:54:19,117 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 09:54:20,226 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.97 (neutral), ER=0.00 (range); ETH: vol_ratio=0.99 (neutral), ER=0.01 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 09:54:20,269 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 10:54:20,877 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.98 (neutral), ER=0.00 (range); ETH: vol_ratio=1.01 (neutral), ER=0.02 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 10:54:20,912 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 11:54:21,555 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.98 (neutral), ER=0.00 (range); ETH: vol_ratio=1.02 (neutral), ER=0.03 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 11:54:21,611 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 12:54:22,235 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.97 (neutral), ER=0.11 (range); ETH: vol_ratio=1.02 (neutral), ER=0.16 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 12:54:22,282 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 13:54:23,459 - regime_allocator - INFO - regime: NEUTRAL (conf 0.32). BTC: vol_ratio=0.98 (neutral), ER=0.13 (range); ETH: vol_ratio=1.10 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 13:54:23,517 - regime_allocator - INFO - regime tick: regime=neutral conf=0.323 proposals=7 mirrored=0 skipped=None
+2026-07-02 14:54:24,136 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.98 (neutral), ER=0.11 (range); ETH: vol_ratio=1.07 (neutral), ER=0.20 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 14:54:24,178 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 15:54:24,799 - regime_allocator - INFO - regime: NEUTRAL (conf 0.50). BTC: vol_ratio=0.97 (neutral), ER=0.11 (range); ETH: vol_ratio=1.06 (neutral), ER=0.20 (range). vol_vote=+0.00, trend_vote=-1.00.
+2026-07-02 15:54:24,846 - regime_allocator - INFO - regime tick: regime=neutral conf=0.5 proposals=7 mirrored=0 skipped=None
+2026-07-02 16:54:25,503 - regime_allocator - INFO - regime: NEUTRAL (conf 0.32). BTC: vol_ratio=0.96 (neutral), ER=0.13 (range); ETH: vol_ratio=1.05 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 16:54:25,640 - regime_allocator - INFO - regime tick: regime=neutral conf=0.316 proposals=7 mirrored=0 skipped=None
+2026-07-02 17:54:26,268 - regime_allocator - INFO - regime: NEUTRAL (conf 0.31). BTC: vol_ratio=0.96 (neutral), ER=0.14 (range); ETH: vol_ratio=1.05 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 17:54:26,327 - regime_allocator - INFO - regime tick: regime=neutral conf=0.314 proposals=7 mirrored=0 skipped=None
+2026-07-02 18:54:26,946 - regime_allocator - INFO - regime: NEUTRAL (conf 0.31). BTC: vol_ratio=0.96 (neutral), ER=0.14 (range); ETH: vol_ratio=1.05 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 18:54:27,012 - regime_allocator - INFO - regime tick: regime=neutral conf=0.31 proposals=7 mirrored=0 skipped=None
+2026-07-02 19:54:27,631 - regime_allocator - INFO - regime: NEUTRAL (conf 0.32). BTC: vol_ratio=0.96 (neutral), ER=0.13 (range); ETH: vol_ratio=1.05 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 19:54:27,672 - regime_allocator - INFO - regime tick: regime=neutral conf=0.317 proposals=7 mirrored=0 skipped=None
+2026-07-02 20:54:28,316 - regime_allocator - INFO - regime: NEUTRAL (conf 0.35). BTC: vol_ratio=0.97 (neutral), ER=0.10 (range); ETH: vol_ratio=1.05 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 20:54:28,358 - regime_allocator - INFO - regime tick: regime=neutral conf=0.355 proposals=7 mirrored=0 skipped=None
+2026-07-02 21:54:29,398 - regime_allocator - INFO - regime: NEUTRAL (conf 0.35). BTC: vol_ratio=0.96 (neutral), ER=0.10 (range); ETH: vol_ratio=1.05 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 21:54:29,445 - regime_allocator - INFO - regime tick: regime=neutral conf=0.348 proposals=7 mirrored=0 skipped=None
+2026-07-02 22:54:30,072 - regime_allocator - INFO - regime: NEUTRAL (conf 0.35). BTC: vol_ratio=0.96 (neutral), ER=0.10 (range); ETH: vol_ratio=1.05 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 22:54:30,128 - regime_allocator - INFO - regime tick: regime=neutral conf=0.349 proposals=7 mirrored=0 skipped=None
+2026-07-02 23:54:30,795 - regime_allocator - INFO - regime: NEUTRAL (conf 0.35). BTC: vol_ratio=0.96 (neutral), ER=0.10 (range); ETH: vol_ratio=1.05 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-02 23:54:30,893 - regime_allocator - INFO - regime tick: regime=neutral conf=0.347 proposals=7 mirrored=0 skipped=None
+2026-07-03 00:54:31,553 - regime_allocator - INFO - regime: NEUTRAL (conf 0.37). BTC: vol_ratio=0.96 (neutral), ER=0.08 (range); ETH: vol_ratio=1.05 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 00:54:31,641 - regime_allocator - INFO - regime tick: regime=neutral conf=0.375 proposals=7 mirrored=0 skipped=None
+2026-07-03 01:54:32,329 - regime_allocator - INFO - regime: NEUTRAL (conf 0.36). BTC: vol_ratio=0.95 (neutral), ER=0.09 (range); ETH: vol_ratio=1.05 (neutral), ER=0.25 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 01:54:32,388 - regime_allocator - INFO - regime tick: regime=neutral conf=0.356 proposals=7 mirrored=0 skipped=None
+2026-07-03 02:54:33,029 - regime_allocator - INFO - regime: NEUTRAL (conf 0.37). BTC: vol_ratio=0.96 (neutral), ER=0.08 (range); ETH: vol_ratio=1.05 (neutral), ER=0.24 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 02:54:33,111 - regime_allocator - INFO - regime tick: regime=neutral conf=0.369 proposals=7 mirrored=0 skipped=None
+2026-07-03 03:54:33,757 - regime_allocator - INFO - regime: NEUTRAL (conf 0.37). BTC: vol_ratio=0.96 (neutral), ER=0.08 (range); ETH: vol_ratio=1.04 (neutral), ER=0.24 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 03:54:33,810 - regime_allocator - INFO - regime tick: regime=neutral conf=0.373 proposals=7 mirrored=0 skipped=None
+2026-07-03 04:54:34,459 - regime_allocator - INFO - regime: NEUTRAL (conf 0.40). BTC: vol_ratio=0.96 (neutral), ER=0.05 (range); ETH: vol_ratio=1.04 (neutral), ER=0.21 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 04:54:34,536 - regime_allocator - INFO - regime tick: regime=neutral conf=0.398 proposals=7 mirrored=0 skipped=None
+2026-07-03 05:54:35,174 - regime_allocator - INFO - regime: NEUTRAL (conf 0.38). BTC: vol_ratio=0.96 (neutral), ER=0.07 (range); ETH: vol_ratio=1.04 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 05:54:35,215 - regime_allocator - INFO - regime tick: regime=neutral conf=0.38 proposals=7 mirrored=0 skipped=None
+2026-07-03 06:54:35,892 - regime_allocator - INFO - regime: NEUTRAL (conf 0.38). BTC: vol_ratio=0.96 (neutral), ER=0.07 (range); ETH: vol_ratio=1.04 (neutral), ER=0.22 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 06:54:35,960 - regime_allocator - INFO - regime tick: regime=neutral conf=0.377 proposals=7 mirrored=0 skipped=None
+2026-07-03 07:54:36,635 - regime_allocator - INFO - regime: NEUTRAL (conf 0.38). BTC: vol_ratio=0.96 (neutral), ER=0.07 (range); ETH: vol_ratio=1.04 (neutral), ER=0.23 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 07:54:36,702 - regime_allocator - INFO - regime tick: regime=neutral conf=0.375 proposals=7 mirrored=0 skipped=None
+2026-07-03 08:54:37,324 - regime_allocator - INFO - regime: NEUTRAL (conf 0.31). BTC: vol_ratio=0.97 (neutral), ER=0.14 (range); ETH: vol_ratio=1.04 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 08:54:37,407 - regime_allocator - INFO - regime tick: regime=neutral conf=0.313 proposals=7 mirrored=0 skipped=None
+2026-07-03 09:54:38,055 - regime_allocator - INFO - regime: NEUTRAL (conf 0.30). BTC: vol_ratio=0.96 (neutral), ER=0.15 (range); ETH: vol_ratio=1.04 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 09:54:38,135 - regime_allocator - INFO - regime tick: regime=neutral conf=0.305 proposals=7 mirrored=0 skipped=None
+2026-07-03 10:54:38,766 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.96 (neutral), ER=0.16 (range); ETH: vol_ratio=1.05 (neutral), ER=0.34 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 10:54:38,818 - regime_allocator - INFO - regime tick: regime=neutral conf=0.291 proposals=7 mirrored=0 skipped=None
+2026-07-03 11:54:39,457 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.96 (neutral), ER=0.16 (range); ETH: vol_ratio=1.04 (neutral), ER=0.33 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 11:54:39,589 - regime_allocator - INFO - regime tick: regime=neutral conf=0.289 proposals=7 mirrored=0 skipped=None
+2026-07-03 12:54:40,219 - regime_allocator - INFO - regime: NEUTRAL (conf 0.34). BTC: vol_ratio=0.97 (neutral), ER=0.11 (range); ETH: vol_ratio=1.05 (neutral), ER=0.27 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 12:54:40,283 - regime_allocator - INFO - regime tick: regime=neutral conf=0.341 proposals=7 mirrored=0 skipped=None
+2026-07-03 13:54:40,900 - regime_allocator - INFO - regime: NEUTRAL (conf 0.33). BTC: vol_ratio=0.97 (neutral), ER=0.12 (range); ETH: vol_ratio=1.05 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 13:54:40,951 - regime_allocator - INFO - regime tick: regime=neutral conf=0.333 proposals=7 mirrored=0 skipped=None
+2026-07-03 14:54:41,595 - regime_allocator - INFO - regime: NEUTRAL (conf 0.33). BTC: vol_ratio=0.97 (neutral), ER=0.12 (range); ETH: vol_ratio=1.05 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 14:54:41,661 - regime_allocator - INFO - regime tick: regime=neutral conf=0.33 proposals=7 mirrored=0 skipped=None
+2026-07-03 15:54:42,312 - regime_allocator - INFO - regime: NEUTRAL (conf 0.34). BTC: vol_ratio=0.97 (neutral), ER=0.11 (range); ETH: vol_ratio=1.06 (neutral), ER=0.27 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 15:54:42,382 - regime_allocator - INFO - regime tick: regime=neutral conf=0.343 proposals=7 mirrored=0 skipped=None
+2026-07-03 16:54:43,034 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.98 (neutral), ER=0.16 (range); ETH: vol_ratio=1.00 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 16:54:43,083 - regime_allocator - INFO - regime tick: regime=neutral conf=0.295 proposals=7 mirrored=0 skipped=None
+2026-07-03 17:54:43,702 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.98 (neutral), ER=0.16 (range); ETH: vol_ratio=1.00 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 17:54:43,752 - regime_allocator - INFO - regime tick: regime=neutral conf=0.288 proposals=7 mirrored=0 skipped=None
+2026-07-03 18:54:44,428 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.98 (neutral), ER=0.16 (range); ETH: vol_ratio=1.00 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 18:54:44,486 - regime_allocator - INFO - regime tick: regime=neutral conf=0.287 proposals=7 mirrored=0 skipped=None
+2026-07-03 19:54:45,116 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.98 (neutral), ER=0.16 (range); ETH: vol_ratio=1.00 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 19:54:45,191 - regime_allocator - INFO - regime tick: regime=neutral conf=0.285 proposals=7 mirrored=0 skipped=None
+2026-07-03 20:54:45,848 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.99 (neutral), ER=0.18 (range); ETH: vol_ratio=0.99 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 20:54:45,904 - regime_allocator - INFO - regime tick: regime=neutral conf=0.272 proposals=7 mirrored=0 skipped=None
+2026-07-03 21:54:46,711 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.99 (neutral), ER=0.18 (range); ETH: vol_ratio=0.99 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 21:54:46,810 - regime_allocator - INFO - regime tick: regime=neutral conf=0.274 proposals=7 mirrored=0 skipped=None
+2026-07-03 22:54:47,429 - regime_allocator - INFO - regime: NEUTRAL (conf 0.28). BTC: vol_ratio=0.98 (neutral), ER=0.17 (range); ETH: vol_ratio=0.98 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 22:54:47,470 - regime_allocator - INFO - regime tick: regime=neutral conf=0.284 proposals=7 mirrored=0 skipped=None
+2026-07-03 23:54:48,107 - regime_allocator - INFO - regime: NEUTRAL (conf 0.28). BTC: vol_ratio=0.98 (neutral), ER=0.17 (range); ETH: vol_ratio=0.99 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-03 23:54:48,361 - regime_allocator - INFO - regime tick: regime=neutral conf=0.284 proposals=7 mirrored=0 skipped=None
+2026-07-04 00:54:48,983 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.95 (neutral), ER=0.16 (range); ETH: vol_ratio=0.93 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 00:54:49,053 - regime_allocator - INFO - regime tick: regime=neutral conf=0.288 proposals=7 mirrored=0 skipped=None
+2026-07-04 01:54:49,713 - regime_allocator - INFO - regime: NEUTRAL (conf 0.31). BTC: vol_ratio=0.95 (neutral), ER=0.14 (range); ETH: vol_ratio=0.94 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 01:54:49,762 - regime_allocator - INFO - regime tick: regime=neutral conf=0.305 proposals=7 mirrored=0 skipped=None
+2026-07-04 02:54:50,382 - regime_allocator - INFO - regime: NEUTRAL (conf 0.30). BTC: vol_ratio=0.95 (neutral), ER=0.15 (range); ETH: vol_ratio=0.94 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 02:54:50,427 - regime_allocator - INFO - regime tick: regime=neutral conf=0.298 proposals=7 mirrored=0 skipped=None
+2026-07-04 03:54:51,051 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.95 (neutral), ER=0.16 (range); ETH: vol_ratio=0.94 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 03:54:51,109 - regime_allocator - INFO - regime tick: regime=neutral conf=0.294 proposals=7 mirrored=0 skipped=None
+2026-07-04 04:54:51,744 - regime_allocator - INFO - regime: NEUTRAL (conf 0.30). BTC: vol_ratio=0.95 (neutral), ER=0.15 (range); ETH: vol_ratio=0.94 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 04:54:51,798 - regime_allocator - INFO - regime tick: regime=neutral conf=0.305 proposals=7 mirrored=0 skipped=None
+2026-07-04 05:54:52,431 - regime_allocator - INFO - regime: NEUTRAL (conf 0.32). BTC: vol_ratio=0.95 (neutral), ER=0.13 (range); ETH: vol_ratio=0.94 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 05:54:52,475 - regime_allocator - INFO - regime tick: regime=neutral conf=0.32 proposals=7 mirrored=0 skipped=None
+2026-07-04 06:54:53,106 - regime_allocator - INFO - regime: NEUTRAL (conf 0.32). BTC: vol_ratio=0.95 (neutral), ER=0.13 (range); ETH: vol_ratio=0.94 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 06:54:53,142 - regime_allocator - INFO - regime tick: regime=neutral conf=0.318 proposals=7 mirrored=0 skipped=None
+2026-07-04 07:54:53,745 - regime_allocator - INFO - regime: NEUTRAL (conf 0.31). BTC: vol_ratio=0.95 (neutral), ER=0.14 (range); ETH: vol_ratio=0.94 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 07:54:53,782 - regime_allocator - INFO - regime tick: regime=neutral conf=0.312 proposals=7 mirrored=0 skipped=None
+2026-07-04 08:54:54,491 - regime_allocator - INFO - regime: NEUTRAL (conf 0.30). BTC: vol_ratio=0.94 (neutral), ER=0.15 (range); ETH: vol_ratio=0.91 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 08:54:54,542 - regime_allocator - INFO - regime tick: regime=neutral conf=0.295 proposals=7 mirrored=0 skipped=None
+2026-07-04 09:54:55,187 - regime_allocator - INFO - regime: NEUTRAL (conf 0.31). BTC: vol_ratio=0.94 (neutral), ER=0.14 (range); ETH: vol_ratio=0.92 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 09:54:55,265 - regime_allocator - INFO - regime tick: regime=neutral conf=0.305 proposals=7 mirrored=0 skipped=None
+2026-07-04 10:54:56,041 - regime_allocator - INFO - regime: NEUTRAL (conf 0.30). BTC: vol_ratio=0.94 (neutral), ER=0.15 (range); ETH: vol_ratio=0.92 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 10:54:56,116 - regime_allocator - INFO - regime tick: regime=neutral conf=0.302 proposals=7 mirrored=0 skipped=None
+2026-07-04 11:54:56,732 - regime_allocator - INFO - regime: NEUTRAL (conf 0.30). BTC: vol_ratio=0.94 (neutral), ER=0.15 (range); ETH: vol_ratio=0.92 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 11:54:56,785 - regime_allocator - INFO - regime tick: regime=neutral conf=0.304 proposals=7 mirrored=0 skipped=None
+2026-07-04 12:54:57,413 - regime_allocator - INFO - regime: NEUTRAL (conf 0.33). BTC: vol_ratio=0.91 (neutral), ER=0.12 (range); ETH: vol_ratio=0.93 (neutral), ER=0.27 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 12:54:57,458 - regime_allocator - INFO - regime tick: regime=neutral conf=0.325 proposals=7 mirrored=0 skipped=None
+2026-07-04 13:54:58,072 - regime_allocator - INFO - regime: NEUTRAL (conf 0.33). BTC: vol_ratio=0.91 (neutral), ER=0.12 (range); ETH: vol_ratio=0.93 (neutral), ER=0.27 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 13:54:58,109 - regime_allocator - INFO - regime tick: regime=neutral conf=0.328 proposals=7 mirrored=0 skipped=None
+2026-07-04 14:54:58,757 - regime_allocator - INFO - regime: NEUTRAL (conf 0.32). BTC: vol_ratio=0.91 (neutral), ER=0.13 (range); ETH: vol_ratio=0.93 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 14:54:58,799 - regime_allocator - INFO - regime tick: regime=neutral conf=0.323 proposals=7 mirrored=0 skipped=None
+2026-07-04 15:54:59,417 - regime_allocator - INFO - regime: NEUTRAL (conf 0.31). BTC: vol_ratio=0.91 (neutral), ER=0.14 (range); ETH: vol_ratio=0.95 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-04 15:54:59,472 - regime_allocator - INFO - regime tick: regime=neutral conf=0.306 proposals=7 mirrored=0 skipped=None
+2026-07-04 16:55:00,082 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.91 (neutral), ER=0.20 (range); ETH: vol_ratio=0.96 (neutral), ER=0.36 (trend). vol_vote=+0.00, trend_vote=-0.20.
+2026-07-04 16:55:00,146 - regime_allocator - INFO - regime tick: regime=neutral conf=0.259 proposals=7 mirrored=0 skipped=None
+2026-07-04 17:55:01,590 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.91 (neutral), ER=0.22 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.38 (trend). vol_vote=+0.00, trend_vote=+0.40.
+2026-07-04 17:55:01,878 - regime_allocator - INFO - regime tick: regime=neutral conf=0.26 proposals=7 mirrored=0 skipped=None
+2026-07-04 18:55:02,964 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.91 (neutral), ER=0.21 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.37 (trend). vol_vote=+0.00, trend_vote=+0.40.
+2026-07-04 18:55:03,086 - regime_allocator - INFO - regime tick: regime=neutral conf=0.258 proposals=7 mirrored=0 skipped=None
+2026-07-04 19:55:03,877 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.91 (neutral), ER=0.22 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.37 (trend). vol_vote=+0.00, trend_vote=+0.40.
+2026-07-04 19:55:04,057 - regime_allocator - INFO - regime tick: regime=neutral conf=0.257 proposals=7 mirrored=0 skipped=None
+2026-07-04 20:55:08,429 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.90 (neutral), ER=0.23 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.37 (trend). vol_vote=+0.00, trend_vote=+0.40.
+2026-07-04 20:55:08,475 - regime_allocator - INFO - regime tick: regime=neutral conf=0.258 proposals=7 mirrored=0 skipped=None
+2026-07-04 21:55:09,104 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.90 (neutral), ER=0.23 (neutral); ETH: vol_ratio=0.94 (neutral), ER=0.37 (trend). vol_vote=+0.00, trend_vote=+0.40.
+2026-07-04 21:55:09,148 - regime_allocator - INFO - regime tick: regime=neutral conf=0.258 proposals=7 mirrored=0 skipped=None
+2026-07-04 22:55:10,233 - regime_allocator - INFO - regime: NEUTRAL (conf 0.25). BTC: vol_ratio=0.90 (neutral), ER=0.22 (neutral); ETH: vol_ratio=0.95 (neutral), ER=0.36 (trend). vol_vote=+0.00, trend_vote=+0.40.
+2026-07-04 22:55:10,300 - regime_allocator - INFO - regime tick: regime=neutral conf=0.253 proposals=7 mirrored=0 skipped=None
+2026-07-04 23:55:10,951 - regime_allocator - INFO - regime: NEUTRAL (conf 0.25). BTC: vol_ratio=0.90 (neutral), ER=0.22 (neutral); ETH: vol_ratio=0.96 (neutral), ER=0.35 (trend). vol_vote=+0.00, trend_vote=+0.40.
+2026-07-04 23:55:11,000 - regime_allocator - INFO - regime tick: regime=neutral conf=0.251 proposals=7 mirrored=0 skipped=None
+2026-07-05 00:55:11,744 - regime_allocator - INFO - regime: NEUTRAL (conf 0.25). BTC: vol_ratio=0.90 (neutral), ER=0.20 (range); ETH: vol_ratio=0.95 (neutral), ER=0.34 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 00:55:11,802 - regime_allocator - INFO - regime tick: regime=neutral conf=0.251 proposals=7 mirrored=0 skipped=None
+2026-07-05 01:55:12,424 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.91 (neutral), ER=0.19 (range); ETH: vol_ratio=0.96 (neutral), ER=0.32 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 01:55:12,468 - regime_allocator - INFO - regime tick: regime=neutral conf=0.263 proposals=7 mirrored=0 skipped=None
+2026-07-05 02:55:13,073 - regime_allocator - INFO - regime: NEUTRAL (conf 0.28). BTC: vol_ratio=0.92 (neutral), ER=0.17 (range); ETH: vol_ratio=0.98 (neutral), ER=0.30 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 02:55:13,118 - regime_allocator - INFO - regime tick: regime=neutral conf=0.283 proposals=7 mirrored=0 skipped=None
+2026-07-05 03:55:13,734 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.91 (neutral), ER=0.18 (range); ETH: vol_ratio=0.97 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 03:55:13,783 - regime_allocator - INFO - regime tick: regime=neutral conf=0.272 proposals=7 mirrored=0 skipped=None
+2026-07-05 04:55:14,437 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.89 (neutral), ER=0.18 (range); ETH: vol_ratio=0.94 (neutral), ER=0.32 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 04:55:14,483 - regime_allocator - INFO - regime tick: regime=neutral conf=0.271 proposals=7 mirrored=0 skipped=None
+2026-07-05 05:55:15,112 - regime_allocator - INFO - regime: NEUTRAL (conf 0.28). BTC: vol_ratio=0.89 (neutral), ER=0.17 (range); ETH: vol_ratio=0.94 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 05:55:15,150 - regime_allocator - INFO - regime tick: regime=neutral conf=0.276 proposals=7 mirrored=0 skipped=None
+2026-07-05 06:55:15,779 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.89 (neutral), ER=0.18 (range); ETH: vol_ratio=0.94 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 06:55:15,828 - regime_allocator - INFO - regime tick: regime=neutral conf=0.273 proposals=7 mirrored=0 skipped=None
+2026-07-05 07:55:16,458 - regime_allocator - INFO - regime: NEUTRAL (conf 0.26). BTC: vol_ratio=0.89 (neutral), ER=0.19 (range); ETH: vol_ratio=0.94 (neutral), ER=0.32 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 07:55:16,515 - regime_allocator - INFO - regime tick: regime=neutral conf=0.261 proposals=7 mirrored=0 skipped=None
+2026-07-05 08:55:17,569 - regime_allocator - INFO - regime: NEUTRAL (conf 0.27). BTC: vol_ratio=0.88 (neutral), ER=0.18 (range); ETH: vol_ratio=0.93 (neutral), ER=0.31 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 08:55:17,626 - regime_allocator - INFO - regime tick: regime=neutral conf=0.274 proposals=7 mirrored=0 skipped=None
+2026-07-05 09:55:18,304 - regime_allocator - INFO - regime: NEUTRAL (conf 0.30). BTC: vol_ratio=0.90 (neutral), ER=0.15 (range); ETH: vol_ratio=0.95 (neutral), ER=0.28 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 09:55:18,354 - regime_allocator - INFO - regime tick: regime=neutral conf=0.298 proposals=7 mirrored=0 skipped=None
+2026-07-05 10:55:18,978 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.89 (neutral), ER=0.16 (range); ETH: vol_ratio=0.94 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 10:55:19,045 - regime_allocator - INFO - regime tick: regime=neutral conf=0.288 proposals=7 mirrored=0 skipped=None
+2026-07-05 11:55:19,716 - regime_allocator - INFO - regime: NEUTRAL (conf 0.29). BTC: vol_ratio=0.90 (neutral), ER=0.16 (range); ETH: vol_ratio=0.94 (neutral), ER=0.29 (neutral). vol_vote=+0.00, trend_vote=-0.60.
+2026-07-05 11:55:19,770 - regime_allocator - INFO - regime tick: regime=neutral conf=0.295 proposals=7 mirrored=0 skipped=None
+2026-07-05 12:55:20,407 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.30). BTC: vol_ratio=0.74 (compression), ER=0.20 (range); ETH: vol_ratio=0.83 (compression), ER=0.30 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-07-05 12:55:20,504 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.301 proposals=7 mirrored=0 skipped=None
+2026-07-05 13:55:21,147 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.30). BTC: vol_ratio=0.74 (compression), ER=0.20 (range); ETH: vol_ratio=0.83 (compression), ER=0.30 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-07-05 13:55:21,185 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.298 proposals=7 mirrored=0 skipped=None
+2026-07-05 14:55:21,794 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.30). BTC: vol_ratio=0.74 (compression), ER=0.19 (range); ETH: vol_ratio=0.83 (compression), ER=0.30 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-07-05 14:55:21,897 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.301 proposals=7 mirrored=0 skipped=None
+2026-07-05 15:55:22,988 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.30). BTC: vol_ratio=0.74 (compression), ER=0.20 (range); ETH: vol_ratio=0.83 (compression), ER=0.31 (neutral). vol_vote=-1.00, trend_vote=-0.60.
+2026-07-05 15:55:23,042 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.3 proposals=7 mirrored=0 skipped=None
+2026-07-05 16:55:23,652 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.55). BTC: vol_ratio=0.74 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.83 (compression), ER=0.34 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-07-05 16:55:23,701 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.545 proposals=7 mirrored=0 skipped=None
+2026-07-05 17:55:24,338 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.55). BTC: vol_ratio=0.74 (compression), ER=0.22 (neutral); ETH: vol_ratio=0.83 (compression), ER=0.35 (neutral). vol_vote=-1.00, trend_vote=+0.00.
+2026-07-05 17:55:24,396 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.546 proposals=7 mirrored=0 skipped=None
+2026-07-05 18:55:25,013 - regime_allocator - INFO - regime: RANGE_COMPRESSION (conf 0.30). BTC: vol_ratio=0.74 (compression), ER=0.23 (neutral); ETH: vol_ratio=0.83 (compression), ER=0.35 (trend). vol_vote=-1.00, trend_vote=+0.40.
+2026-07-05 18:55:25,049 - regime_allocator - INFO - regime tick: regime=range_compression conf=0.299 proposals=7 mirrored=0 skipped=None

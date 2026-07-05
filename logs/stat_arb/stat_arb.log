@@ -1,0 +1,285 @@
+2026-06-15 21:48:49,476 - StatArbModule - INFO - === Stat-Arb Module Starting (shadow-first, market-neutral pairs) ===
+2026-06-15 21:48:49,476 - StatArbModule - INFO -    Working dir: /app
+2026-06-15 21:48:49,487 - StatArbModule - INFO -    DRY_RUN (resolved per-module): True
+2026-06-15 21:48:50,203 - StatArbModule - INFO -    Database connected
+2026-06-15 21:48:50,475 - StatArbModule - INFO -    Loaded 24 stat_arb settings from database
+2026-06-15 21:49:01,413 - StatArbModule - INFO -    core.risk_manager wired (validate_trade gates any live order)
+2026-06-15 21:49:01,425 - StatArbModule - INFO - Health server running at http://0.0.0.0:8104
+2026-06-15 21:49:01,425 - StatArbModule.Engine - INFO - Stat-arb engine loop starting (shadow_mode=True, live_execution_enabled=False)
+2026-06-15 21:49:01,425 - StatArbModule.Engine - INFO - Stat-arb engine loop starting (shadow_mode=True, live_execution_enabled=False)
+2026-06-15 21:49:01,446 - StatArbModule.Engine - INFO - Reconciled 3 open pair(s) from DB: ['ADA/USDT~BNB/USDT', 'ADA/USDT~DOGE/USDT', 'BTC/USDT~DOGE/USDT']
+2026-06-15 21:49:01,446 - StatArbModule.Engine - INFO - Reconciled 3 open pair(s) from DB: ['ADA/USDT~BNB/USDT', 'ADA/USDT~DOGE/USDT', 'BTC/USDT~DOGE/USDT']
+2026-06-15 22:04:25,928 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~BNB/USDT z=0.38 pnl=$3.69 sim=True
+2026-06-15 22:04:25,928 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~BNB/USDT z=0.38 pnl=$3.69 sim=True
+2026-06-15 22:04:25,941 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~SOL/USDT z=-3.56 long=ADA/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-15 22:04:25,941 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~SOL/USDT z=-3.56 long=ADA/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 13:30:01,454 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$-1.4 sim=True
+2026-06-16 13:30:01,454 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$-1.4 sim=True
+2026-06-16 13:30:01,490 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ADA/USDT~SOL/USDT z=None pnl=$0.37 sim=True
+2026-06-16 13:30:01,490 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ADA/USDT~SOL/USDT z=None pnl=$0.37 sim=True
+2026-06-16 16:01:57,692 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.49 pnl=$4.39 sim=True
+2026-06-16 16:01:57,692 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.49 pnl=$4.39 sim=True
+2026-06-16 16:01:57,706 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~BTC/USDT z=-2.09 long=ADA/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 16:01:57,706 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~BTC/USDT z=-2.09 long=ADA/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 16:01:57,714 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~SOL/USDT z=-2.21 long=DOGE/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 16:01:57,714 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~SOL/USDT z=-2.21 long=DOGE/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 16:32:27,924 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ADA/USDT~BTC/USDT z=None pnl=$-0.04 sim=True
+2026-06-16 16:32:27,924 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ADA/USDT~BTC/USDT z=None pnl=$-0.04 sim=True
+2026-06-16 16:32:27,932 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOGE/USDT~SOL/USDT z=None pnl=$-0.05 sim=True
+2026-06-16 16:32:27,932 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOGE/USDT~SOL/USDT z=None pnl=$-0.05 sim=True
+2026-06-16 17:02:57,240 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~BTC/USDT z=-2.17 long=ADA/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 17:02:57,240 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~BTC/USDT z=-2.17 long=ADA/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 17:02:57,243 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~SOL/USDT z=-2.62 long=DOGE/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 17:02:57,243 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~SOL/USDT z=-2.62 long=DOGE/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 17:33:21,571 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ADA/USDT~BTC/USDT z=None pnl=$-0.25 sim=True
+2026-06-16 17:33:21,571 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ADA/USDT~BTC/USDT z=None pnl=$-0.25 sim=True
+2026-06-16 17:33:21,578 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOGE/USDT~SOL/USDT z=None pnl=$-0.42 sim=True
+2026-06-16 17:33:21,578 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOGE/USDT~SOL/USDT z=None pnl=$-0.42 sim=True
+2026-06-16 19:04:30,954 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~LINK/USDT z=-2.14 long=ADA/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 19:04:30,954 - StatArbModule.Engine - INFO - [enter:long_spread] ADA/USDT~LINK/USDT z=-2.14 long=ADA/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 20:00:15,806 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.15 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 20:00:15,806 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.15 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 20:00:15,825 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~SOL/USDT z=-2.05 long=DOGE/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 20:00:15,825 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~SOL/USDT z=-2.05 long=DOGE/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 20:30:42,189 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.6 sim=True
+2026-06-16 20:30:42,189 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.6 sim=True
+2026-06-16 20:30:42,200 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOGE/USDT~SOL/USDT z=None pnl=$-0.57 sim=True
+2026-06-16 20:30:42,200 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOGE/USDT~SOL/USDT z=None pnl=$-0.57 sim=True
+2026-06-16 21:01:06,734 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.18 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 21:01:06,734 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.18 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-16 21:31:27,420 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.15 sim=True
+2026-06-16 21:31:27,420 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.15 sim=True
+2026-06-17 00:03:12,037 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.67 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-17 00:03:12,037 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.67 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-17 00:33:32,961 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.45 sim=True
+2026-06-17 00:33:32,961 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.45 sim=True
+2026-06-17 02:04:45,072 - StatArbModule.Engine - INFO - [enter:short_spread] AVAX/USDT~BNB/USDT z=2.25 long=BNB/USDT short=AVAX/USDT $100/leg sim=True skip=shadow_mode
+2026-06-17 02:04:45,072 - StatArbModule.Engine - INFO - [enter:short_spread] AVAX/USDT~BNB/USDT z=2.25 long=BNB/USDT short=AVAX/USDT $100/leg sim=True skip=shadow_mode
+2026-06-17 03:00:27,333 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.86 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-17 03:00:27,333 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~BTC/USDT z=-2.86 long=BNB/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-06-17 03:30:49,627 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.19 sim=True
+2026-06-17 03:30:49,627 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.19 sim=True
+2026-06-17 03:30:49,634 - StatArbModule.Engine - INFO - [enter:short_spread] DOT/USDT~XRP/USDT z=2.16 long=XRP/USDT short=DOT/USDT $100/leg sim=True skip=shadow_mode
+2026-06-17 03:30:49,634 - StatArbModule.Engine - INFO - [enter:short_spread] DOT/USDT~XRP/USDT z=2.16 long=XRP/USDT short=DOT/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 04:04:01,920 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~XRP/USDT z=-0.54 pnl=$1.17 sim=True
+2026-06-18 04:04:01,920 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~XRP/USDT z=-0.54 pnl=$1.17 sim=True
+2026-06-18 06:00:29,989 - StatArbModule.Engine - INFO - [enter:long_spread] AVAX/USDT~ETH/USDT z=-2.34 long=AVAX/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 06:00:29,989 - StatArbModule.Engine - INFO - [enter:long_spread] AVAX/USDT~ETH/USDT z=-2.34 long=AVAX/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 06:30:51,403 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] AVAX/USDT~ETH/USDT z=None pnl=$-0.32 sim=True
+2026-06-18 06:30:51,403 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] AVAX/USDT~ETH/USDT z=None pnl=$-0.32 sim=True
+2026-06-18 07:01:14,810 - StatArbModule.Engine - INFO - [enter:long_spread] AVAX/USDT~ETH/USDT z=-2.12 long=AVAX/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 07:01:14,810 - StatArbModule.Engine - INFO - [enter:long_spread] AVAX/USDT~ETH/USDT z=-2.12 long=AVAX/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 07:31:36,740 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] AVAX/USDT~ETH/USDT z=None pnl=$-0.84 sim=True
+2026-06-18 07:31:36,740 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] AVAX/USDT~ETH/USDT z=None pnl=$-0.84 sim=True
+2026-06-18 08:01:56,963 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~BNB/USDT z=2.12 long=BNB/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 08:01:56,963 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~BNB/USDT z=2.12 long=BNB/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 15:02:09,014 - StatArbModule.Engine - INFO - [exit:mean_revert] AVAX/USDT~BNB/USDT z=0.46 pnl=$2.02 sim=True
+2026-06-18 15:02:09,014 - StatArbModule.Engine - INFO - [exit:mean_revert] AVAX/USDT~BNB/USDT z=0.46 pnl=$2.02 sim=True
+2026-06-18 15:02:09,024 - StatArbModule.Engine - INFO - [enter:long_spread] AVAX/USDT~DOT/USDT z=-2.44 long=AVAX/USDT short=DOT/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 15:02:09,024 - StatArbModule.Engine - INFO - [enter:long_spread] AVAX/USDT~DOT/USDT z=-2.44 long=AVAX/USDT short=DOT/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 16:02:57,892 - StatArbModule.Engine - INFO - [exit:hard_z_stop] AVAX/USDT~DOT/USDT z=-6.34 pnl=$-2.2 sim=True
+2026-06-18 16:02:57,892 - StatArbModule.Engine - INFO - [exit:hard_z_stop] AVAX/USDT~DOT/USDT z=-6.34 pnl=$-2.2 sim=True
+2026-06-18 16:02:57,901 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOGE/USDT z=2.08 long=DOGE/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-18 16:02:57,901 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOGE/USDT z=2.08 long=DOGE/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-19 15:01:37,706 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.49 pnl=$0.18 sim=True
+2026-06-19 15:01:37,706 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.49 pnl=$0.18 sim=True
+2026-06-19 20:00:37,798 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~BNB/USDT z=0.32 pnl=$1.52 sim=True
+2026-06-19 20:00:37,798 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~BNB/USDT z=0.32 pnl=$1.52 sim=True
+2026-06-19 20:00:37,818 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~SOL/USDT z=-2.19 long=DOT/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-19 20:00:37,818 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~SOL/USDT z=-2.19 long=DOT/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-19 20:31:00,292 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOT/USDT~SOL/USDT z=None pnl=$-0.35 sim=True
+2026-06-19 20:31:00,292 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOT/USDT~SOL/USDT z=None pnl=$-0.35 sim=True
+2026-06-19 22:02:12,662 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~SOL/USDT z=-2.12 long=DOT/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-19 22:02:12,662 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~SOL/USDT z=-2.12 long=DOT/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-19 22:32:35,359 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOT/USDT~SOL/USDT z=None pnl=$-0.86 sim=True
+2026-06-19 22:32:35,359 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] DOT/USDT~SOL/USDT z=None pnl=$-0.86 sim=True
+2026-06-20 03:01:10,013 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~SOL/USDT z=-2.13 long=LINK/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-20 03:01:10,013 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~SOL/USDT z=-2.13 long=LINK/USDT short=SOL/USDT $100/leg sim=True skip=shadow_mode
+2026-06-20 03:31:31,623 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] LINK/USDT~SOL/USDT z=None pnl=$-0.76 sim=True
+2026-06-20 03:31:31,623 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] LINK/USDT~SOL/USDT z=None pnl=$-0.76 sim=True
+2026-06-20 19:08:49,817 - StatArbModule.Engine - INFO - [exit:time_stop] ADA/USDT~LINK/USDT z=-1.38 pnl=$-3.34 sim=True
+2026-06-20 19:08:49,817 - StatArbModule.Engine - INFO - [exit:time_stop] ADA/USDT~LINK/USDT z=-1.38 pnl=$-3.34 sim=True
+2026-06-22 02:03:53,283 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~DOGE/USDT z=2.24 long=DOGE/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-22 02:03:53,283 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~DOGE/USDT z=2.24 long=DOGE/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-22 10:05:02,859 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~LINK/USDT z=-2.38 long=DOT/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-22 10:05:02,859 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~LINK/USDT z=-2.38 long=DOT/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-22 23:00:36,002 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~XRP/USDT z=-2.62 long=DOT/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-22 23:00:36,002 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~XRP/USDT z=-2.62 long=DOT/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-23 09:03:17,501 - StatArbModule.Engine - INFO - [exit:hard_z_stop] DOT/USDT~XRP/USDT z=-4.44 pnl=$-2.46 sim=True
+2026-06-23 09:03:17,501 - StatArbModule.Engine - INFO - [exit:hard_z_stop] DOT/USDT~XRP/USDT z=-4.44 pnl=$-2.46 sim=True
+2026-06-23 11:05:00,184 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~XRP/USDT z=-3.84 long=LINK/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-23 11:05:00,184 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~XRP/USDT z=-3.84 long=LINK/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-23 21:03:19,249 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~LINK/USDT z=0.03 pnl=$-0.57 sim=True
+2026-06-23 21:03:19,249 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~LINK/USDT z=0.03 pnl=$-0.57 sim=True
+2026-06-24 12:00:03,137 - StatArbModule.Engine - INFO - [exit:mean_revert] LINK/USDT~XRP/USDT z=-0.47 pnl=$1.63 sim=True
+2026-06-24 12:00:03,137 - StatArbModule.Engine - INFO - [exit:mean_revert] LINK/USDT~XRP/USDT z=-0.47 pnl=$1.63 sim=True
+2026-06-24 14:01:48,948 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.01 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 14:01:48,948 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.01 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 14:32:11,929 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.36 sim=True
+2026-06-24 14:32:11,929 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.36 sim=True
+2026-06-24 16:03:20,793 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.66 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 16:03:20,793 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.66 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 16:33:44,695 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$0.11 sim=True
+2026-06-24 16:33:44,695 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$0.11 sim=True
+2026-06-24 17:04:10,547 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOGE/USDT z=2.68 long=DOGE/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 17:04:10,547 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOGE/USDT z=2.68 long=DOGE/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 17:04:10,552 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~XRP/USDT z=-2.92 long=LINK/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 17:04:10,552 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~XRP/USDT z=-2.92 long=LINK/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 18:04:59,295 - StatArbModule.Engine - INFO - [exit:hard_z_stop] LINK/USDT~XRP/USDT z=-4.24 pnl=$-1.59 sim=True
+2026-06-24 18:04:59,295 - StatArbModule.Engine - INFO - [exit:hard_z_stop] LINK/USDT~XRP/USDT z=-4.24 pnl=$-1.59 sim=True
+2026-06-24 20:01:44,937 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.11 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 20:01:44,937 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.11 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 20:32:10,753 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$1.11 sim=True
+2026-06-24 20:32:10,753 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$1.11 sim=True
+2026-06-24 20:32:10,769 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~DOT/USDT z=-2.22 long=DOGE/USDT short=DOT/USDT $100/leg sim=True skip=shadow_mode
+2026-06-24 20:32:10,769 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~DOT/USDT z=-2.22 long=DOGE/USDT short=DOT/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 08:01:12,196 - StatArbModule.Engine - INFO - [exit:mean_revert] DOGE/USDT~DOT/USDT z=-0.34 pnl=$1.3 sim=True
+2026-06-25 08:01:12,196 - StatArbModule.Engine - INFO - [exit:mean_revert] DOGE/USDT~DOT/USDT z=-0.34 pnl=$1.3 sim=True
+2026-06-25 11:03:37,439 - StatArbModule.Engine - INFO - [exit:mean_revert] BNB/USDT~DOGE/USDT z=0.48 pnl=$-4.13 sim=True
+2026-06-25 11:03:37,439 - StatArbModule.Engine - INFO - [exit:mean_revert] BNB/USDT~DOGE/USDT z=0.48 pnl=$-4.13 sim=True
+2026-06-25 14:01:09,107 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~LINK/USDT z=2.71 long=LINK/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 14:01:09,107 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~LINK/USDT z=2.71 long=LINK/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 17:03:37,627 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.57 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 17:03:37,627 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.57 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 17:34:06,711 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$0.07 sim=True
+2026-06-25 17:34:06,711 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$0.07 sim=True
+2026-06-25 19:00:25,820 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.12 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 19:00:25,820 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.12 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 19:30:49,644 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.75 sim=True
+2026-06-25 19:30:49,644 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.75 sim=True
+2026-06-25 21:02:05,495 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.31 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 21:02:05,495 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.31 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-25 21:32:31,142 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$0.15 sim=True
+2026-06-25 21:32:31,142 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$0.15 sim=True
+2026-06-26 00:04:27,109 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.48 pnl=$-0.94 sim=True
+2026-06-26 00:04:27,109 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.48 pnl=$-0.94 sim=True
+2026-06-26 01:00:08,494 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.82 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 01:00:08,494 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.82 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 01:30:30,383 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.79 sim=True
+2026-06-26 01:30:30,383 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-0.79 sim=True
+2026-06-26 02:00:51,594 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOT/USDT z=2.50 long=DOT/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 02:00:51,594 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOT/USDT z=2.50 long=DOT/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 02:00:51,606 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.76 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 02:00:51,606 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~BTC/USDT z=2.76 long=BTC/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 02:31:14,857 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-1.3 sim=True
+2026-06-26 02:31:14,857 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BNB/USDT~BTC/USDT z=None pnl=$-1.3 sim=True
+2026-06-26 02:31:14,866 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~LINK/USDT z=-2.09 long=DOT/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 02:31:14,866 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~LINK/USDT z=-2.09 long=DOT/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 13:04:07,523 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~LINK/USDT z=-0.21 pnl=$0.55 sim=True
+2026-06-26 13:04:07,523 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~LINK/USDT z=-0.21 pnl=$0.55 sim=True
+2026-06-26 16:01:28,187 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOGE/USDT z=2.71 long=DOGE/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-26 16:01:28,187 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOGE/USDT z=2.71 long=DOGE/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-06-27 08:03:45,622 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~LINK/USDT z=0.37 pnl=$-1.6 sim=True
+2026-06-27 08:03:45,622 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~LINK/USDT z=0.37 pnl=$-1.6 sim=True
+2026-06-27 08:03:45,640 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~XRP/USDT z=-2.75 long=DOT/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-27 08:03:45,640 - StatArbModule.Engine - INFO - [enter:long_spread] DOT/USDT~XRP/USDT z=-2.75 long=DOT/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-27 18:01:21,603 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.17 pnl=$1.49 sim=True
+2026-06-27 18:01:21,603 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOGE/USDT z=0.17 pnl=$1.49 sim=True
+2026-06-28 16:03:23,566 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~LINK/USDT z=-3.03 long=DOGE/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-28 16:03:23,566 - StatArbModule.Engine - INFO - [enter:long_spread] DOGE/USDT~LINK/USDT z=-3.03 long=DOGE/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-06-29 18:03:47,106 - StatArbModule.Engine - INFO - [exit:hard_z_stop] DOGE/USDT~LINK/USDT z=-4.03 pnl=$-2.01 sim=True
+2026-06-29 18:03:47,106 - StatArbModule.Engine - INFO - [exit:hard_z_stop] DOGE/USDT~LINK/USDT z=-4.03 pnl=$-2.01 sim=True
+2026-06-29 18:03:47,129 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~ETH/USDT z=-3.77 long=BTC/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-06-29 18:03:47,129 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~ETH/USDT z=-3.77 long=BTC/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 01:03:58,529 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOT/USDT z=0.47 pnl=$-2.75 sim=True
+2026-06-30 01:03:58,529 - StatArbModule.Engine - INFO - [exit:mean_revert] ADA/USDT~DOT/USDT z=0.47 pnl=$-2.75 sim=True
+2026-06-30 13:02:59,873 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~XRP/USDT z=-0.28 pnl=$-2.34 sim=True
+2026-06-30 13:02:59,873 - StatArbModule.Engine - INFO - [exit:mean_revert] DOT/USDT~XRP/USDT z=-0.28 pnl=$-2.34 sim=True
+2026-06-30 16:00:12,019 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.39 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 16:00:12,019 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.39 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 16:30:34,479 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.74 sim=True
+2026-06-30 16:30:34,479 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.74 sim=True
+2026-06-30 17:00:55,554 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-3.35 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 17:00:55,554 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-3.35 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 17:31:19,065 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.59 sim=True
+2026-06-30 17:31:19,065 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.59 sim=True
+2026-06-30 18:01:42,050 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-3.22 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 18:01:42,050 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-3.22 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 18:32:07,307 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.2 sim=True
+2026-06-30 18:32:07,307 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.2 sim=True
+2026-06-30 20:03:15,114 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.87 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 20:03:15,114 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.87 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 20:33:36,101 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.43 sim=True
+2026-06-30 20:33:36,101 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.43 sim=True
+2026-06-30 22:04:42,519 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~DOGE/USDT z=-2.22 long=BNB/USDT short=DOGE/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 22:04:42,519 - StatArbModule.Engine - INFO - [enter:long_spread] BNB/USDT~DOGE/USDT z=-2.22 long=BNB/USDT short=DOGE/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 23:00:25,352 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.73 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 23:00:25,352 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.73 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-06-30 23:30:48,330 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.2 sim=True
+2026-06-30 23:30:48,330 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.2 sim=True
+2026-07-01 00:01:11,830 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.37 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 00:01:11,830 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.37 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 00:31:35,993 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.77 sim=True
+2026-07-01 00:31:35,993 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.77 sim=True
+2026-07-01 01:01:59,071 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.18 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 01:01:59,071 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.18 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 01:32:22,363 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.52 sim=True
+2026-07-01 01:32:22,363 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.52 sim=True
+2026-07-01 03:03:28,375 - StatArbModule.Engine - INFO - [exit:mean_revert] BNB/USDT~DOGE/USDT z=-0.06 pnl=$0.76 sim=True
+2026-07-01 03:03:28,375 - StatArbModule.Engine - INFO - [exit:mean_revert] BNB/USDT~DOGE/USDT z=-0.06 pnl=$0.76 sim=True
+2026-07-01 07:01:19,176 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.11 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 07:01:19,176 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.11 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 07:31:41,163 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.29 sim=True
+2026-07-01 07:31:41,163 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.29 sim=True
+2026-07-01 08:02:03,370 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.28 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 08:02:03,370 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.28 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 08:32:27,885 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.53 sim=True
+2026-07-01 08:32:27,885 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.53 sim=True
+2026-07-01 10:03:40,070 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.01 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 10:03:40,070 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.01 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 10:34:01,681 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.69 sim=True
+2026-07-01 10:34:01,681 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.69 sim=True
+2026-07-01 22:03:01,186 - StatArbModule.Engine - INFO - [enter:short_spread] BTC/USDT~DOGE/USDT z=2.85 long=DOGE/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 22:03:01,186 - StatArbModule.Engine - INFO - [enter:short_spread] BTC/USDT~DOGE/USDT z=2.85 long=DOGE/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-07-01 22:33:30,257 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$0.05 sim=True
+2026-07-01 22:33:30,257 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$0.05 sim=True
+2026-07-02 01:00:18,563 - StatArbModule.Engine - INFO - [enter:short_spread] ETH/USDT~XRP/USDT z=2.02 long=XRP/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 01:00:18,563 - StatArbModule.Engine - INFO - [enter:short_spread] ETH/USDT~XRP/USDT z=2.02 long=XRP/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 01:30:42,992 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ETH/USDT~XRP/USDT z=None pnl=$-0.88 sim=True
+2026-07-02 01:30:42,992 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ETH/USDT~XRP/USDT z=None pnl=$-0.88 sim=True
+2026-07-02 02:01:08,092 - StatArbModule.Engine - INFO - [enter:short_spread] BTC/USDT~DOGE/USDT z=2.11 long=DOGE/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 02:01:08,092 - StatArbModule.Engine - INFO - [enter:short_spread] BTC/USDT~DOGE/USDT z=2.11 long=DOGE/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 02:31:33,465 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$-0.39 sim=True
+2026-07-02 02:31:33,465 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$-0.39 sim=True
+2026-07-02 04:02:43,016 - StatArbModule.Engine - INFO - [enter:short_spread] LINK/USDT~XRP/USDT z=2.40 long=XRP/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 04:02:43,016 - StatArbModule.Engine - INFO - [enter:short_spread] LINK/USDT~XRP/USDT z=2.40 long=XRP/USDT short=LINK/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 05:03:27,251 - StatArbModule.Engine - INFO - [enter:short_spread] ETH/USDT~XRP/USDT z=2.00 long=XRP/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 05:03:27,251 - StatArbModule.Engine - INFO - [enter:short_spread] ETH/USDT~XRP/USDT z=2.00 long=XRP/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 05:33:49,351 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ETH/USDT~XRP/USDT z=None pnl=$-0.3 sim=True
+2026-07-02 05:33:49,351 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ETH/USDT~XRP/USDT z=None pnl=$-0.3 sim=True
+2026-07-02 09:01:20,713 - StatArbModule.Engine - INFO - [enter:short_spread] BTC/USDT~DOGE/USDT z=2.07 long=DOGE/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 09:01:20,713 - StatArbModule.Engine - INFO - [enter:short_spread] BTC/USDT~DOGE/USDT z=2.07 long=DOGE/USDT short=BTC/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 09:31:41,720 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$-0.54 sim=True
+2026-07-02 09:31:41,720 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~DOGE/USDT z=None pnl=$-0.54 sim=True
+2026-07-02 09:56:58,905 - StatArbModule.Engine - INFO - [exit:mean_revert] BTC/USDT~ETH/USDT z=-0.43 pnl=$0.35 sim=True
+2026-07-02 09:56:58,905 - StatArbModule.Engine - INFO - [exit:mean_revert] BTC/USDT~ETH/USDT z=-0.43 pnl=$0.35 sim=True
+2026-07-02 14:00:18,333 - StatArbModule.Engine - INFO - [enter:short_spread] ETH/USDT~XRP/USDT z=2.63 long=XRP/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 14:00:18,333 - StatArbModule.Engine - INFO - [enter:short_spread] ETH/USDT~XRP/USDT z=2.63 long=XRP/USDT short=ETH/USDT $100/leg sim=True skip=shadow_mode
+2026-07-02 14:30:42,636 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ETH/USDT~XRP/USDT z=None pnl=$0.06 sim=True
+2026-07-02 14:30:42,636 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] ETH/USDT~XRP/USDT z=None pnl=$0.06 sim=True
+2026-07-03 16:00:31,892 - StatArbModule.Engine - INFO - [exit:mean_revert] LINK/USDT~XRP/USDT z=-0.05 pnl=$0.46 sim=True
+2026-07-03 16:00:31,892 - StatArbModule.Engine - INFO - [exit:mean_revert] LINK/USDT~XRP/USDT z=-0.05 pnl=$0.46 sim=True
+2026-07-04 05:01:05,405 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.07 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 05:01:05,405 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.07 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 05:01:05,415 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~XRP/USDT z=-2.03 long=LINK/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 05:01:05,415 - StatArbModule.Engine - INFO - [enter:long_spread] LINK/USDT~XRP/USDT z=-2.03 long=LINK/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 05:31:29,983 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.53 sim=True
+2026-07-04 05:31:29,983 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.53 sim=True
+2026-07-04 16:04:31,999 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.17 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 16:04:31,999 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.17 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 16:34:54,782 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.42 sim=True
+2026-07-04 16:34:54,782 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.42 sim=True
+2026-07-04 17:00:14,694 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.20 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 17:00:14,694 - StatArbModule.Engine - INFO - [enter:long_spread] BTC/USDT~XRP/USDT z=-2.20 long=BTC/USDT short=XRP/USDT $100/leg sim=True skip=shadow_mode
+2026-07-04 17:30:36,336 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.23 sim=True
+2026-07-04 17:30:36,336 - StatArbModule.Engine - INFO - [exit:pair_retest_fail] BTC/USDT~XRP/USDT z=None pnl=$-0.23 sim=True
+2026-07-05 01:01:26,450 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~XRP/USDT z=2.37 long=XRP/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-07-05 01:01:26,450 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~XRP/USDT z=2.37 long=XRP/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-07-05 06:00:10,397 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~DOGE/USDT z=2.37 long=DOGE/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-07-05 06:00:10,397 - StatArbModule.Engine - INFO - [enter:short_spread] BNB/USDT~DOGE/USDT z=2.37 long=DOGE/USDT short=BNB/USDT $100/leg sim=True skip=shadow_mode
+2026-07-05 09:02:39,357 - StatArbModule.Engine - INFO - [exit:mean_revert] LINK/USDT~XRP/USDT z=-0.35 pnl=$-0.04 sim=True
+2026-07-05 09:02:39,357 - StatArbModule.Engine - INFO - [exit:mean_revert] LINK/USDT~XRP/USDT z=-0.35 pnl=$-0.04 sim=True
+2026-07-05 09:02:39,377 - StatArbModule.Engine - INFO - [exit:hard_z_stop] BNB/USDT~DOGE/USDT z=4.39 pnl=$-1.2 sim=True
+2026-07-05 09:02:39,377 - StatArbModule.Engine - INFO - [exit:hard_z_stop] BNB/USDT~DOGE/USDT z=4.39 pnl=$-1.2 sim=True
+2026-07-05 09:02:39,384 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOT/USDT z=2.31 long=DOT/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode
+2026-07-05 09:02:39,384 - StatArbModule.Engine - INFO - [enter:short_spread] ADA/USDT~DOT/USDT z=2.31 long=DOT/USDT short=ADA/USDT $100/leg sim=True skip=shadow_mode

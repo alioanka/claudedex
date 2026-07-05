@@ -1,0 +1,961 @@
+2026-06-15 21:48:46,978 - PortfolioAllocatorModule - INFO - 📊 Portfolio Allocator Module Starting...
+2026-06-15 21:48:46,978 - PortfolioAllocatorModule - INFO -    Working dir: /app
+2026-06-15 21:48:46,978 - PortfolioAllocatorModule - INFO -    Log dir: /app/logs/portfolio_allocator
+2026-06-15 21:48:48,232 - PortfolioAllocatorModule - INFO -    DB pool connected to postgres:5432/tradingbot
+2026-06-15 21:48:48,291 - portfolio_allocator - INFO - rebalance engine starting: interval=3600s lookback=168h book=$1000.00
+2026-06-15 21:48:48,442 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-15 21:48:48,444 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-15 22:48:48,706 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-15 22:48:48,717 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-15 23:48:48,897 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-15 23:48:48,904 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 00:48:49,112 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 00:48:49,122 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 01:48:49,295 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 01:48:49,301 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 02:48:49,443 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 02:48:49,448 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 03:48:49,604 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 03:48:49,610 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 04:48:49,776 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 04:48:49,786 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 05:48:49,943 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 05:48:49,949 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 06:48:50,104 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 06:48:50,110 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 07:48:50,252 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 07:48:50,258 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 08:48:50,445 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 08:48:50,449 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 09:48:50,635 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 09:48:50,639 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 10:48:50,885 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 10:48:50,891 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 11:48:51,075 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 11:48:51,080 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 12:48:51,260 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 12:48:51,267 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 13:48:51,429 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 13:48:51,437 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 14:48:51,592 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 14:48:51,597 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 15:48:51,759 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 15:48:51,763 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 16:48:51,901 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 16:48:51,908 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 17:48:52,074 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 17:48:52,080 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 18:48:52,228 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 18:48:52,232 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 19:48:52,382 - portfolio_allocator - INFO - tick: reserve=10.00% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 19:48:52,387 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.0, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 20:48:52,529 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 20:48:52,534 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 21:48:52,693 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 21:48:52,698 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 22:48:52,868 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 22:48:52,878 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-16 23:48:53,044 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-16 23:48:53,050 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 00:48:53,190 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 00:48:53,194 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 01:48:53,407 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 01:48:53,414 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 02:48:53,620 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 02:48:53,624 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 03:48:53,762 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 03:48:53,768 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 04:48:53,922 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 04:48:53,926 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 05:48:54,083 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 05:48:54,088 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 06:48:54,258 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 06:48:54,264 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 07:48:54,418 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 07:48:54,423 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 08:48:54,573 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 08:48:54,581 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 09:48:54,735 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 09:48:54,741 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 10:48:54,918 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 10:48:54,924 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 11:48:55,102 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 11:48:55,108 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 12:48:55,281 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 12:48:55,300 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 13:48:55,448 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 13:48:55,452 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 14:48:55,637 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 14:48:55,642 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 15:48:55,838 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 15:48:55,847 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 16:48:56,056 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 16:48:56,064 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 17:48:56,215 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 17:48:56,220 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 18:48:56,383 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 18:48:56,389 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 19:48:56,568 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 19:48:56,575 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-17 20:48:56,796 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 20:48:56,804 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-17 21:48:57,134 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 21:48:57,141 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-17 22:48:57,324 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 22:48:57,329 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-17 23:48:57,468 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-17 23:48:57,472 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 00:48:57,615 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 00:48:57,620 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 01:48:57,765 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 01:48:57,771 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 02:48:57,968 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 02:48:57,973 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 03:48:58,117 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 03:48:58,123 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 04:48:58,266 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 04:48:58,270 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 05:48:58,431 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 05:48:58,436 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 06:48:58,585 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 06:48:58,589 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 07:48:58,760 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 07:48:58,767 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 08:48:58,924 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 08:48:58,930 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 09:48:59,097 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 09:48:59,102 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 10:48:59,285 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 10:48:59,290 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 11:48:59,441 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 11:48:59,445 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 12:48:59,631 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 12:48:59,638 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 13:48:59,786 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 13:48:59,789 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 14:48:59,949 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 14:48:59,955 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 15:49:00,116 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 15:49:00,121 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 16:49:00,330 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 16:49:00,335 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 17:49:00,592 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 17:49:00,597 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 18:49:01,127 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 18:49:01,139 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 19:49:01,450 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 19:49:01,455 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 20:49:01,750 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 20:49:01,760 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 21:49:02,095 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 21:49:02,105 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 22:49:02,818 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 22:49:02,830 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-18 23:49:03,046 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-18 23:49:03,055 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 00:49:03,646 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 00:49:03,663 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 01:49:03,935 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 01:49:03,952 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 02:49:04,116 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 02:49:04,121 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 03:49:04,307 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 03:49:04,311 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 04:49:04,522 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 04:49:04,529 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 05:49:04,887 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 05:49:04,912 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 06:49:05,104 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 06:49:05,109 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 07:49:05,344 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 07:49:05,352 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 08:49:05,599 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 08:49:05,634 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 09:49:05,842 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 09:49:05,853 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 10:49:06,096 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 10:49:06,100 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 11:49:06,702 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 11:49:06,707 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 12:49:06,930 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 12:49:06,948 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-19 13:49:07,135 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 13:49:07,175 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 14:49:07,493 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 14:49:07,511 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 15:49:07,777 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 15:49:07,784 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 16:49:07,998 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 16:49:08,005 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 17:49:08,204 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 17:49:08,208 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 18:49:08,373 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 18:49:08,378 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 19:49:08,636 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 19:49:08,641 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 20:49:09,035 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 20:49:09,075 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 21:49:09,265 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 21:49:09,270 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 22:49:09,615 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 22:49:09,622 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-19 23:49:09,817 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-19 23:49:09,824 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-20 00:49:10,117 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 00:49:10,125 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-20 01:49:10,424 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 01:49:10,430 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 02:49:10,600 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 02:49:10,609 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 03:49:10,824 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 03:49:10,834 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 04:49:11,008 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 04:49:11,015 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 05:49:11,256 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 05:49:11,263 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 06:49:11,477 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 06:49:11,486 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 07:49:11,710 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 07:49:11,716 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 08:49:11,908 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 08:49:11,915 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 09:49:12,112 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 09:49:12,120 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 10:49:12,436 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 10:49:12,445 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 11:49:12,744 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 11:49:12,753 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 12:49:12,937 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 12:49:12,947 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 13:49:13,163 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 13:49:13,168 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 14:49:13,351 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 14:49:13,358 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 15:49:13,598 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 15:49:13,612 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 16:49:13,885 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 16:49:13,903 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 17:49:14,074 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 17:49:14,078 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 18:49:14,240 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 18:49:14,245 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 19:49:14,451 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 19:49:14,458 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 20:49:14,620 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 20:49:14,625 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 21:49:14,817 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 21:49:14,822 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 22:49:15,055 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 22:49:15,060 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-20 23:49:15,253 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-20 23:49:15,260 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 00:49:15,533 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 00:49:15,551 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 01:49:15,765 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 01:49:15,773 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 02:49:15,924 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 02:49:15,928 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 03:49:16,137 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 03:49:16,143 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 04:49:16,426 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 04:49:16,443 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 05:49:16,603 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 05:49:16,606 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 06:49:16,750 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 06:49:16,755 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 07:49:17,209 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 07:49:17,218 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 08:49:17,405 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 08:49:17,410 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 09:49:17,576 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 09:49:17,583 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 10:49:17,821 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 10:49:17,829 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 11:49:18,050 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 11:49:18,058 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 12:49:18,483 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 12:49:18,519 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 13:49:18,733 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 13:49:18,739 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 14:49:18,964 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 14:49:18,970 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 15:49:19,294 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 15:49:19,303 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 16:49:19,551 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 16:49:19,561 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-21 17:49:19,804 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 17:49:19,814 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-21 18:49:19,981 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 18:49:19,987 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-21 19:49:20,231 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 19:49:20,241 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-21 20:49:20,545 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 20:49:20,566 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-21 21:49:20,749 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 21:49:20,759 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-21 22:49:20,941 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 22:49:20,947 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-21 23:49:21,134 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-21 23:49:21,140 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 00:49:21,299 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 00:49:21,303 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 01:49:21,816 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 01:49:21,823 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 02:49:22,008 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 02:49:22,016 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-22 03:49:22,244 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 03:49:22,250 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-22 04:49:22,497 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 04:49:22,538 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 05:49:22,749 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 05:49:22,756 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 06:49:22,951 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 06:49:22,957 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 07:49:23,216 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 07:49:23,223 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 08:49:23,434 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 08:49:23,458 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 09:49:23,635 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 09:49:23,643 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 10:49:23,889 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 10:49:23,894 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 11:49:24,093 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 11:49:24,100 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 12:49:24,352 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 12:49:24,359 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 13:49:24,590 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 13:49:24,595 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 14:49:24,855 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 14:49:24,864 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 15:49:25,041 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 15:49:25,051 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 16:49:25,287 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 16:49:25,295 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 17:49:25,513 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 17:49:25,522 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 18:49:25,694 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 18:49:25,699 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 19:49:25,858 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 19:49:25,894 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 20:49:26,120 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 20:49:26,125 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 21:49:26,356 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 21:49:26,360 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 22:49:26,562 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 22:49:26,569 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-22 23:49:26,816 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-22 23:49:26,825 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 00:49:27,014 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 00:49:27,023 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 01:49:27,344 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 01:49:27,353 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 02:49:27,528 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 02:49:27,533 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 03:49:27,720 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 03:49:27,728 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 04:49:27,915 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 04:49:27,920 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 05:49:28,119 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 05:49:28,126 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 06:49:28,297 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 06:49:28,301 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 07:49:28,589 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 07:49:28,598 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 08:49:28,811 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 08:49:28,820 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 09:49:28,975 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 09:49:28,980 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 10:49:29,179 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 10:49:29,195 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 11:49:29,391 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 11:49:29,397 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 12:49:29,596 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 12:49:29,605 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 13:49:29,849 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 13:49:29,860 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 14:49:30,222 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 14:49:30,240 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 15:49:30,593 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 15:49:30,605 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 16:49:30,823 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 16:49:30,831 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 17:49:31,004 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 17:49:31,011 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 18:49:31,260 - portfolio_allocator - INFO - tick: reserve=17.69% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 18:49:31,279 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 17.69, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 19:49:31,561 - portfolio_allocator - INFO - tick: reserve=11.08% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 19:49:31,573 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 11.08, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 20:49:31,746 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 20:49:31,751 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 21:49:31,968 - portfolio_allocator - INFO - tick: reserve=10.17% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 21:49:31,976 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.17, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 22:49:32,183 - portfolio_allocator - INFO - tick: reserve=10.94% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 22:49:32,190 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.94, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-23 23:49:32,342 - portfolio_allocator - INFO - tick: reserve=13.39% proposals=7 (modules=7, orch_budgets=1)
+2026-06-23 23:49:32,346 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 13.39, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 00:49:32,760 - portfolio_allocator - INFO - tick: reserve=16.24% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 00:49:32,773 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 16.24, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 01:49:33,068 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 01:49:33,085 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 02:49:33,298 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 02:49:33,309 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 03:49:33,460 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 03:49:33,464 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 04:49:33,668 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 04:49:33,674 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 05:49:34,162 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 05:49:34,174 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 06:49:34,380 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 06:49:34,387 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 07:49:34,628 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 07:49:34,637 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 08:49:34,816 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 08:49:34,825 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 09:49:34,971 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 09:49:34,979 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 10:49:35,226 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 10:49:35,234 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 11:49:35,495 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 11:49:35,506 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 12:49:35,722 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 12:49:35,729 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 13:49:35,958 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 13:49:36,025 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 14:49:36,222 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 14:49:36,230 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-24 15:49:36,617 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 15:49:36,623 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 16:49:36,839 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 16:49:36,848 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 17:49:37,001 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 17:49:37,008 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 18:49:37,267 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 18:49:37,276 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 19:49:37,454 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 19:49:37,465 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 20:49:37,709 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 20:49:37,721 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 21:49:37,904 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 21:49:37,919 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 22:49:38,254 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 22:49:38,282 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-24 23:49:38,872 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-24 23:49:38,892 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-25 00:49:39,079 - portfolio_allocator - INFO - tick: reserve=19.66% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 00:49:39,085 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 19.66, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-25 01:49:39,593 - portfolio_allocator - INFO - tick: reserve=10.18% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 01:49:39,605 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.18, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-25 02:49:39,771 - portfolio_allocator - INFO - tick: reserve=10.20% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 02:49:39,782 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.2, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-25 03:49:39,930 - portfolio_allocator - INFO - tick: reserve=10.00% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 03:49:39,937 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.0, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-25 04:49:40,147 - portfolio_allocator - INFO - tick: reserve=11.23% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 04:49:40,155 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 11.23, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-25 05:49:40,349 - portfolio_allocator - INFO - tick: reserve=10.84% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 05:49:40,357 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.84, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-25 06:49:40,522 - portfolio_allocator - INFO - tick: reserve=10.68% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 06:49:40,531 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.68, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 07:49:40,705 - portfolio_allocator - INFO - tick: reserve=10.03% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 07:49:40,711 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.03, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 08:49:40,960 - portfolio_allocator - INFO - tick: reserve=10.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 08:49:40,982 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 09:49:41,171 - portfolio_allocator - INFO - tick: reserve=10.58% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 09:49:41,184 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.58, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 10:49:41,361 - portfolio_allocator - INFO - tick: reserve=10.40% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 10:49:41,369 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.4, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 11:49:41,640 - portfolio_allocator - INFO - tick: reserve=10.37% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 11:49:41,646 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.37, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 12:49:41,950 - portfolio_allocator - INFO - tick: reserve=10.35% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 12:49:41,964 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.35, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 13:49:42,234 - portfolio_allocator - INFO - tick: reserve=10.35% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 13:49:42,267 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.35, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 14:49:42,493 - portfolio_allocator - INFO - tick: reserve=15.71% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 14:49:42,502 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 15.71, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 15:49:42,987 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 15:49:43,004 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 16:49:43,413 - portfolio_allocator - INFO - tick: reserve=12.49% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 16:49:43,422 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 12.49, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 17:49:43,611 - portfolio_allocator - INFO - tick: reserve=10.00% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 17:49:43,619 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.0, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 18:49:43,777 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 18:49:43,782 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 19:49:43,934 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 19:49:43,940 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 20:49:44,107 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 20:49:44,113 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 21:49:44,268 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 21:49:44,275 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 22:49:44,431 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 22:49:44,436 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-25 23:49:44,596 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-25 23:49:44,605 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 00:49:44,794 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 00:49:44,801 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 01:49:44,970 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 01:49:44,978 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 02:49:45,134 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 02:49:45,139 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 03:49:45,288 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 03:49:45,293 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 04:49:45,435 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 04:49:45,443 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 05:49:45,584 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 05:49:45,590 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 06:49:45,736 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 06:49:45,742 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 07:49:45,885 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 07:49:45,891 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 08:49:46,033 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 08:49:46,039 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 09:49:46,190 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 09:49:46,197 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 10:49:46,394 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 10:49:46,399 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 11:49:46,566 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 11:49:46,571 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 12:49:46,728 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 12:49:46,733 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 13:49:46,886 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 13:49:46,892 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 14:49:47,079 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 14:49:47,085 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 15:49:47,244 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 15:49:47,252 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 16:49:47,459 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 16:49:47,467 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 17:49:47,636 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 17:49:47,641 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 18:49:47,926 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 18:49:47,930 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 19:49:48,099 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 19:49:48,107 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 20:49:48,328 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 20:49:48,334 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 21:49:48,491 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 21:49:48,498 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 22:49:48,725 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 22:49:48,731 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-26 23:49:48,888 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-26 23:49:48,895 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 00:49:49,058 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 00:49:49,063 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 01:49:49,234 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 01:49:49,242 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 02:49:49,397 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 02:49:49,403 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 03:49:49,573 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 03:49:49,580 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 04:49:49,842 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 04:49:49,855 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 05:49:50,033 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 05:49:50,039 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 06:49:50,247 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 06:49:50,252 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 07:49:50,417 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 07:49:50,426 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 08:49:50,607 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 08:49:50,613 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 09:49:50,785 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 09:49:50,790 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 10:49:50,975 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 10:49:50,984 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 11:49:51,146 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 11:49:51,152 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 12:49:51,325 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 12:49:51,330 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 13:49:51,549 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 13:49:51,580 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 14:49:51,751 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 14:49:51,757 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 15:49:51,928 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 15:49:51,936 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 16:49:52,124 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 16:49:52,130 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 17:49:52,349 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 17:49:52,357 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 18:49:52,540 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 18:49:52,544 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 19:49:52,714 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 19:49:52,722 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 20:49:52,879 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 20:49:52,884 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 21:49:53,046 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 21:49:53,051 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 22:49:53,212 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 22:49:53,221 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-27 23:49:53,372 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-27 23:49:53,378 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 00:49:53,567 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 00:49:53,572 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 01:49:53,742 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 01:49:53,748 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 02:49:54,195 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 02:49:54,219 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 03:49:54,390 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 03:49:54,406 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 04:49:54,565 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 04:49:54,571 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 05:49:54,736 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 05:49:54,742 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 06:49:54,909 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 06:49:54,915 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 07:49:55,076 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 07:49:55,085 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 08:49:55,249 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 08:49:55,254 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 09:49:55,458 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 09:49:55,463 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 10:49:55,624 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 10:49:55,630 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 11:49:55,804 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 11:49:55,809 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 12:49:55,985 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 12:49:55,994 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'chop_expansion'}
+2026-06-28 13:49:56,164 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 13:49:56,173 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 14:49:56,365 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 14:49:56,370 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 15:49:56,547 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 15:49:56,554 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 16:49:56,711 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 16:49:56,720 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 17:49:56,899 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 17:49:56,905 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 18:49:57,044 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 18:49:57,048 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 19:49:57,210 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 19:49:57,218 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 20:49:57,380 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 20:49:57,388 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 21:49:57,623 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 21:49:57,634 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 22:49:57,809 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 22:49:57,820 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-28 23:49:57,974 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-28 23:49:57,980 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 00:49:58,209 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 00:49:58,220 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 01:49:58,391 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 01:49:58,398 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 02:49:58,554 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 02:49:58,559 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 03:49:58,827 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 03:49:58,836 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 04:49:59,047 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 04:49:59,054 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 05:49:59,617 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 05:49:59,630 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 06:49:59,857 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 06:49:59,867 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 07:50:00,528 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 07:50:00,547 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 08:50:00,751 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 08:50:00,758 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 09:50:01,009 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 09:50:01,013 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 10:50:01,302 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 10:50:01,312 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 11:50:02,932 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 11:50:02,975 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 12:50:03,392 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 12:50:03,415 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-06-29 13:50:03,814 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 13:50:03,859 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 14:50:04,530 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 14:50:04,547 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 15:50:04,864 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 15:50:04,879 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 16:50:05,217 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 16:50:05,225 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 17:50:05,491 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 17:50:05,516 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 18:50:05,689 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 18:50:05,696 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 19:50:05,961 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 19:50:05,971 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 20:50:06,220 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 20:50:06,235 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 21:50:06,408 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 21:50:06,415 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 22:50:06,600 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 22:50:06,606 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-29 23:50:06,773 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-29 23:50:06,797 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 00:50:06,987 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 00:50:06,999 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 01:50:07,175 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 01:50:07,182 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 02:50:07,377 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 02:50:07,392 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 03:50:07,654 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 03:50:07,663 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 04:50:07,835 - portfolio_allocator - INFO - tick: reserve=18.05% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 04:50:07,843 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 18.05, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 05:50:08,046 - portfolio_allocator - INFO - tick: reserve=12.57% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 05:50:08,052 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 12.57, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 06:50:08,287 - portfolio_allocator - INFO - tick: reserve=20.23% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 06:50:08,294 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 20.23, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 07:50:08,566 - portfolio_allocator - INFO - tick: reserve=20.24% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 07:50:08,578 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 20.24, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 08:50:08,837 - portfolio_allocator - INFO - tick: reserve=15.79% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 08:50:08,847 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 15.79, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 09:50:09,097 - portfolio_allocator - INFO - tick: reserve=13.95% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 09:50:09,112 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 13.95, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 10:50:09,440 - portfolio_allocator - INFO - tick: reserve=10.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 10:50:09,446 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 11:50:09,598 - portfolio_allocator - INFO - tick: reserve=12.70% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 11:50:09,606 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 12.7, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 12:50:09,766 - portfolio_allocator - INFO - tick: reserve=10.02% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 12:50:09,774 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.02, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 13:50:09,991 - portfolio_allocator - INFO - tick: reserve=10.02% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 13:50:09,999 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.02, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 14:50:10,185 - portfolio_allocator - INFO - tick: reserve=11.33% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 14:50:10,191 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 11.33, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 15:50:10,380 - portfolio_allocator - INFO - tick: reserve=11.13% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 15:50:10,388 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 11.13, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 16:50:10,605 - portfolio_allocator - INFO - tick: reserve=11.30% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 16:50:10,612 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 11.3, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 17:50:10,767 - portfolio_allocator - INFO - tick: reserve=10.00% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 17:50:10,773 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.0, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 18:50:11,016 - portfolio_allocator - INFO - tick: reserve=10.00% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 18:50:11,022 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.0, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 19:50:11,193 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 19:50:11,199 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 20:50:11,363 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 20:50:11,369 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 21:50:11,641 - portfolio_allocator - INFO - tick: reserve=10.02% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 21:50:11,654 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.02, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 22:50:11,899 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 22:50:11,909 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-06-30 23:50:12,115 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-06-30 23:50:12,121 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 00:50:12,288 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 00:50:12,293 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 01:50:12,516 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 01:50:12,523 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 02:50:12,680 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 02:50:12,685 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 03:50:12,848 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 03:50:12,853 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 04:50:13,008 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 04:50:13,015 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 05:50:13,170 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 05:50:13,177 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 06:50:13,406 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 06:50:13,421 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 07:50:13,633 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 07:50:13,643 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 08:50:13,810 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 08:50:13,814 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 09:50:14,000 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 09:50:14,007 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 10:50:14,194 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 10:50:14,200 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 11:50:14,365 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 11:50:14,370 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 12:50:14,566 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 12:50:14,573 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 13:50:14,751 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 13:50:14,757 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 14:50:14,904 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 14:50:14,909 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 15:50:15,138 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 15:50:15,147 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 16:50:15,455 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 16:50:15,461 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 17:50:15,667 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 17:50:15,679 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 18:50:15,963 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 18:50:15,970 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 19:50:16,227 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 19:50:16,235 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 20:50:16,481 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 20:50:16,488 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 21:50:16,725 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 21:50:16,733 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-01 22:50:16,929 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 22:50:16,953 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-01 23:50:17,154 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-01 23:50:17,172 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-02 00:50:17,351 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 00:50:17,360 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-02 01:50:17,559 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 01:50:17,565 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-02 02:50:17,753 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 02:50:17,760 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-02 03:50:17,934 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 03:50:17,948 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-02 04:50:18,150 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 04:50:18,156 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 05:50:18,323 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 05:50:18,328 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 06:50:18,504 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 06:50:18,510 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 07:50:18,741 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 07:50:18,753 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 08:50:18,948 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 08:50:18,959 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 09:50:19,161 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 09:50:19,179 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 10:50:19,334 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 10:50:19,339 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 11:50:19,532 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 11:50:19,538 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 12:50:19,786 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 12:50:19,796 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 13:50:20,036 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 13:50:20,045 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 14:50:20,213 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 14:50:20,223 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 15:50:20,418 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 15:50:20,423 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 16:50:20,613 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 16:50:20,619 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 17:50:20,813 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 17:50:20,823 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 18:50:21,100 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 18:50:21,110 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 19:50:21,303 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 19:50:21,310 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 20:50:21,492 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 20:50:21,497 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 21:50:21,653 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 21:50:21,660 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 22:50:21,852 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 22:50:21,861 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-02 23:50:22,099 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-02 23:50:22,122 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 00:50:22,336 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 00:50:22,343 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 01:50:22,583 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 01:50:22,589 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 02:50:22,793 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 02:50:22,802 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 03:50:23,016 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 03:50:23,039 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 04:50:23,260 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 04:50:23,268 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 05:50:23,505 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 05:50:23,514 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 06:50:23,696 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 06:50:23,703 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 07:50:23,933 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 07:50:23,938 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 08:50:24,129 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 08:50:24,147 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 09:50:24,350 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 09:50:24,354 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 10:50:24,594 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 10:50:24,602 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 11:50:24,802 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 11:50:24,808 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 12:50:24,993 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 12:50:25,000 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 13:50:25,144 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 13:50:25,148 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 14:50:25,413 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 14:50:25,424 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 15:50:25,624 - portfolio_allocator - INFO - tick: reserve=10.66% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 15:50:25,635 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.66, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 16:50:25,801 - portfolio_allocator - INFO - tick: reserve=13.01% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 16:50:25,806 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 13.01, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 17:50:25,979 - portfolio_allocator - INFO - tick: reserve=17.45% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 17:50:25,987 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 17.45, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 18:50:26,145 - portfolio_allocator - INFO - tick: reserve=18.51% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 18:50:26,151 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 18.51, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 19:50:26,317 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 19:50:26,323 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 20:50:26,499 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 20:50:26,506 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 21:50:26,686 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 21:50:26,692 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 22:50:26,870 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 22:50:26,874 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-03 23:50:27,035 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-03 23:50:27,041 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 00:50:27,198 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 00:50:27,202 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 01:50:27,486 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 01:50:27,507 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 02:50:27,670 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 02:50:27,675 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 03:50:27,865 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 03:50:27,871 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 04:50:28,064 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 04:50:28,076 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 05:50:28,250 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 05:50:28,255 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 06:50:28,422 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 06:50:28,427 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 07:50:28,616 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 07:50:28,624 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 08:50:28,815 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 08:50:28,820 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 09:50:28,984 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 09:50:28,994 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 10:50:29,179 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 10:50:29,188 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 11:50:29,364 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 11:50:29,370 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 12:50:29,527 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 12:50:29,536 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 13:50:29,725 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 13:50:29,732 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 14:50:30,026 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 14:50:30,035 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 15:50:30,200 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 15:50:30,204 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 16:50:30,385 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 16:50:30,392 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 17:50:30,601 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 17:50:30,608 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 18:50:30,795 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 18:50:30,800 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 19:50:30,980 - portfolio_allocator - INFO - tick: reserve=10.02% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 19:50:30,985 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.02, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 20:50:31,153 - portfolio_allocator - INFO - tick: reserve=12.07% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 20:50:31,158 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 12.07, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 21:50:31,313 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 21:50:31,319 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 22:50:31,478 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 22:50:31,483 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-04 23:50:31,664 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-07-04 23:50:31,670 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 00:50:31,864 - portfolio_allocator - INFO - tick: reserve=9.98% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 00:50:31,870 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.98, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 01:50:32,053 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 01:50:32,058 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 02:50:32,273 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 02:50:32,278 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 03:50:32,549 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 03:50:32,554 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 04:50:32,703 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 04:50:32,708 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 05:50:32,865 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 05:50:32,870 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 06:50:33,074 - portfolio_allocator - INFO - tick: reserve=19.79% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 06:50:33,082 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 19.79, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 07:50:33,306 - portfolio_allocator - INFO - tick: reserve=15.16% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 07:50:33,313 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 15.16, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 08:50:33,528 - portfolio_allocator - INFO - tick: reserve=14.89% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 08:50:33,534 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 14.89, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 09:50:33,837 - portfolio_allocator - INFO - tick: reserve=16.00% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 09:50:33,842 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 16.0, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 10:50:34,012 - portfolio_allocator - INFO - tick: reserve=13.31% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 10:50:34,018 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 13.31, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 11:50:34,189 - portfolio_allocator - INFO - tick: reserve=12.83% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 11:50:34,196 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 12.83, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 12:50:34,366 - portfolio_allocator - INFO - tick: reserve=13.30% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 12:50:34,372 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 13.3, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'neutral'}
+2026-07-05 13:50:34,555 - portfolio_allocator - INFO - tick: reserve=9.97% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 13:50:34,561 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.97, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-05 14:50:34,714 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 14:50:34,718 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-05 15:50:34,950 - portfolio_allocator - INFO - tick: reserve=21.42% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 15:50:34,955 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 21.42, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-05 16:50:35,162 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 16:50:35,170 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-05 17:50:35,358 - portfolio_allocator - INFO - tick: reserve=10.02% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 17:50:35,364 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 10.02, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}
+2026-07-05 18:50:35,583 - portfolio_allocator - INFO - tick: reserve=9.99% proposals=7 (modules=7, orch_budgets=1)
+2026-07-05 18:50:35,590 - portfolio_allocator - INFO - tick summary: {'modules': 7, 'proposals_written': 7, 'reserve_pct': 9.99, 'orchestrator_budgets_found': 1, 'errors': [], 'market_regime': 'range_compression'}

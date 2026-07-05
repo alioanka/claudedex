@@ -1,0 +1,318 @@
+2026-06-15 23:07:29,417 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-16 03:00:33,656 - SolanaTradingEngine - ERROR -    Price: 0.0000607700 → 0.0000038210
+2026-06-16 03:00:33,671 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 08:38:36,107 - SolanaTradingEngine - ERROR -    Price: 0.0001394000 → 0.0000448500
+2026-06-16 08:38:36,109 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 10:16:54,593 - SolanaTradingEngine - ERROR -    Price: 0.0000722300 → 0.0000014490
+2026-06-16 10:16:54,595 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 13:08:46,375 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-16 13:36:34,628 - SolanaTradingEngine - ERROR -    Price: 0.0000301100 → 0.0000063210
+2026-06-16 13:36:34,634 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 15:48:58,233 - SolanaTradingEngine - ERROR -    Price: 0.0000599300 → 0.0000343300
+2026-06-16 15:48:58,235 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 16:05:26,393 - SolanaTradingEngine - ERROR -    Price: 0.0000399400 → 0.0000225100
+2026-06-16 16:05:26,393 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 16:40:49,259 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-16 17:12:23,726 - SolanaTradingEngine - ERROR -    Price: 0.0000995600 → 0.0000021010
+2026-06-16 17:12:23,726 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 18:57:01,311 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-16 20:23:45,934 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-16 21:14:08,855 - SolanaTradingEngine - ERROR -    Price: 0.0000796200 → 0.0000019220
+2026-06-16 21:14:08,856 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-16 22:38:59,511 - SolanaTradingEngine - ERROR -    Price: 0.0001979000 → 0.0001116000
+2026-06-16 22:38:59,513 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-17 07:43:43,955 - SolanaTradingEngine - ERROR -    Price: 0.0001024000 → 0.0000022510
+2026-06-17 07:43:43,959 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-17 09:21:27,606 - SolanaTradingEngine - ERROR -    Price: 0.0002831000 → 0.0001044000
+2026-06-17 09:21:27,620 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-17 09:23:39,289 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-17 11:44:30,955 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-17 13:19:56,322 - SolanaTradingEngine - ERROR -    Price: 0.0000294900 → 0.0000153500
+2026-06-17 13:19:56,324 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-17 13:43:31,281 - SolanaTradingEngine - ERROR -    Price: 0.0000321900 → 0.0000173600
+2026-06-17 13:43:31,281 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 01:50:07,773 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-18 03:44:43,832 - SolanaTradingEngine - ERROR -    Price: 0.0000323000 → 0.0000075310
+2026-06-18 03:44:43,834 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 13:16:13,461 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-18 13:55:00,780 - SolanaTradingEngine - ERROR -    Price: 0.0006495000 → 0.0000005351
+2026-06-18 13:55:00,783 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 14:47:39,144 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-18 15:16:03,709 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-18 18:23:33,194 - SolanaTradingEngine - ERROR -    Price: 0.0000432100 → 0.0000021170
+2026-06-18 18:23:33,197 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 18:44:39,859 - SolanaTradingEngine - ERROR -    Price: 0.0000376200 → 0.0000203900
+2026-06-18 18:44:39,859 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 20:05:35,795 - SolanaTradingEngine - ERROR -    Price: 0.0001735000 → 0.0000181300
+2026-06-18 20:05:35,796 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 20:27:14,885 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-18 20:43:08,229 - SolanaTradingEngine - ERROR -    Price: 0.0000806400 → 0.0000289700
+2026-06-18 20:43:08,229 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 20:45:22,197 - SolanaTradingEngine - ERROR -    Price: 0.0000299700 → 0.0000157000
+2026-06-18 20:45:22,197 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-18 21:32:58,033 - SolanaTradingEngine - ERROR -    Price: 0.0000214500 → 0.0000055660
+2026-06-18 21:32:58,035 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-19 07:42:56,037 - SolanaTradingEngine - ERROR -    Price: 0.0000529900 → 0.0000299300
+2026-06-19 07:42:56,042 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-19 15:40:48,955 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-20 05:58:45,124 - SolanaTradingEngine - ERROR -    Price: 0.0000661300 → 0.0000312400
+2026-06-20 05:58:45,131 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-20 11:35:12,753 - SolanaTradingEngine - ERROR -    Price: 0.0000383500 → 0.0000014740
+2026-06-20 11:35:12,756 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-20 12:31:48,966 - SolanaTradingEngine - ERROR -    Price: 0.0001364000 → 0.0000339100
+2026-06-20 12:31:48,971 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-20 13:05:33,714 - SolanaTradingEngine - ERROR -    Price: 0.0001029000 → 0.0000412400
+2026-06-20 13:05:33,714 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-20 20:09:36,140 - SolanaTradingEngine - ERROR -    Price: 0.0000355100 → 0.0000200700
+2026-06-20 20:09:36,142 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-21 05:40:59,601 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-21 08:46:36,371 - SolanaTradingEngine - ERROR -    Price: 0.0001787000 → 0.0000610700
+2026-06-21 08:46:36,374 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-21 14:27:34,835 - SolanaTradingEngine - ERROR -    Price: 0.0000302300 → 0.0000136200
+2026-06-21 14:27:34,837 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-21 20:01:23,924 - SolanaTradingEngine - ERROR -    Price: 0.0000509400 → 0.0000119100
+2026-06-21 20:01:23,936 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-22 02:27:19,121 - SolanaTradingEngine - ERROR -    Price: 0.0000310500 → 0.0000040990
+2026-06-22 02:27:19,124 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-22 04:26:15,891 - SolanaTradingEngine - ERROR -    Price: 0.0000258400 → 0.0000108600
+2026-06-22 04:26:15,892 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-23 00:14:15,456 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-23 00:45:08,807 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-23 05:34:23,705 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-23 07:32:45,941 - SolanaTradingEngine - ERROR -    Price: 0.0000265800 → 0.0000036120
+2026-06-23 07:32:45,943 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-23 13:17:40,267 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-23 15:44:12,825 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-23 18:34:06,176 - SolanaTradingEngine - ERROR -    Price: 0.0000260400 → 0.0000139600
+2026-06-23 18:34:06,178 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-23 19:10:12,378 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-23 20:42:59,845 - SolanaTradingEngine - ERROR -    Price: 0.0001236000 → 0.0000700500
+2026-06-23 20:42:59,846 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-23 20:45:49,356 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-24 06:12:45,317 - SolanaTradingEngine - ERROR -    Price: 0.0000407500 → 0.0000045730
+2026-06-24 06:12:45,320 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-24 07:17:00,968 - SolanaTradingEngine - ERROR -    Price: 0.0000382400 → 0.0000228300
+2026-06-24 07:17:00,974 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-24 10:54:07,672 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-24 10:57:03,010 - SolanaTradingEngine - ERROR -    Price: 0.0000298000 → 0.0000137600
+2026-06-24 10:57:03,010 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-24 12:45:35,585 - SolanaTradingEngine - ERROR -    Price: 0.0000428800 → 0.0000247800
+2026-06-24 12:45:35,587 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-24 13:06:57,036 - SolanaTradingEngine - ERROR -    Price: 0.0000429500 → 0.0000138000
+2026-06-24 13:06:57,037 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-24 18:14:36,062 - SolanaTradingEngine - ERROR -    Price: 0.0000452600 → 0.0000040610
+2026-06-24 18:14:36,064 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-24 20:24:23,735 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-24 21:10:24,659 - SolanaTradingEngine - ERROR -    Price: 0.0000328100 → 0.0000186700
+2026-06-24 21:10:24,659 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-24 22:55:26,130 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-25 07:29:15,868 - SolanaTradingEngine - ERROR -    Price: 0.0000314000 → 0.0000116500
+2026-06-25 07:29:15,871 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-25 09:12:39,017 - SolanaTradingEngine - ERROR -    Price: 0.0001518000 → 0.0000028540
+2026-06-25 09:12:39,019 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-25 10:34:51,271 - SolanaTradingEngine - ERROR -    Price: 0.0001085000 → 0.0000164600
+2026-06-25 10:34:51,274 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-25 13:09:50,684 - SolanaTradingEngine - ERROR -    Price: 0.0000542300 → 0.0000172300
+2026-06-25 13:09:50,693 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-25 14:53:38,851 - SolanaTradingEngine - ERROR -    Price: 0.0000321800 → 0.0000180400
+2026-06-25 14:53:38,852 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-25 18:54:31,505 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-25 19:56:47,624 - SolanaTradingEngine - ERROR -    Price: 0.0000887600 → 0.0000061150
+2026-06-25 19:56:47,626 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-25 21:06:28,904 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-25 22:07:35,327 - SolanaTradingEngine - ERROR -    Price: 0.0000357600 → 0.0000158300
+2026-06-25 22:07:35,329 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 00:21:23,196 - SolanaTradingEngine - ERROR -    Price: 0.0000244600 → 0.0000081860
+2026-06-26 00:21:23,198 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 01:15:26,110 - SolanaTradingEngine - ERROR -    Price: 0.0000916500 → 0.0000546900
+2026-06-26 01:15:26,110 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 04:38:49,547 - SolanaTradingEngine - ERROR -    Price: 0.0000350300 → 0.0000118500
+2026-06-26 04:38:49,551 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 10:15:48,309 - SolanaTradingEngine - ERROR -    Price: 0.0000260000 → 0.0000153200
+2026-06-26 10:15:48,310 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 10:29:36,353 - SolanaTradingEngine - ERROR -    Price: 0.0001581000 → 0.0000015410
+2026-06-26 10:29:36,355 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 12:19:17,283 - SolanaTradingEngine - ERROR -    Price: 0.0000444000 → 0.0000036250
+2026-06-26 12:19:17,286 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 16:21:56,395 - SolanaTradingEngine - ERROR -    Price: 0.0000366500 → 0.0000202400
+2026-06-26 16:21:56,397 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-26 23:12:23,239 - SolanaTradingEngine - ERROR -    Price: 0.0000392800 → 0.0000224800
+2026-06-26 23:12:23,240 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-27 03:33:22,725 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-27 18:05:03,440 - SolanaTradingEngine - ERROR -    Price: 0.0001229000 → 0.0000107800
+2026-06-27 18:05:03,441 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-27 20:57:43,840 - SolanaTradingEngine - ERROR -    Price: 0.0002271000 → 0.0000050840
+2026-06-27 20:57:43,842 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 00:15:28,738 - SolanaTradingEngine - ERROR -    Price: 0.0000399500 → 0.0000175700
+2026-06-28 00:15:28,740 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 03:06:50,504 - SolanaTradingEngine - ERROR -    Price: 0.0001486000 → 0.0000018090
+2026-06-28 03:06:50,506 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 04:21:00,455 - SolanaTradingEngine - ERROR -    Price: 0.0000256500 → 0.0000101500
+2026-06-28 04:21:00,457 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 05:25:46,359 - SolanaTradingEngine - ERROR -    Price: 0.0000309100 → 0.0000019340
+2026-06-28 05:25:46,360 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 06:57:12,215 - SolanaTradingEngine - ERROR -    Price: 0.0002044000 → 0.0000020500
+2026-06-28 06:57:12,217 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 07:50:50,209 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 09:29:12,792 - SolanaTradingEngine - ERROR -    Price: 0.0000361000 → 0.0000158600
+2026-06-28 09:29:12,794 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 12:13:44,106 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 13:33:27,414 - SolanaTradingEngine - ERROR -    Price: 0.0001255000 → 0.0000698500
+2026-06-28 13:33:27,416 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 14:36:36,640 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 14:38:32,282 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 16:45:36,233 - SolanaTradingEngine - ERROR -    Price: 0.0000362400 → 0.0000209500
+2026-06-28 16:45:36,237 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 18:21:27,342 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 18:33:14,644 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 19:11:29,435 - SolanaTradingEngine - ERROR -    Price: 0.0000476300 → 0.0000016880
+2026-06-28 19:11:29,435 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 19:52:14,180 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 20:12:50,750 - SolanaTradingEngine - ERROR -    Price: 0.0000252400 → 0.0000141800
+2026-06-28 20:12:50,750 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 20:19:39,017 - SolanaTradingEngine - ERROR -    Price: 0.0000770300 → 0.0000376400
+2026-06-28 20:19:39,019 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 21:11:59,273 - SolanaTradingEngine - ERROR -    Price: 0.0000476200 → 0.0000018340
+2026-06-28 21:11:59,274 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 21:30:32,953 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 23:04:50,322 - SolanaTradingEngine - ERROR -    Price: 0.0000451900 → 0.0000168700
+2026-06-28 23:04:50,325 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-28 23:55:26,162 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-28 23:59:20,680 - SolanaTradingEngine - ERROR -    Price: 0.0001333000 → 0.0000698700
+2026-06-28 23:59:20,680 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-29 00:27:49,211 - SolanaTradingEngine - ERROR -    Price: 0.0000438900 → 0.0000210700
+2026-06-29 00:27:49,215 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-29 01:01:44,352 - SolanaTradingEngine - ERROR -    Price: 0.0001123000 → 0.0000016240
+2026-06-29 01:01:44,352 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-29 01:36:59,836 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-29 08:35:32,925 - SolanaTradingEngine - ERROR -    Price: 0.0000662000 → 0.0000223100
+2026-06-29 08:35:32,931 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-29 14:17:32,624 - SolanaTradingEngine - ERROR -    Price: 0.0000890700 → 0.0000019030
+2026-06-29 14:17:32,629 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-29 15:47:09,159 - SolanaTradingEngine - ERROR -    Price: 0.0000587100 → 0.0000039750
+2026-06-29 15:47:09,166 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-29 18:20:12,219 - SolanaTradingEngine - ERROR -    Price: 0.0000426300 → 0.0000249000
+2026-06-29 18:20:12,223 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-29 20:17:58,707 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-29 20:25:23,056 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-30 03:36:00,095 - SolanaTradingEngine - ERROR -    Price: 0.0000298700 → 0.0000153800
+2026-06-30 03:36:00,097 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 06:01:18,470 - SolanaTradingEngine - ERROR -    Price: 0.0002800000 → 0.0001250000
+2026-06-30 06:01:18,472 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 06:01:50,199 - SolanaTradingEngine - ERROR -    Price: 0.0001603000 → 0.0000812200
+2026-06-30 06:01:50,199 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 07:33:19,973 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-30 12:44:31,918 - SolanaTradingEngine - ERROR -    Price: 0.0002081000 → 0.0000014830
+2026-06-30 12:44:31,925 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 14:37:18,340 - SolanaTradingEngine - ERROR -    Price: 0.0000423200 → 0.0000159200
+2026-06-30 14:37:18,342 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 14:39:09,158 - SolanaTradingEngine - ERROR -    Price: 0.0000442100 → 0.0000209400
+2026-06-30 14:39:09,159 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 14:59:21,503 - SolanaTradingEngine - ERROR -    Price: 0.0000293500 → 0.0000043830
+2026-06-30 14:59:21,504 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 17:26:15,013 - SolanaTradingEngine - ERROR -    Price: 0.0000970600 → 0.0000135600
+2026-06-30 17:26:15,014 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 17:55:40,921 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-30 19:10:47,113 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-30 19:46:57,495 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-30 21:40:50,522 - SolanaTradingEngine - ERROR -    Price: 0.0000313600 → 0.0000186300
+2026-06-30 21:40:50,524 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 21:51:06,180 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-06-30 22:29:19,579 - SolanaTradingEngine - ERROR -    Price: 0.0000385400 → 0.0000215700
+2026-06-30 22:29:19,582 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-06-30 23:06:50,109 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 00:11:40,687 - SolanaTradingEngine - ERROR -    Price: 0.0001356000 → 0.0000791900
+2026-07-01 00:11:40,690 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 00:15:47,082 - SolanaTradingEngine - ERROR -    Price: 0.0000268400 → 0.0000043910
+2026-07-01 00:15:47,082 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 03:24:58,493 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 04:30:42,048 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 05:53:47,987 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 06:37:37,973 - SolanaTradingEngine - ERROR -    Price: 0.0000488200 → 0.0000255100
+2026-07-01 06:37:37,974 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 11:51:31,739 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 12:30:57,278 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 12:34:48,240 - SolanaTradingEngine - ERROR -    Price: 0.0000282600 → 0.0000161000
+2026-07-01 12:34:48,240 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 15:23:56,148 - SolanaTradingEngine - ERROR -    Price: 0.0000569500 → 0.0000048460
+2026-07-01 15:23:56,149 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 15:23:56,186 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 15:38:36,559 - SolanaTradingEngine - ERROR -    Price: 0.0000406300 → 0.0000161300
+2026-07-01 15:38:36,559 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 17:05:23,064 - SolanaTradingEngine - ERROR -    Price: 0.0000348300 → 0.0000194800
+2026-07-01 17:05:23,066 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 17:31:31,940 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 18:41:35,097 - SolanaTradingEngine - ERROR -    Price: 0.0000611500 → 0.0000019900
+2026-07-01 18:41:35,099 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 18:46:51,784 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 18:57:06,060 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 21:26:39,004 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-01 22:39:18,848 - SolanaTradingEngine - ERROR -    Price: 0.0000479500 → 0.0000253600
+2026-07-01 22:39:18,850 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-01 22:43:50,820 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-02 04:12:13,440 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-02 06:17:45,853 - SolanaTradingEngine - ERROR -    Price: 0.0000457900 → 0.0000235300
+2026-07-02 06:17:45,855 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 06:56:02,970 - SolanaTradingEngine - ERROR -    Price: 0.0002146000 → 0.0001111000
+2026-07-02 06:56:02,970 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 08:17:16,283 - SolanaTradingEngine - ERROR -    Price: 0.0000339600 → 0.0000191200
+2026-07-02 08:17:16,285 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 08:53:59,432 - SolanaTradingEngine - ERROR -    Price: 0.0000497200 → 0.0000290400
+2026-07-02 08:53:59,433 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 13:56:02,334 - SolanaTradingEngine - ERROR -    Price: 0.0001616000 → 0.0000019080
+2026-07-02 13:56:02,338 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 16:23:25,739 - SolanaTradingEngine - ERROR -    Price: 0.0000359000 → 0.0000161300
+2026-07-02 16:23:25,740 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 18:35:17,502 - SolanaTradingEngine - ERROR -    Price: 0.0000439800 → 0.0000031820
+2026-07-02 18:35:17,505 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 22:34:51,760 - SolanaTradingEngine - ERROR -    Price: 0.0000407500 → 0.0000090280
+2026-07-02 22:34:51,762 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 23:00:35,845 - SolanaTradingEngine - ERROR -    Price: 0.0001423000 → 0.0000799600
+2026-07-02 23:00:35,845 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 23:11:57,909 - SolanaTradingEngine - ERROR -    Price: 0.0000798400 → 0.0000280700
+2026-07-02 23:11:57,909 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-02 23:37:37,092 - SolanaTradingEngine - ERROR -    Price: 0.0000349400 → 0.0000115000
+2026-07-02 23:37:37,094 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-03 00:21:07,618 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-03 02:05:42,801 - SolanaTradingEngine - ERROR -    Price: 0.0000883300 → 0.0000022940
+2026-07-03 02:05:42,803 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-03 02:57:35,474 - SolanaTradingEngine - ERROR -    Price: 0.0000857500 → 0.0000017070
+2026-07-03 02:57:35,476 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-03 09:26:32,700 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-03 13:27:08,262 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-03 17:41:09,088 - SolanaTradingEngine - ERROR -    Price: 0.0000776900 → 0.0000137400
+2026-07-03 17:41:09,090 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-03 18:21:33,989 - SolanaTradingEngine - ERROR -    Price: 0.0001675000 → 0.0000945900
+2026-07-03 18:21:33,992 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-03 18:50:46,204 - SolanaTradingEngine - ERROR -    Price: 0.0003125000 → 0.0001646000
+2026-07-03 18:50:46,204 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-03 19:19:17,776 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-03 22:36:32,434 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-04 05:40:20,968 - SolanaTradingEngine - ERROR -    Price: 0.0000861000 → 0.0000483400
+2026-07-04 05:40:20,973 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-04 13:20:03,191 - SolanaTradingEngine - ERROR -    Price: 0.0000486700 → 0.0000275900
+2026-07-04 13:20:03,197 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-04 13:21:48,728 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-04 17:44:40,203 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-04 18:08:01,981 - SolanaTradingEngine - ERROR -    Price: 0.0000668500 → 0.0000237300
+2026-07-04 18:08:01,981 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-04 18:12:57,726 - SolanaTradingEngine - ERROR -    Price: 0.0000338100 → 0.0000173800
+2026-07-04 18:12:57,726 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-04 20:04:14,917 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-04 21:57:29,691 - SolanaTradingEngine - ERROR -    Price: 0.0000346500 → 0.0000150300
+2026-07-04 21:57:29,692 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-04 23:10:02,782 - SolanaTradingEngine - ERROR -    Price: 0.0000521000 → 0.0000243200
+2026-07-04 23:10:02,784 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-05 01:54:13,132 - SolanaTradingEngine - ERROR -    Price: 0.0000767700 → 0.0000047520
+2026-07-05 01:54:13,133 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-05 01:54:49,294 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-05 09:58:34,829 - SolanaTradingEngine - ERROR -    Price: 0.0001525000 → 0.0000018240
+2026-07-05 09:58:34,832 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-05 12:36:03,254 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-05 12:50:40,098 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT for new position rapid decline
+2026-07-05 14:47:32,993 - SolanaTradingEngine - ERROR -    Price: 0.0002032000 → 0.0001167000
+2026-07-05 14:47:32,995 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-05 16:35:19,184 - SolanaTradingEngine - ERROR -    Price: 0.0000459400 → 0.0000038080
+2026-07-05 16:35:19,186 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
+2026-07-05 17:07:05,176 - SolanaTradingEngine - ERROR -    Price: 0.0000421900 → 0.0000219700
+2026-07-05 17:07:05,177 - SolanaTradingEngine - ERROR -    Triggering EMERGENCY EXIT
