@@ -540,12 +540,24 @@ class TokenSafetyChecker:
 
     async def _call_helius_token_info(self, token_address: str) -> Optional[Dict]:
         """Call Helius API for Solana token info (fallback)"""
-        # Get API key from secrets manager (database/Docker secrets)
+        # Wave-F5 multi-key: rotated key from pool_engine (numbered
+        # HELIUS_API_KEY_2.. siblings share the safety-check quota burn);
+        # secrets/env fallback preserves single-key behaviour.
+        api_key = None
+        key_ref = None
         try:
-            from security.secrets_manager import secrets
-            api_key = secrets.get('HELIUS_API_KEY', log_access=False) or os.getenv('HELIUS_API_KEY')
+            from config.rpc_provider import RPCProvider
+            res = await RPCProvider.get_api_key('HELIUS_API')
+            if res:
+                api_key, key_ref = res
         except Exception:
-            api_key = os.getenv('HELIUS_API_KEY')
+            pass
+        if not api_key:
+            try:
+                from security.secrets_manager import secrets
+                api_key = secrets.get('HELIUS_API_KEY', log_access=False) or os.getenv('HELIUS_API_KEY')
+            except Exception:
+                api_key = os.getenv('HELIUS_API_KEY')
         if not api_key:
             return None
 
@@ -554,6 +566,16 @@ class TokenSafetyChecker:
 
         try:
             async with self.session.post(url, json=payload) as response:
+                if response.status == 429:
+                    # Cool THIS key so the next safety check rotates to a
+                    # sibling account instead of hammering the limited one.
+                    try:
+                        from config.rpc_provider import RPCProvider
+                        await RPCProvider.report_key_rate_limit(
+                            key_ref if key_ref is not None else api_key, 60)
+                    except Exception:
+                        pass
+                    return None
                 if response.status == 200:
                     data = await response.json()
                     if data:

@@ -410,18 +410,41 @@ class SolanaListener:
 
     async def _reresolve_endpoints(self, reason: str) -> None:
         """Report the current endpoint failed and rotate to a fresh one via
-        pool_engine (the single source of RPCs). Fail-soft."""
+        pool_engine (the single source of RPCs). Fail-soft.
+
+        Wave-F5 multi-key: prefer a rotated HELIUS_API endpoint BEFORE the
+        public SOLANA_RPC pool. Each numbered HELIUS_API_KEY registers its
+        own endpoint whose JSON-RPC URL is both a valid RPC and a
+        WSS-derivable host, but they live under provider type HELIUS_API —
+        get_rpc('SOLANA_RPC') alone can never rotate onto a sibling Helius
+        key (the same trap copy_trading's Wave-19 fix documented). Failure
+        is reported under the provider type the current URL actually
+        belongs to, so the right endpoint is penalized."""
         try:
             from config.rpc_provider import RPCProvider
             if self.rpc_url:
                 try:
+                    provider_type = (
+                        'HELIUS_API' if 'helius' in self.rpc_url.lower()
+                        else 'SOLANA_RPC'
+                    )
                     await RPCProvider.report_failure(
-                        'SOLANA_RPC', self.rpc_url,
+                        provider_type, self.rpc_url,
                         error_type='verify_failed', error_message=reason,
                     )
                 except Exception:
                     pass
-            new_url = await RPCProvider.get_rpc('SOLANA_RPC')
+            new_url = None
+            try:
+                helius_url = await RPCProvider.get_api('HELIUS_API')
+                # Env fallback returns a bare key, not a URL — guard on scheme.
+                if (helius_url and helius_url.startswith('http')
+                        and 'helius' in helius_url.lower()):
+                    new_url = helius_url
+            except Exception:
+                pass
+            if not new_url:
+                new_url = await RPCProvider.get_rpc('SOLANA_RPC')
             if not new_url:
                 new_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or self.rpc_url
             if new_url and new_url != self.rpc_url:
