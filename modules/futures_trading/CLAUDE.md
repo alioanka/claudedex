@@ -261,6 +261,41 @@ DRY_RUN before going live. No backtest was run in this environment.
   params={'reduceOnly': True})`. Verified end-to-end; no flag-file polling is
   needed for futures close (unlike the on-chain modules).
 
+## Wave-F5 changes (2026-07-06) — geometry + entry hygiene (DRY_RUN tuning)
+Source: `docs/agents/wave-f5/02_futures_ai.md`. 20-day DRY_RUN diagnosis found
+PF 0.55 with **ZERO take-profit exits in 691 trades**: the `atr_sl_min_pct=1.5`
+floor bound ~100% of the time, so TP1 at `2.0×SL = 3.0%` was unreachable inside
+the 240-min hold window (4h diffusion ≈ 0.8–2.2%). The whole loss lived in the
+SL bucket; the other 71% of trades were a 4-hour coin flip. Fixes are entry
+hygiene + geometry only — **no live flag flipped**; PF 0.55 is nowhere near a
+GREEN/live precondition.
+
+### New / changed knobs (mig 139; all conditional seeds, no operator clobber)
+| Key (section) | Old | New | Why |
+|---|---|---|---|
+| `atr_tp_rr_ratio` (futures_risk) | 2.0 | **1.0** | TP1 = SL = 1.5% ⇒ reachable in-window; the 4-leg ladder finally participates. Changed ONE geometry lever; `max_hold_minutes` stays 240. |
+| `trailing_stop_arm_pct` (futures_risk) | — (new) | **0.75** | Arm the trailing stop at +0.75% price (0.5×SL), independent of TP2. TSL exits were 4/4 winners. Trail distance stays the FIXED `trailing_stop_distance` (no dynamic widening). 0 = disabled. |
+| `min_signal_score` (futures_strategy) | 3 (DB) | **4** | Align DB with code default; cut marginal score-3 entries (RSI 31–33 / 0.1–0.4× vol). |
+| `min_volume_ratio` (futures_strategy) | — (new) | **0.25** | HARD volume gate (distinct from the diagnostic-only `min_volume_multiplier`=0.80×). Blocks only dead tape (0.09–0.24×). 0 = disabled. |
+| `blocked_entry_hours_utc` (futures_strategy) | — (new) | **'3,4,5'** | Block NEW entries 03:00–06:59 UTC (worst session, −$66/33% win). ENTRIES ONLY — monitoring/exits never gated. Empty = disabled. |
+| `short_min_rsi` (futures_strategy) | — (new) | **35** | Refuse SHORT entries when RSI < 35 (shorting into oversold filled the SL bucket). 0 = disabled. |
+| `rolling_gate_bench_minutes` (futures_risk) | 1440 | **2880** | Double the bench (48h); bleeders re-entered through the expiring 24h bench. |
+| `rolling_gate_max_win_rate` (futures_risk) | 0.45 | **0.48** | Evict mid-tier bleeders one cycle earlier (break-even WR ≈ 53.8%). |
+
+Also code-only: **fee-aware entry** logs `TP1 − 2×taker` on every entry and
+hard-skips any entry where a TP1 win wouldn't clear the round-trip fee; **DRY_RUN
+funding honesty** stashes an estimated funding cost into `Trade.metadata` at
+close (never applied to net_pnl — a visible paper-vs-live drift line).
+
+### A/B discipline
+Validate the geometry batch in **DRY_RUN for ≥2 weeks** before drawing any
+conclusion — 691 trades at PF 0.55 is the baseline to beat. Change one geometry
+lever at a time (rr=1.0 was picked over widening `max_hold_minutes` so
+attribution stays clean). Do NOT flip live: the checklist's profitability
+precondition is unmet. Funding is still not applied to DRY_RUN net_pnl (only
+logged) — any GREEN conversation needs the full live cost stack.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
+- Wave-F5 diagnosis: `docs/agents/wave-f5/02_futures_ai.md`.
 - Canonical engine API: `docs/engines.md`.
