@@ -53,6 +53,21 @@ from modules.copy_trading.wallet_profitability import (
 
 logger = logging.getLogger("CopyDiscoveryV3")
 
+# Wave-F5: per-source WARNING throttle (1/source/hour) so a chronically-failing
+# source is visible without spamming the log.
+import time as _time
+_WARN_THROTTLE_S = 3600.0
+_last_warn_at: Dict[str, float] = {}
+
+
+def _warn_rate_limited(source: str, msg: str) -> None:
+    now = _time.monotonic()
+    if now - _last_warn_at.get(source, 0.0) >= _WARN_THROTTLE_S:
+        _last_warn_at[source] = now
+        logger.warning(msg)
+    else:
+        logger.debug(msg)
+
 SOL_MINT = "So11111111111111111111111111111111111111112"
 STABLE_MINTS = {
     SOL_MINT,
@@ -738,7 +753,7 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
                 provenance.setdefault((chain, wallet), []).append(source)
                 n += 1
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[discovery-v3] source={source} FAILED: {e}")
+            _warn_rate_limited(source, f"[discovery-v3] source={source} FAILED: {e}")
             per_source_counts[source] = -1
             return
         per_source_counts[source] = n
@@ -763,7 +778,9 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
             sm_scores_proposed = await _propose_smart_money_scores(db_pool, cfg)
             per_source_counts["smart_money_scores"] = sm_scores_proposed
         except Exception as e:  # noqa: BLE001
-            logger.warning(f"[discovery-v3] source=smart_money_scores FAILED: {e}")
+            _warn_rate_limited(
+                "smart_money_scores",
+                f"[discovery-v3] source=smart_money_scores FAILED: {e}")
             per_source_counts["smart_money_scores"] = -1
 
     # 2. Build realized-event history per wallet (merge sources), score.
@@ -840,6 +857,25 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
     except Exception as e:  # noqa: BLE001
         logger.debug(f"auto-promote pass failed: {e}")
 
+    # HONESTY (Wave-F5): flag when only the LOCAL/recycled sources produced
+    # candidates. onchain + leader_scores both re-serve wallets we already
+    # track; smart_money / helius_tokens / dexscreener / smart_money_scores are
+    # the genuinely-external feeds. If the external total is 0, discovery is
+    # degraded and any proposals came from already-tracked wallets.
+    external_srcs = ("smart_money", "helius_tokens", "dexscreener", "smart_money_scores")
+    local_srcs = ("onchain", "leader_scores")
+    ext_total = sum(max(0, per_source_counts.get(s, 0)) for s in external_srcs)
+    local_total = sum(max(0, per_source_counts.get(s, 0)) for s in local_srcs)
+    fallback = ext_total == 0 and (local_total > 0 or len(provenance) > 0)
+    if fallback:
+        _warn_rate_limited(
+            "v3_fallback",
+            "[discovery-v3] ALL external candidate sources returned 0 "
+            f"(per-source={per_source_counts}); the {len(provenance)} "
+            "candidate(s) are LOCAL/recycled (already-tracked) wallets. "
+            "Discovery is degraded — check Helius quota / add helius_tokens "
+            "or smart_money_scores to copy_v3_sources / set ETHERSCAN_API_KEY.")
+
     summary = {
         "candidates": len(provenance),
         "scored": len(scored),
@@ -847,12 +883,17 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
         "sm_scores_proposed": sm_scores_proposed,
         "promoted": promoted,
         "rpc_enriched": enriched,
+        "per_source": per_source_counts,
+        "external_candidates": ext_total,
+        "fallback": fallback,
     }
     logger.info(
-        f"[discovery-v3] sweep: {summary['candidates']} candidates, "
-        f"{summary['proposed']} proposed (min_score={cfg.min_score}, "
-        f"min_trades={cfg.min_trades}), {promoted} auto-promoted "
-        f"(gate {'ON' if cfg.auto_promote_enabled else 'OFF'})"
+        f"[discovery-v3] sweep: {summary['candidates']} candidates "
+        f"(per-source={per_source_counts}, external={ext_total}), "
+        f"{summary['proposed']} proposed + {sm_scores_proposed} sm-scores "
+        f"(min_score={cfg.min_score}, min_trades={cfg.min_trades}), "
+        f"{promoted} auto-promoted (gate {'ON' if cfg.auto_promote_enabled else 'OFF'})"
+        f"{' [FALLBACK/degraded]' if fallback else ''}"
     )
     return summary
 

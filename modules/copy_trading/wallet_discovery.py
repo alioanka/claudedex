@@ -57,6 +57,22 @@ from modules.copy_trading.leader_scorer import (
 
 logger = logging.getLogger("WalletDiscovery")
 
+# Wave-F5: per-source WARNING throttle so a source that fails every sweep
+# logs at most once per hour (not silently at DEBUG, not spamming). Keyed by
+# source id.
+_WARN_THROTTLE_S = 3600.0
+_last_warn_at: Dict[str, float] = {}
+
+
+def _warn_rate_limited(source: str, msg: str) -> None:
+    now = time.monotonic()
+    last = _last_warn_at.get(source, 0.0)
+    if now - last >= _WARN_THROTTLE_S:
+        _last_warn_at[source] = now
+        logger.warning(msg)
+    else:
+        logger.debug(msg)
+
 # -----------------------------------------------------------------------
 # Config + rate limiter
 # -----------------------------------------------------------------------
@@ -149,14 +165,18 @@ async def _safe_get_json(
     try/except dance."""
     if session is None:
         return None
+    host = url.split("/")[2] if "://" in url else url
     try:
         async with session.get(url, headers=headers or {}, timeout=timeout) as resp:
             if resp.status != 200:
-                logger.debug(f"discovery GET {url} -> HTTP {resp.status}")
+                _warn_rate_limited(
+                    f"http:{host}",
+                    f"[discovery] GET {host} -> HTTP {resp.status} "
+                    "(rate-limited/unauthorized?)")
                 return None
             return await resp.json(content_type=None)
     except (asyncio.TimeoutError, Exception) as e:  # noqa: BLE001
-        logger.debug(f"discovery GET {url} failed: {e}")
+        _warn_rate_limited(f"http:{host}", f"[discovery] GET {host} failed: {e}")
         return None
 
 
@@ -614,20 +634,43 @@ async def discover_and_score(
             except Exception:  # noqa: BLE001
                 pass
 
-    # Flatten + dedupe.
+    # Flatten + dedupe, counting candidates per source for diagnostics.
     seen: Dict[tuple, DiscoveredCandidate] = {}
+    per_source: Dict[str, int] = {}
     for r in results:
         if isinstance(r, Exception):
-            logger.debug(f"discovery source raised: {r}")
+            _warn_rate_limited("discovery", f"discovery source raised: {r}")
             continue
         for c in r or []:
+            per_source[c.source] = per_source.get(c.source, 0) + 1
             key = (c.chain, c.wallet_address)
             if key not in seen:
                 seen[key] = c
 
+    # HONESTY (Wave-F5): distinguish EXTERNAL discovery sources from the LOCAL
+    # fallback (operator target_wallets + our own copytrading_trades history —
+    # both can only ever surface already-tracked wallets). When every external
+    # source is empty, log ONE honest WARNING and mark the fallback candidates
+    # fallback=true so downstream / the operator knows discovery is degraded.
+    external_sources = {SOURCE_DEXSCREENER, SOURCE_HELIUS, SOURCE_BIRDEYE, SOURCE_GMGN}
+    local_sources = {SOURCE_MANUAL, SOURCE_ONCHAIN}
+    external_total = sum(per_source.get(s, 0) for s in external_sources)
+    local_total = sum(per_source.get(s, 0) for s in local_sources)
+    if external_total == 0 and local_total > 0:
+        _warn_rate_limited(
+            "fallback",
+            "[discovery] ALL external candidate sources returned 0 "
+            f"(per-source={per_source}); serving LOCAL fallback of "
+            f"{local_total} already-tracked wallet(s). Discovery is degraded — "
+            "check HELIUS_API_KEY quota / BIRDEYE_API_KEY / ETHERSCAN_API_KEY.")
+        for c in seen.values():
+            if c.source in local_sources:
+                c.raw = {**(c.raw or {}), "fallback": True}
+
     logger.info(
-        f"Discovery sweep produced {len(seen)} unique candidates across "
-        f"{len(cfg.chains)} chains / {len(cfg.sources)} sources"
+        f"[discovery] sweep: {len(seen)} unique candidates across "
+        f"{len(cfg.chains)} chains / {len(cfg.sources)} sources "
+        f"(per-source={per_source}, external={external_total}, local={local_total})"
     )
 
     # Score each candidate (uses our own copytrading_trades for history).
