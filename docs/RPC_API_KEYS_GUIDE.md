@@ -110,3 +110,102 @@ constraint.
   degrades to in-memory state.
 - All keys rate-limited → least-penalized key is still returned (starvation
   fallback) and a single throttled WARNING is logged per state transition.
+
+## 7. Bulk verify + import (`scripts/verify_and_import_rpcs.py`)
+
+Have a spreadsheet full of endpoint/key combos (several Ankr / dRPC /
+Alchemy accounts per chain, a stack of Helius/Etherscan/Birdeye keys) and
+no idea which still work? This tool probes every candidate with one cheap
+read-only call, prints a verdict table, and — only when you say so —
+imports the working set into `rpc_api_pool` + the encrypted secrets slots.
+
+### Operator flow (exact commands)
+
+```bash
+# 1. update + rebuild (the bot keeps running on your existing .env —
+#    the env bootstrap is unchanged; NEVER `down -v`, that wipes the DB)
+git pull
+docker compose up -d --build
+
+# 2. copy your spreadsheet into ./data on the HOST — docker-compose mounts
+#    it at /app/data inside the container
+cp ~/Downloads/rpc_keys.xlsx ./data/
+
+# 3. DRY-RUN (default): probe everything, write logs/rpc_verify_report.json
+docker compose exec trading-bot \
+    python scripts/verify_and_import_rpcs.py --file /app/data/rpc_keys.xlsx
+
+# 4. review the console table (and logs/rpc_verify_report.json)
+
+# 5. import the verified working set
+docker compose exec trading-bot \
+    python scripts/verify_and_import_rpcs.py --file /app/data/rpc_keys.xlsx --apply
+
+# 6. restart so every module reloads the pool
+docker compose restart trading-bot
+```
+
+If `openpyxl` is unavailable the tool tells you to export the sheet as
+CSV — CSV is always supported. Expected sheet layout (sheet name `RPCs`
+or first sheet): column A = chain/provider block label on the first row
+of each block, B = key, C = base URL (final URL = C+B), D = account
+email, E = the C&B formula (ignored), F = optional wss URL.
+
+### What it verifies
+
+Candidates come from four places, deduped: your `--file`, every RPC/key
+var in `.env` (numbered slots included), the existing `rpc_api_pool`
+rows (re-verified, even disabled ones), and the encrypted secrets slots.
+Probes are strictly read-only: EVM https `eth_chainId` (must match the
+chain the row claims — the operator's `solana_DEVNET` Ankr rows and any
+devnet/testnet URL classify `WRONG_NETWORK` and are never imported) +
+`eth_blockNumber` + a 1-block `eth_getLogs` capability check (drives
+smart_money / copy EVM discovery — shown in the `LOGS` column); EVM wss
+`eth_chainId` over the socket; Solana https `getSlot` + `getGenesisHash`
+(must equal mainnet-beta `5eykt4Us…`); Solana wss `slotSubscribe`;
+Helius `getSlot` (~1 credit); Etherscan V2 `proxy.eth_blockNumber`
+(free); Birdeye `defi/price` for SOL. Statuses: `OK`, `AUTH_FAIL`,
+`RATE_LIMITED`, `QUOTA_EXHAUSTED`, `WRONG_NETWORK`, `TIMEOUT`, `DEAD`,
+`UNTESTED`. GoPlus keys are always `UNTESTED`: GoPlus auth is a signed
+app_key+app_secret token flow, so a bare key cannot be positively
+verified — it is reported but never imported.
+
+### What `--apply` does (and refuses to do)
+
+- Verified-OK RPC/WSS URLs upsert into `rpc_api_pool` under the existing
+  provider taxonomy (`ETHEREUM_RPC` … `SOLANA_RPC`, `SOLANA_WS`, …).
+  Keyed/account URLs get priority 50, publics 100 (lower = preferred).
+  Existing rows only get `status`/`last_health_check_at` refreshed —
+  your priority/weight/name edits survive. wss URLs for chains without a
+  `*_WS` provider type (only ETHEREUM/BSC/ARBITRUM/SOLANA exist) are
+  skipped with a note rather than inventing a type nothing consumes.
+- Verified-OK bare keys are stored **Fernet-encrypted** in the numbered
+  secrets slots (`HELIUS_API_KEY`, `_2` …): keys already sitting in a
+  slot keep it, new keys fill empty slots, and only slots holding a key
+  that verified hard-failed are ever overwritten (loudly). Their pool
+  endpoints are seeded exactly like the Wave-F5 bootstrap.
+- Rows that failed `AUTH_FAIL` / `DEAD` / `WRONG_NETWORK` are set
+  `is_enabled=false` — **never deleted**. `RATE_LIMITED` /
+  `QUOTA_EXHAUSTED` rows stay enabled (transient; pool_engine cools them
+  at runtime); such *new* candidates are skipped with a re-run note.
+- It refuses `--apply` outright if the DB or the encryption key is
+  unavailable (no partial writes), and it is idempotent — re-running is
+  always safe.
+
+Offline self-test of the classification + slot logic:
+`python scripts/verify_and_import_rpcs.py --mock`.
+
+**Plaintext honesty note:** `rpc_api_pool` URLs (which can embed provider
+keys, e.g. Helius/Alchemy key-in-URL) are stored plaintext in Postgres —
+same as every row the `/settings/rpc-api` page writes today. Only bare
+API keys go through the encrypted `secure_credentials` store. Full
+at-rest encryption of pool URLs is a candidate future hardening.
+
+### Etherscan July-2026 free-tier note
+
+Etherscan capped free-tier list endpoints (txlist etc.) at 1000 rows per
+page in July 2026. Our only consumer (the COPY EVM monitor) requests
+`offset=5`, so we are unaffected; a defensive
+`ETHERSCAN_TXLIST_PAGE_SIZE` clamp (≤1000) was added in
+`modules/copy_trading/copy_engine.py` so future edits cannot silently
+break free-tier accounts.

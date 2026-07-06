@@ -66,6 +66,12 @@ EVM_STABLECOIN_ADDRESSES = {
 # See: https://docs.etherscan.io/etherscan-v2
 ETHERSCAN_V2_API = "https://api.etherscan.io/v2/api"
 
+# July-2026 Etherscan free-tier change caps list-endpoint page sizes at 1000
+# rows. Our monitor only ever asks for the last 5 txs per wallet, so we are
+# unaffected — the min() clamp is purely defensive so a future edit to the
+# page size cannot silently break free-tier accounts.
+ETHERSCAN_TXLIST_PAGE_SIZE = min(5, 1000)
+
 # Supported EVM chains with their chain IDs
 EVM_CHAINS = {
     'ethereum': {'chain_id': 1, 'name': 'Ethereum', 'symbol': 'ETH', 'aliases': ['eth', 'mainnet']},
@@ -2359,7 +2365,7 @@ class CopyTradingEngine(BaseModule):
                             f"&module=account&action=txlist"
                             f"&address={address}"
                             f"&startblock=0&endblock=99999999"
-                            f"&page=1&offset=5"  # Only get last 5 txs
+                            f"&page=1&offset={ETHERSCAN_TXLIST_PAGE_SIZE}"  # last 5 txs (≤1000 free-tier cap)
                             f"&sort=desc"
                             f"&apikey={etherscan_key}"
                         )
