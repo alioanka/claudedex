@@ -47,4 +47,36 @@ VALUES
      '(wave-F5 BUG-5).', NOW(), NOW())
 ON CONFLICT (config_type, key) DO NOTHING;
 
+-- ── live-path safety knobs (wave-F5 BUG-2/3; only consulted AFTER the
+--    shadow_mode/live_execution_enabled/should_skip_live chain passes) ──
+INSERT INTO config_settings (config_type, key, value, value_type, description, created_at, updated_at)
+VALUES
+    ('polymarket_config', 'max_market_exposure_usd', '100', 'float',
+     'Polymarket risk gate: max live USD notional per market (across both '
+     'legs of an arb pair). Replaces the DEX-token RiskManager call, which '
+     'ran honeypot analysis on CLOB token ids (wave-F5 BUG-3).', NOW(), NOW()),
+
+    ('polymarket_config', 'max_total_exposure_usd', '500', 'float',
+     'Polymarket risk gate: max total live USD notional across all open '
+     'markets. Exceeding it records simulated with '
+     'skip_reason=risk:total_exposure_cap.', NOW(), NOW()),
+
+    ('polymarket_config', 'max_open_markets', '10', 'int',
+     'Polymarket risk gate: max distinct markets with live exposure at once.',
+     NOW(), NOW()),
+
+    ('polymarket_config', 'order_fill_timeout_s', '30', 'int',
+     'Live order lifecycle: seconds to poll a submitted CLOB order for a '
+     'fill before cancelling it (never leave an unknown resting order).',
+     NOW(), NOW()),
+
+    ('polymarket_config', 'signature_type', '', 'string',
+     'py-clob-client signature type: empty/0 = EOA-L1 wallet; 1/2 = '
+     'Polymarket proxy wallet (requires funder_address).', NOW(), NOW()),
+
+    ('polymarket_config', 'funder_address', '', 'string',
+     'Proxy (funder) wallet address for signature_type 1/2; empty for EOA.',
+     NOW(), NOW())
+ON CONFLICT (config_type, key) DO NOTHING;
+
 COMMIT;

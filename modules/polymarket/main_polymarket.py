@@ -7,7 +7,8 @@ Strategies: risk-free YES+NO arbitrage detector + event-momentum advice,
 both shadow-recorded to polymarket_signals / polymarket_trades
 (is_simulated=true). LIVE CLOB execution is OFF by default and gated:
 shadow_mode=false AND live_execution_enabled=true AND not should_skip_live
-AND RiskManager.validate_trade — see modules/polymarket/executor.py.
+AND the built-in Polymarket risk gate (per-market/total exposure caps,
+max open markets) — see modules/polymarket/executor.py.
 
 Launched by main.py when POLYMARKET_MODULE_ENABLED=true (default false).
 Health server: http://0.0.0.0:8089 (env override: POLYMARKET_HEALTH_PORT).
@@ -91,7 +92,7 @@ async def load_config(db_pool) -> dict:
 class PolymarketEngine:
     """Poll Gamma -> run shadow strategies -> record signals/simulated trades."""
 
-    def __init__(self, db_pool, config: dict, risk_manager, module_dry_run: bool):
+    def __init__(self, db_pool, config: dict, module_dry_run: bool):
         self.db_pool = db_pool
         self.config = config
         self.module_dry_run = module_dry_run
@@ -99,7 +100,7 @@ class PolymarketEngine:
             str(config.get('gamma_base_url', DEFAULT_GAMMA_BASE_URL)),
             max_requests_per_minute=int(config.get('gamma_max_requests_per_minute', 30)),
         )
-        self.executor = PolymarketExecutor(db_pool, config, risk_manager)
+        self.executor = PolymarketExecutor(db_pool, config)
         self.running = False
         self._prev_yes_prices: dict = {}
         self._prev_seen_at = None
@@ -194,11 +195,12 @@ class PolymarketEngine:
             self.stats['arb_signals'] += 1
             await self._save_signal(sig)
             # Shadow trade record (executor simulates unless ALL live gates pass).
-            result = await self.executor.execute(
-                strategy='risk_free_arb', market_id=sig['market_id'],
-                question=sig['question'], side='BUY', outcome='BOTH',
-                token_id=sig['details'].get('yes_token_id'),
-                price=sig['yes_price'],
+            # Two-leg path: YES + NO together; leg-2 failure unwinds leg-1.
+            result = await self.executor.execute_arb(
+                market_id=sig['market_id'], question=sig['question'],
+                yes_token_id=sig['details'].get('yes_token_id'),
+                no_token_id=sig['details'].get('no_token_id'),
+                yes_price=sig['yes_price'], no_price=sig['no_price'],
                 size_usd=float(self.config.get('max_position_size_usd', 50)),
                 expected_edge_bps=sig['edge_bps'], module_dry_run=self.module_dry_run,
                 details=sig['details'],
@@ -241,6 +243,12 @@ class PolymarketEngine:
         logger.info("Polymarket engine loop starting "
                     f"(shadow_mode={self.config.get('shadow_mode', True)}, "
                     f"live_execution_enabled={self.config.get('live_execution_enabled', False)})")
+        # Startup reconciliation: no-op in shadow; with live gates open it lists
+        # resting CLOB orders + rebuilds the exposure map from the trade ledger.
+        try:
+            await self.executor.reconcile_open_orders(self.module_dry_run)
+        except Exception as e:
+            logger.error(f"Startup reconcile failed (continuing): {e}")
         while self.running:
             try:
                 await self._cycle()
@@ -291,6 +299,9 @@ class PolymarketHealthServer:
             "gamma_last_error": self.engine.gamma.last_error,
             "live_orders": self.engine.executor.live_orders,
             "simulated_records": self.engine.executor.simulated_records,
+            "live_exposure_usd": round(sum(self.engine.executor.live_exposure.values()), 2),
+            "live_open_markets": len(self.engine.executor.live_exposure),
+            "open_orders_at_start": self.engine.executor.open_orders_at_start,
             **self.engine.stats,
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
@@ -346,15 +357,13 @@ async def main():
         except Exception:
             pass
 
-    risk_manager = None
-    try:
-        from core.risk_manager import RiskManager
-        risk_manager = RiskManager(config={}, portfolio_manager=None, config_manager=None)
-        logger.info("   core.risk_manager wired (validate_trade gates any live order)")
-    except Exception as e:
-        logger.warning(f"   RiskManager unavailable ({e}) — live path will refuse to fire")
-
-    engine = PolymarketEngine(db_pool, config, risk_manager, module_dry_run)
+    # Live risk gate is built into the executor (per-market/total exposure
+    # caps + max open markets). The old core.risk_manager.validate_trade call
+    # ran EVM honeypot analysis on CLOB token ids — semantically wrong for
+    # prediction markets (wave-F5 BUG-3) — and was replaced, NOT removed:
+    # every live order still passes shadow_mode -> live_execution_enabled ->
+    # should_skip_live -> the Polymarket risk gate, in that order.
+    engine = PolymarketEngine(db_pool, config, module_dry_run)
     health_port = int(os.getenv('POLYMARKET_HEALTH_PORT', '8089'))
     health = PolymarketHealthServer(engine, port=health_port)
     try:
