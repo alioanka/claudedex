@@ -178,6 +178,16 @@ class AdviceEngine:
         # ML daily tick — runs at most once per calendar day.
         await self._ml_learning_tick()
 
+        # One aggregated data-failure summary per analyzer per cycle
+        # (Wave-F5 fix 9: BIST previously WARN'd per symbol/horizon).
+        for analyzer in self.analyzers.values():
+            flush = getattr(analyzer, "flush_failure_summary", None)
+            if callable(flush):
+                try:
+                    flush()
+                except Exception as exc:
+                    logger.debug("[advice] failure-summary flush error: %s", exc)
+
         # One INFO summary per cycle for the publish gate (Wave-F5 fix 9):
         # rejects were previously DEBUG-only, so a saturated/misconfigured gate
         # produced an unexplainable "0 advice(s) published".

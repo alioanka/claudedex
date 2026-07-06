@@ -163,6 +163,27 @@ class BISTAnalyzer(BaseAnalyzer):
     def __init__(self, config: dict, db_pool=None):
         super().__init__(config, db_pool)
         self.last_price: dict = {}
+        # Wave-F5 fix 9: per-cycle all-sources-failed aggregation. Individual
+        # failures log at DEBUG; AdviceEngine calls flush_failure_summary() at
+        # the end of each cycle to emit ONE WARN line (was one WARN per
+        # symbol/horizon — ~2,200 log lines/day with a garbage universe).
+        self._cycle_source_failures: list = []
+
+    def flush_failure_summary(self) -> None:
+        """Emit ONE aggregated WARN for this cycle's all-sources-failed
+        symbols, then reset (Wave-F5 fix 9). Called by AdviceEngine at the
+        end of each cycle; safe to call when nothing failed (no-op)."""
+        failed = self._cycle_source_failures
+        if not failed:
+            return
+        self._cycle_source_failures = []
+        shown = ", ".join(failed[:20])
+        more = f" (+{len(failed) - 20} more)" if len(failed) > 20 else ""
+        self.logger.warning(
+            "[bist] cycle summary: %d symbol/horizon fetch(es) failed ALL "
+            "sources (fonoloji/borsapy/yfinance): %s%s. Per-symbol detail at "
+            "DEBUG.", len(failed), shown, more,
+        )
 
     # ------------------------------------------------------------------
     # BaseAnalyzer contract
@@ -294,15 +315,29 @@ class BISTAnalyzer(BaseAnalyzer):
                 )
 
         if signals is None:
-            return self._error_result(
-                symbol, horizon,
-                Exception(
+            # Wave-F5 fix 9: aggregate instead of one WARN per symbol/horizon.
+            # Per-symbol detail at DEBUG; flush_failure_summary() emits one
+            # WARN per cycle.
+            self._cycle_source_failures.append(f"{symbol}/{horizon.value}")
+            self.logger.debug(
+                "[bist] all data sources failed for %s/%s "
+                "(fonoloji/borsapy/yfinance).", symbol, horizon.value,
+            )
+            return AdviceResult(
+                market=self.market,
+                symbol=symbol,
+                horizon=horizon,
+                direction=Direction.NEUTRAL,
+                confidence=0.0,
+                rationale="Data fetch error. Retry next cycle.",
+                data_source_status=DataSourceStatus.ERROR,
+                data_source_note=(
                     f"All BIST data sources failed for '{symbol}'. "
                     "borsapy not installed or returned no data, yfinance also "
                     "failed. Check symbol format (borsapy: bare ticker e.g. "
                     "'THYAO'; yfinance: .IS suffix e.g. 'THYAO.IS') and "
                     "network connectivity."
-                )
+                )[:500],
             )
 
         # --- Broker analyst-consensus vote (Fonoloji, FREE within quota) ---
