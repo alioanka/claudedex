@@ -134,8 +134,16 @@ class CredentialsRoutes:
         'GOPLUS_API_KEY': {'category': 'api', 'subcategory': 'goplus', 'is_sensitive': True},
         '1INCH_API_KEY': {'category': 'api', 'subcategory': '1inch', 'is_sensitive': True},
         'HELIUS_API_KEY': {'category': 'api', 'subcategory': 'helius', 'is_sensitive': True},
+        # Wave-F5 multi-key rotation slots: pool_engine probes the numbered
+        # names at startup and registers each as its own rotating endpoint.
+        'HELIUS_API_KEY_2': {'category': 'api', 'subcategory': 'helius', 'is_sensitive': True},
+        'HELIUS_API_KEY_3': {'category': 'api', 'subcategory': 'helius', 'is_sensitive': True},
+        'HELIUS_API_KEY_4': {'category': 'api', 'subcategory': 'helius', 'is_sensitive': True},
         'JUPITER_API_KEY': {'category': 'api', 'subcategory': 'jupiter', 'is_sensitive': True},
         'ETHERSCAN_API_KEY': {'category': 'api', 'subcategory': 'etherscan', 'is_sensitive': True},
+        'ETHERSCAN_API_KEY_2': {'category': 'api', 'subcategory': 'etherscan', 'is_sensitive': True},
+        'BIRDEYE_API_KEY': {'category': 'api', 'subcategory': 'birdeye', 'is_sensitive': True},
+        'BIRDEYE_API_KEY_2': {'category': 'api', 'subcategory': 'birdeye', 'is_sensitive': True},
         'OPENAI_API_KEY': {'category': 'api', 'subcategory': 'openai', 'is_sensitive': True},
         'ANTHROPIC_API_KEY': {'category': 'api', 'subcategory': 'anthropic', 'is_sensitive': True},
 
