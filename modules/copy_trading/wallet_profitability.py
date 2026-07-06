@@ -51,6 +51,25 @@ WASH_HOLD_SECONDS = 60.0         # round-trip faster than this is suspect
 WASH_PNL_EPS_PCT = 0.5           # ...when |pnl| < 0.5% of notional
 LUCKY_SHARE_THRESHOLD = 0.6      # best trade > 60% of gross wins = lucky
 DIVERSIFICATION_FULL_TOKENS = 5  # distinct tokens for full diversification
+CROWDING_FOLLOWERS_SOFTCAP = 5   # followers-per-entry before alpha decays
+
+
+def crowding_penalty_from_followers(avg_followers: float) -> float:
+    """Soft-cap crowding penalty 0..0.5 (AI-Trader port, INVERTED).
+
+    ``avg_followers`` = mean distinct wallets that bought the same token shortly
+    AFTER the leader's entry. On-chain, crowding == alpha decay: a publicly
+    rankable wallet attracts copiers who front-run and fade the edge (our own
+    CLAUDE.md honesty note). No penalty up to the soft cap, then a bounded shave
+    — mirrors the smart_money soft-cap pattern rather than a hard cliff."""
+    try:
+        avg_followers = float(avg_followers)
+    except (TypeError, ValueError):
+        return 0.0
+    if avg_followers <= CROWDING_FOLLOWERS_SOFTCAP:
+        return 0.0
+    excess = avg_followers - CROWDING_FOLLOWERS_SOFTCAP
+    return min(0.5, excess / (excess + CROWDING_FOLLOWERS_SOFTCAP))
 
 DEFAULT_WEIGHTS: Dict[str, float] = {
     "pnl": 0.30,            # realized PnL USD (sigmoid)
@@ -103,6 +122,7 @@ class WalletScore:
     diversification: float = 0.0
     wash_penalty: float = 0.0
     lucky_penalty: float = 0.0
+    crowding_penalty: float = 0.0
     recency: float = 0.0
     score: float = 0.0
     components: Dict[str, float] = field(default_factory=dict)
@@ -221,9 +241,15 @@ def score_wallet(
     window_days: int = DEFAULT_WINDOW_DAYS,
     weights: Optional[Dict[str, float]] = None,
     strict: bool = False,
+    crowding: float = 0.0,
 ) -> WalletScore:
     """Full pipeline: events → FIFO round-trips → trailing-window metrics →
-    bounded 0..100 composite with wash/lucky penalties."""
+    bounded 0..100 composite with wash/lucky/crowding penalties.
+
+    ``crowding`` (0..1) is an OPTIONAL, caller-supplied soft-cap penalty
+    (see ``crowding_penalty_from_followers``); default 0 keeps the scorer pure
+    and backward-compatible. The discovery layer populates it from smart_money
+    follower density; it can only SHRINK the composite, never inflate it."""
     as_of = _utc(as_of) or datetime.now(timezone.utc)
     trips = _window_trips(fifo_round_trips(events, as_of, strict=strict), as_of, window_days)
     s = WalletScore(chain=chain, wallet_address=wallet_address, window_days=window_days)
@@ -302,9 +328,12 @@ def score_wallet(
         "recency": s.recency,
         "diversification": s.diversification,
     }
+    s.crowding_penalty = max(0.0, min(1.0, float(crowding or 0.0)))
+
     composite = sum(components[k] * w[k] for k in components)
     sample_credit = min(1.0, len(trips) / float(MIN_FULL_CREDIT_TRADES))
-    composite *= sample_credit * (1.0 - s.wash_penalty) * (1.0 - s.lucky_penalty)
+    composite *= (sample_credit * (1.0 - s.wash_penalty)
+                  * (1.0 - s.lucky_penalty) * (1.0 - s.crowding_penalty))
     s.components = components
     s.score = round(max(0.0, min(1.0, composite)) * 100.0, 2)
     return s
@@ -418,6 +447,13 @@ def _self_test() -> None:
     # 9. Bounds: score always within [0, 100].
     for w in (lucky, steady, wash, two, s):
         assert 0.0 <= w.score <= 100.0
+
+    # 10. Crowding penalty: soft-cap curve + it can only SHRINK the score.
+    assert crowding_penalty_from_followers(CROWDING_FOLLOWERS_SOFTCAP) == 0.0
+    assert 0.0 < crowding_penalty_from_followers(20) <= 0.5
+    crowded = score_wallet("solana", "STEADY", steady_evs, as_of=now,
+                           crowding=crowding_penalty_from_followers(30))
+    assert crowded.crowding_penalty > 0.0 and crowded.score < steady.score
 
     print("wallet_profitability self-test OK "
           f"(steady={steady.score} lucky={lucky.score} wash={wash.score} two={two.score})")

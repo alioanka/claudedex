@@ -1361,6 +1361,15 @@ class CopyTradingEngine(BaseModule):
         self._last_discovery_sweep: float = 0.0
         self._last_shadow_tick: float = 0.0
 
+        # AI-Trader port (Wave-F5): periodic leader holdings-snapshot
+        # reconciliation. Compares each Solana leader's CURRENT on-chain
+        # holdings against the positions we mirror and logs drift / flags
+        # positions the leader has fully exited. Advisory only — never trades,
+        # never auto-closes; a state-sync check on top of the event-only
+        # monitor (a missed leader tx would otherwise leave us silently wrong).
+        self.copy_reconcile_minutes = 360.0
+        self._last_reconcile: float = 0.0
+
         # Statistics
         self._stats = {
             'cycles': 0,
@@ -1478,6 +1487,14 @@ class CopyTradingEngine(BaseModule):
                     await self._maybe_tick_shadow_sim()
                 except Exception as e:
                     logger.error(f"shadow sim tick failed: {e}")
+
+                # AI-Trader port (advisory, fail-soft): reconcile each Solana
+                # leader's current holdings against our mirrored positions and
+                # flag drift. Never trades / auto-closes.
+                try:
+                    await self._maybe_reconcile_leaders()
+                except Exception as e:
+                    logger.error(f"leader reconcile failed: {e}")
 
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
@@ -1830,6 +1847,104 @@ class CopyTradingEngine(BaseModule):
             logger.debug(f"shadow cfg load failed (defaults used): {e}")
         await tick(self.db_pool, cfg)
 
+    async def _maybe_reconcile_leaders(self) -> None:
+        """AI-Trader port: every copy_reconcile_minutes, snapshot each Solana
+        leader's CURRENT on-chain token holdings and reconcile against the
+        positions we mirror in copytrading_trades. Logs drift and flags
+        positions the leader has FULLY EXITED (they no longer hold the token but
+        we still show an open mirror). ADVISORY ONLY — never trades, never
+        auto-closes; a state-sync layer on top of the event-only monitor so a
+        missed leader SELL doesn't leave us silently wrong. Fail-soft."""
+        if not self.db_pool or not self.targets:
+            return
+        import time as _t
+        interval_s = max(15.0, float(self.copy_reconcile_minutes)) * 60.0
+        now = _t.monotonic()
+        if self._last_reconcile and (now - self._last_reconcile) < interval_s:
+            return
+        self._last_reconcile = now
+
+        # Solana leaders only in v1 (Helius/RPC token-account snapshot is cheap;
+        # EVM balance reconciliation would need Etherscan token-balance calls).
+        sol_leaders = [t for t in self.targets if self._is_solana_address(t)]
+        if not sol_leaders:
+            return
+        rpc_url = await self._resolve_solana_rpc()
+        if not rpc_url:
+            logger.debug("[reconcile] no Solana RPC resolved; skipping")
+            return
+
+        drift_total = 0
+        for leader in sol_leaders:
+            addr = leader.split('@')[0]
+            try:
+                held = await self._fetch_solana_holdings(addr, rpc_url)
+            except Exception as e:
+                logger.debug(f"[reconcile] holdings fetch {addr[:8]} failed: {e}")
+                continue
+            if held is None:  # RPC failure — do not infer a full exit
+                continue
+            try:
+                async with self.db_pool.acquire() as conn:
+                    open_rows = await conn.fetch(
+                        "SELECT token_address FROM copytrading_trades "
+                        "WHERE source_wallet = $1 AND status = 'open' "
+                        "  AND token_address IS NOT NULL",
+                        addr)
+            except Exception as e:
+                logger.debug(f"[reconcile] open-position read {addr[:8]} failed: {e}")
+                continue
+            for r in open_rows:
+                token = r["token_address"]
+                if token and token not in held:
+                    drift_total += 1
+                    logger.warning(
+                        f"[reconcile] reason=leader_exited leader={addr[:8]} "
+                        f"token={str(token)[:8]} — leader no longer holds this "
+                        "token but we still show an OPEN mirror (advisory; not "
+                        "auto-closed). Review /copytrading/positions.")
+        if drift_total:
+            logger.warning(
+                f"[reconcile] {drift_total} mirrored position(s) drifted from "
+                f"leader holdings across {len(sol_leaders)} Solana leader(s)")
+        else:
+            logger.info(
+                f"[reconcile] {len(sol_leaders)} Solana leader(s) reconciled — "
+                "no holdings drift")
+
+    async def _fetch_solana_holdings(self, owner: str, rpc_url: str):
+        """Return the set of SPL mints the wallet currently holds a non-zero
+        balance of (getTokenAccountsByOwner). None on RPC failure so the caller
+        does NOT misread a transport error as the leader exiting everything."""
+        await self._space_solana_request()
+        payload = {
+            "jsonrpc": "2.0", "id": 1, "method": "getTokenAccountsByOwner",
+            "params": [owner,
+                       {"programId": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"},
+                       {"encoding": "jsonParsed"}],
+        }
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(rpc_url, json=payload, timeout=15) as resp:
+                    if resp.status != 200:
+                        return None
+                    data = await resp.json()
+        except Exception as e:
+            logger.debug(f"[reconcile] getTokenAccountsByOwner {owner[:8]}: {e}")
+            return None
+        accounts = (((data or {}).get("result") or {}).get("value")) or []
+        held = set()
+        for acc in accounts:
+            try:
+                info = acc["account"]["data"]["parsed"]["info"]
+                mint = info.get("mint")
+                amt = float((info.get("tokenAmount") or {}).get("uiAmount") or 0)
+                if mint and amt > 0:
+                    held.add(mint)
+            except (KeyError, TypeError, ValueError):
+                continue
+        return held
+
     async def _load_settings(self):
         """Load Copy Trading settings from database"""
         if not self.db_pool:
@@ -2139,6 +2254,13 @@ class CopyTradingEngine(BaseModule):
                         try:
                             v = int(float(val)) if val else 10
                             self.copy_score_decay_min_trades = max(1, min(1000, v))
+                        except (TypeError, ValueError):
+                            pass
+                    elif key == 'copy_reconcile_minutes':
+                        try:
+                            v = float(val) if val else 360.0
+                            # Floor 15 min so a fat-finger can't hammer RPC.
+                            self.copy_reconcile_minutes = max(15.0, min(1440.0, v))
                         except (TypeError, ValueError):
                             pass
 

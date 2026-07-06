@@ -66,7 +66,11 @@ VALUES
     ('copytrading_config', 'discovery_min_swaps',      '3',   'number'),
     -- smart_money_scores source floor (item 6): smart_money_wallet_scores
     -- score threshold to propose an EVM wallet into copy_leader_candidates.
-    ('copytrading_config', 'copy_sm_min_score',        '0.6', 'number')
+    ('copytrading_config', 'copy_sm_min_score',        '0.6', 'number'),
+    -- Leader holdings-snapshot reconciliation cadence, minutes (item 8c).
+    -- Advisory only: logs drift between a leader's on-chain holdings and our
+    -- mirrored positions. Never trades / auto-closes.
+    ('copytrading_config', 'copy_reconcile_minutes',   '360', 'number')
 ON CONFLICT (config_type, key) DO NOTHING;
 
 -- ---------------------------------------------------------------------

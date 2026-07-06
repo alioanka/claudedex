@@ -338,6 +338,107 @@ async def record_events(db_pool, chain: str, wallet: str,
         return 0
 
 
+async def _fetch_solana_prices(mints: Sequence[str]) -> Dict[str, float]:
+    """Best-effort Jupiter Price v3 lookup (free, no key) for Solana mints.
+    Returns {mint: usd_price}; empty dict on any failure (caller keeps the
+    last observed mark). Bounded to 100 mints per call."""
+    mints = [m for m in dict.fromkeys(mints) if m]
+    if not mints:
+        return {}
+    try:
+        import aiohttp  # local import: module stays importable without aiohttp
+    except ImportError:
+        return {}
+    url = "https://lite-api.jup.ag/price/v3?ids=" + ",".join(mints[:100])
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=10) as resp:
+                if resp.status != 200:
+                    return {}
+                data = await resp.json(content_type=None)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"jupiter price fetch failed: {e}")
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # v3 shape: {mint: {usdPrice: x}}; some deployments nest under 'data'.
+    root = data.get("data") if isinstance(data.get("data"), dict) else data
+    out: Dict[str, float] = {}
+    for mint, rec in (root or {}).items():
+        if not isinstance(rec, dict):
+            continue
+        try:
+            px = float(rec.get("usdPrice") or rec.get("price") or 0)
+        except (TypeError, ValueError):
+            continue
+        if px > 0:
+            out[mint] = px
+    return out
+
+
+async def mark_to_market(db_pool, cfg: ShadowConfig) -> int:
+    """AI-Trader port: continuously re-mark OPEN shadow positions and write a
+    fresh copy_shadow_equity snapshot per wallet, so equity curves are honest
+    BETWEEN leader events (previously the mark was stale until the next event).
+    Solana marks are refreshed via Jupiter (free); other chains keep the last
+    observed price (documented limitation). Read-only on fills; fail-soft.
+    Returns the number of wallets re-marked."""
+    if db_pool is None:
+        return 0
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chain, wallet_address, token, qty, cost_usd, last_price_usd "
+                "FROM copy_shadow_positions WHERE qty > 0")
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"mark_to_market load failed: {e}")
+        return 0
+    if not rows:
+        return 0
+    sol_mints = [r["token"] for r in rows if r["chain"] == "solana"]
+    prices = await _fetch_solana_prices(sol_mints)
+    by_wallet: Dict[tuple, List] = {}
+    for r in rows:
+        by_wallet.setdefault((r["chain"], r["wallet_address"]), []).append(r)
+    marked = 0
+    for (chain, wallet), plist in by_wallet.items():
+        try:
+            unreal = 0.0
+            async with db_pool.acquire() as conn:
+                for r in plist:
+                    px = prices.get(r["token"])
+                    if px and px > 0:
+                        await conn.execute(
+                            "UPDATE copy_shadow_positions SET last_price_usd=$1, "
+                            "updated_at=NOW() WHERE chain=$2 AND wallet_address=$3 "
+                            "AND token=$4", px, chain, wallet, r["token"])
+                    else:
+                        px = float(r["last_price_usd"] or 0)
+                    if px > 0:
+                        unreal += float(r["qty"]) * px - float(r["cost_usd"])
+                agg = await conn.fetchrow(
+                    "SELECT COALESCE(SUM(realized_pnl_usd),0) AS r, COUNT(*) AS n "
+                    "FROM copy_shadow_fills WHERE chain=$1 AND wallet_address=$2 "
+                    "AND is_simulated", chain, wallet)
+                realized = float(agg["r"] or 0) if agg else 0.0
+                fills_n = int(agg["n"] or 0) if agg else 0
+                await conn.execute(
+                    """
+                    INSERT INTO copy_shadow_equity (
+                        chain, wallet_address, realized_pnl_usd, unrealized_pnl_usd,
+                        equity_usd, open_positions, fills_count, is_simulated
+                    ) VALUES ($1,$2,$3,$4,$5,$6,$7,TRUE)
+                    """,
+                    chain, wallet, realized, unreal, realized + unreal,
+                    len(plist), fills_n)
+            marked += 1
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"mark_to_market {wallet[:8]}: {e}")
+    if marked:
+        logger.info(f"[shadow-sim] marked-to-market {marked} wallet(s) with open positions")
+    return marked
+
+
 async def _shadow_watchlist(db_pool, max_wallets: int) -> List[Dict]:
     """Wallets worth shadow-copying: top discovered + pending candidates.
     Active targets are EVM/Solana leader wallets already mirrored DRY/LIVE;
@@ -430,7 +531,14 @@ async def tick(db_pool, cfg: ShadowConfig) -> Dict:
             logger.debug(f"shadow tick skipped {wallet[:8]}: {e}")
     if total_fills:
         logger.info(f"[shadow-sim] booked {total_fills} paper fills across {wallets} wallets")
-    return {"wallets": wallets, "fills": total_fills}
+    # AI-Trader port: re-mark open positions each cycle so equity curves stay
+    # honest between leader events (fail-soft, does not affect fills).
+    marked = 0
+    try:
+        marked = await mark_to_market(db_pool, cfg)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"mark_to_market pass failed: {e}")
+    return {"wallets": wallets, "fills": total_fills, "marked": marked}
 
 
 # -------------------------------------------------------------------------
