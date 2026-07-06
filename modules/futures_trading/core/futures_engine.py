@@ -17,7 +17,7 @@ Features:
 import asyncio
 import logging
 from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
@@ -356,6 +356,9 @@ class FuturesTradingEngine:
             # Trailing stop
             self.trailing_stop_enabled = getattr(risk_config, 'trailing_stop_enabled', True)
             self.trailing_stop_distance = getattr(risk_config, 'trailing_stop_distance', 1.0)
+            # Wave-F5 (F3): early trailing-stop arm at +arm_pct price (0 = off).
+            self.trailing_stop_arm_pct = float(getattr(
+                risk_config, 'trailing_stop_arm_pct', 0.75))
 
             # Market condition filters (relaxed defaults for live trading)
             self.require_trend_confirmation = getattr(risk_config, 'require_trend_confirmation', False)
@@ -380,8 +383,10 @@ class FuturesTradingEngine:
                 risk_config, 'atr_sl_multiplier', 1.5))
             self.atr_sl_min_pct = float(getattr(
                 risk_config, 'atr_sl_min_pct', 1.5))
+            # Wave-F5 (F1): default lowered 2.0 -> 1.0 so TP1 is reachable in
+            # the hold window (see FuturesRiskConfig.atr_tp_rr_ratio).
             self.atr_tp_rr_ratio = float(getattr(
-                risk_config, 'atr_tp_rr_ratio', 2.0))
+                risk_config, 'atr_tp_rr_ratio', 1.0))
 
             # FUT-RM-23 (Wave 14): intraday max-hold cap (0 = disabled).
             self.max_hold_minutes = int(getattr(risk_config, 'max_hold_minutes', 240))
@@ -421,6 +426,13 @@ class FuturesTradingEngine:
             self.rsi_weak_oversold = strategy_config.rsi_weak_oversold
             self.rsi_weak_overbought = strategy_config.rsi_weak_overbought
             self.min_signal_score = strategy_config.min_signal_score
+            # Wave-F5 (F8/F5/F9): hard volume gate + blocked-hours + short-RSI.
+            self.min_volume_ratio = float(getattr(
+                strategy_config, 'min_volume_ratio', 0.25))
+            self.blocked_entry_hours_utc = self._parse_blocked_hours(
+                getattr(strategy_config, 'blocked_entry_hours_utc', '3,4,5'))
+            self.short_min_rsi = float(getattr(
+                strategy_config, 'short_min_rsi', 35.0))
             # FUT-RM-15 (Wave 5): multi-indicator confluence gate count
             self.min_signal_confluence_count = int(getattr(
                 strategy_config, 'min_signal_confluence_count', 2
@@ -499,7 +511,8 @@ class FuturesTradingEngine:
             self.atr_dynamic_sl_tp_enabled = True
             self.atr_sl_multiplier = 1.5
             self.atr_sl_min_pct = 1.5
-            self.atr_tp_rr_ratio = 2.0
+            self.atr_tp_rr_ratio = 1.0  # Wave-F5 (F1): reachable TP1
+            self.trailing_stop_arm_pct = 0.75  # Wave-F5 (F3)
             self.stop_loss_pct = -5.0
             self.take_profit_pct = 10.0
             self.max_daily_loss = 500.0
@@ -514,6 +527,10 @@ class FuturesTradingEngine:
             self.rsi_weak_oversold = 40.0
             self.rsi_weak_overbought = 60.0
             self.min_signal_score = 3  # Lower threshold for more signals
+            # Wave-F5 (F8/F5/F9) fallback defaults
+            self.min_volume_ratio = 0.25
+            self.blocked_entry_hours_utc = self._parse_blocked_hours("3,4,5")
+            self.short_min_rsi = 35.0
             # FUT-RM-15 (Wave 5): multi-indicator confluence gate (fallback)
             self.min_signal_confluence_count = 2
             # FUT-RM-19/20 (Wave 7) fallback defaults
@@ -1612,6 +1629,21 @@ class FuturesTradingEngine:
                 logger.debug(f"⏸️ At max positions ({self.max_positions}), skipping scan")
             return  # Already at max positions
 
+        # Wave-F5 (F5): block NEW entries during the worst UTC session. ENTRIES
+        # ONLY — this returns before any signal is evaluated; open positions are
+        # still monitored/exited by _monitor_positions on the normal path.
+        blocked_hours = getattr(self, 'blocked_entry_hours_utc', None)
+        if blocked_hours:
+            cur_hour = datetime.now(timezone.utc).hour
+            if cur_hour in blocked_hours:
+                if self.verbose_signals:
+                    logger.info(
+                        f"⏸️  Wave-F5: entries blocked this UTC hour "
+                        f"({cur_hour:02d}:00 in {sorted(blocked_hours)}) — "
+                        f"monitoring only, no new entries"
+                    )
+                return
+
         if self.verbose_signals:
             logger.info(f"🔍 Scanning {len(self.symbols)} symbols for opportunities: {', '.join(self.symbols)}")
 
@@ -1734,6 +1766,20 @@ class FuturesTradingEngine:
                                 f"diagnostic only, entry not blocked"
                             )
 
+                # Wave-F5 (F8): HARD volume gate. Distinct from the diagnostic
+                # above — this one BLOCKS entries on genuinely dead tape
+                # (0.09-0.24x) that the demoted 0.80x reference over-restricted.
+                # Set at the bottom of the observed live range (0.25x).
+                hard_volume_ok = True
+                _min_vol = float(getattr(self, 'min_volume_ratio', 0.0) or 0.0)
+                if _min_vol > 0 and signals.volume_ratio < _min_vol:
+                    hard_volume_ok = False
+                    if self.verbose_signals:
+                        logger.info(
+                            f"     ⛔ Wave-F5 volume gate: {signals.volume_ratio:.2f}x "
+                            f"< {_min_vol:.2f}x — dead tape, entry blocked"
+                        )
+
                 # FUT-RM-21 (Wave 7): regime gate. The signal stack mixes
                 # mean-reversion (RSI extremes) with trend-following (BB
                 # breakout, EMA) additively, so a bullish RSI bounce can clear
@@ -1812,10 +1858,12 @@ class FuturesTradingEngine:
                                 f"bearish indicators agree (min {confluence_min})"
                             )
 
-                # All filters must pass — volume_ok intentionally excluded (diagnostic only)
+                # All filters must pass — volume_ok intentionally excluded
+                # (diagnostic only); hard_volume_ok (Wave-F5) DOES gate.
                 all_filters_ok = (
                     trend_ok and momentum_ok
                     and signals_aligned and confluence_ok and regime_ok
+                    and hard_volume_ok
                 )
 
                 if signal_score >= self.min_signal_score and all_filters_ok:
@@ -1841,6 +1889,20 @@ class FuturesTradingEngine:
                             logger.info(f"     ❌ REJECTED: Bearish but weak (score {signal_score} > -{self.min_signal_score})")
                         else:
                             logger.info(f"     ❌ REJECTED: Neutral market conditions (score = 0)")
+
+                # Wave-F5 (F9): SHORT sanity floor — refuse shorts into an
+                # already-oversold RSI (the shorting-into-a-bounce pattern that
+                # dominated the stop-loss bucket). Entry-side specific, so it
+                # runs after the side is resolved.
+                _short_min_rsi = float(getattr(self, 'short_min_rsi', 0.0) or 0.0)
+                if (entry_side == TradeSide.SHORT and _short_min_rsi > 0
+                        and signals.rsi < _short_min_rsi):
+                    if self.verbose_signals:
+                        logger.info(
+                            f"     ⛔ Wave-F5 short-RSI gate: RSI {signals.rsi:.1f} "
+                            f"< {_short_min_rsi:.0f} — shorting into oversold, blocked"
+                        )
+                    entry_side = None
 
                 if entry_side:
                     logger.info(f"📈 Signal detected: {symbol} {entry_side.value.upper()}")
@@ -3286,6 +3348,27 @@ class FuturesTradingEngine:
         epoch = now.timestamp()
         floored = epoch - (epoch % seconds)
         return datetime.fromtimestamp(floored)
+
+    @staticmethod
+    def _parse_blocked_hours(raw) -> set:
+        """Wave-F5 (F5): parse a comma-separated UTC-hour string (e.g. '3,4,5')
+        into a set of ints in [0,23]. Fail-soft: bad tokens are dropped, an
+        empty/None value yields an empty set (gate disabled)."""
+        out = set()
+        if not raw:
+            return out
+        if isinstance(raw, (set, list, tuple)):
+            tokens = raw
+        else:
+            tokens = str(raw).split(',')
+        for tok in tokens:
+            try:
+                h = int(str(tok).strip())
+                if 0 <= h <= 23:
+                    out.add(h)
+            except (TypeError, ValueError):
+                continue
+        return out
 
     async def _compute_net_edge_pct(
         self, symbol: str, side: TradeSide, tp1_dist_pct: float

@@ -190,7 +190,24 @@ class FuturesRiskConfig(BaseModel):
     atr_dynamic_sl_tp_enabled: bool = True
     atr_sl_multiplier: float = 1.5     # SL = max(atr_sl_min_pct, 1.5 × ATR%)
     atr_sl_min_pct: float = 1.5        # Floor on SL distance (price %)
-    atr_tp_rr_ratio: float = 2.0       # TP1 = 2 × SL distance
+    # Wave-F5 (F1): lowered 2.0 -> 1.0. The 20-day DRY_RUN diagnosis
+    # (docs/agents/wave-f5/02_futures_ai.md) found ZERO take-profit exits in
+    # 691 trades: with the atr_sl_min_pct=1.5 floor binding ~100% of the time,
+    # TP1 at 2.0×SL = 3.0% is statistically unreachable inside the 240-min hold
+    # window (4h diffusion ≈ 0.8-2.2%). rr=1.0 puts TP1 = SL = 1.5%, reachable
+    # in-window, so the 4-leg ladder finally participates. Change ONE geometry
+    # lever at a time (max_hold_minutes stays 240) to keep attribution clean.
+    atr_tp_rr_ratio: float = 1.0       # TP1 = 1 × SL distance (Wave-F5)
+
+    # Wave-F5 (F3): early trailing-stop arm. The diagnosis found TSL exits were
+    # 4/4 winners (best per-trade expectancy of any exit path) but only fired
+    # after TP2 (rare). Arm the trailing stop as soon as the position is
+    # +trailing_stop_arm_pct in PRICE terms (0.75% ≈ 0.5×SL), independent of
+    # TP2, so time-limit give-backs convert to locked partial gains. The trail
+    # distance itself stays `trailing_stop_distance` — a FIXED config value (no
+    # dynamic stop-widening; working-rule compliant). 0 = disabled (revert to
+    # TP2-only activation).
+    trailing_stop_arm_pct: float = 0.75
 
     # FUT-RM-17 (Wave 5): per-symbol consecutive-loss cool-off. After
     # `post_loss_cooloff_threshold` losses in a row on the same symbol,
@@ -230,8 +247,14 @@ class FuturesRiskConfig(BaseModel):
     rolling_gate_window: int = 20          # trailing-N trades per symbol
     rolling_gate_min_trades: int = 10      # min closes before gate can fire
     rolling_gate_max_net_pnl_usd: float = -5.0   # bench when net < this...
-    rolling_gate_max_win_rate: float = 0.45      # ...AND win rate < this
-    rolling_gate_bench_minutes: int = 1440       # 24h bench
+    # Wave-F5 (F7): 0.45 -> 0.48. Break-even win rate at the realized payoff is
+    # ~53.8%; benching below 48% (instead of 45%) evicts mid-tier bleeders one
+    # cycle earlier. Revisit after the F1/F3 geometry change moves the payoff.
+    rolling_gate_max_win_rate: float = 0.48      # ...AND win rate < this
+    # Wave-F5 (F6): 1440 -> 2880. AAVE/ADA/JUP/ETH/LINK each got re-benched 3-4×
+    # through the expiring 24h bench and still accumulated the top-5 losses;
+    # doubling the bench halves their re-entry bleed.
+    rolling_gate_bench_minutes: int = 2880       # 48h bench (Wave-F5)
     rolling_gate_probation_weight: float = 0.5   # post-unbench size factor
 
     # FUT-RM-24 (Wave 14): signal-reversal threshold for early exit.
@@ -276,6 +299,28 @@ class FuturesStrategyConfig(BaseModel):
     # Signal quality threshold - CRITICAL for profitability
     # Higher = fewer trades but better win rate
     min_signal_score: int = 4  # Increased from 3 for better entries
+
+    # Wave-F5 (F8): hard minimum volume gate (distinct from the RISK-config
+    # `min_volume_multiplier`, which stays DIAGNOSTIC-only at 0.80x). Wave-13
+    # demoted the 0.80x gate because it blocked 100% of signals (live range
+    # 0.17-0.76x); reinstating it at the BOTTOM of the observed range (0.25x)
+    # blocks only the truly dead tape (0.09-0.24x entries seen in logs) while
+    # leaving normal signals through. Reject entries when volume_ratio < this.
+    # 0 = disabled.
+    min_volume_ratio: float = 0.25
+
+    # Wave-F5 (F5): block NEW entries during the worst UTC session. The
+    # diagnosis attributed -$66 (33% win, 162 trades) to 03:00-06:59 UTC.
+    # Comma-separated UTC hour integers (0-23); entries only — exits/monitoring
+    # are NEVER gated by this. Empty string disables.
+    blocked_entry_hours_utc: str = "3,4,5"
+
+    # Wave-F5 (F9): SHORT sanity floor. The SL bucket was dominated by shorts
+    # opened at RSI 30-33 (already oversold — shorting into a bounce with a
+    # 1.5% stop is how the stop bucket fills). Require RSI >= this for any SHORT
+    # entry. 0 disables. (The symmetric LONG-overbought bound is left to the
+    # existing regime/confluence gates.)
+    short_min_rsi: float = 35.0
 
     # FUT-RM-15 (Wave 5): multi-indicator CONFLUENCE gate. The aggregate
     # signal_score above only checks SIGNED magnitude — a single very-strong
@@ -876,6 +921,7 @@ class FuturesConfigManager:
             'trailing_stop_enabled': FuturesConfigType.RISK,
             'trailing_distance': FuturesConfigType.RISK,  # alias
             'trailing_stop_distance': FuturesConfigType.RISK,
+            'trailing_stop_arm_pct': FuturesConfigType.RISK,  # Wave-F5 (F3)
             # Pairs settings
             'allowed_pairs': FuturesConfigType.PAIRS,
             'both_directions': FuturesConfigType.PAIRS,
@@ -890,6 +936,10 @@ class FuturesConfigManager:
             'rsi_weak_oversold': FuturesConfigType.STRATEGY,
             'rsi_weak_overbought': FuturesConfigType.STRATEGY,
             'min_signal_score': FuturesConfigType.STRATEGY,
+            # Wave-F5: hard volume gate + blocked-hours + short-RSI floor
+            'min_volume_ratio': FuturesConfigType.STRATEGY,
+            'blocked_entry_hours_utc': FuturesConfigType.STRATEGY,
+            'short_min_rsi': FuturesConfigType.STRATEGY,
             'verbose_signals': FuturesConfigType.STRATEGY,
             'cooldown_minutes': FuturesConfigType.STRATEGY,
             'require_trend_alignment': FuturesConfigType.STRATEGY,
