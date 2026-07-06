@@ -1131,8 +1131,237 @@ async def main_async(args) -> int:
     return 0
 
 
-async def apply_results(cands, db_pool, secrets) -> None:  # pragma: no cover - replaced in stage 2
-    raise NotImplementedError('apply stage lands in the next commit')
+# =========================================================================
+# --apply: import the working set
+# =========================================================================
+
+_KEY_BASE_URLS = {  # mirrors pool_engine api_mappings base URLs
+    'HELIUS_API': None,  # URL embeds the key
+    'ETHERSCAN_API': 'https://api.etherscan.io',
+    'BIRDEYE_API': 'https://public-api.birdeye.so',
+    'GOPLUS_API': 'https://api.gopluslabs.io',
+}
+
+
+def _url_is_keyed(url: str) -> bool:
+    """Heuristic: URL carries a provider key (path segment or query param)."""
+    try:
+        import urllib.parse as up
+        parts = up.urlsplit(url)
+        for k, v in up.parse_qsl(parts.query, keep_blank_values=True):
+            if k.lower() in _KEY_QUERY_PARAMS and v:
+                return True
+        for seg in parts.path.split('/'):
+            if (_KEYISH_SEGMENT.match(seg)
+                    and (any(c.isdigit() for c in seg)
+                         or (seg.lower() != seg and seg.upper() != seg))):
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def plan_key_slots(existing: Dict[int, Optional[str]], ok_keys: List[str],
+                   failed_existing: set) -> Tuple[Dict[int, str], List[str]]:
+    """Pure slot planner for numbered secrets (KEY, KEY_2 .. KEY_9).
+
+    - a verified key already sitting in a slot KEEPS that slot (never reshuffle)
+    - new keys fill EMPTY slots lowest-first
+    - if no empty slot remains, slots whose current value verified hard-failed
+      (AUTH_FAIL/DEAD) may be overwritten — loudly reported by the caller
+    - slots holding any other value (OK / unverified / rate-limited) are
+      never touched; keys with nowhere to go are returned as skipped
+    """
+    assignment: Dict[int, str] = {}
+    remaining: List[str] = []
+    for key in ok_keys:
+        slot = next((s for s, v in existing.items() if v == key), None)
+        if slot is not None and slot not in assignment:
+            assignment[slot] = key
+        else:
+            remaining.append(key)
+    empty = [s for s in range(1, MAX_NUMBERED_KEYS + 1)
+             if not existing.get(s) and s not in assignment]
+    replaceable = [s for s in sorted(existing)
+                   if existing.get(s) and existing[s] in failed_existing
+                   and s not in assignment]
+    skipped: List[str] = []
+    for key in remaining:
+        if empty:
+            assignment[empty.pop(0)] = key
+        elif replaceable:
+            assignment[replaceable.pop(0)] = key
+        else:
+            skipped.append(key)
+    return assignment, skipped
+
+
+async def _upsert_endpoint(conn, *, provider_type: str, name: str, url: str,
+                           api_key: Optional[str], chain: Optional[str],
+                           priority: int, notes: str,
+                           supports_ws: bool = False) -> str:
+    """INSERT a new pool row, or (on conflict) refresh status/last_checked
+    ONLY — operator edits (priority, weight, name, is_enabled) are preserved.
+    Returns 'inserted' or 'updated'."""
+    endpoint_type = 'ws' if provider_type.endswith('_WS') else (
+        'rpc' if provider_type.endswith('_RPC') else 'api')
+    row = await conn.fetchrow("""
+        INSERT INTO rpc_api_pool (
+            endpoint_type, provider_type, name, url, api_key,
+            status, is_enabled, priority, weight, chain, supports_ws, notes,
+            last_health_check_at
+        ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE, $6, 100, $7, $8, $9, NOW())
+        ON CONFLICT (provider_type, url) DO NOTHING
+        RETURNING id
+    """, endpoint_type, provider_type, name, url, api_key,
+        priority, chain, supports_ws, notes)
+    if row:
+        return 'inserted'
+    await conn.execute("""
+        UPDATE rpc_api_pool
+        SET status = 'active', last_health_check_at = NOW()
+        WHERE provider_type = $1 AND url = $2
+    """, provider_type, url)
+    return 'updated'
+
+
+async def apply_results(cands: List[Candidate], db_pool, secrets) -> None:
+    """Write phase. Callers guarantee db_pool + secrets(+fernet) are live."""
+    stamp = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+    inserted = updated = disabled = keys_stored = 0
+    skipped: List[str] = []
+
+    # ---- (a) verified RPC / WSS URLs -> rpc_api_pool ---------------------
+    async with db_pool.acquire() as conn:
+        for c in cands:
+            if c.kind not in ('evm_rpc', 'solana_rpc', 'evm_ws', 'solana_ws'):
+                continue
+            if c.status != OK:
+                if c.status in (RATE_LIMITED, QUOTA_EXHAUSTED) and c.db_id is None:
+                    skipped.append(f'{c.name or redact_url(c.url)}: {c.status} '
+                                   f'(auth looks fine — re-run --apply once the limit clears)')
+                continue
+            if c.looks_non_mainnet():
+                skipped.append(f'{c.name or redact_url(c.url)}: devnet/testnet URL never imported')
+                continue
+            provider_type = c.effective_provider_type()
+            if not provider_type:
+                if c.kind in ('evm_ws', 'solana_ws'):
+                    skipped.append(f'{c.name or redact_url(c.url)}: OK but no '
+                                   f'{(c.chain or "?").upper()}_WS provider_type exists '
+                                   f'(mig 011 taxonomy) — not inventing one, add manually if needed')
+                else:
+                    skipped.append(f'{c.name or redact_url(c.url)}: OK but chain unknown — not imported')
+                continue
+            if c.db_id is not None:
+                # existing row: refresh status/last_checked only
+                await conn.execute("""
+                    UPDATE rpc_api_pool
+                    SET status = 'active', last_health_check_at = NOW()
+                    WHERE id = $1
+                """, c.db_id)
+                updated += 1
+                if c.db_enabled is False:
+                    skipped.append(f'{c.name}: verified OK but operator-disabled in DB '
+                                   f'(id={c.db_id}) — left disabled, re-enable via /settings/rpc-api')
+                continue
+            priority = 50 if (_url_is_keyed(c.url) or c.account) else 100
+            notes = f'[verify_and_import_rpcs {stamp}]'
+            if c.account:
+                notes += f' account={c.account}'
+            if c.getlogs_ok is False:
+                notes += ' getlogs=blocked'
+            outcome = await _upsert_endpoint(
+                conn, provider_type=provider_type,
+                name=(c.name or provider_type)[:100], url=c.url, api_key=None,
+                chain=c.chain, priority=priority, notes=notes,
+                supports_ws=provider_type.endswith('_WS'))
+            if outcome == 'inserted':
+                inserted += 1
+            else:
+                updated += 1
+
+        # ---- (c) hard-failing EXISTING rows -> disable (never delete) ----
+        for c in cands:
+            if c.db_id is None or c.status not in HARD_FAIL:
+                continue
+            result = await conn.execute("""
+                UPDATE rpc_api_pool
+                SET is_enabled = FALSE, status = 'disabled',
+                    notes = COALESCE(notes, '') || $2,
+                    last_health_check_at = NOW()
+                WHERE id = $1 AND is_enabled = TRUE
+            """, c.db_id, f' [verify: {c.status} {stamp}]')
+            if result.endswith('1'):
+                disabled += 1
+                print(f'  disabled rpc_api_pool id={c.db_id} ({c.name}): {c.status}')
+        for c in cands:
+            if c.db_id is not None and c.status in (RATE_LIMITED, QUOTA_EXHAUSTED):
+                print(f'  note: id={c.db_id} ({c.name}) is {c.status} — left ENABLED '
+                      f'(transient; pool_engine cools it at runtime)')
+
+    # ---- (b) verified bare API keys -> encrypted secrets + pool seed -----
+    from config.pool_engine import PoolEngine  # reuse the exact URL convention
+    for kind, (provider_type, chain, base_var) in KEY_KINDS.items():
+        kind_cands = [c for c in cands if c.kind == kind]
+        ok_keys = [c.key for c in kind_cands if c.status == OK]
+        failed = {c.key for c in kind_cands if c.status in HARD_FAIL}
+        if not ok_keys:
+            for c in kind_cands:
+                if c.status == UNTESTED:
+                    skipped.append(f'{c.name or base_var}: UNTESTED — never imported unverified')
+            continue
+        # current slot occupancy (env + DB secrets, decrypted)
+        existing: Dict[int, Optional[str]] = {}
+        for slot in range(1, MAX_NUMBERED_KEYS + 1):
+            name = base_var if slot == 1 else f'{base_var}_{slot}'
+            try:
+                existing[slot] = _clean(await secrets.get_async(name, log_access=False))
+            except Exception:
+                existing[slot] = None
+        assignment, no_room = plan_key_slots(existing, ok_keys, failed)
+        for key in no_room:
+            skipped.append(f'{base_var}: key {redact_secret(key)} verified OK but all '
+                           f'{MAX_NUMBERED_KEYS} slots are occupied — free a slot and re-run')
+        for slot in sorted(assignment):
+            key = assignment[slot]
+            name = base_var if slot == 1 else f'{base_var}_{slot}'
+            prev = existing.get(slot)
+            if prev and prev != key:
+                print(f'  OVERWRITING {name}: previous key {redact_secret(prev)} '
+                      f'verified {AUTH_FAIL}/{DEAD}')
+            ok = await secrets.set(name, key, category='api', is_sensitive=True)
+            if not ok:
+                skipped.append(f'{name}: secrets.set failed — key NOT stored')
+                continue
+            keys_stored += 1
+            # seed the pool endpoint exactly like the Wave-F5 bootstrap
+            url = PoolEngine._api_url_for_key(provider_type, key, slot,
+                                              _KEY_BASE_URLS.get(provider_type))
+            async with db_pool.acquire() as conn:
+                outcome = await _upsert_endpoint(
+                    conn, provider_type=provider_type, name=name, url=url,
+                    api_key=key, chain=chain, priority=100,
+                    notes=f'[verify_and_import_rpcs {stamp}]')
+            if outcome == 'inserted':
+                inserted += 1
+        # slots holding hard-failed keys that were NOT overwritten
+        for slot, value in existing.items():
+            if value and value in failed and assignment.get(slot) != value \
+                    and value not in assignment.values():
+                name = base_var if slot == 1 else f'{base_var}_{slot}'
+                print(f'  WARNING: secrets slot {name} holds a key that verified '
+                      f'hard-failed ({redact_secret(value)}) — clear it via the '
+                      f'/credentials page')
+
+    # ---- (d) summary ------------------------------------------------------
+    print(f'\nAPPLY SUMMARY: imported {inserted} new endpoint(s), refreshed '
+          f'{updated} existing, disabled {disabled}, stored {keys_stored} '
+          f'API key slot(s) encrypted, skipped {len(skipped)}.')
+    for s in skipped:
+        print(f'  skipped: {s}')
+    print('\nReminder: run `docker compose restart trading-bot` so every module '
+          'reloads the pool with the imported endpoints.')
 
 
 async def run_mock_selftest() -> int:  # pragma: no cover - replaced in stage 3
