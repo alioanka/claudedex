@@ -6,6 +6,7 @@ import asyncio
 import logging
 import hashlib
 import random
+import time
 from typing import Dict, Optional, List
 from datetime import datetime, timedelta
 import json
@@ -272,6 +273,17 @@ class SniperEngine:
         self._rejected_cache: Dict[str, datetime] = {}  # Track recently rejected tokens
         self._cooldown_duration = timedelta(minutes=5)  # 5-minute cooldown per token
 
+        # Wave-F5 entry-only risk knobs (mig 140). Both gate ENTRIES only —
+        # exits are never blocked.
+        #  - sniper_max_daily_loss_usd: once realized losses for the UTC day
+        #    breach this, no new entry opens until the next UTC day.
+        #  - sniper_entry_cooldown_seconds: minimum spacing between entries.
+        self.sniper_max_daily_loss_usd = 50.0
+        self.sniper_entry_cooldown_seconds = 60
+        self._daily_realized_pnl_usd = 0.0
+        self._daily_pnl_date = datetime.utcnow().date()
+        self._last_entry_monotonic = 0.0
+
         # Price fetcher for real USD values
         self.price_fetcher = PriceFetcher()
 
@@ -280,6 +292,31 @@ class SniperEngine:
         # active position per tick.
         self._mint_price_cache: Dict[str, tuple] = {}  # token -> (price, ts)
         self._mint_price_ttl = timedelta(seconds=15)
+
+    def _accrue_daily_pnl(self, pnl_usd: float) -> None:
+        """Accumulate realized USD PnL for the current UTC day (Wave-F5).
+        Rolls over at UTC midnight so the daily-loss halt resets each day.
+        Fail-soft: any error leaves the accumulator untouched."""
+        try:
+            today = datetime.utcnow().date()
+            if today != self._daily_pnl_date:
+                self._daily_pnl_date = today
+                self._daily_realized_pnl_usd = 0.0
+            self._daily_realized_pnl_usd += float(pnl_usd or 0.0)
+        except Exception as exc:
+            logger.debug(f"_accrue_daily_pnl failed: {exc}")
+
+    def _daily_loss_halt_active(self) -> bool:
+        """True iff realized losses for the current UTC day have breached
+        sniper_max_daily_loss_usd (entries only). 0/absent cap disables."""
+        cap = float(getattr(self, 'sniper_max_daily_loss_usd', 0.0) or 0.0)
+        if cap <= 0:
+            return False
+        # Roll the day forward before reading so a stale date can't wedge it.
+        if datetime.utcnow().date() != self._daily_pnl_date:
+            self._daily_pnl_date = datetime.utcnow().date()
+            self._daily_realized_pnl_usd = 0.0
+        return self._daily_realized_pnl_usd <= -abs(cap)
 
     def set_risk_manager(self, risk_manager) -> None:
         """Inject a core.risk_manager.RiskManager instance (Wave-13).
@@ -460,6 +497,11 @@ class SniperEngine:
                             )
                         elif key == 'sniper_phantom_price_threshold':
                             self.sniper_phantom_price_threshold = float(val) if val else 300.0
+                        # Wave-F5 entry-only risk knobs (migration 140)
+                        elif key == 'sniper_max_daily_loss_usd':
+                            self.sniper_max_daily_loss_usd = float(val) if val else 50.0
+                        elif key == 'sniper_entry_cooldown_seconds':
+                            self.sniper_entry_cooldown_seconds = int(val) if val else 60
                         # LIVE-readiness knobs (migration 107)
                         elif key == 'sniper_confirm_timeout_secs':
                             self.sniper_confirm_timeout_secs = float(val) if val else 45.0
@@ -1626,6 +1668,42 @@ class SniperEngine:
             self.pending_targets.pop(token_address, None)
             return
 
+        # Wave-F5 entry-only gate 1: per-UTC-day realized-loss halt. Blocks
+        # NEW entries once the day's losses breach sniper_max_daily_loss_usd;
+        # exits are never affected. Resets at UTC midnight.
+        if self._daily_loss_halt_active():
+            self._stats['daily_loss_halted'] = self._stats.get('daily_loss_halted', 0) + 1
+            now = datetime.now()
+            if now - self._stats.get('last_daily_loss_log', now - timedelta(minutes=2)) >= timedelta(minutes=1):
+                logger.warning(
+                    f"⛔ Sniper daily-loss halt: realized "
+                    f"${self._daily_realized_pnl_usd:.2f} <= "
+                    f"-${abs(self.sniper_max_daily_loss_usd):.2f} for {self._daily_pnl_date} "
+                    f"(UTC) — new entries suppressed until tomorrow"
+                )
+                self._stats['last_daily_loss_log'] = now
+            data['status'] = 'failed'
+            data['error'] = 'daily_loss_halt'
+            self.pending_targets.pop(token_address, None)
+            return
+
+        # Wave-F5 entry-only gate 2: minimum spacing between entries. Paces
+        # snipes and bounds re-entry churn on the same hostile tape.
+        cooldown = int(getattr(self, 'sniper_entry_cooldown_seconds', 0) or 0)
+        if cooldown > 0:
+            since = time.monotonic() - self._last_entry_monotonic
+            if self._last_entry_monotonic > 0 and since < cooldown:
+                self._stats['entry_cooldown_skipped'] = (
+                    self._stats.get('entry_cooldown_skipped', 0) + 1
+                )
+                logger.debug(
+                    f"entry cooldown: {since:.0f}s < {cooldown}s — deferring {token_address}"
+                )
+                data['status'] = 'failed'
+                data['error'] = 'entry_cooldown'
+                self.pending_targets.pop(token_address, None)
+                return
+
         # Per-trade hot path (63k+ trades in a DRY_RUN window). DEBUG to keep
         # logs/sniper/ small; failures below are still ERROR.
         logger.debug(f"🔫 EXECUTING SNIPE: {token_address} on {chain}")
@@ -1754,6 +1832,8 @@ class SniperEngine:
 
                 self.active_snipes[token_address] = data
                 del self.pending_targets[token_address]
+                # Wave-F5: stamp the last-entry clock for the entry cooldown.
+                self._last_entry_monotonic = time.monotonic()
 
                 # Log to database
                 await self._log_snipe_to_db(data, result)
@@ -2143,6 +2223,9 @@ class SniperEngine:
             # Retire from active_snipes so the monitor loop stops iterating it.
             self.active_snipes.pop(token_address, None)
 
+            # Wave-F5: feed realized PnL into the daily-loss halt (entries only).
+            self._accrue_daily_pnl(pnl_usd)
+
             self._stats['positions_synthetic_closed'] = (
                 self._stats.get('positions_synthetic_closed', 0) + 1
             )
@@ -2527,6 +2610,11 @@ class SniperEngine:
                 # Calculate real PnL in USD
                 pnl_usd = exit_usd - entry_usd
                 pnl_pct = ((exit_usd - entry_usd) / entry_usd * 100) if entry_usd > 0 else 0
+
+                # Wave-F5: feed realized PnL into the daily-loss halt (only on
+                # an actual close; a failed exit is not a realized loss).
+                if getattr(result, 'success', False):
+                    self._accrue_daily_pnl(pnl_usd)
 
                 trade_id = data.get('db_trade_id')
 
