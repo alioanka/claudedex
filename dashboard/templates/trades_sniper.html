@@ -633,7 +633,10 @@ function applyFilters() {
     const dateFrom = document.getElementById('filter-date-from').value;
     const dateTo = document.getElementById('filter-date-to').value;
     const pair = document.getElementById('filter-pair').value;
-    const side = document.getElementById('filter-side').value;
+    // Wave-F5: markup has 'filter-chain' (there is no 'filter-side'); reading
+    // the missing id returned null and threw on .value, so applyFilters()
+    // crashed on every call -> permanent "0 of 0". Read the real element.
+    const chain = document.getElementById('filter-chain').value;
     const exitReason = document.getElementById('filter-exit').value;
     const result = document.getElementById('filter-result').value;
 
@@ -688,8 +691,8 @@ function applyFilters() {
         // Pair filter
         if (pair !== 'all' && trade.symbol !== pair) return false;
 
-        // Side filter
-        if (side !== 'all' && trade.side !== side) return false;
+        // Chain filter (the API returns trade.chain)
+        if (chain !== 'all' && (trade.chain || '').toLowerCase() !== chain) return false;
 
         // Exit reason filter
         const tradeExitReason = trade.close_reason || trade.exit_reason;
@@ -721,7 +724,7 @@ function updateActiveFilters() {
 
     const timeframe = document.getElementById('filter-timeframe').value;
     const pair = document.getElementById('filter-pair').value;
-    const side = document.getElementById('filter-side').value;
+    const chain = document.getElementById('filter-chain').value;
     const exitReason = document.getElementById('filter-exit').value;
     const result = document.getElementById('filter-result').value;
 
@@ -732,8 +735,8 @@ function updateActiveFilters() {
     if (pair !== 'all') {
         tags.push({ key: 'pair', label: `Pair: ${pair}` });
     }
-    if (side !== 'all') {
-        tags.push({ key: 'side', label: `Side: ${side.toUpperCase()}` });
+    if (chain !== 'all') {
+        tags.push({ key: 'chain', label: `Chain: ${chain.toUpperCase()}` });
     }
     if (exitReason !== 'all') {
         tags.push({ key: 'exit', label: `Exit: ${formatExitReasonLabel(exitReason)}` });
@@ -764,8 +767,8 @@ function clearFilter(key) {
         case 'pair':
             document.getElementById('filter-pair').value = 'all';
             break;
-        case 'side':
-            document.getElementById('filter-side').value = 'all';
+        case 'chain':
+            document.getElementById('filter-chain').value = 'all';
             break;
         case 'exit':
             document.getElementById('filter-exit').value = 'all';
@@ -782,7 +785,7 @@ function resetFilters() {
     document.getElementById('filter-date-from').value = '';
     document.getElementById('filter-date-to').value = '';
     document.getElementById('filter-pair').value = 'all';
-    document.getElementById('filter-side').value = 'all';
+    document.getElementById('filter-chain').value = 'all';
     document.getElementById('filter-exit').value = 'all';
     document.getElementById('filter-result').value = 'all';
     applyFilters();
