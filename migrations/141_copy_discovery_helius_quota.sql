@@ -69,4 +69,28 @@ VALUES
     ('copytrading_config', 'copy_sm_min_score',        '0.6', 'number')
 ON CONFLICT (config_type, key) DO NOTHING;
 
+-- ---------------------------------------------------------------------
+-- 4. Conditional activation of DISCOVERY + SHADOW SIMULATION only.
+--    Root cause: the v3 discovery engine (mig 135) had NEVER executed because
+--    copy_auto_discovery_enabled (mig 092) was still 'false'. Turn it on — and
+--    the paper shadow simulator — ONLY WHERE the stored value is still the
+--    seeded 'false'. An operator who already changed either value is NOT
+--    touched (never clobber operator overrides).
+--
+--    SAFETY: these two flags gate READ-ONLY discovery writes (candidates for
+--    operator approval) and SIMULATED shadow fills (is_simulated=true). NEITHER
+--    is a live-execution flag. No order path is enabled: a discovered wallet is
+--    still only traded after operator approval (copy_leader_candidates) or the
+--    pre-existing double-gated auto-promote (default OFF, max_leaders=0), and
+--    every live gate (should_skip_live, RiskManager, DRY_RUN) is unchanged.
+UPDATE config_settings SET value = 'true', updated_at = NOW()
+ WHERE config_type = 'copytrading_config'
+   AND key = 'copy_auto_discovery_enabled'
+   AND value = 'false';
+
+UPDATE config_settings SET value = 'true', updated_at = NOW()
+ WHERE config_type = 'copytrading_config'
+   AND key = 'copy_shadow_sim_enabled'
+   AND value = 'false';
+
 COMMIT;
