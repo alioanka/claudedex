@@ -166,6 +166,22 @@ def _as_utc(dt):
     return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
 
 
+def _jsonable_metadata(value):
+    """Recursively coerce numpy scalars to plain Python for DB jsonb writes.
+
+    Wave-F5 RC-D3: position metadata carried numpy.float64 (ML scores),
+    which broke orjson in database.update_trade and left closed trades
+    stuck OPEN. The DB boundary also converts (belt+braces).
+    """
+    if isinstance(value, dict):
+        return {k: _jsonable_metadata(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable_metadata(v) for v in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    return value
+
+
 @dataclass
 class ClosedPositionRecord:
     """Track recently closed positions for cooldown"""
@@ -2489,7 +2505,7 @@ class TradingBotEngine:
                         trade_id = await self.db.pool.fetchval(query, token_address)
 
                     if trade_id:
-                        updated_metadata = {
+                        updated_metadata = _jsonable_metadata({
                             **position.get('metadata', {}),
                             'close_reason': reason,
                             'holding_time_minutes': holding_time,
@@ -2500,7 +2516,7 @@ class TradingBotEngine:
                                 'final_pnl': float(final_pnl),
                                 'pnl_percentage': float(pnl_percentage)
                             }
-                        }
+                        })
                         
                         await self.db.update_trade(trade_id, {
                             'exit_price': float(current_price),
@@ -2725,7 +2741,7 @@ class TradingBotEngine:
                         trade_id = await self.db.pool.fetchval(query, token_address)
 
                     if trade_id:
-                        updated_metadata = {
+                        updated_metadata = _jsonable_metadata({
                             **position.get('metadata', {}),
                             'close_reason': reason,
                             'holding_time_minutes': holding_time,
@@ -2736,7 +2752,7 @@ class TradingBotEngine:
                                 'final_pnl': float(final_pnl),
                                 'pnl_percentage': float(pnl_percentage)
                             }
-                        }
+                        })
                         await self.db.update_trade(trade_id, {
                             'exit_price': float(exit_price),
                             'exit_timestamp': datetime.now(),
