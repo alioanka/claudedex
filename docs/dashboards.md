@@ -4,44 +4,63 @@ Page map, auth flow, API route table, and Socket.IO event taxonomy
 for the dashboard module. Pairs with `modules/dashboard/CLAUDE.md`
 (module overview) and `docs/runbook.md` (operational procedures).
 
-## 1. Page map
+## 1. Page map (final IA — Wave-F5 consolidation, 2026-07)
 
-Routes are registered across three files: `monitoring/enhanced_dashboard.py`
-(top-level), `monitoring/module_routes.py` (module pages), and
-`monitoring/auth_routes.py` / `credentials_routes.py` (admin pages).
+Routes are registered across `monitoring/enhanced_dashboard.py`
+(top-level + fallback module pages), `monitoring/module_routes.py`
+(embedded-mode module pages), and `monitoring/auth_routes.py` /
+`credentials_routes.py` / `analytics_routes.py` / `rpc_pool_routes.py`.
 
-| Path | Source | Auth | Description |
-|---|---|---|---|
-| `/` | enhanced_dashboard:415 | session | Operator home; module-status tiles + emergency stop. |
-| `/login` | auth_routes:25 | none | Username/password form; CSRF cookie set on first GET (MB-27). |
-| `/dashboard` | enhanced_dashboard:417 | session | Main dashboard view. |
-| `/full-dashboard` | enhanced_dashboard:416 | session | Wide-screen power-user view. |
-| `/trades` | enhanced_dashboard:418 | session | Trade history (joined across modules). |
-| `/positions` | enhanced_dashboard:419 | session | Live open positions. |
-| `/performance` | enhanced_dashboard:420 | session | Performance analytics + P&L charts. |
-| `/settings` | enhanced_dashboard:421 | session | Global settings. |
-| `/global-settings` | enhanced_dashboard:512 | session | New pro feature: cross-module knobs. |
-| `/pro-controls` | enhanced_dashboard:513 | session | New pro feature: power-user controls. |
-| `/logs` | enhanced_dashboard:424 | session | Live log tail (filterable by module / level). |
-| `/reports` | enhanced_dashboard:422 | session | Generated reports archive. |
-| `/backtest` | enhanced_dashboard:423 | session | Backtest runner UI. |
-| `/analytics` | enhanced_dashboard:426 | session | Aggregated analytics + portfolio metrics. |
-| `/analysis` | enhanced_dashboard:425 | session | Ad-hoc analysis tools. |
-| `/simulator` | enhanced_dashboard:427 | session | Strategy simulator. |
-| `/wallet-balances` | enhanced_dashboard:428 | session | On-chain balances per chain. |
-| `/modules` | module_routes:48 | session | Per-module enable/disable/pause grid. |
-| `/modules/{name}` | module_routes:49 | session | Module detail + configure subroutes. |
-| `/module-control` | module_routes:72 | session | Module orchestration panel. |
-| `/dex/dashboard`, `/dex/settings` | module_routes:54-55 | session | DEX module pages. |
-| `/futures/{dashboard,positions,trades,performance,settings}` | module_routes:58-62 | session | Futures pages. |
-| `/solana/{dashboard,positions,trades,performance,settings}` | module_routes:65-69 | session | Solana pages. |
-| `/credentials` | credentials_routes:182 | session | Encrypted-credential management UI. |
-| `/users` | auth_routes:38 | admin | User CRUD. |
+Principles: one home (`/control-center`), one cross-module chart page
+(`/analytics`), one module-control hub (`/modules`), one approvals inbox
+(`/proposals`), one settings engine (`/config`). Per trading module:
+exactly 5 pages. Every retired URL 302s to its successor (no 404'd
+bookmarks).
 
-The sniper / arbitrage / copy-trading / AI modules expose their settings
-through `/api/<module>/settings` (no dedicated page route); their
-templates (`settings_sniper.html`, etc.) are rendered inside the
-top-level `/settings` shell.
+### Sidebar tree
+
+| Entry | Path | Description |
+|---|---|---|
+| Control Center | `/control-center` | Home (`/` 302s here). Runtime badges, per-module PnL, pause/restart/Go-LIVE, cross-module table, meta decisions. |
+| Analytics | `/analytics` | THE cross-module chart/risk page (analytics_routes). |
+| Modules | `/modules` | Single enable/disable/pause hub + intel-ops cards + Manual Trade panel (ported from pro-controls). |
+| DEX / Futures / Solana / Sniper / Copy / Polymarket | `/<mod>/{dashboard,positions,trades,performance,settings}` | Standard 5-page set. Copy keeps Discovery + Wallet Monitor + Leaders extras; Arbitrage has 4 pages (no Positions by design); Polymarket settings = `/config/polymarket_config`. |
+| Financial Advisor | `/advisor/{dashboard,advice,simulations,portfolio,kap,settings}` | 6 pages. |
+| AI Analysis | `/ai/{dashboard,sentiment,performance,settings,logs}` | 5 pages. |
+| Intelligence & Ops | `/module/<key>` ×16 | Generic panels; settings via `/config/<type>`. |
+| Proposals | `/proposals` | Single approvals inbox: advisory proposals + Orchestrator AI recs (`#orchestrator`) + portfolio allocation (`#allocation`). |
+| Help | `/help` | Deploy & use guide. |
+| All Settings | `/config`, `/config/{type}` | Canonical typed settings engine (docs + audit trail). |
+| Telegram / RPC-API / Wallet Balances / Credentials / Simulator / Logs / Backtest Replay | `/telegram/settings`, `/settings/rpc-api`, `/wallet-balances`, `/credentials`, `/simulator`, `/logs`, `/backtest-replay` | System pages. |
+
+Off-sidebar but live: `/settings` (account page, user-avatar menu only),
+`/users` (admin user CRUD, standalone template), `/test-runner`
+(admin-only dev/QA tool), `/arbitrage/positions` (inline explainer).
+
+### Redirect table (Wave-F5)
+
+| Old URL | → Redirect | Why |
+|---|---|---|
+| `/` | 302 `/control-center` | four overview pages computed disagreeing portfolio totals |
+| `/full-dashboard` | 302 `/control-center` | duplicate chart set |
+| `/dashboard` | 301 `/dex/dashboard` | pre-F5 legacy alias |
+| `/trades`, `/positions`, `/performance` | 302 `/dex/{trades,positions,performance}` | unprefixed legacy DEX aliases |
+| `/reports`, `/dex/reports`, `/analysis`, `/dex/analysis` | 302 `/dex/performance` | legacy DEX pages folded into performance |
+| `/backtest`, `/dex/backtest` | 302 `/backtest-replay` | superseded by the maintained replay simulator |
+| `/module-control` | 302 `/modules` | duplicate lifecycle controls |
+| `/pro-controls` | 302 `/modules` | Manual Trade ported to /modules; rest duplicated |
+| `/orchestrator` | 302 `/proposals#orchestrator` | approvals consolidated |
+| `/allocation` | 302 `/proposals#allocation` | approvals consolidated |
+| `/global-settings` | 302 `/config/allocation_guard_config` | accordion duplicated /config; guard keys live there |
+| `/modules/{name}`, `/modules/{name}/details` | 302 `/module/{name}` | old detail page superseded by generic panels |
+| `/modules/{name}/configure` | 302 `/config/{name}_config` | template never existed (was a 500) |
+
+Deleted templates: `index.html`, `full_dashboard.html`, `orchestrator.html`,
+`allocation.html`, `module_control.html`, `pro_controls.html`,
+`global_settings.html`, `reports.html`, `analysis.html`, `backtest.html`,
+`module_details.html`, `positions_arbitrage.html` (+ `analysis.js`,
+`backtest.js`, legacy `monitoring/dashboard.py`). Added: `users.html`
+(fixes the admin `/users` 500).
 
 ## 2. Auth flow
 
@@ -66,21 +85,22 @@ printed ONCE to stdout (MB-29b). See `docs/runbook.md` §3 for rotation.
 
 ## 3. Settings + Guide tab pattern
 
-Each per-module settings template (`settings_dex.html`,
-`settings_futures.html`, `settings_solana.html`, `settings_sniper.html`,
-`settings_arbitrage.html`, `settings_copytrading.html`,
-`settings_ai.html`) has two tabs:
+Target pattern (arbitrage/advisor style, adopted by the Wave-F5 DEX
+rebuild): each per-module settings page has a **Settings** surface
+(module-scoped config groups; values flow through
+`ConfigManager.set(...)` into `config_settings` — MB-33 deprecated the
+`.env`-write fallback) and a **Guide** tab (read-only docs with defaults
+and recommended ranges).
 
-- **Settings** — form controls that POST to `/api/settings/<module>` or
-  `/api/<module>/settings`. Values flow through `ConfigManager.set(...)`
-  into the `config_settings` table. MB-33 deprecated the `.env`-write
-  fallback; all changes go through the DB.
-- **Guide** — read-only inline reference describing each setting and
-  its recommended range. Pulls from the `description` column of
-  `config_settings` (or a hardcoded fallback per template).
-
-This was MB-30 observability work — operators no longer leave the page
-to learn what a knob does.
+Current state per template: `settings_arbitrage.html` and
+`advisor_settings.html` have proper Settings/Guide tabs;
+`settings_dex.html` was rebuilt in Wave-F5 to six module-scoped tabs
+(Trading/Risk/Strategies/Chains/Positions/ML Models) + Guide + an
+"App Settings" link-out to `/config`; `settings_futures.html`,
+`settings_solana.html` are single long forms;
+`settings_sniper.html`, `settings_copytrading.html`, `settings_ai.html`
+still inline-append their guides instead of tabbing them (open item,
+audit row 16).
 
 ## 4. Socket.IO event taxonomy
 
