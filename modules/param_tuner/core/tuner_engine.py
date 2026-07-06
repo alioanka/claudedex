@@ -41,6 +41,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from modules.param_tuner.core import bandit
+from modules.param_tuner.core import challenge
+from modules.param_tuner.core import challenge_engine
 from modules.param_tuner.core.bandit import KIND_EXPLOIT
 
 # Single-source the per-module trade-table schema and the track-scoring
@@ -215,9 +217,12 @@ async def compute_reward(conn, module: str, lookback_hours: int,
 # ───────────────────────────── proposals ───────────────────────────────────
 
 async def _open_pending(conn, ctype: str, key: str) -> int:
+    """In-flight proposals for a key: pending (operator queue) AND
+    challenge (out-of-sample gate). Both count against the per-key cap so
+    a running challenge does not let the tuner also queue a duplicate."""
     return int(await conn.fetchval(
         "SELECT COUNT(*) FROM param_proposals "
-        "WHERE config_type=$1 AND key=$2 AND status='pending'",
+        "WHERE config_type=$1 AND key=$2 AND status IN ('pending','challenge')",
         ctype, key,
     ) or 0)
 
@@ -363,14 +368,62 @@ async def run_tick(pool, cfg: dict) -> dict:
                 if await _open_pending(conn, entry["config_type"],
                                        entry["key"]) >= max_open:
                     continue
-                pid = await _persist_proposal(conn, entry, p)
-                summary["proposed"] += 1
-                if await try_auto_apply(conn, entry, p, pid, cfg):
-                    summary["applied"] += 1
+                await _emit_proposal(conn, entry, p, cfg, summary)
             except Exception as exc:
                 logger.error("tunable %s/%s fail-soft: %s",
                              entry.get("config_type"), entry.get("key"), exc)
+
+        # Advance every open variant challenge (score + resolve). Fail-soft.
+        try:
+            cs = await challenge_engine.process_challenges(conn, cfg)
+            summary["challenges_open"] = cs["open"]
+            summary["challenges_passed"] = cs["passed"]
+            summary["challenges_failed"] = cs["failed"]
+            if cs["open"] or cs["passed"] or cs["failed"]:
+                logger.info(
+                    "challenges: open=%d scored_trades=%d passed=%d failed=%d "
+                    "abandoned=%d", cs["open"], cs["scored_trades"],
+                    cs["passed"], cs["failed"], cs["abandoned"])
+        except Exception as exc:
+            logger.error("process_challenges fail-soft: %s", exc)
     return summary
+
+
+async def _emit_proposal(conn, entry: dict, p: bandit.Proposal, cfg: dict,
+                         summary: dict) -> None:
+    """Route a bandit proposal. When challenges are enabled and the knob
+    has an honest out-of-sample proxy (challenge.classify_route ->
+    ROUTE_CHALLENGE), open a baseline-vs-variant challenge instead of
+    queueing directly; the proposal only reaches the operator queue if it
+    PASSES, and is NEVER auto-applied. Exempt/censored knobs (no honest
+    proxy) keep the old direct-to-pending + auto-apply-eligible behavior,
+    logged. Challenges disabled -> old behavior for every knob."""
+    if bool(cfg.get("challenge_enabled", True)):
+        route, detail = challenge.classify_route(
+            entry["config_type"], entry["key"],
+            p.current_value, p.proposed_value)
+        if route == challenge.ROUTE_CHALLENGE:
+            cooldown = float(cfg.get("challenge_retry_cooldown_hours", 72))
+            if await challenge_engine.failed_recently(
+                    conn, entry["config_type"], entry["key"],
+                    f"{p.proposed_value:g}", cooldown):
+                logger.info("%s/%s -> variant %g failed a challenge within "
+                            "%gh cooldown; not re-opening",
+                            entry["config_type"], entry["key"],
+                            p.proposed_value, cooldown)
+                return
+            pid = await _persist_proposal(conn, entry, p, status="challenge")
+            summary["proposed"] += 1
+            await challenge_engine.open_challenge(conn, pid, entry, p, cfg)
+            return
+        logger.info("%s/%s challenge bypass (%s): %s — direct to pending",
+                    entry["config_type"], entry["key"], route, detail)
+
+    # Old behavior: exempt/censored knob, or challenges globally disabled.
+    pid = await _persist_proposal(conn, entry, p)
+    summary["proposed"] += 1
+    if await try_auto_apply(conn, entry, p, pid, cfg):
+        summary["applied"] += 1
 
 
 async def run_loop(pool, *, get_config=None) -> None:
