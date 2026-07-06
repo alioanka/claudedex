@@ -5683,12 +5683,13 @@ class DashboardEndpoints:
     # ==================== PAGE HANDLERS ====================
     
     async def index(self, request):
-        """Index page - render main dashboard with modules overview"""
-        template = self.jinja_env.get_template('index.html')
-        return web.Response(
-            text=template.render(page='main_dashboard'),
-            content_type='text/html'
-        )
+        """Home — 302 to the Control Center (Wave-F5 IA consolidation).
+
+        The old index.html overview computed portfolio KPIs from its own
+        queries and contradicted /control-center and /analytics ($8.9M vs
+        $882 vs $1,982 in the F5 audit). Retired pages redirect rather
+        than recompute; /control-center is the single home surface."""
+        raise web.HTTPFound('/control-center')
     
     async def dashboard_page(self, request):
         """Legacy /dashboard URL — permanently redirects to /dex/dashboard.
@@ -17761,9 +17762,13 @@ class DashboardEndpoints:
     # ==================== FULL DASHBOARD HANDLERS ====================
 
     async def full_dashboard_page(self, request):
-        """Render the new Full Dashboard page"""
-        template = self.jinja_env.get_template('full_dashboard.html')
-        return web.Response(text=template.render(page='full_dashboard'), content_type='text/html')
+        """Retired page — 302 to /control-center (Wave-F5 IA consolidation).
+
+        full_dashboard.html duplicated the /, /analytics and /control-center
+        chart sets with a fourth disagreeing portfolio total. Cross-module
+        charts live on /analytics; runtime + PnL live on /control-center.
+        The /api/dashboard/charts/full endpoint is intentionally preserved."""
+        raise web.HTTPFound('/control-center')
 
     async def api_funding_accounts(self, request):
         """ISSUE 15: consolidated "Funding / Accounts" surface.

@@ -753,29 +753,14 @@
                 </a>
             </li>
 
-            <!-- Full Dashboard (All Modules) -->
-            <li class="nav-item {% if page == 'full_dashboard' %}active{% endif %}">
-                <a href="/full-dashboard">
-                    <i class="fas fa-tachometer-alt"></i>
-                    <span>Full Dashboard</span>
-                </a>
-            </li>
-
-            <!-- Analytics (cross-module). Placed directly below Full Dashboard
-                 per VPS-feedback FAILURE B — operators couldn't find it
-                 when it was buried as the 8th entry inside the DEX submenu. -->
+            <!-- Analytics — THE cross-module chart/risk page. Full
+                 Dashboard + Main Overview retired in Wave-F5 (their
+                 routes 302 → /control-center; they recomputed the same
+                 KPIs with disagreeing totals). -->
             <li class="nav-item {% if page == 'analytics' %}active{% endif %}">
                 <a href="/analytics">
                     <i class="fas fa-chart-bar"></i>
                     <span>Analytics</span>
-                </a>
-            </li>
-
-            <!-- Main Dashboard (Overview) -->
-            <li class="nav-item {% if page == 'main_dashboard' %}active{% endif %}">
-                <a href="/">
-                    <i class="fas fa-th-large"></i>
-                    <span>Main Overview</span>
                 </a>
             </li>
 
