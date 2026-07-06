@@ -76,6 +76,15 @@ class DiscoveryV3Config:
     auto_promote_enabled: bool = False
     auto_promote_max_leaders: int = 0
     auto_promote_min_shadow_fills: int = 10
+    # Wave-F5 Helius quota discipline (mig 141 seeds). The same Helius key is
+    # shared with the copy monitor's per-wallet poll, so discovery must be a
+    # good tenant: a hard daily call budget + exponential backoff on 429 +
+    # cross-sweep fee-payer accumulation (no more "5 swaps in one 100-tx
+    # snapshot" sampling flaw — see docs/agents/wave-f5/04_copy_aitrader.md).
+    helius_daily_call_budget: int = 500
+    helius_tx_sample: int = 100
+    discovery_min_swaps: int = 3
+    sm_min_score: float = 0.6
     helius_api_key: Optional[str] = None
     shadow_cfg: Optional[object] = None  # shadow_simulator.ShadowConfig
 
@@ -90,7 +99,10 @@ async def load_config(db_pool) -> DiscoveryV3Config:
         async with db_pool.acquire() as conn:
             rows = await conn.fetch(
                 "SELECT key, value FROM config_settings "
-                "WHERE config_type = 'copytrading_config' AND key LIKE 'copy_v3_%'"
+                "WHERE config_type = 'copytrading_config' "
+                "  AND (key LIKE 'copy_v3_%' "
+                "       OR key IN ('helius_daily_call_budget', 'helius_tx_sample', "
+                "                  'discovery_min_swaps', 'copy_sm_min_score'))"
             )
     except Exception as e:  # noqa: BLE001
         logger.debug(f"v3 config read failed: {e}")
@@ -125,6 +137,10 @@ async def load_config(db_pool) -> DiscoveryV3Config:
     cfg.auto_promote_enabled = _b("copy_v3_auto_promote_enabled", False)
     cfg.auto_promote_max_leaders = int(_f("copy_v3_auto_promote_max_leaders", 0, 0, 20))
     cfg.auto_promote_min_shadow_fills = int(_f("copy_v3_auto_promote_min_shadow_fills", 10, 1, 1000))
+    cfg.helius_daily_call_budget = int(_f("helius_daily_call_budget", 500, 0, 1_000_000))
+    cfg.helius_tx_sample = int(_f("helius_tx_sample", 100, 1, 100))
+    cfg.discovery_min_swaps = int(_f("discovery_min_swaps", 3, 1, 100))
+    cfg.sm_min_score = _f("copy_sm_min_score", 0.6, 0.0, 1.0)
     return cfg
 
 
@@ -297,18 +313,127 @@ def parse_helius_swaps(wallet: str, txs: Sequence[Dict],
     return events
 
 
-async def _helius_enrich(session, wallet: str, api_key: str,
-                         sol_price_usd: float) -> List[Dict]:
-    url = (f"https://api.helius.xyz/v0/addresses/{wallet}/transactions"
-           f"?api-key={api_key}&limit=100&type=SWAP")
+# --- Helius daily call budget (persistent, shared across sweeps) ----------
+
+async def _helius_budget_remaining(db_pool, budget: int) -> int:
+    """Calls left in today's (UTC) Helius budget. Fail-soft: on DB error
+    assume budget available so a transient DB blip doesn't wedge discovery."""
+    if db_pool is None or budget <= 0:
+        return 0 if budget <= 0 else 10 ** 9
     try:
-        async with session.get(url, timeout=12) as resp:
-            if resp.status != 200:
-                return []
-            data = await resp.json(content_type=None)
+        async with db_pool.acquire() as conn:
+            used = await conn.fetchval(
+                "SELECT calls FROM copy_helius_budget WHERE day = CURRENT_DATE")
+        return max(0, int(budget) - int(used or 0))
     except Exception as e:  # noqa: BLE001
-        logger.debug(f"helius enrich {wallet[:8]}: {e}")
+        logger.debug(f"helius budget read failed: {e}")
+        return int(budget)
+
+
+async def _helius_budget_consume(db_pool, n: int = 1) -> None:
+    if db_pool is None or n <= 0:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            await conn.execute(
+                """
+                INSERT INTO copy_helius_budget (day, calls) VALUES (CURRENT_DATE, $1)
+                ON CONFLICT (day) DO UPDATE SET calls = copy_helius_budget.calls + $1
+                """, int(n))
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"helius budget consume failed: {e}")
+
+
+async def _helius_get_json(session, url: str, db_pool, cfg: "DiscoveryV3Config",
+                           *, max_attempts: int = 3):
+    """Budgeted Helius GET with exponential backoff on 429. Returns parsed
+    JSON or None. Every attempt that actually reaches Helius consumes one unit
+    of the daily budget (checked BEFORE the request)."""
+    for attempt in range(max_attempts):
+        if await _helius_budget_remaining(db_pool, cfg.helius_daily_call_budget) <= 0:
+            logger.debug("helius daily budget exhausted; skipping request")
+            return None
+        await _helius_budget_consume(db_pool, 1)
+        try:
+            async with session.get(url, timeout=12) as resp:
+                if resp.status == 429:
+                    # Exponential backoff: 0.5s, 1.0s, 2.0s ... then give up.
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+                    continue
+                if resp.status != 200:
+                    return None
+                return await resp.json(content_type=None)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"helius GET failed ({attempt + 1}/{max_attempts}): {e}")
+            await asyncio.sleep(0.5 * (2 ** attempt))
+    return None
+
+
+# --- Cross-sweep fee-payer accumulation -----------------------------------
+
+async def _accumulate_feepayers(db_pool, chain: str, source: str,
+                                counts: Dict[str, int]) -> None:
+    """Persist per-wallet swap counts ACROSS sweeps in copy_discovery_feepayers.
+    This replaces the broken "≥N swaps inside one 100-tx snapshot" heuristic:
+    a wallet that trades a handful of times per sweep accumulates over days
+    until it clears discovery_min_swaps. Fail-soft."""
+    if db_pool is None or not counts:
+        return
+    try:
+        async with db_pool.acquire() as conn:
+            for wallet, n in counts.items():
+                if not wallet or n <= 0:
+                    continue
+                await conn.execute(
+                    """
+                    INSERT INTO copy_discovery_feepayers
+                        (chain, wallet_address, source, cumulative_swaps,
+                         first_seen_at, last_seen_at)
+                    VALUES ($1, $2, $3, $4, NOW(), NOW())
+                    ON CONFLICT (chain, wallet_address, source) DO UPDATE SET
+                        cumulative_swaps =
+                            copy_discovery_feepayers.cumulative_swaps + $4,
+                        last_seen_at = NOW()
+                    """, chain, wallet, source, int(n))
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"feepayer accumulation failed: {e}")
+
+
+async def _feepayer_candidates(db_pool, min_swaps: int,
+                               limit: int = 200) -> List[Tuple[str, str]]:
+    """Accumulated fee-payers that have cleared the cross-sweep swap floor."""
+    if db_pool is None:
         return []
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chain, wallet_address FROM copy_discovery_feepayers "
+                "WHERE cumulative_swaps >= $1 "
+                "ORDER BY cumulative_swaps DESC LIMIT $2",
+                int(min_swaps), int(limit))
+        return [(r["chain"], r["wallet_address"]) for r in rows]
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"feepayer candidate read failed: {e}")
+        return []
+
+
+async def _helius_enrich(session, wallet: str, api_key: str,
+                         sol_price_usd: float, db_pool=None,
+                         cfg: Optional["DiscoveryV3Config"] = None) -> List[Dict]:
+    limit = cfg.helius_tx_sample if cfg else 100
+    url = (f"https://api.helius.xyz/v0/addresses/{wallet}/transactions"
+           f"?api-key={api_key}&limit={limit}&type=SWAP")
+    if cfg is not None and db_pool is not None:
+        data = await _helius_get_json(session, url, db_pool, cfg)
+    else:
+        try:
+            async with session.get(url, timeout=12) as resp:
+                if resp.status != 200:
+                    return []
+                data = await resp.json(content_type=None)
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"helius enrich {wallet[:8]}: {e}")
+            return []
     if not isinstance(data, list):
         return []
     return parse_helius_swaps(wallet, data, sol_price_usd)
@@ -519,7 +644,8 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
                         and enriched < cfg.max_rpc_enrich_wallets):
                     enriched += 1
                     events = await _helius_enrich(
-                        session, wallet, cfg.helius_api_key, DEFAULT_SOL_PRICE_USD)
+                        session, wallet, cfg.helius_api_key, DEFAULT_SOL_PRICE_USD,
+                        db_pool=db_pool, cfg=cfg)
                     if events:
                         pnl_basis = "sol_numeraire"
                         sources = sources + ["rpc_solana"]
