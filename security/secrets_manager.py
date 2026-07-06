@@ -542,11 +542,14 @@ class SecureSecretsManager:
                 """, key, encrypted_value, value_hash, category, is_sensitive, is_sensitive)
 
                 # Log the access
+                # $1 must be cast explicitly: it is used both as an inserted
+                # value (text) and in the WHERE against key_name (varchar) —
+                # asyncpg otherwise fails with "inconsistent types deduced".
                 await conn.execute("""
                     INSERT INTO credential_access_log
                     (credential_id, key_name, access_type, accessed_by, success)
-                    SELECT id, $1, 'write', 'secrets_manager', TRUE
-                    FROM secure_credentials WHERE key_name = $1
+                    SELECT id, $1::varchar, 'write', 'secrets_manager', TRUE
+                    FROM secure_credentials WHERE key_name = $1::varchar
                 """, key)
 
             # Update cache
