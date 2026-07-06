@@ -92,6 +92,10 @@ Env knobs: `YIELD_TREASURY_MODULE_ENABLED` (gate, default false),
   recommendation + reason, `shadow` flag, details.
 - Reads `treasury_snapshots` (mig 121) for idle balances — without a running
   treasury module (fresh rows < 2h) the tick is an idle no-op, fail-soft.
+  Wave-F5 note: the Jun 15–Jul 5 "no fresh idle data" idle streak was PURELY
+  upstream (treasury's missing `secrets.initialize` meant 0 snapshots ever,
+  fixed in treasury); this module needs no change and self-heals as soon as
+  treasury writes fresh snapshots.
 
 ## Isolation / safety
 RPC URLs ONLY via `config/pool_engine.PoolEngine.get_endpoint('<CHAIN>_RPC')`

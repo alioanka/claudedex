@@ -48,6 +48,13 @@ Self-test asserts this: `python -m modules.smart_money.core.cluster_scorer`.
   parsing is a separate build; copy_trading's monitor is NOT reused here).
 - Only the top `watch_pairs_per_chain` DexScreener pairs per chain are
   watched — accumulation in unwatched/long-tail pools is invisible.
+- **getLogs-capable RPC required per chain** (Wave-F5): free-tier RPCs
+  reject or blank `eth_getLogs` over address+topic ranges (the Ankr
+  limitation), which showed up as ethereum/arbitrum `pairs>0 swaps=0` on
+  every tick with zero errors. `chain_scanner` now WARNs (rate-limited
+  1/chain/hour) on getLogs errors AND on 24+ consecutive all-empty scans,
+  naming the operator action: point the chain at a getLogs-capable endpoint
+  (Alchemy/dRPC) in `/settings/rpc-api`. Logging only — no behavior change.
 - Only swaps >= `min_event_usd` with successful wallet attribution (capped at
   `max_wallet_lookups_per_tick`) become events; quiet sub-threshold
   accumulation is invisible by design (RPC budget discipline).

@@ -104,6 +104,20 @@ def gas_floor_for(cfg: dict, chain: str) -> float:
 
 # ───────────────────────────── wallet discovery ─────────────────────────────
 
+# One-shot WARNING keys so a broken/uninitialized secrets path is VISIBLE
+# (the 20-day zero-snapshot outage hid behind a DEBUG line) without spamming
+# every 5-minute tick.
+_warned_derivations: set = set()
+
+
+def _warn_once(key: str, msg: str, *args) -> None:
+    if key in _warned_derivations:
+        logger.debug(msg, *args)
+        return
+    _warned_derivations.add(key)
+    logger.warning(msg, *args)
+
+
 def _derive_evm_address() -> Optional[str]:
     """Public EVM address DERIVED from the secrets-managed PRIVATE_KEY. Reads the
     key only to compute its public address — never signs, never persists it.
@@ -112,11 +126,16 @@ def _derive_evm_address() -> Optional[str]:
         from security.secrets_manager import secrets
         pk = (secrets.get('PRIVATE_KEY') or '').strip()
         if not pk or pk.lower().startswith('your'):
+            _warn_once('evm_pk_missing',
+                       "PRIVATE_KEY not resolvable via secrets manager — evm "
+                       "wallet falls back to env WALLET_ADDRESS (fail-soft)")
             return None
         from eth_account import Account
         return Account.from_key(pk).address
     except Exception as exc:
-        logger.debug("EVM address derivation failed (fail-soft): %s", exc)
+        _warn_once('evm_derive_failed',
+                   "EVM address derivation failed (fail-soft; env "
+                   "WALLET_ADDRESS fallback): %s", exc)
         return None
 
 
@@ -138,10 +157,17 @@ def _derive_solana_address(secret_key_name: str) -> Optional[str]:
     """Public Solana address DERIVED from a secrets-managed private key. Fail-soft."""
     try:
         from security.secrets_manager import secrets
-        return _solana_pubkey_from_secret(secrets.get(secret_key_name) or '')
+        addr = _solana_pubkey_from_secret(secrets.get(secret_key_name) or '')
+        if addr is None:
+            _warn_once(f'{secret_key_name}_missing',
+                       "%s not resolvable via secrets manager — solana wallet "
+                       "falls back to its env address (fail-soft)",
+                       secret_key_name)
+        return addr
     except Exception as exc:
-        logger.debug("Solana address derivation (%s) failed (fail-soft): %s",
-                     secret_key_name, exc)
+        _warn_once(f'{secret_key_name}_derive_failed',
+                   "Solana address derivation (%s) failed (fail-soft; env "
+                   "address fallback): %s", secret_key_name, exc)
         return None
 
 

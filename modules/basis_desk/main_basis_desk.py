@@ -104,6 +104,7 @@ class BasisDeskEngine:
         self.confirm = ConfirmTracker(int(config.get('confirm_polls', 2)))
         self.running = False
         self._last_recorded: dict = {}  # (venue, symbol) -> monotonic ts
+        self._venue_warned_at: dict = {}  # venue -> monotonic ts (1 WARN/h)
         self.stats = {
             'cycles': 0, 'venues_ok': 0, 'quotes_evaluated': 0,
             'actionable': 0, 'suggestions_recorded': 0,
@@ -155,11 +156,36 @@ class BasisDeskEngine:
             *(c.fetch_quotes(symbols) for c in clients.values()),
             return_exceptions=True,
         )
+        # Per-venue outcome — 20 days of silence proved a run where both
+        # fetchers throw is log-identical to "no carry clears the cost
+        # model"; the tick summary below makes the data path verifiable.
+        venue_status: dict = {}
+        for venue, res in zip(clients.keys(), results):
+            if isinstance(res, BaseException):
+                venue_status[venue] = f"error:{type(res).__name__}"
+                now_m = time.monotonic()
+                last_w = self._venue_warned_at.get(venue)
+                if last_w is None or (now_m - last_w) >= 3600.0:
+                    self._venue_warned_at[venue] = now_m
+                    logger.warning(
+                        f"venue fetch failed for {venue} (fail-soft, "
+                        f"warn rate-limited 1/h): "
+                        f"{type(res).__name__}: {res}")
+                else:
+                    logger.debug(f"venue fetch failed for {venue} "
+                                 f"(suppressed repeat): {res}")
+            elif isinstance(res, dict):
+                venue_status[venue] = f"ok:{len(res)}"
+            else:
+                venue_status[venue] = f"unexpected:{type(res).__name__}"
         self.stats['venues_ok'] = sum(
             1 for r in results if isinstance(r, dict) and r)
 
         fees = self._fees()
         best = None
+        cyc_quotes = 0
+        cyc_actionable = 0
+        reject_reasons: dict = {}
         for res in results:
             if not isinstance(res, dict):
                 continue
@@ -181,8 +207,11 @@ class BasisDeskEngine:
                         self.config.get('allow_short_spot', False)),
                 )
                 if plan is None:
+                    reject_reasons['invalid_quote'] = \
+                        reject_reasons.get('invalid_quote', 0) + 1
                     continue
                 self.stats['quotes_evaluated'] += 1
+                cyc_quotes += 1
                 if best is None or (plan.net_carry_bps_at_horizon
                                     > best.net_carry_bps_at_horizon):
                     best = plan
@@ -190,9 +219,12 @@ class BasisDeskEngine:
                     f'{plan.venue}:{plan.symbol}', plan.actionable,
                     plan.direction)
                 if not plan.actionable:
+                    reject_reasons[plan.reason] = \
+                        reject_reasons.get(plan.reason, 0) + 1
                     logger.debug(f"[skip] {plan.venue}:{plan.symbol} {plan.reason}")
                     continue
                 self.stats['actionable'] += 1
+                cyc_actionable += 1
                 if not confirmed:
                     logger.info(
                         f"[confirming] {plan.venue}:{plan.symbol} "
@@ -227,6 +259,17 @@ class BasisDeskEngine:
                     best.net_carry_bps_at_horizon, 2),
                 'actionable': best.actionable, 'reason': best.reason,
             }
+
+        # One INFO line per cycle so venues_ok=0 (broken fetch) is
+        # distinguishable from venues ok + 0 actionable (working-by-design).
+        best_str = 'none' if best is None else (
+            f"{best.venue}:{best.symbol} "
+            f"net@{best.horizon_intervals:.0f}iv="
+            f"{best.net_carry_bps_at_horizon:.1f}bps ({best.reason})")
+        logger.info(
+            f"basis tick: venues={venue_status} quotes={cyc_quotes} "
+            f"actionable={cyc_actionable} rejects={reject_reasons or '{}'} "
+            f"best={best_str}")
 
     async def run(self) -> None:
         self.running = True
