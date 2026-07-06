@@ -81,3 +81,24 @@ VALUES
      'included; advisor_universe_max caps the total.',
      NOW(), NOW())
 ON CONFLICT (config_type, key) DO NOTHING;
+
+-- =========================================================================
+-- 4. KAP bounded re-queue knob (Wave-F5 fix 7). Budget-starved disclosures
+--    are stamped classifier_stage='unclassified' and were NEVER retried
+--    (the dedupe join treated any stamp as done) — weeks of ingestion left
+--    thousands of permanent UNCLASSIFIED rows. kap_store.get_unclassified
+--    now re-surfaces stamps older than this many hours (never-classified
+--    rows always sort first; every attempt re-stamps classified_at, so a
+--    row retries at most once per window). 0 disables the re-queue.
+-- =========================================================================
+
+INSERT INTO config_settings (config_type, key, value, value_type, description, created_at, updated_at)
+VALUES
+    ('advisor_config', 'advisor_kap_reclassify_after_hours', '24', 'float',
+     'Hours after which a KAP disclosure stamped classifier_stage='
+     '''unclassified'' is re-queued for classification (budget-starved rows '
+     'get retried once LLM budget exists). New disclosures always take '
+     'priority; each attempt re-stamps classified_at so a row retries at '
+     'most once per window. 0 disables the re-queue. Default 24.',
+     NOW(), NOW())
+ON CONFLICT (config_type, key) DO NOTHING;

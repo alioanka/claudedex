@@ -264,20 +264,49 @@ async def get_recent_classified_for_ticker(pool, ticker: str,
         return []
 
 
-async def get_unclassified(pool, limit: int = 100) -> List[dict]:
+async def get_unclassified(pool, limit: int = 100,
+                           reclassify_after_hours: Optional[float] = None) -> List[dict]:
     """
     Return disclosures that have no classification in kap_classifications.
     If migration 063 (kap_classifications table) has not been run, falls back
     to returning all recent disclosures (classifier table absence = degrade).
+
+    Wave-F5 fix 7 — bounded re-queue: when `reclassify_after_hours` is a
+    positive number, rows STAMPED classifier_stage='unclassified' whose stamp
+    is older than that many hours are ALSO returned (flagged `requeued=True`),
+    so budget-starved UNCLASSIFIED stamps get retried once LLM budget exists.
+    Bounded three ways: never-classified rows sort FIRST (re-queues can never
+    starve fresh rows), the shared LIMIT caps the batch, and a retried row is
+    re-stamped with a fresh classified_at on every attempt (store_classification
+    upserts), so it cannot come back for another `reclassify_after_hours` hours.
     """
+    try:
+        requeue_h = float(reclassify_after_hours or 0)
+    except (TypeError, ValueError):
+        requeue_h = 0.0
+
     sql_with_join = """
         SELECT d.id, d.disclosure_id, d.ticker, d.tickers, d.company_name,
                d.subject, d.disclosure_type, d.summary, d.full_text,
-               d.url, d.disclosed_at, d.source
+               d.url, d.disclosed_at, d.source,
+               FALSE AS requeued
         FROM kap_disclosures d
         LEFT JOIN kap_classifications c ON c.disclosure_id = d.id
         WHERE c.disclosure_id IS NULL
         ORDER BY d.disclosed_at DESC
+        LIMIT $1
+    """
+    sql_with_requeue = """
+        SELECT d.id, d.disclosure_id, d.ticker, d.tickers, d.company_name,
+               d.subject, d.disclosure_type, d.summary, d.full_text,
+               d.url, d.disclosed_at, d.source,
+               (c.disclosure_id IS NOT NULL) AS requeued
+        FROM kap_disclosures d
+        LEFT JOIN kap_classifications c ON c.disclosure_id = d.id
+        WHERE c.disclosure_id IS NULL
+           OR (c.classifier_stage = 'unclassified'
+               AND c.classified_at < NOW() - ($2 * interval '1 hour'))
+        ORDER BY (c.disclosure_id IS NULL) DESC, d.disclosed_at DESC
         LIMIT $1
     """
     sql_fallback = """
@@ -289,7 +318,10 @@ async def get_unclassified(pool, limit: int = 100) -> List[dict]:
         LIMIT $1
     """
     try:
-        rows = await pool.fetch(sql_with_join, limit)
+        if requeue_h > 0:
+            rows = await pool.fetch(sql_with_requeue, limit, requeue_h)
+        else:
+            rows = await pool.fetch(sql_with_join, limit)
         return [dict(r) for r in rows]
     except Exception as exc:
         err_str = str(exc).lower()
@@ -343,6 +375,7 @@ async def store_classification(pool, disclosure_id: str, event_type: str,
             confidence       = EXCLUDED.confidence,
             raw_subject      = EXCLUDED.raw_subject,
             extra            = EXCLUDED.extra,
+            classified_at    = NOW(),
             updated_at       = NOW()
     """
     extra_d = dict(extra or {})
