@@ -264,3 +264,40 @@ A discovered wallet is NEVER traded silently. The only paths to live copying:
 - **Alpha decays as wallets get crowded.** A publicly-rankable profitable wallet attracts copiers; their flow front-runs ours and fades the edge. Expect discovered-wallet performance to mean-revert; the decay-demotion knob exists because scores SHOULD fall.
 - **On-chain PnL attribution is noisy.** FIFO over observed swaps misses transfers in/out, airdrops, LP positions, cross-wallet activity, and (for `sol_numeraire` rows) uses a single current SOL price. Wash-trade detection is heuristic. Treat scores as a screening rank, not an audited track record — that is why the shadow simulator and the operator-approval gate sit between discovery and live money.
 - **Survivorship bias at the source.** Leaderboard-style feeds (DexScreener, smart-money scores) only ever show wallets that already won; the scorer's trailing-window + penalty design mitigates but cannot eliminate this.
+
+## Wave-F5 (2026-07-06) — discovery revival + AI-Trader adaptations (migration 141)
+
+**Operator complaint (second time): "wallet discovery is finding my already-tracked wallet always."** Root cause (docs/agents/wave-f5/04_copy_aitrader.md): every EXTERNAL candidate source returned 0 rows, so discovery degraded — by design — to a LOCAL fallback built only from `target_wallets` + `copytrading_trades.source_wallet` (the already-tracked wallets), and the UI presented that fallback as real discovery. Meanwhile the v3 engine (mig 135) had NEVER run because `copy_auto_discovery_enabled` was still `false`. Source failures were logged at DEBUG only, so the degradation was invisible.
+
+### Discovery source table (v3, `copy_v3_sources`)
+| Source | Chain | Free? | Status | Notes |
+|---|---|---|---|---|
+| `smart_money` | EVM | yes (mig 133) | best USD-priced feed | needs `smart_money_wallet_events`; EVM-only in v1 |
+| `smart_money_scores` | EVM | yes | **NEW (F5)** | reads `smart_money_wallet_scores` ≥ `copy_sm_min_score`, proposes top-N EVM wallets DIRECTLY into `copy_leader_candidates` (bypasses the realized-PnL scorer — the smart_money module already scored them); fail-soft if table absent |
+| `helius_tokens` | Solana | yes | **NEW (F5)** | top-volume tokens (DexScreener) → recent SWAP fee-payers per token (Helius, budget-capped) → accumulated ACROSS sweeps in `copy_discovery_feepayers` → candidate once cumulative swaps ≥ `discovery_min_swaps`. This is the structurally-sound Solana feed the old code lacked |
+| `onchain` | any | yes | recycles tracked | our own `copytrading_trades` — realized, USD-exact, but only already-tracked wallets |
+| `leader_scores` | any | yes | recycles v2 output | re-ranks `copy_leader_scores` |
+| `dexscreener` | any | yes | **candidate-address only** | see quarantine note below |
+| `rpc_solana` | Solana | Helius | enrichment | per-candidate Helius enhanced-tx, SOL-numeraire pricing; auto-added when a Helius key resolves |
+
+**DexScreener pool-address bug fixed.** `wallet_discovery.fetch_dexscreener_top_traders` used to harvest `pairAddress` (an AMM pool contract) and a non-existent `info.deployerAddress` as "wallets" — junk that scored ~0 and polluted candidates. DexScreener has no public top-traders REST API, so that adapter now returns `[]` (mock rows preserved). The legitimate volume signal it CAN provide is exposed by the new `fetch_dexscreener_token_pools` and consumed by `helius_tokens`.
+
+### Helius quota discipline
+The Helius key is shared with the copy monitor's per-wallet poll, so discovery is a good tenant: exponential backoff on 429 + a persistent daily call budget (`helius_daily_call_budget`, seed 500) tracked in `copy_helius_budget` (one row per UTC day). Every discovery Helius request checks the budget BEFORE firing and consumes one unit. The old "wallet must appear ≥5 times inside ONE 100-tx snapshot" sampling flaw is replaced by cross-sweep fee-payer accumulation (`copy_discovery_feepayers`): low-frequency wallets accumulate over days until they clear `discovery_min_swaps`.
+
+### Honest-fallback semantics (no more silent degradation)
+- **Dashboard `/api/copytrading/discover`**: response now carries `source_status` (per-source candidate counts + failure reasons, e.g. `helius: no_helius_key`, `birdeye: no_birdeye_key`) and `already_tracked_count`. Local-fallback rows are flagged `fallback=true` + `already_tracked=true` so the UI never presents an already-tracked wallet as a new find. Discovery is allowed to honestly return zero.
+- **Module (`wallet_discovery` v2 + `discovery_v3`)**: per-source failures are now WARNING (rate-limited 1/source/hour) instead of DEBUG; every sweep logs a per-source summary (`per-source={...}, external=N, local=M`). When EVERY external source returns 0 and only local/recycled wallets remain, ONE honest WARNING fires and those candidates are marked `fallback=true`.
+
+### Config knobs (all `copytrading_config`, mig 141 seeds)
+`helius_daily_call_budget` (500), `helius_tx_sample` (100), `discovery_min_swaps` (3), `copy_sm_min_score` (0.6), `copy_reconcile_minutes` (360). Mig 141 also CONDITIONALLY flips `copy_auto_discovery_enabled` and `copy_shadow_sim_enabled` `'false'→'true'` **only WHERE still the seeded `'false'`** (operator overrides preserved). Both gate read-only discovery writes and simulated shadow fills — **neither is a live-execution flag; no order path is enabled.** A discovered wallet is still traded only after operator approval (`copy_leader_candidates`) or the pre-existing double-gated auto-promote (default OFF, `max_leaders=0`).
+
+### AI-Trader (HKUDS) adaptations
+- **Shadow mark-to-market** (`shadow_simulator.mark_to_market`, called each `tick`): re-prices open `copy_shadow_positions` via Jupiter Price v3 (free) and writes a fresh `copy_shadow_equity` snapshot each cycle, so equity curves are honest between leader events (Solana marks refreshed; other chains keep last price — documented limitation).
+- **Crowding penalty** (`wallet_profitability.crowding_penalty_from_followers` + optional `crowding` arg to `score_wallet`): inverted follower-density soft-cap (crowding = alpha decay). Pure, default 0, can only shrink the composite.
+- **Leader holdings reconciliation** (`copy_engine._maybe_reconcile_leaders`, every `copy_reconcile_minutes`): snapshots each Solana leader's current SPL holdings (`getTokenAccountsByOwner`) vs our mirrored open positions, logs `[reconcile] reason=leader_exited` drift. **Advisory only — never trades, never auto-closes** (RPC failure is not misread as a full exit). NOT worth porting from AI-Trader: 1:1 mirroring (regression vs fractional-Kelly), LLM-in-the-loop trade decisions, the FastAPI signal marketplace.
+
+### Operator notes (key-gated, fail-soft)
+- **`ETHERSCAN_API_KEY` unlocks EVM discovery.** Without it the copy engine's EVM monitor is disabled, so `smart_money` / `smart_money_scores` EVM candidates would be leaders the engine cannot mirror — set the key, or drop those two sources from `copy_v3_sources`.
+- **`BIRDEYE_API_KEY` unlocks the Birdeye source.** Absent → `source_status` reports `birdeye: no_birdeye_key` and the source is skipped (never a hard failure).
+- **Helius free tier**: at 33 wallets/15s the copy monitor alone can exceed 100k credits/day; discovery's daily budget is deliberately small (500) so it does not compound the monitor's burn. Raise `copy_poll_interval_s` or upgrade the plan if 429s persist.
