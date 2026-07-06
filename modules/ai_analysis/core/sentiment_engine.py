@@ -344,6 +344,16 @@ class SentimentEngine:
         # ai_max_positions allow operators to tune the set without a code deploy.
         self.ai_symbols: List[str] = ['BTC', 'ETH', 'SOL']
         self.ai_max_positions: int = 3
+        # Wave-F5 (A5): per-SIGNAL position cap. One market-wide sentiment score
+        # must not open a basket of correlated positions (BTC+ETH+SOL on one
+        # score was one 3x-concentrated bet). Limits how many NEW positions a
+        # single _execute_trade cycle may open, independent of the global
+        # concurrent cap ai_max_positions. 0 = disabled (fall back to global).
+        self.ai_max_positions_per_signal: int = 1
+        # Wave-F5 (A3): CryptoCompare news v2 now requires an API key (it 401'd
+        # every cycle for ~20 days once the free tier was removed). One-time
+        # WARNING flag so a key-less deployment logs the skip once, not 1,900×.
+        self._cryptocompare_warned: bool = False
 
         # Wave-18 position-reversal + scaling config (migration 055).
         # ai_reversal_min_score: minimum |score| required for a counter-directional
@@ -612,6 +622,12 @@ class SentimentEngine:
                                 self.ai_max_positions = cap
                         except (ValueError, TypeError):
                             pass
+                    elif key == 'ai_max_positions_per_signal':
+                        # Wave-F5 (A5): per-signal position cap. 0 disables.
+                        try:
+                            self.ai_max_positions_per_signal = max(0, int(val))
+                        except (ValueError, TypeError):
+                            pass
                     elif key == 'ai_reversal_min_score':
                         # Wave-18: minimum |score| to trigger position reversal.
                         # 0 disables reversals entirely.
@@ -662,7 +678,7 @@ class SentimentEngine:
             logger.info(f"   Claude model: {self._claude_model}")
             logger.info(f"   OpenAI model: {self._openai_model}")
             logger.info(f"   Exit: TP={self.take_profit_pct}% SL={self.stop_loss_pct}% max_hold={self.max_hold_hours}h")
-            logger.info(f"   Symbols: {self.ai_symbols} (max_positions={self.ai_max_positions})")
+            logger.info(f"   Symbols: {self.ai_symbols} (max_positions={self.ai_max_positions}, per_signal={self.ai_max_positions_per_signal})")
             logger.info(f"   Reversal min_score={self.ai_reversal_min_score} scale_ins={self.ai_max_scale_ins}")
         except Exception as e:
             logger.warning(f"Failed to load AI settings: {e}")
@@ -1070,13 +1086,42 @@ class SentimentEngine:
         }
         timeout = aiohttp.ClientTimeout(total=10)
 
-        sources: List[Dict] = [
-            {
+        # Wave-F5 (A3): CryptoCompare news v2 now requires an API key — it
+        # returned HTTP 401 every cycle for ~20 days once the free tier was
+        # removed, flooding the log and yielding zero headlines. Key-gate it:
+        # include the source ONLY when a key is present (appended as api_key);
+        # otherwise skip with a ONE-TIME warning and fall through to the
+        # key-less RSS sources below.
+        cryptocompare_key: Optional[str] = None
+        try:
+            from security.secrets_manager import secrets
+            try:
+                cryptocompare_key = await secrets.get_async('CRYPTOCOMPARE_API_KEY')
+            except Exception:
+                cryptocompare_key = secrets.get('CRYPTOCOMPARE_API_KEY') if hasattr(secrets, 'get') else None
+        except Exception:
+            cryptocompare_key = None
+        if not cryptocompare_key:
+            cryptocompare_key = os.getenv('CRYPTOCOMPARE_API_KEY') or os.getenv('CRYPTOCOMPARE_KEY')
+
+        sources: List[Dict] = []
+        if cryptocompare_key:
+            sources.append({
                 "name": "cryptocompare",
-                "url": "https://min-api.cryptocompare.com/data/v2/news/?lang=EN",
+                "url": (
+                    "https://min-api.cryptocompare.com/data/v2/news/?lang=EN"
+                    f"&api_key={cryptocompare_key}"
+                ),
                 "kind": "cryptocompare_json",
-            },
-        ]
+            })
+        elif not self._cryptocompare_warned:
+            logger.warning(
+                "News source cryptocompare SKIPPED: no CRYPTOCOMPARE_API_KEY "
+                "configured (the free news/v2 tier now returns HTTP 401). Set "
+                "the key via /settings/credentials to re-enable; falling back "
+                "to CoinDesk/CoinTelegraph RSS. (this warning fires once)"
+            )
+            self._cryptocompare_warned = True
         # CryptoPanic authenticated endpoint (still works with API key).
         # The unauthenticated /api/v1/posts/?public=true endpoint is DEAD
         # (returns 404 as of 2026) — do not add it.
@@ -1800,6 +1845,18 @@ class SentimentEngine:
 
         opened = 0
         for symbol in self.ai_symbols:
+            # Wave-F5 (A5): per-signal position cap. One market-wide score must
+            # not open a basket of correlated positions. 0 disables (the global
+            # ai_max_positions cap below still applies).
+            if (self.ai_max_positions_per_signal > 0
+                    and opened >= self.ai_max_positions_per_signal):
+                logger.info(
+                    f"[ai] per-signal cap reached "
+                    f"({opened}/{self.ai_max_positions_per_signal}); "
+                    f"not opening more positions on this score"
+                )
+                break
+
             # -- REVERSAL / SCALING CHECK: symbol already has an open position --
             if symbol in self.active_positions:
                 existing = self.active_positions[symbol]
