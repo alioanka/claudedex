@@ -19,6 +19,18 @@ DEFAULT_UNISWAPX_BASE_URL = "https://api.uniswap.org"
 DEFAULT_DEXSCREENER_BASE_URL = "https://api.dexscreener.com"
 COW_CHAINS = ("mainnet", "xdai", "arbitrum_one", "base")
 
+# Browser-class UA: CoW's Cloudflare front 403-blocks the default aiohttp
+# User-Agent (28,589 rejects, one per minute, Jun 15 - Jul 5 — blocked, not
+# rate-limited). Same idea as catalyst_calendar's explicit UA.
+_USER_AGENT = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+# After this many CONSECUTIVE 403s on one path the source is treated as dead
+# and only re-probed hourly (catalyst_calendar's dead-source pattern, but
+# recoverable: a WAF rule change should not require a restart to notice).
+_DEAD_403_THRESHOLD = 3
+_DEAD_RETRY_INTERVAL_S = 3600.0
+
 
 class _JsonClient:
     """Rate-limited, fail-soft JSON-over-HTTP helper."""
@@ -30,6 +42,9 @@ class _JsonClient:
         self.max_requests_per_minute = max(1, int(max_requests_per_minute))
         self._request_times: List[float] = []
         self.last_error: Optional[str] = None
+        self._consec_403: Dict[str, int] = {}       # path -> consecutive 403s
+        self._backoff_until: Dict[str, float] = {}  # path -> monotonic ts
+        self._backoff_warned: set = set()           # warn ONCE per path per run
 
     async def _throttle(self) -> None:
         now = time.monotonic()
@@ -47,15 +62,43 @@ class _JsonClient:
         except ImportError:
             self.last_error = "aiohttp not installed"
             return None
+        # Dead-source backoff: a path that 403'd _DEAD_403_THRESHOLD times in
+        # a row is only re-probed hourly (no request spent, no log spam).
+        until = self._backoff_until.get(path)
+        if until is not None and time.monotonic() < until:
+            self.last_error = (f"HTTP 403 on {path} "
+                               f"(dead-source backoff; retrying hourly)")
+            logger.debug("skip %s %s: 403 backoff active", method, path)
+            return None
         await self._throttle()
         url = f"{self.base_url}{path}"
         try:
             timeout = aiohttp.ClientTimeout(total=self.timeout_s)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+            headers = {"User-Agent": _USER_AGENT, "Accept": "application/json"}
+            async with aiohttp.ClientSession(timeout=timeout,
+                                             headers=headers) as session:
                 async with session.request(method, url, params=params,
                                            json=json_body) as resp:
                     if resp.status != 200:
                         self.last_error = f"HTTP {resp.status} on {path}"
+                        if resp.status == 403:
+                            n = self._consec_403.get(path, 0) + 1
+                            self._consec_403[path] = n
+                            if n >= _DEAD_403_THRESHOLD:
+                                self._backoff_until[path] = (
+                                    time.monotonic() + _DEAD_RETRY_INTERVAL_S)
+                                if path not in self._backoff_warned:
+                                    self._backoff_warned.add(path)
+                                    logger.warning(
+                                        "%s%s: %d consecutive HTTP 403s "
+                                        "(blocked, not rate-limited) — backing "
+                                        "off to hourly retries this run",
+                                        self.base_url, path, n)
+                                else:
+                                    logger.debug("%s still 403 after hourly "
+                                                 "re-probe", path)
+                        else:
+                            self._consec_403.pop(path, None)
                         return None
                     payload = await resp.json(content_type=None)
         except asyncio.CancelledError:
@@ -65,6 +108,8 @@ class _JsonClient:
             logger.warning("%s %s failed: %s", method, path, self.last_error)
             return None
         self.last_error = None
+        self._consec_403.pop(path, None)
+        self._backoff_until.pop(path, None)
         return payload
 
 

@@ -60,7 +60,7 @@ port 8102 (env override: `INTENT_SOLVER_HEALTH_PORT`).
 ## Key config (DB-backed, config_type='intent_solver'; migration 130)
 | Key | Default | What it does |
 |---|---|---|
-| `poll_interval_s` | 60 | Cycle cadence |
+| `poll_interval_s` | 60 in code; DB row raised to **3600** by mig 143 (conditional — only while still at the mig-130 default 60) | Cycle cadence. The scaffold is PARKED; hourly is plenty for its one falsifiable question |
 | `cow_enabled` / `cow_chains` | true / mainnet | CoW polling (mainnet, xdai, arbitrum_one, base) |
 | `uniswapx_enabled` / `uniswapx_chain_ids` | false / 1 | Optional UniswapX polling |
 | `max_quotes_per_cycle` | 10 | Reference-quote budget (respect the free API) |
@@ -80,6 +80,16 @@ port 8102 (env override: `INTENT_SOLVER_HEALTH_PORT`).
 
 ## DB tables (migration 130)
 `intent_fill_opportunities` — simulated fill ledger (`is_simulated` default TRUE).
+
+## Wave-F5 ingest fix (2026-07): CoW 403-block + log spam
+CoW's Cloudflare front 403-blocked the default aiohttp User-Agent on every
+call since Jun 15 (28,589 log lines, `intent_fill_opportunities` 0 rows
+ever). Fixes in `clients.py`: (a) browser-class `User-Agent` on all client
+requests; (b) dead-source backoff — after 3 CONSECUTIVE 403s on a path the
+client warns ONCE and re-probes only hourly (recoverable without restart).
+`main_intent_solver.py` additionally suppresses repeated identical
+source-fetch warnings to once/hour. Mig 143 conditionally raises the DB
+`poll_interval_s` 60 → 3600 (only while still at the seeded default).
 
 ## Data-source matrix (all free, no keys, no RPC)
 | Path | Source | Key |

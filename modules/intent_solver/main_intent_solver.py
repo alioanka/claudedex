@@ -117,6 +117,7 @@ class IntentSolverEngine:
             max_requests_per_minute=rpm)
         self.running = False
         self._last_recorded: dict = {}  # order_uid -> monotonic ts
+        self._source_warn: dict = {}    # source key -> (message, monotonic ts)
         self.stats = {
             'cycles': 0, 'orders_seen': 0, 'quotes_requested': 0,
             'opportunities_recorded': 0, 'last_cycle_at': None, 'last_error': None,
@@ -133,6 +134,19 @@ class IntentSolverEngine:
             self._last_recorded.clear()
         return False
 
+    def _warn_source(self, key: str, msg: str) -> None:
+        """WARN a per-source fetch failure at most once/hour per unchanged
+        message (28,589 identical 'CoW mainnet: HTTP 403' lines taught us the
+        per-cycle warning is noise, not signal). A CHANGED message logs
+        immediately."""
+        now = time.monotonic()
+        prev = self._source_warn.get(key)
+        if prev is not None and prev[0] == msg and (now - prev[1]) < 3600.0:
+            logger.debug("%s: %s (suppressed repeat)", key, msg)
+            return
+        self._source_warn[key] = (msg, now)
+        logger.warning(f"{key}: {msg}")
+
     async def _gather_intents(self, now_ts: float) -> list:
         """Fetch + normalize open intents from every enabled source. Fail-soft."""
         cap = int(self.config.get('max_orders_per_poll', 200))
@@ -143,7 +157,7 @@ class IntentSolverEngine:
             for chain in chains:
                 raw = await self.cow.fetch_open_orders(chain, cap)
                 if not raw and self.cow.last_error:
-                    logger.warning(f"CoW {chain}: {self.cow.last_error}")
+                    self._warn_source(f"CoW {chain}", self.cow.last_error)
                 for r in raw:
                     o = normalize_cow_order(r, chain)
                     if o:
@@ -157,7 +171,8 @@ class IntentSolverEngine:
                     continue  # no quote source for this chain — skip honestly
                 raw = await self.uniswapx.fetch_open_orders(cid, cap)
                 if not raw and self.uniswapx.last_error:
-                    logger.warning(f"UniswapX {cid}: {self.uniswapx.last_error}")
+                    self._warn_source(f"UniswapX {cid}",
+                                      self.uniswapx.last_error)
                 for r in raw:
                     o = normalize_uniswapx_order(r, CHAIN_ID_TO_COW[cid], now_ts)
                     if o:
