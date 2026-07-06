@@ -44,3 +44,40 @@ SET status = 'closed', close_reason = 'nan_entry_cleanup',
     closed_at = NOW(), updated_at = NOW()
 WHERE status = 'open'
   AND entry_price = 'NaN'::numeric;
+
+-- =========================================================================
+-- 3. BIST universe default -> curated bist50 (Wave-F5 fix 6). The mig-083
+--    'auto' default resolves to the Fonoloji live /stocks/list, which is
+--    ~88% garbage (Midas-US symbols + funds/options/ISINs): 53 of the 60
+--    scan slots failed every source, every cycle (~2,200 error lines/day),
+--    while real BIST names beyond the watchlist were never attempted. The
+--    curated BIST-50 snapshot in universes.py is the honest default.
+--    CONDITIONAL: only the mig-078/083 seeded defaults ('watchlist'->'auto'
+--    lineage and 'fonoloji') are updated; an explicit operator choice of
+--    'watchlist' / 'bist30' / 'custom' is preserved. The live list remains
+--    available by setting advisor_bist_universe='fonoloji' — the code-side
+--    Midas-US row filter now cleans it.
+-- =========================================================================
+
+UPDATE config_settings
+SET value = 'bist50',
+    description = 'BIST scan universe: bist50 (DEFAULT — curated BIST-50 '
+        'snapshot in universes.py) | bist30 | watchlist (watchlist-only) | '
+        'fonoloji (live /stocks/list, Midas-US rows filtered) | auto (live '
+        'list when a Fonoloji key is present) | custom. Watchlist tickers '
+        'are always included; advisor_universe_max caps the total.',
+    updated_at = NOW()
+WHERE config_type = 'advisor_config'
+  AND key = 'advisor_bist_universe'
+  AND value IN ('auto', 'fonoloji', '');
+
+INSERT INTO config_settings (config_type, key, value, value_type, description, created_at, updated_at)
+VALUES
+    ('advisor_config', 'advisor_bist_universe', 'bist50', 'string',
+     'BIST scan universe: bist50 (DEFAULT — curated BIST-50 snapshot in '
+     'universes.py) | bist30 | watchlist (watchlist-only) | fonoloji (live '
+     '/stocks/list, Midas-US rows filtered) | auto (live list when a '
+     'Fonoloji key is present) | custom. Watchlist tickers are always '
+     'included; advisor_universe_max caps the total.',
+     NOW(), NOW())
+ON CONFLICT (config_type, key) DO NOTHING;
