@@ -417,6 +417,63 @@ async def _feepayer_candidates(db_pool, min_swaps: int,
         return []
 
 
+# Fee-payers that are routers / infra, never a copyable trader wallet.
+_HELIUS_TOKENS_EXCLUDED = {
+    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",   # Jupiter v6
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",  # Raydium AMM V4
+} | STABLE_MINTS
+
+
+async def _helius_tokens_candidates(db_pool, cfg: "DiscoveryV3Config",
+                                    session) -> List[Tuple[str, str]]:
+    """helius_tokens source (Wave-F5): the structurally-sound free Solana feed.
+
+    1. Top-volume tokens per chain from DexScreener (free, works for tokens).
+    2. Recent SWAP txs per token via Helius enhanced-tx (budget-capped).
+    3. Fee-payers accumulated ACROSS sweeps in copy_discovery_feepayers.
+    4. Candidate once cumulative swaps >= discovery_min_swaps — fixes the
+       "5 swaps in one 100-tx snapshot" flaw. Solana only; fail-soft."""
+    if session is None or not cfg.helius_api_key:
+        return []
+    try:
+        from modules.copy_trading.wallet_discovery import (
+            DiscoveryConfig, _RateLimiter, fetch_dexscreener_token_pools,
+        )
+    except Exception:  # noqa: BLE001
+        return []
+    v2cfg = DiscoveryConfig()
+    rl = _RateLimiter(qps=v2cfg.rate_limit_qps)
+    try:
+        tokens = await fetch_dexscreener_token_pools(
+            session, "solana", v2cfg, rl, max_tokens=10)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"helius_tokens token feed failed: {e}")
+        tokens = []
+    if not tokens:
+        return []
+    counts: Dict[str, int] = {}
+    for tok in tokens:
+        if await _helius_budget_remaining(db_pool, cfg.helius_daily_call_budget) <= 0:
+            break
+        addr = tok.get("token_address")
+        if not addr:
+            continue
+        url = (f"https://api.helius.xyz/v0/addresses/{addr}/transactions"
+               f"?api-key={cfg.helius_api_key}&limit={cfg.helius_tx_sample}&type=SWAP")
+        data = await _helius_get_json(session, url, db_pool, cfg)
+        if not isinstance(data, list):
+            continue
+        for tx in data:
+            if not isinstance(tx, dict):
+                continue
+            fp = tx.get("feePayer")
+            if (isinstance(fp, str) and len(fp) >= 32
+                    and fp not in _HELIUS_TOKENS_EXCLUDED):
+                counts[fp] = counts.get(fp, 0) + 1
+    await _accumulate_feepayers(db_pool, "solana", "helius_tokens", counts)
+    return await _feepayer_candidates(db_pool, cfg.discovery_min_swaps)
+
+
 async def _helius_enrich(session, wallet: str, api_key: str,
                          sol_price_usd: float, db_pool=None,
                          cfg: Optional["DiscoveryV3Config"] = None) -> List[Dict]:
@@ -606,13 +663,28 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
 
     # 1. Candidate universe with provenance.
     provenance: Dict[Tuple[str, str], List[str]] = {}
+    per_source_counts: Dict[str, int] = {}
+
+    # A Helius session is needed both by the helius_tokens candidate source
+    # and by the per-wallet rpc_solana enrichment. Open it up-front so both
+    # phases share it (and the daily budget).
+    session = None
+    if (cfg.helius_api_key and aiohttp is not None
+            and ("helius_tokens" in cfg.sources
+                 or ("rpc_solana" in cfg.sources and cfg.max_rpc_enrich_wallets > 0))):
+        session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
 
     async def _add(source: str, coro) -> None:
+        n = 0
         try:
             for chain, wallet in await coro:
                 provenance.setdefault((chain, wallet), []).append(source)
+                n += 1
         except Exception as e:  # noqa: BLE001
-            logger.debug(f"source {source} failed: {e}")
+            logger.warning(f"[discovery-v3] source={source} FAILED: {e}")
+            per_source_counts[source] = -1
+            return
+        per_source_counts[source] = n
 
     if "smart_money" in cfg.sources:
         await _add("smart_money", _smart_money_candidates(db_pool))
@@ -622,15 +694,12 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
         await _add("leader_scores", _leader_score_candidates(db_pool))
     if "dexscreener" in cfg.sources:
         await _add("dexscreener", _dexscreener_candidates(cfg))
+    if "helius_tokens" in cfg.sources:
+        await _add("helius_tokens", _helius_tokens_candidates(db_pool, cfg, session))
 
     # 2. Build realized-event history per wallet (merge sources), score.
     scored: List[Tuple[WalletScore, List[str], str]] = []
     enriched = 0
-    session = None
-    if (cfg.helius_api_key and "rpc_solana" in cfg.sources
-            and aiohttp is not None and cfg.max_rpc_enrich_wallets > 0):
-        session = aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=15))
     try:
         for (chain, wallet), sources in provenance.items():
             try:
