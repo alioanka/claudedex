@@ -172,7 +172,8 @@ def redact_url(url: Optional[str]) -> str:
             if k.lower() in _KEY_QUERY_PARAMS and v:
                 v = redact_secret(v)
             q_out.append((k, v))
-        query = up.urlencode(q_out, safe='…')
+        # display-only reassembly (urlencode would %-escape the ellipsis)
+        query = '&'.join(f'{k}={v}' if v != '' else k for k, v in q_out)
         # Path segments that look like keys (require a digit or mixed case
         # so plain words like 'transactions' survive)
         segs = []
@@ -619,25 +620,38 @@ class Prober:
         if self._session:
             await self._session.close()
 
+    # -- transport helpers (the --mock self-test overrides ONLY these) -----
+    async def _post_json(self, url: str, payload: dict) -> Tuple[int, Any]:
+        async with self._session.post(url, json=payload) as resp:
+            try:
+                body = await resp.json(content_type=None)
+            except Exception:
+                body = None
+            return resp.status, body
+
+    async def _get_json(self, url: str, headers: Optional[dict] = None) -> Tuple[int, Any]:
+        async with self._session.get(url, headers=headers) as resp:
+            try:
+                body = await resp.json(content_type=None)
+            except Exception:
+                body = None
+            return resp.status, body
+
     async def _rpc(self, url: str, method: str, params: list) -> Tuple[Optional[Any], Optional[str], int]:
         """POST one JSON-RPC call. Returns (result, error_class_or_None, http_status).
         Raises asyncio.TimeoutError / connection errors upward."""
         payload = {'jsonrpc': '2.0', 'id': 1, 'method': method, 'params': params}
-        async with self._session.post(url, json=payload) as resp:
-            cls = _status_to_class(resp.status)
-            if cls:
-                return None, cls, resp.status
-            if resp.status >= 400:
-                return None, DEAD, resp.status
-            try:
-                body = await resp.json(content_type=None)
-            except Exception:
-                return None, DEAD, resp.status
-            if isinstance(body, dict) and body.get('error'):
-                err = body['error']
-                msg = f"{err.get('code', '')} {err.get('message', '')}" if isinstance(err, dict) else str(err)
-                return None, (_classify_body_error(msg) or DEAD), resp.status
-            return (body.get('result') if isinstance(body, dict) else None), None, resp.status
+        status, body = await self._post_json(url, payload)
+        cls = _status_to_class(status)
+        if cls:
+            return None, cls, status
+        if status >= 400 or body is None:
+            return None, DEAD, status
+        if isinstance(body, dict) and body.get('error'):
+            err = body['error']
+            msg = f"{err.get('code', '')} {err.get('message', '')}" if isinstance(err, dict) else str(err)
+            return None, (_classify_body_error(msg) or DEAD), status
+        return (body.get('result') if isinstance(body, dict) else None), None, status
 
     # --- EVM https --------------------------------------------------------
     async def probe_evm_http(self, cand: Candidate) -> None:
@@ -706,13 +720,12 @@ class Prober:
             return json.loads(raw)
 
     def _classify_ws_exception(self, e: Exception) -> Tuple[str, str]:
-        import websockets
         if isinstance(e, asyncio.TimeoutError):
             return TIMEOUT, ''
+        # websockets.exceptions.InvalidStatusCode carries .status_code
         status = getattr(e, 'status_code', None)
-        if isinstance(e, websockets.exceptions.InvalidStatusCode) or status:
-            cls = _status_to_class(int(status or 0))
-            return (cls or DEAD), f'HTTP {status}'
+        if status:
+            return (_status_to_class(int(status)) or DEAD), f'HTTP {status}'
         return DEAD, type(e).__name__
 
     async def probe_evm_ws(self, cand: Candidate) -> None:
@@ -742,37 +755,42 @@ class Prober:
         except Exception as e:
             cand.status, cand.note = self._classify_ws_exception(e)
 
+    async def _solana_ws_subscribe(self, url: str) -> dict:
+        """slotSubscribe + slotUnsubscribe transaction; returns the subscribe
+        response body. Overridden by the --mock self-test."""
+        import websockets
+        async with websockets.connect(url, open_timeout=self.timeout_s,
+                                      close_timeout=3, max_size=2 ** 20) as ws:
+            await ws.send(json.dumps({'jsonrpc': '2.0', 'id': 1,
+                                      'method': 'slotSubscribe'}))
+            body = json.loads(await asyncio.wait_for(ws.recv(), timeout=self.timeout_s))
+            sub_id = body.get('result')
+            if sub_id is not None:
+                try:
+                    await ws.send(json.dumps({'jsonrpc': '2.0', 'id': 2,
+                                              'method': 'slotUnsubscribe',
+                                              'params': [sub_id]}))
+                except Exception:
+                    pass
+            return body
+
     async def probe_solana_ws(self, cand: Candidate) -> None:
         """connect + slotSubscribe (+ unsubscribe). Note: the Solana ws API is
         subscription-only, so the NETWORK cannot be verified over ws — pair
         it with the https genesis check; devnet-looking URLs are rejected."""
-        import websockets
         t0 = time.monotonic()
         try:
-            async with websockets.connect(cand.url, open_timeout=self.timeout_s,
-                                          close_timeout=3, max_size=2 ** 20) as ws:
-                await ws.send(json.dumps({'jsonrpc': '2.0', 'id': 1,
-                                          'method': 'slotSubscribe'}))
-                raw = await asyncio.wait_for(ws.recv(), timeout=self.timeout_s)
-                body = json.loads(raw)
-                cand.latency_ms = int((time.monotonic() - t0) * 1000)
-                if body.get('error'):
-                    cand.status = _classify_body_error(str(body['error'])) or DEAD
-                    return
-                sub_id = body.get('result')
-                if sub_id is not None:
-                    try:
-                        await ws.send(json.dumps({'jsonrpc': '2.0', 'id': 2,
-                                                  'method': 'slotUnsubscribe',
-                                                  'params': [sub_id]}))
-                    except Exception:
-                        pass
-                if cand.looks_non_mainnet():
-                    cand.status = WRONG_NETWORK
-                    cand.note = 'devnet/testnet URL'
-                    return
-                cand.status = OK
-                cand.note = cand.note or 'network not verifiable over ws (subscription API)'
+            body = await self._solana_ws_subscribe(cand.url)
+            cand.latency_ms = int((time.monotonic() - t0) * 1000)
+            if body.get('error'):
+                cand.status = _classify_body_error(str(body['error'])) or DEAD
+                return
+            if cand.looks_non_mainnet():
+                cand.status = WRONG_NETWORK
+                cand.note = 'devnet/testnet URL'
+                return
+            cand.status = OK
+            cand.note = cand.note or 'network not verifiable over ws (subscription API)'
         except asyncio.TimeoutError:
             cand.status = TIMEOUT
         except Exception as e:
@@ -817,12 +835,15 @@ class Prober:
                f'&action=eth_blockNumber&apikey={cand.key}')
         t0 = time.monotonic()
         try:
-            async with self._session.get(url) as resp:
-                cls = _status_to_class(resp.status)
-                if cls:
-                    cand.status = cls
-                    return
-                body = await resp.json(content_type=None)
+            status, body = await self._get_json(url)
+            cls = _status_to_class(status)
+            if cls:
+                cand.status = cls
+                return
+            if status >= 400 or not isinstance(body, dict):
+                cand.status = DEAD
+                cand.note = f'HTTP {status}'
+                return
             cand.latency_ms = int((time.monotonic() - t0) * 1000)
             result = str(body.get('result', ''))
             if body.get('status') == '0' or body.get('message') == 'NOTOK':
@@ -849,17 +870,16 @@ class Prober:
         url = f'https://public-api.birdeye.so/defi/price?address={WSOL_MINT}'
         t0 = time.monotonic()
         try:
-            async with self._session.get(
-                    url, headers={'X-API-KEY': cand.key, 'x-chain': 'solana'}) as resp:
-                cls = _status_to_class(resp.status)
-                if cls:
-                    cand.status = cls
-                    return
-                if resp.status >= 400:
-                    cand.status = DEAD
-                    cand.note = f'HTTP {resp.status}'
-                    return
-                body = await resp.json(content_type=None)
+            status, body = await self._get_json(
+                url, headers={'X-API-KEY': cand.key, 'x-chain': 'solana'})
+            cls = _status_to_class(status)
+            if cls:
+                cand.status = cls
+                return
+            if status >= 400 or not isinstance(body, dict):
+                cand.status = DEAD
+                cand.note = f'HTTP {status}'
+                return
             cand.latency_ms = int((time.monotonic() - t0) * 1000)
             cand.status = OK if body.get('success') else AUTH_FAIL
             if not body.get('success'):
@@ -877,15 +897,15 @@ class Prober:
         check only, classify UNTESTED unless the API hard-rejects."""
         url = f'https://api.gopluslabs.io/api/v1/token_security/1?contract_addresses={USDC_ETH}'
         try:
-            async with self._session.get(
-                    url, headers={'Authorization': f'Bearer {cand.key}'}) as resp:
-                cls = _status_to_class(resp.status)
-                if cls:
-                    cand.status = cls
-                    return
-                cand.status = UNTESTED
-                cand.note = ('endpoint reachable; GoPlus bare keys are not '
-                             'verifiable without app_secret — not imported')
+            status, _body = await self._get_json(
+                url, headers={'Authorization': f'Bearer {cand.key}'})
+            cls = _status_to_class(status)
+            if cls:
+                cand.status = cls
+                return
+            cand.status = UNTESTED
+            cand.note = ('endpoint reachable; GoPlus bare keys are not '
+                         'verifiable without app_secret — not imported')
         except asyncio.TimeoutError:
             cand.status = TIMEOUT
         except Exception as e:
@@ -1364,8 +1384,169 @@ async def apply_results(cands: List[Candidate], db_pool, secrets) -> None:
           'reloads the pool with the imported endpoints.')
 
 
-async def run_mock_selftest() -> int:  # pragma: no cover - replaced in stage 3
-    raise NotImplementedError('mock self-test lands in a later commit')
+# =========================================================================
+# --mock: offline self-test (no network, no DB)
+# =========================================================================
+
+DEVNET_GENESIS = 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG'
+
+
+class _WsAuthError(Exception):
+    status_code = 401
+
+
+class MockProber(Prober):
+    """Stubs ONLY the transport helpers so the real classification,
+    chain-id/genesis matching and note logic is what gets exercised."""
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *exc):
+        return None
+
+    async def _post_json(self, url: str, payload: dict) -> Tuple[int, Any]:
+        method = payload.get('method', '')
+        if 'timeout' in url:
+            raise asyncio.TimeoutError()
+        if 'refused' in url:
+            raise ConnectionError('connection refused')
+        if 'auth401' in url:
+            return 401, None
+        if 'rl429' in url:
+            return 429, None
+        if 'quota' in url:
+            return 200, {'error': {'code': -32005,
+                                   'message': 'daily request count exceeded, quota reached'}}
+        if method == 'eth_chainId':
+            cid = 1
+            if 'chain56' in url:
+                cid = 56
+            elif 'chain999' in url:
+                cid = 999
+            return 200, {'result': hex(cid)}
+        if method == 'eth_blockNumber':
+            return 200, {'result': '0x100'}
+        if method == 'eth_getLogs':
+            if 'nologs' in url:
+                return 200, {'error': {'code': -32601,
+                                       'message': 'eth_getLogs is not available on this tier'}}
+            return 200, {'result': []}
+        if method == 'getSlot':
+            return 200, {'result': 123456}
+        if method == 'getGenesisHash':
+            genesis = DEVNET_GENESIS if 'devnet' in url else SOLANA_MAINNET_GENESIS
+            return 200, {'result': genesis}
+        return 200, {'result': None}
+
+    async def _get_json(self, url: str, headers: Optional[dict] = None) -> Tuple[int, Any]:
+        headers = headers or {}
+        if 'etherscan' in url:
+            if 'apikey=goodscan' in url:
+                return 200, {'jsonrpc': '2.0', 'result': '0x1234abc'}
+            if 'apikey=rlscan' in url:
+                return 200, {'status': '0', 'message': 'NOTOK',
+                             'result': 'Max rate limit reached'}
+            return 200, {'status': '0', 'message': 'NOTOK',
+                         'result': 'Invalid API Key'}
+        if 'birdeye' in url:
+            if headers.get('X-API-KEY') == 'goodbird123456':
+                return 200, {'success': True, 'data': {'value': 150.0}}
+            return 401, None
+        if 'gopluslabs' in url:
+            return 200, {'code': 1, 'result': {}}
+        return 404, None
+
+    async def _ws_roundtrip(self, url: str, request: dict) -> dict:
+        if 'timeout' in url:
+            raise asyncio.TimeoutError()
+        if 'auth401' in url:
+            raise _WsAuthError('rejected')
+        cid = 8453 if 'chain8453' in url else 1
+        return {'jsonrpc': '2.0', 'id': 1, 'result': hex(cid)}
+
+    async def _solana_ws_subscribe(self, url: str) -> dict:
+        if 'auth401' in url:
+            raise _WsAuthError('rejected')
+        return {'jsonrpc': '2.0', 'id': 1, 'result': 7}
+
+
+async def run_mock_selftest() -> int:
+    failures: List[str] = []
+
+    def check(label: str, actual, expected) -> None:
+        if actual != expected:
+            failures.append(f'{label}: expected {expected!r}, got {actual!r}')
+            print(f'  FAIL {label}: expected {expected!r}, got {actual!r}')
+        else:
+            print(f'  ok   {label}')
+
+    # ---- classification --------------------------------------------------
+    cases = [
+        # (candidate, expected_status, expected_getlogs or None)
+        (Candidate(kind='evm_rpc', url='http://mock/eth', chain='ethereum', name='eth ok'), OK, True),
+        (Candidate(kind='evm_rpc', url='http://mock/nologs', chain='ethereum', name='eth nologs'), OK, False),
+        (Candidate(kind='evm_rpc', url='http://mock/eth', chain='bsc', name='bsc claims eth'), WRONG_NETWORK, None),
+        (Candidate(kind='evm_rpc', url='http://mock/chain999', chain='monad', name='monad soft-id'), OK, True),
+        (Candidate(kind='evm_rpc', url='http://mock/auth401', chain='ethereum', name='401'), AUTH_FAIL, None),
+        (Candidate(kind='evm_rpc', url='http://mock/rl429', chain='ethereum', name='429'), RATE_LIMITED, None),
+        (Candidate(kind='evm_rpc', url='http://mock/quota', chain='ethereum', name='quota'), QUOTA_EXHAUSTED, None),
+        (Candidate(kind='evm_rpc', url='http://mock/timeout', chain='ethereum', name='timeout'), TIMEOUT, None),
+        (Candidate(kind='evm_rpc', url='http://mock/refused', chain='ethereum', name='dead'), DEAD, None),
+        (Candidate(kind='solana_rpc', url='http://mock/sol', chain='solana', name='sol mainnet'), OK, None),
+        (Candidate(kind='solana_rpc', url='http://mock/sol-devnet', chain='solana', name='sol devnet'), WRONG_NETWORK, None),
+        (Candidate(kind='evm_ws', url='wss://mock/ws', chain='ethereum', name='ws eth'), OK, None),
+        (Candidate(kind='evm_ws', url='wss://mock/ws-chain8453', chain='ethereum', name='ws wrongnet'), WRONG_NETWORK, None),
+        (Candidate(kind='evm_ws', url='wss://mock/auth401', chain='ethereum', name='ws 401'), AUTH_FAIL, None),
+        (Candidate(kind='solana_ws', url='wss://mock/solws', chain='solana', name='sol ws'), OK, None),
+        (Candidate(kind='solana_ws', url='wss://mock/solws-devnet', chain='solana', name='sol ws devnet'), WRONG_NETWORK, None),
+        (Candidate(kind='helius_key', key='goodhelius12345', chain='solana', name='helius ok'), OK, None),
+        (Candidate(kind='helius_key', key='auth401helius', chain='solana', name='helius 401'), AUTH_FAIL, None),
+        (Candidate(kind='etherscan_key', key='goodscan', name='etherscan ok'), OK, None),
+        (Candidate(kind='etherscan_key', key='rlscan', name='etherscan rl'), RATE_LIMITED, None),
+        (Candidate(kind='etherscan_key', key='badscan12345', name='etherscan bad'), AUTH_FAIL, None),
+        (Candidate(kind='birdeye_key', key='goodbird123456', name='birdeye ok'), OK, None),
+        (Candidate(kind='birdeye_key', key='badbird1234567', name='birdeye bad'), AUTH_FAIL, None),
+        (Candidate(kind='goplus_key', key='whoknows123456', name='goplus'), UNTESTED, None),
+    ]
+    print('classification:')
+    cands = [c for c, _, _ in cases]
+    async with MockProber(timeout_s=1.0) as prober:
+        await run_probes(cands, prober, concurrency=8)
+    for cand, want_status, want_logs in cases:
+        check(f'{cand.kind}/{cand.name}', cand.status, want_status)
+        if want_logs is not None:
+            check(f'{cand.kind}/{cand.name} getlogs_ok', cand.getlogs_ok, want_logs)
+    monad = cases[3][0]
+    check('monad soft-id warns', 'accepting with warning' in monad.note, True)
+
+    # ---- slot assignment -------------------------------------------------
+    print('slot assignment:')
+    existing = {1: 'aaa', 2: 'bbb'}
+    assignment, no_room = plan_key_slots(existing, ['bbb', 'ccc', 'ddd'], failed_existing={'aaa'})
+    check('matching key keeps slot 2', assignment.get(2), 'bbb')
+    check('new keys fill empty slots first', (assignment.get(3), assignment.get(4)), ('ccc', 'ddd'))
+    check('healthy-looking slot 1 untouched when empties exist', 1 in assignment, False)
+    check('nothing skipped', no_room, [])
+
+    full = {s: f'key{s}' for s in range(1, MAX_NUMBERED_KEYS + 1)}
+    assignment, no_room = plan_key_slots(full, ['newkey'], failed_existing={'key4'})
+    check('full slots: overwrite only the hard-failed one', assignment, {4: 'newkey'})
+    assignment, no_room = plan_key_slots(full, ['newkey'], failed_existing=set())
+    check('full slots + none failed: key skipped', (assignment, no_room), ({}, ['newkey']))
+
+    # ---- redaction -------------------------------------------------------
+    print('redaction:')
+    red = redact_url('https://mainnet.helius-rpc.com/?api-key=abcdef1234567890')
+    check('helius key redacted', 'abcdef1234567890' not in red and 'abcdef' in red, True)
+    check('host kept readable', 'mainnet.helius-rpc.com' in red, True)
+    red = redact_url('https://eth-mainnet.g.alchemy.com/v2/AbCd1234EfGh5678IjKl')
+    check('alchemy path key redacted', 'AbCd1234EfGh5678IjKl' not in red, True)
+    check('bare key redacted to 6 chars', redact_secret('supersecretkey123'), 'supers…')
+
+    print(f'\nMOCK SELF-TEST: {"PASS" if not failures else "FAIL"} '
+          f'({len(failures)} failure(s))')
+    return 0 if not failures else 1
 
 
 def main() -> int:
