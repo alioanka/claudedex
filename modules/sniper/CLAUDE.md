@@ -386,6 +386,43 @@ monitor in `sniper_engine.py:1059-1067` next wave.
 
 Commit: this Wave-12 sim-cap.
 
+## Wave-F5 listener revival + hard tuning (2026-07-06)
+Per `docs/agents/wave-f5/03_solana_sniper.md`. The Solana listener had been a
+silent zombie since 2026-06-15 (`RPC verification failed` → 0 pools across
+16.9M scans) while the dashboard reported a healthy scanner.
+- **Self-healing listener.** `solana_listener.initialize()` no longer logs one
+  ERROR and returns on a failed `_verify_rpc()`. It hands off to
+  `_startup_supervisor()`, which re-resolves RPC/WSS via
+  `config.rpc_provider.RPCProvider` (pool_engine — reports failure, rotates to
+  a fallback endpoint), retries with exponential backoff (5s→300s), and only
+  starts polling/WSS once verification succeeds. `_stats['listener_status']` =
+  `starting`|`ok`|`rpc_auth_failed`, lifted to top-level
+  `sniper_runtime_stats.listener_status` so a dead scanner stops reading
+  healthy. Failure is LOUD: ERROR at most hourly (`_loud_rpc_failure_log`),
+  plus `rpc_verify_failures` / `rpc_endpoint_rotations` counters.
+- **Trades page fixed.** `dashboard/templates/trades_sniper.html` `applyFilters()`
+  read a nonexistent `filter-side` element (markup has `filter-chain`) →
+  TypeError on every call → permanent "0 of 0". Now reads `filter-chain` and
+  filters on `trade.chain`.
+- **Hard tuning (mig 140, conditional — never clobbers operator overrides):**
+  `test_mode` false, `min_liquidity` 1000→25000, `max_buy_tax`/`max_sell_tax`
+  10→5, `sniper_min_holder_count` 10→50, `sniper_min_token_age_seconds` 30→180,
+  `sniper_min_safety_score` 40→70, `sniper_min_buy_sell_ratio` 1.5→2.0,
+  `sniper_max_dev_holding_pct` 30→15, `trade_amount` 0.1→0.05,
+  `max_active_positions` 500→25, `max_hold_minutes` 0→240, `take_profit_pct`
+  50→100, `stop_loss_pct` 20→15, `sniper_partial_take_pct` 20→30, `chain`
+  all→solana.
+- **NEW entry-only risk knobs (mig 140, implemented in `sniper_engine.py`):**
+  `sniper_max_daily_loss_usd` (default 50) halts NEW entries for the UTC day
+  once realized losses breach it (resets at UTC midnight; realized PnL accrued
+  from both the modeled and live close paths); `sniper_entry_cooldown_seconds`
+  (default 60) enforces minimum spacing between entries. Both gate ENTRIES
+  ONLY — exits are never blocked. Counters: `daily_loss_halted`,
+  `entry_cooldown_skipped`.
+- **RiskManager gate:** `RiskManager.validate_trade` remains wired entry-only
+  fail-soft on the snipe path (`_execute_snipe`, Wave-13/15) — verified still
+  in place; no change needed.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.

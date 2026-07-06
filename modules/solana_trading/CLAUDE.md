@@ -102,3 +102,39 @@ loosened; DRY_RUN untouched.
 - Wave-2 campaign report: `docs/agents/reports/SOLANA_CAMPAIGN.md`.
 - Wave-4 report: `docs/agents/reports/SOLANA_WAVE4.md`.
 - Canonical engine API: `docs/engines.md`.
+
+## Wave-F5 fake-PnL chain closed (2026-07-06)
+Per `docs/agents/wave-f5/03_solana_sniper.md`. The five-bug wrong-denomination
+fake-PnL chain (poisoned quote = real USD × ~5000 → fake +526,608% TP exits,
+mirror −99.98% stops, +1,176 SOL fabricated on the dashboard) is closed. The
+`PriceValidator` (`core/price_validator.py`) is now the single price-trust
+authority. **Contract:**
+- **Validate at fetch, everywhere.** `_scan_jupiter_opportunities` and the
+  `_open_position` metadata/DexScreener entry price now route through
+  `_get_token_price` (validated). A candidate entry that disagrees with the
+  validated quote beyond the hard ratio is discarded — a poisoned quote can no
+  longer fire a fake momentum BUY or seed a poisoned entry.
+- **Seed on open/reconcile, drop on close.** `price_validator.seed(mint,
+  entry_price)` anchors the mint at entry (and on restart reconcile);
+  `.drop(mint)` clears it on full close.
+- **Quorum for hard jumps (bug 3).** A `>hard_jump_ratio` (5x) move can no
+  longer auto-confirm by single-source repetition or via the `lastgood_ttl_s`
+  quiet window. Under `solana_price_quorum_required=true` (default) only
+  cross-source agreement (≥2 independent providers within `CONSISTENCY_BAND`)
+  accepts it; `_get_token_price` fetches a second provider on a held hard jump
+  to corroborate genuine moves. Otherwise it keeps HOLDING the last-good price
+  (a held price can never fire TP/SL).
+- **Void, don't pin (bug 4).** `_save_trade_to_db` no longer pins exit to 50×
+  entry and books `notional×49` phantom profit. An implausible exit/entry is
+  recomputed from the last VALIDATED price (or flat-voided), tagged
+  `metadata.excluded=true` + `exclusion_reason`, raw values kept for audit.
+- **Dashboard honesty (bug 5).** `/api/solana/trades` and the module-overview
+  aggregate exclude `metadata.excluded=true` rows from PnL/win-rate (separate
+  `excluded_count`). tz-aware ISO timestamps no longer emit `+00:00Z`
+  (killed the "NaNm" position ages).
+- **Data repair.** Migration 140 tags historical poisoned rows (pnl_pct ≥ 2000
+  and their mirror −99.98% stops on the same mints) excluded; idempotent,
+  audit-preserving.
+- Config knobs: `solana_price_{soft,hard}_jump_ratio`, `solana_price_{jump,
+  hard_jump}_confirmations`, `solana_price_lastgood_ttl_s`,
+  `solana_price_pending_window_s`, `solana_price_quorum_required`.
