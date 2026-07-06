@@ -454,17 +454,20 @@ class ModuleProcess:
                 except:
                     pass
 
-    async def restart(self):
-        """Restart the module.
-
-        Resets restart_count after RESTART_COUNT_RESET_AFTER seconds of
-        successful uptime so a module that crashes once a week does NOT
+    def maybe_reset_restart_budget(self):
+        """Reset restart_count after RESTART_COUNT_RESET_AFTER seconds since
+        the most recent start, so a module that crashes once a week does NOT
         eventually exhaust its budget over months — only sustained
         crash-restart cycles trip the permanent-failure latch.
+
+        Wave-F5 RC-D1: hoisted out of restart() so the health monitor can
+        evaluate it BEFORE its restart-count gate. Previously the reset was
+        unreachable once the latch hit (gate never called restart() again),
+        leaving a dead module dead forever. Side effect: elapsed time while
+        latched also counts, so a latched module now gets one retry per hour
+        instead of requiring human intervention.
         """
-        # Reset budget if the module has been up long enough since
-        # the most recent restart. self._last_start_ts tracked below.
-        RESTART_COUNT_RESET_AFTER = 3600  # 1 hour uptime resets budget
+        RESTART_COUNT_RESET_AFTER = 3600  # 1 hour since last start resets budget
         last_start = getattr(self, '_last_start_ts', None)
         if last_start is not None and self.restart_count > 0:
             uptime = (datetime.now() - last_start).total_seconds()
@@ -474,6 +477,11 @@ class ModuleProcess:
                     f"resetting restart budget from {self.restart_count}"
                 )
                 self.restart_count = 0
+
+    async def restart(self):
+        """Restart the module. Self-gates on the restart budget
+        (see maybe_reset_restart_budget for the reset semantics)."""
+        self.maybe_reset_restart_budget()
 
         if self.restart_count >= self.max_restarts:
             logger.error(f"❌ {self.name} exceeded max restarts ({self.max_restarts})")
@@ -497,6 +505,9 @@ class TradingBotOrchestrator:
         self.modules: Dict[str, ModuleProcess] = {}
         self.shutdown_event = asyncio.Event()
         self.health_check_interval = 60  # seconds
+        # Wave-F5 RC-D1: rate-limit "failed permanently" to 1/hour/module
+        # (was 26,228 identical lines over 20 days of latched DEX).
+        self._permafail_last_log: Dict[str, datetime] = {}
 
         # Dashboard module - ALWAYS starts first, independent of trading modules
         # This ensures the dashboard is accessible even if trading modules fail
@@ -817,13 +828,24 @@ class TradingBotOrchestrator:
                         continue
 
                     if not module.is_running():
-                        logger.warning(f"⚠️  {module.name} is not running!")
-
-                        # Attempt restart
+                        # Wave-F5 RC-D1: evaluate the uptime-based budget
+                        # reset BEFORE the restart-count gate — it used to
+                        # live only inside restart(), unreachable once the
+                        # latch hit (DEX stayed dead 20 days after 3 OOMs).
+                        module.maybe_reset_restart_budget()
                         if module.restart_count < module.max_restarts:
+                            logger.warning(f"⚠️  {module.name} is not running!")
                             await module.restart()
                         else:
-                            logger.error(f"❌ {module.name} has failed permanently")
+                            now = datetime.now()
+                            last = self._permafail_last_log.get(name)
+                            if last is None or (now - last).total_seconds() >= 3600:
+                                logger.error(
+                                    f"❌ {module.name} has failed permanently "
+                                    f"(restart budget exhausted; touch "
+                                    f"logs/.restart_{name} to force a restart)"
+                                )
+                                self._permafail_last_log[name] = now
 
                     # Check log rotation every 5 health checks (~5 minutes)
                     if log_rotation_counter % 5 == 0:
@@ -943,6 +965,17 @@ class TradingBotOrchestrator:
                         "🔁 Restart flag detected for %s — restarting module",
                         module_key,
                     )
+                    # Wave-F5 RC-D1: an explicit operator flag always clears
+                    # the permanent-failure latch and restart budget, even if
+                    # the module latched less than an hour ago.
+                    if module.restart_count > 0:
+                        logger.info(
+                            "♻️  %s: clearing restart latch/budget (was %d) via flag file",
+                            module_key,
+                            module.restart_count,
+                        )
+                        module.restart_count = 0
+                        self._permafail_last_log.pop(module_key, None)
                     try:
                         await module.restart()
                     except Exception as e:
