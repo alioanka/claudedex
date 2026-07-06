@@ -153,10 +153,33 @@ async def main():
     if not helius_key:
         helius_key = os.getenv('HELIUS_API_KEY')
 
+    # Wave-F5 multi-key: count numbered sibling keys (KEY_2 .. KEY_9 in
+    # secrets/env). pool_engine registers each as its own rotating endpoint
+    # at engine init; this is an honest startup log of what's configured.
+    async def _count_sibling_keys(base: str, have_base: bool) -> int:
+        n = 1 if have_base else 0
+        for i in range(2, 10):
+            name = f"{base}_{i}"
+            v = None
+            try:
+                from security.secrets_manager import secrets as _s
+                v = await _s.get_async(name, log_access=False)
+            except Exception:
+                pass
+            if not v:
+                v = os.getenv(name)
+            if v and v not in ('null', 'None') and not v.startswith('your_'):
+                n += 1
+        return n
+
+    helius_key_count = await _count_sibling_keys('HELIUS_API_KEY', bool(helius_key))
+    etherscan_key_count = await _count_sibling_keys('ETHERSCAN_API_KEY', bool(etherscan_key))
+
     # Resolve the Solana RPC AFTER the Helius key is known. Prefer Helius
     # (paid, high-rate) over any public endpoint so the run-loop stops
-    # getting 429-throttled. PoolEngine is initialised later by the
-    # engine; here we build the Helius RPC URL directly from the key.
+    # getting 429-throttled. This boot-time value is DIAGNOSTIC + last-resort
+    # only: the engine re-resolves its RPC/keys per cycle via pool_engine
+    # (with multi-key rotation), so it is never pinned to this URL.
     solana_rpc = None
     if helius_key:
         solana_rpc = f"https://mainnet.helius-rpc.com/?api-key={helius_key}"
@@ -166,8 +189,14 @@ async def main():
         solana_rpc = os.getenv('SOLANA_RPC_URL')
 
     rpc_is_helius = bool(helius_key) and bool(solana_rpc) and 'helius' in solana_rpc.lower()
-    logger.info(f"   ETHERSCAN_API_KEY: {'SET' if etherscan_key else 'NOT SET - EVM monitoring disabled'}")
-    logger.info(f"   HELIUS_API_KEY: {'SET' if helius_key else 'Not set (optional)'}")
+    logger.info(
+        f"   ETHERSCAN_API_KEY: "
+        f"{f'SET ({etherscan_key_count} key(s), pool-rotated)' if etherscan_key else 'NOT SET - EVM monitoring disabled'}"
+    )
+    logger.info(
+        f"   HELIUS_API_KEY: "
+        f"{f'SET ({helius_key_count} key(s), pool-rotated)' if helius_key else 'Not set (optional)'}"
+    )
     logger.info(
         f"   SOLANA_RPC: {'SET (Helius)' if rpc_is_helius else ('SET (public/fallback)' if solana_rpc else 'NOT SET - Solana monitoring disabled')}"
     )

@@ -10,7 +10,7 @@ Features:
 import asyncio
 import logging
 import json
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import aiohttp
 import os
 import ast
@@ -1803,8 +1803,12 @@ class CopyTradingEngine(BaseModule):
         from modules.copy_trading import discovery_v3
         cfg = await discovery_v3.load_config(self.db_pool)
         # Helius key enables the bounded Solana enrichment source.
+        # Wave-F5: prefer the CURRENT rotated pool key (spreads discovery's
+        # budgeted burn across sibling accounts) over the init-time pins.
+        _pool_key, _ = await self._get_pool_api_key('HELIUS_API')
         cfg.helius_api_key = (
-            getattr(self, 'helius_api_key', None)
+            _pool_key
+            or getattr(self, 'helius_api_key', None)
             or getattr(self.executor, 'helius_api_key', None)
             or None
         )
@@ -2316,7 +2320,13 @@ class CopyTradingEngine(BaseModule):
         """
         trades_copied = 0
 
-        if not self.etherscan_api_key:
+        # Wave-F5: fetch the CURRENT rotated Etherscan key per monitor batch
+        # (60s TTL) instead of pinning the init-time self.etherscan_api_key
+        # for the process lifetime. Fallback keeps single-key behaviour.
+        etherscan_key, etherscan_ref = await self._get_pool_api_key('ETHERSCAN_API')
+        if not etherscan_key:
+            etherscan_key, etherscan_ref = self.etherscan_api_key, None
+        if not etherscan_key:
             return 0
 
         # Filter EVM wallets (may include chain suffix like @base)
@@ -2338,67 +2348,85 @@ class CopyTradingEngine(BaseModule):
                     address, chain_name, chain_id = self._parse_evm_wallet(wallet_with_chain)
                     chain_info = EVM_CHAINS.get(chain_name, EVM_CHAINS['ethereum'])
 
-                    # Use Etherscan V2 API with chain ID
-                    url = (
-                        f"{ETHERSCAN_V2_API}?chainid={chain_id}"
-                        f"&module=account&action=txlist"
-                        f"&address={address}"
-                        f"&startblock=0&endblock=99999999"
-                        f"&page=1&offset=5"  # Only get last 5 txs
-                        f"&sort=desc"
-                        f"&apikey={self.etherscan_api_key}"
-                    )
-
-                    async with session.get(url) as resp:
-                        # Handle rate limiting
-                        if resp.status == 429:
-                            logger.warning(f"⚠️ Etherscan rate limited on {chain_name} - backing off")
-                            try:
-                                await RPCProvider.report_rate_limit('ETHERSCAN_API', 'etherscan.io', 300)
-                            except Exception:
-                                pass
-                            await asyncio.sleep(30)
-                            continue
-
-                        data = await resp.json()
-
-                        # V2 API returns different status format
-                        if data.get('status') == '1' and data.get('result'):
-                            # Leader-lifecycle: result is sort=desc, so the
-                            # first row's timeStamp is the newest activity.
-                            try:
-                                _newest = int(data['result'][0].get('timeStamp') or 0)
-                                if _newest > 0:
-                                    self._record_wallet_activity(wallet_with_chain, float(_newest))
-                            except (ValueError, TypeError, IndexError, AttributeError):
-                                pass
-                            for tx in data['result']:
-                                tx_hash = tx.get('hash')
-
-                                # Skip if already processed
-                                if tx_hash in self._known_tx_hashes:
+                    # Wave-F5: two-attempt fetch — on 429, report the key to
+                    # pool_engine (cools THIS account), refetch the rotated
+                    # sibling key and retry ONCE before backing off.
+                    data = None
+                    for attempt in range(2):
+                        # Use Etherscan V2 API with chain ID
+                        url = (
+                            f"{ETHERSCAN_V2_API}?chainid={chain_id}"
+                            f"&module=account&action=txlist"
+                            f"&address={address}"
+                            f"&startblock=0&endblock=99999999"
+                            f"&page=1&offset=5"  # Only get last 5 txs
+                            f"&sort=desc"
+                            f"&apikey={etherscan_key}"
+                        )
+                        async with session.get(url) as resp:
+                            # Handle rate limiting
+                            if resp.status == 429:
+                                try:
+                                    await RPCProvider.report_key_rate_limit(
+                                        etherscan_ref if etherscan_ref is not None else etherscan_key,
+                                        300,
+                                    )
+                                except Exception:
+                                    pass
+                                new_key, new_ref = await self._get_pool_api_key(
+                                    'ETHERSCAN_API', force_refresh=True)
+                                if attempt == 0 and new_key and new_key != etherscan_key:
+                                    logger.info(
+                                        f"Etherscan 429 on {chain_name} — rotated to sibling key, retrying"
+                                    )
+                                    etherscan_key, etherscan_ref = new_key, new_ref
                                     continue
+                                logger.warning(f"⚠️ Etherscan rate limited on {chain_name} - backing off")
+                                await asyncio.sleep(30)
+                                break
+                            data = await resp.json()
+                            break
 
-                                # Check if recent (last 90 seconds).
-                                # Window was 60s but Etherscan can lag
-                                # up to ~30s and the monitor polls every
-                                # 15s, so a leader tx at T=0 could arrive
-                                # at T=44s (15s poll + 29s Etherscan lag)
-                                # which is still within 90s. Duplicates
-                                # are prevented by _known_tx_hashes.
-                                if int(tx['timeStamp']) > time.time() - 90:
-                                    self._remember_tx_hash(tx_hash)
-                                    # Add chain info to tx for analysis
-                                    tx['_chain'] = chain_name
-                                    tx['_chain_id'] = chain_id
-                                    tx['_chain_symbol'] = chain_info['symbol']
-                                    if await self._analyze_and_copy_evm(tx):
-                                        trades_copied += 1
-                                        logger.info(f"📋 Copied trade on {chain_info['name']}: {tx_hash[:16]}...")
+                    if data is None:
+                        continue
 
-                        elif data.get('message') and 'rate limit' in data.get('message', '').lower():
-                            logger.warning(f"⚠️ Etherscan V2 rate limited on {chain_name}")
-                            await asyncio.sleep(5)
+                    # V2 API returns different status format
+                    if data.get('status') == '1' and data.get('result'):
+                        # Leader-lifecycle: result is sort=desc, so the
+                        # first row's timeStamp is the newest activity.
+                        try:
+                            _newest = int(data['result'][0].get('timeStamp') or 0)
+                            if _newest > 0:
+                                self._record_wallet_activity(wallet_with_chain, float(_newest))
+                        except (ValueError, TypeError, IndexError, AttributeError):
+                            pass
+                        for tx in data['result']:
+                            tx_hash = tx.get('hash')
+
+                            # Skip if already processed
+                            if tx_hash in self._known_tx_hashes:
+                                continue
+
+                            # Check if recent (last 90 seconds).
+                            # Window was 60s but Etherscan can lag
+                            # up to ~30s and the monitor polls every
+                            # 15s, so a leader tx at T=0 could arrive
+                            # at T=44s (15s poll + 29s Etherscan lag)
+                            # which is still within 90s. Duplicates
+                            # are prevented by _known_tx_hashes.
+                            if int(tx['timeStamp']) > time.time() - 90:
+                                self._remember_tx_hash(tx_hash)
+                                # Add chain info to tx for analysis
+                                tx['_chain'] = chain_name
+                                tx['_chain_id'] = chain_id
+                                tx['_chain_symbol'] = chain_info['symbol']
+                                if await self._analyze_and_copy_evm(tx):
+                                    trades_copied += 1
+                                    logger.info(f"📋 Copied trade on {chain_info['name']}: {tx_hash[:16]}...")
+
+                    elif data.get('message') and 'rate limit' in data.get('message', '').lower():
+                        logger.warning(f"⚠️ Etherscan V2 rate limited on {chain_name}")
+                        await asyncio.sleep(5)
 
                 except Exception as e:
                     logger.debug(f"Failed to check EVM wallet {wallet_with_chain}: {e}")
@@ -2419,11 +2447,16 @@ class CopyTradingEngine(BaseModule):
     # ---------------------------------------------------------------------------
     _HELIUS_ENHANCED_TX_LIMIT = 5
 
+    # Wave-F5: distinct sentinel for a 429 so the caller can rotate to a
+    # sibling Helius key and retry once BEFORE falling back to public RPC.
+    _HELIUS_RATE_LIMITED = 'rate_limited'
+
     async def _fetch_wallet_txs_helius(
         self,
         session: aiohttp.ClientSession,
         wallet: str,
         helius_key: str,
+        key_ref=None,
     ) -> Optional[list]:
         """Single Helius REST call returning SWAP-typed enhanced-tx dicts.
 
@@ -2454,10 +2487,17 @@ class CopyTradingEngine(BaseModule):
                     logger.debug("Helius enhanced-tx rate limited (429) — backing off")
                     try:
                         from config.rpc_provider import RPCProvider
-                        await RPCProvider.report_rate_limit('HELIUS_API', 'api.helius.xyz', 60)
+                        # Wave-F5: report against the ACTUAL key/endpoint used
+                        # so pool_engine cools THIS account and rotation hands
+                        # the next call a sibling key. (The old report used the
+                        # literal 'api.helius.xyz' which matched no endpoint —
+                        # a silent no-op, the key never cooled.)
+                        await RPCProvider.report_key_rate_limit(
+                            key_ref if key_ref is not None else helius_key, 60
+                        )
                     except Exception:
                         pass
-                    return None  # transport failure — caller may fall back
+                    return self._HELIUS_RATE_LIMITED  # caller may rotate + retry once
                 if resp.status != 200:
                     logger.debug(
                         f"Helius enhanced-tx non-200 for {wallet[:10]}: {resp.status}"
@@ -2502,6 +2542,41 @@ class CopyTradingEngine(BaseModule):
         except Exception as e:
             logger.debug(f"_resolve_solana_rpc pool_engine lookup failed: {e}")
         return self.solana_rpc_url
+
+    # Wave-F5 multi-key: local TTL on pool_engine key lookups so hot loops
+    # fetch the CURRENT rotated key per call-batch, not per call.
+    _api_key_ttl_s = 60.0
+
+    async def _get_pool_api_key(
+        self, provider_type: str, force_refresh: bool = False
+    ) -> Tuple[Optional[str], Optional[int]]:
+        """(api_key, endpoint_ref) for provider_type via pool_engine rotation.
+
+        Replaces the init-time pinned self.*_api_key caches: a key is held
+        for at most _api_key_ttl_s before the pool is consulted again, so a
+        429-cooled key rotates out mid-process instead of being pinned for
+        the subprocess lifetime. force_refresh=True (call after reporting a
+        429) drops the cache so the NEXT healthy sibling key is fetched.
+        Fail-soft: (None, None) when no key is available anywhere.
+        """
+        import time as _t
+        cache = getattr(self, '_pool_key_cache', None)
+        if cache is None:
+            cache = self._pool_key_cache = {}
+        now = _t.monotonic()
+        if not force_refresh:
+            hit = cache.get(provider_type)
+            if hit and (now - hit[2]) < self._api_key_ttl_s:
+                return hit[0], hit[1]
+        result = None
+        try:
+            result = await RPCProvider.get_api_key(provider_type)
+        except Exception as e:
+            logger.debug(f"_get_pool_api_key({provider_type}) failed: {e}")
+        if result:
+            cache[provider_type] = (result[0], result[1], now)
+            return result[0], result[1]
+        return None, None
 
     async def _space_solana_request(self) -> None:
         """Enforce a minimum gap between consecutive outbound Solana RPC calls.
@@ -2793,15 +2868,16 @@ class CopyTradingEngine(BaseModule):
             return 0
 
         helius_key: Optional[str] = None
+        helius_ref = None
         pool = None
         try:
             from config.pool_engine import PoolEngine
             pool = await PoolEngine.get_instance()
-            helius_ep = await pool.get_endpoint('HELIUS_API')
-            if helius_ep:
-                import urllib.parse as _up
-                parsed = _up.urlparse(helius_ep)
-                helius_key = _up.parse_qs(parsed.query).get('api-key', [None])[0]
+            # Wave-F5: get_api_key returns the rotated healthy key + endpoint
+            # id so 429s can be reported against exactly what was used.
+            res = await pool.get_api_key('HELIUS_API')
+            if res:
+                helius_key, helius_ref = res
         except Exception:
             pass
         if not helius_key:
@@ -2837,15 +2913,12 @@ class CopyTradingEngine(BaseModule):
                 # 4 keys this turns a 33-call burst on one key into ~8 calls per
                 # key — the actual fix for the api.helius.xyz 429 storm. Falls
                 # back to the cycle-level helius_key if the lookup yields nothing.
-                wallet_key = helius_key
+                wallet_key, wallet_ref = helius_key, helius_ref
                 if pool is not None and use_helius:
                     try:
-                        ep = await pool.get_endpoint('HELIUS_API')
-                        if ep:
-                            import urllib.parse as _up
-                            k = _up.parse_qs(_up.urlparse(ep).query).get('api-key', [None])[0]
-                            if k:
-                                wallet_key = k
+                        res = await pool.get_api_key('HELIUS_API')
+                        if res:
+                            wallet_key, wallet_ref = res
                     except Exception:
                         pass
                 # BUG 2: block on the shared token bucket so consecutive
@@ -2858,7 +2931,24 @@ class CopyTradingEngine(BaseModule):
                         pass
                 try:
                     if use_helius:
-                        txs = await self._fetch_wallet_txs_helius(session, wallet, wallet_key)
+                        txs = await self._fetch_wallet_txs_helius(
+                            session, wallet, wallet_key, wallet_ref)
+                        if txs == self._HELIUS_RATE_LIMITED:
+                            # Wave-F5: THIS key just got cooled by the 429
+                            # report — rotate to a sibling account and retry
+                            # ONCE before degrading to the public-RPC poll.
+                            res = None
+                            try:
+                                if pool is not None:
+                                    res = await pool.get_api_key('HELIUS_API')
+                            except Exception:
+                                pass
+                            if res and res[0] != wallet_key:
+                                wallet_key, wallet_ref = res
+                                txs = await self._fetch_wallet_txs_helius(
+                                    session, wallet, wallet_key, wallet_ref)
+                            if txs == self._HELIUS_RATE_LIMITED:
+                                txs = None  # all keys limited — fall back
                         # Wave-16: txs=None means Helius transport failure
                         # (429 / non-200 / timeout) — only then fall back
                         # to the public SOLANA_RPC poll.  txs=[] (success,
