@@ -26,6 +26,7 @@ Wave-21 additions
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Dict, List, Optional
@@ -129,9 +130,13 @@ class AdvisorPortfolioEngine:
             entry_price = (
                 result.entry_low if result.entry_low is not None else result.entry_high
             )
-        if entry_price is None or entry_price <= 0:
+        # Non-finite guard (Wave-F5 fix 3): NaN passes `<= 0` (all NaN
+        # comparisons are False) and would persist as 'NaN'::float8, breaking
+        # the simulations JSON and every later PnL calc.
+        if entry_price is None or not math.isfinite(entry_price) or entry_price <= 0:
             logger.warning(
-                "[portfolio] Cannot open sim for %s: non-positive entry price %s",
+                "[portfolio] Cannot open sim for %s: non-positive/non-finite "
+                "entry price %s",
                 result.symbol, entry_price,
             )
             return None
@@ -253,7 +258,16 @@ class AdvisorPortfolioEngine:
 
         # Guard against poisoned marks: analyzers cache last_price as
         # signals.get("close", 0) — a 0.0 mark would show -100% PnL on a LONG.
-        if current_price is None or current_price <= 0 or sim.entry_price <= 0:
+        # Non-finite marks (NaN/inf) are equally poisonous: NaN passes `<= 0`
+        # and would persist as 'NaN'::float8 (Wave-F5 fix 3).
+        if (
+            current_price is None
+            or not math.isfinite(current_price)
+            or current_price <= 0
+            or sim.entry_price is None
+            or not math.isfinite(sim.entry_price)
+            or sim.entry_price <= 0
+        ):
             logger.debug(
                 "[portfolio] mark_to_market skipped sim#%d: bad price "
                 "(current=%s entry=%s)", sim_id, current_price, sim.entry_price,

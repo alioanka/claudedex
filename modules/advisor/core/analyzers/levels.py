@@ -46,6 +46,8 @@ All multipliers/floors are operator-tunable via advisor_config (migration 067).
 
 from __future__ import annotations
 
+import math
+
 from typing import Optional, Tuple
 
 from modules.advisor.core.models import Direction, Horizon
@@ -167,12 +169,22 @@ def horizon_levels(
     Returns (entry_low, entry_high, target_price, stop_price). target/stop are
     None for a NEUTRAL direction (no actionable trade).
     """
-    close = float(signals.get("close") or 0.0)
-    if close <= 0:
+    # Non-finite guard (Wave-F5 fix 3): a NaN close passes `close <= 0`
+    # (all NaN comparisons are False) and poisons every derived level, which
+    # then persists as 'NaN'::float8 and breaks the dashboard JSON. Reject it.
+    try:
+        close = float(signals.get("close") or 0.0)
+    except (TypeError, ValueError):
+        return None, None, None, None
+    if not math.isfinite(close) or close <= 0:
         return None, None, None, None
 
     hk = _horizon_key(horizon)
     vu = vol_unit_from_signals(signals, config)
+    if not math.isfinite(vu) or vu <= 0:
+        # Defensive: vol_unit_from_signals clamps to [floor, ceiling], but a
+        # non-finite ATR/BB input must never reach the level math.
+        return None, None, None, None
 
     entry_mult = _cfg_float(config, f"levels_entry_mult_{hk}")
     target_mult = _cfg_float(config, f"levels_target_mult_{hk}")

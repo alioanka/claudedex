@@ -24,6 +24,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from enum import Enum
 import json
+import math
 import io
 from pathlib import Path
 import aiohttp
@@ -52,6 +53,34 @@ try:
 except ImportError as e:
     logger.warning(f"Authentication system not available: {e}")
     AUTH_AVAILABLE = False
+
+
+# ===== NaN-safe JSON (Wave-F5 fix 3) =====
+# Python's json.dumps default (allow_nan=True) emits bare NaN/Infinity tokens,
+# which are NOT valid JSON — the browser's res.json() throws SyntaxError and
+# the page dies with "Unexpected token 'N'". Legacy advisor_advice /
+# advisor_sim_positions rows contain 'NaN'::float8 values, so those endpoints
+# must sanitize non-finite floats to null before serializing.
+
+def _json_nan_safe(obj):
+    """Recursively replace non-finite floats (NaN/±Inf) with None."""
+    if isinstance(obj, float):
+        return obj if math.isfinite(obj) else None
+    if isinstance(obj, dict):
+        return {k: _json_nan_safe(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_json_nan_safe(v) for v in obj]
+    return obj
+
+
+def _json_dumps_nan_safe(obj) -> str:
+    """json.dumps that never emits bare NaN/Infinity tokens.
+
+    Sanitizes recursively, then serializes with allow_nan=False as a hard
+    guarantee (any non-finite float that slipped through raises instead of
+    silently producing invalid JSON).
+    """
+    return json.dumps(_json_nan_safe(obj), allow_nan=False)
 
 
 # ===== Universal settings: value_type normalization =====
@@ -18367,13 +18396,15 @@ class DashboardEndpoints:
                             'operator_notes': r['operator_notes'],
                             'created_at': r['created_at'].isoformat() if r['created_at'] else None,
                         })
+            # NaN-safe dumps: legacy rows can hold 'NaN'::float8 levels; a bare
+            # NaN token kills res.json() in the browser (Wave-F5 fix 3).
             return web.json_response({
                 'success': True,
                 'rows': rows,
                 'total': total,
                 'limit': limit,
                 'offset': offset,
-            })
+            }, dumps=_json_dumps_nan_safe)
         except Exception as exc:
             logger.error(f'[advisor] api_get_advisor_advice error: {exc}')
             return web.json_response({'success': False, 'error': str(exc)}, status=500)
@@ -18712,7 +18743,12 @@ class DashboardEndpoints:
                     summary['open_by_market'] = {
                         str(r['market']): int(r['n']) for r in by_mkt
                     }
-            return web.json_response({'success': True, 'rows': rows, 'summary': summary})
+            # NaN-safe dumps: sim rows can hold 'NaN'::float8 entry/current
+            # prices; a bare NaN token kills res.json() (Wave-F5 fix 3).
+            return web.json_response(
+                {'success': True, 'rows': rows, 'summary': summary},
+                dumps=_json_dumps_nan_safe,
+            )
         except Exception as exc:
             logger.error(f'[advisor] api_get_advisor_simulations error: {exc}')
             return web.json_response({'success': False, 'error': str(exc)}, status=500)
