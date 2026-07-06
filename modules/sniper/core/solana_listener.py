@@ -311,16 +311,19 @@ class SolanaListener:
         if self.listener_mode == 'wss':
             logger.info(f"   WSS URL: {(self.wss_url or 'NONE')[:60]}...")
 
-        if not self.rpc_url:
-            logger.error("❌ No RPC URL provided - Solana detection DISABLED")
-            logger.error("   Set SOLANA_RPC_URL in .env or configure Pool Engine")
-            return
+        # Wave-F5: never a permanent zombie. A failed RPC verification (a
+        # rotated Alchemy key, an expired Helius WSS, a transient outage) used
+        # to log one ERROR and `return`, leaving the module scanning nothing
+        # forever while the dashboard reported a healthy listener. Hand off to
+        # a self-healing supervisor task that re-resolves endpoints via
+        # pool_engine and retries with backoff; initialize() returns fast so
+        # engine startup is never blocked on a bad endpoint.
+        self._stats['listener_status'] = 'starting'
+        self._supervisor_task = asyncio.create_task(self._startup_supervisor())
+        logger.info("✅ Solana Listener supervisor started (RPC verify + self-heal)")
 
-        # Verify RPC is working
-        if not await self._verify_rpc():
-            logger.error("❌ RPC verification failed - check your RPC URL")
-            return
-
+    async def _start_listeners(self) -> None:
+        """Start the polling / WSS tasks once the RPC has verified."""
         self.is_running = True
 
         # Create session
@@ -347,7 +350,96 @@ class SolanaListener:
                 self.poll_task = asyncio.create_task(self._run_polling_listener())
         else:
             self.poll_task = asyncio.create_task(self._run_polling_listener())
+        self._stats['listener_status'] = 'ok'
         logger.info("✅ Solana Listener initialized successfully")
+
+    async def _startup_supervisor(self) -> None:
+        """Verify the RPC and, on failure, self-heal by rotating endpoints via
+        pool_engine — retry with exponential backoff instead of giving up.
+
+        Sets listener_status='rpc_auth_failed' while failing (so the dashboard
+        stops showing a healthy scanner) and logs an ERROR at most hourly to
+        keep the failure LOUD without spamming. Exits the loop and starts the
+        listeners the moment a verification succeeds.
+        """
+        backoff = 5.0
+        max_backoff = 300.0
+        attempt = 0
+        while True:
+            attempt += 1
+            if not self.rpc_url:
+                await self._reresolve_endpoints(reason='no_rpc_url')
+
+            if self.rpc_url and await self._verify_rpc():
+                if attempt > 1:
+                    logger.warning(
+                        f"🟢 Solana listener RPC RECOVERED after {attempt} attempt(s) "
+                        f"— resuming detection on {self.rpc_url[:50]}..."
+                    )
+                self._stats['listener_status'] = 'ok'
+                self._stats['rpc_verify_failures'] = 0
+                await self._start_listeners()
+                return
+
+            # Verification failed — surface loudly and self-heal.
+            self._stats['listener_status'] = 'rpc_auth_failed'
+            self._stats['rpc_verify_failures'] = (
+                self._stats.get('rpc_verify_failures', 0) + 1
+            )
+            self._loud_rpc_failure_log(attempt)
+            await self._reresolve_endpoints(reason='verify_failed')
+            await asyncio.sleep(backoff)
+            backoff = min(max_backoff, backoff * 2)
+
+    def _loud_rpc_failure_log(self, attempt: int) -> None:
+        """ERROR at most once per hour; DEBUG in between. Keeps the zombie
+        state visible in logs without flooding them under fast backoff."""
+        now = time.time()
+        msg = (
+            f"❌ Solana listener RPC verification FAILED (attempt {attempt}, "
+            f"{self._stats.get('rpc_verify_failures', 0)} total) — "
+            f"rpc={self.rpc_url[:50] if self.rpc_url else 'NONE'}; "
+            f"self-healing via pool_engine, retrying with backoff. "
+            f"listener_status=rpc_auth_failed (0 pools will be detected until recovery)."
+        )
+        if now - self._last_rpc_error_log_ts >= 3600.0:
+            logger.error(msg)
+            self._last_rpc_error_log_ts = now
+        else:
+            logger.debug(msg)
+
+    async def _reresolve_endpoints(self, reason: str) -> None:
+        """Report the current endpoint failed and rotate to a fresh one via
+        pool_engine (the single source of RPCs). Fail-soft."""
+        try:
+            from config.rpc_provider import RPCProvider
+            if self.rpc_url:
+                try:
+                    await RPCProvider.report_failure(
+                        'SOLANA_RPC', self.rpc_url,
+                        error_type='verify_failed', error_message=reason,
+                    )
+                except Exception:
+                    pass
+            new_url = await RPCProvider.get_rpc('SOLANA_RPC')
+            if not new_url:
+                new_url = RPCProvider.get_rpc_sync('SOLANA_RPC') or self.rpc_url
+            if new_url and new_url != self.rpc_url:
+                logger.warning(
+                    f"🔄 Solana listener rotating RPC endpoint ({reason}): "
+                    f"{new_url[:50]}..."
+                )
+                self.rpc_url = new_url
+                self._stats['rpc_endpoint_rotations'] = (
+                    self._stats.get('rpc_endpoint_rotations', 0) + 1
+                )
+                # Re-derive WSS unless the operator pinned one explicitly.
+                if not os.getenv('SNIPER_SOLANA_WSS_URL', '').strip():
+                    inferred = self._infer_wss_url()
+                    if inferred:
+                        self.wss_url = inferred
+        except Exception as e:
+            logger.debug(f"Solana listener endpoint re-resolve failed ({reason}): {e}")
 
     async def _verify_rpc(self) -> bool:
         """Verify RPC connection is working"""

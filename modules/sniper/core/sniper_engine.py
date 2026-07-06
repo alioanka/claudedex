@@ -1418,6 +1418,12 @@ class SniperEngine:
                 try:
                     sl_stats = getattr(self.solana_listener, '_stats', {}) or {}
                     snapshot['solana_listener'] = dict(sl_stats)
+                    # Wave-F5: lift listener health to the top level so the
+                    # dashboard can show 'rpc_auth_failed' instead of a
+                    # healthy scanner when the listener is a zombie.
+                    snapshot['listener_status'] = sl_stats.get(
+                        'listener_status', 'unknown'
+                    )
                 except Exception:
                     pass
             if hasattr(self, 'evm_listener') and self.evm_listener is not None:
