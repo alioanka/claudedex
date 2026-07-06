@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+
+{% block title %}Polymarket - Performance{% endblock %}
+
+{% block extra_head %}
+<style>
+    .dashboard-container { padding: 20px; }
+    .dashboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 10px; }
+    .dashboard-title { font-size: 2rem; font-weight: 700; color: var(--text-primary); }
+    .dashboard-subtitle { color: var(--text-secondary); font-size: 1rem; margin-top: 4px; }
+    .section-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .section-title { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 14px; }
+    .chart-container { position: relative; height: 300px; }
+    .chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 20px; }
+    @media (max-width: 900px) { .chart-row { grid-template-columns: 1fr; } }
+    .honesty-banner { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.4);
+                      border-radius: 10px; padding: 14px 18px; color: var(--text-primary); margin-bottom: 24px; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .data-table th, .data-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+    .data-table th { color: var(--text-secondary); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
+    .ret-pos { color: #10b981; font-weight: 600; }
+    .ret-neg { color: #dc2626; font-weight: 600; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <div>
+            <div class="dashboard-title"><i class="fas fa-chart-line"></i> Polymarket Performance</div>
+            <div class="dashboard-subtitle">Simulated PnL + forward-outcome scorecard by signal type and horizon</div>
+        </div>
+        <select id="days-select" class="form-select form-select-sm" style="width:auto;" onchange="refreshAll()">
+            <option value="7">7d</option>
+            <option value="30" selected>30d</option>
+            <option value="90">90d</option>
+        </select>
+    </div>
+
+    <div class="honesty-banner">
+        <i class="fas fa-exclamation-triangle"></i>
+        <strong>Honesty note:</strong> the PnL curve is <em>expected edge on simulated arb pairs</em>
+        (size &times; expected_edge_bps), not realized money — no settlement/redemption accounting exists yet.
+        The forward-return table below is the real evidence: it measures whether signals pointed the right way,
+        LATE-marked at 1h/6h/24h in probability points signed by direction.
+    </div>
+
+    <div class="chart-row">
+        <div class="section-card">
+            <div class="section-title"><i class="fas fa-chart-area"></i> Cumulative Simulated PnL (expected)</div>
+            <div class="chart-container"><canvas id="pnlChart"></canvas></div>
+        </div>
+        <div class="section-card">
+            <div class="section-title"><i class="fas fa-bullseye"></i> Win Rate by Type (fwd 24h &gt; 0)</div>
+            <div class="chart-container"><canvas id="winRateChart"></canvas></div>
+        </div>
+    </div>
+
+    <div class="section-card">
+        <div class="section-title"><i class="fas fa-chart-bar"></i> Daily Expected PnL + Trades</div>
+        <div class="chart-container"><canvas id="dailyChart"></canvas></div>
+    </div>
+
+    <div class="section-card">
+        <div class="section-title"><i class="fas fa-table"></i> Outcome-Horizon Scorecard</div>
+        <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:10px;">
+            avg = mean forward return (probability points, direction-signed); hit = share &gt; 0; n = marked signals.
+            Edge-acceptance guidance lives in docs/POLYMARKET_GUIDE.md.
+        </div>
+        <div style="overflow-x:auto;">
+            <table class="data-table">
+                <thead><tr>
+                    <th>Signal Type</th>
+                    <th>n 1h</th><th>avg 1h</th><th>hit 1h</th>
+                    <th>n 6h</th><th>avg 6h</th><th>hit 6h</th>
+                    <th>n 24h</th><th>avg 24h</th><th>hit 24h</th>
+                </tr></thead>
+                <tbody id="horizonBody"><tr><td colspan="10" style="text-align:center;">Loading…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+let pnlChart = null, winRateChart = null, dailyChart = null;
+
+function fmtAvg(v) {
+    if (v === null || v === undefined) return '—';
+    const cls = v > 0 ? 'ret-pos' : (v < 0 ? 'ret-neg' : '');
+    return `<span class="${cls}">${v > 0 ? '+' : ''}${Number(v).toFixed(2)}pp</span>`;
+}
+function fmtHit(v) {
+    if (v === null || v === undefined) return '—';
+    const pct = Number(v) * 100;
+    const cls = pct > 52 ? 'ret-pos' : (pct < 48 ? 'ret-neg' : '');
+    return `<span class="${cls}">${pct.toFixed(1)}%</span>`;
+}
+
+async function refreshAll() {
+    const days = document.getElementById('days-select').value;
+    try {
+        const resp = await fetch('/api/polymarket/performance?days=' + days);
+        const body = await resp.json();
+        if (!body.success) return;
+
+        // Cumulative expected PnL
+        const labels = body.daily_pnl.map(r => r.day.slice(0, 10));
+        if (pnlChart) pnlChart.destroy();
+        pnlChart = new Chart(document.getElementById('pnlChart'), {
+            type: 'line',
+            data: { labels, datasets: [{ label: 'Cumulative expected PnL ($, simulated)',
+                    data: body.daily_pnl.map(r => r.cumulative),
+                    borderColor: '#8b5cf6', backgroundColor: 'rgba(139,92,246,0.1)', fill: true, tension: 0.3 }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'top' } } }
+        });
+
+        // Daily expected PnL bars + trade counts
+        if (dailyChart) dailyChart.destroy();
+        dailyChart = new Chart(document.getElementById('dailyChart'), {
+            type: 'bar',
+            data: { labels, datasets: [
+                { label: 'Expected PnL ($)', data: body.daily_pnl.map(r => r.expected_pnl),
+                  backgroundColor: 'rgba(16,185,129,0.6)', yAxisID: 'y' },
+                { label: 'Arb records', data: body.daily_pnl.map(r => r.trades),
+                  type: 'line', borderColor: '#3b82f6', yAxisID: 'y1', tension: 0.2 },
+            ] },
+            options: { responsive: true, maintainAspectRatio: false,
+                       plugins: { legend: { position: 'top' } },
+                       scales: { y: { position: 'left' },
+                                 y1: { position: 'right', grid: { drawOnChartArea: false }, beginAtZero: true } } }
+        });
+
+        // Win-rate donut (fwd 24h hit rate per type)
+        const ht = body.horizon_table || [];
+        const withHit = ht.filter(r => r.hit_24h !== null && r.n_24h > 0);
+        if (winRateChart) winRateChart.destroy();
+        if (withHit.length) {
+            const colors = { risk_free_arb: '#10b981', momentum: '#3b82f6', new_market: '#f59e0b' };
+            winRateChart = new Chart(document.getElementById('winRateChart'), {
+                type: 'bar',
+                data: {
+                    labels: withHit.map(r => r.signal_type),
+                    datasets: [{ label: 'hit rate 24h (%)',
+                                 data: withHit.map(r => (r.hit_24h * 100).toFixed(1)),
+                                 backgroundColor: withHit.map(r => colors[r.signal_type] || '#8b5cf6') }],
+                },
+                options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                           plugins: { legend: { display: false } },
+                           scales: { x: { min: 0, max: 100 } } }
+            });
+        }
+
+        // Horizon scorecard table
+        const tb = document.getElementById('horizonBody');
+        if (!ht.length) {
+            tb.innerHTML = '<tr><td colspan="10" style="text-align:center;">No outcomes marked yet — requires mig 137 + 24h of engine runtime.</td></tr>';
+        } else {
+            tb.innerHTML = ht.map(r => `
+                <tr>
+                    <td>${r.signal_type}</td>
+                    <td>${r.n_1h}</td><td>${fmtAvg(r.avg_1h)}</td><td>${fmtHit(r.hit_1h)}</td>
+                    <td>${r.n_6h}</td><td>${fmtAvg(r.avg_6h)}</td><td>${fmtHit(r.hit_6h)}</td>
+                    <td>${r.n_24h}</td><td>${fmtAvg(r.avg_24h)}</td><td>${fmtHit(r.hit_24h)}</td>
+                </tr>`).join('');
+        }
+    } catch (e) { /* fail-soft */ }
+}
+
+refreshAll();
+setInterval(refreshAll, 30000);
+</script>
+{% endblock %}
