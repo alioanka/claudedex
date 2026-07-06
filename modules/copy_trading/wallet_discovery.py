@@ -166,60 +166,73 @@ async def fetch_dexscreener_top_traders(
     cfg: DiscoveryConfig,
     rl: _RateLimiter,
 ) -> List[DiscoveredCandidate]:
-    """DexScreener public token-pair endpoint. We use it to fish out
-    the highest-volume tokens per chain, then look up the top buyers
-    of those tokens. This is a coarse proxy for "active traders".
+    """QUARANTINED (Wave-F5). This adapter previously harvested
+    ``pairAddress`` — an AMM **pool contract**, not a trader wallet — plus a
+    ``info.deployerAddress`` field DexScreener does not return, and
+    ``_looks_like_wallet`` could not tell a pool from a wallet. Every row it
+    produced was a junk pool address that scored ~0 and polluted the candidate
+    set. DexScreener has no public top-traders REST endpoint, so this source
+    **can never** produce a wallet.
 
-    No API key required. Rate-limited at 300 req/min upstream — we cap
-    ourselves well below.
+    It now returns [] unconditionally (mock mode still yields deterministic
+    test rows). The volume signal it *can* legitimately provide — top-volume
+    tokens/pools per chain — is exposed by ``fetch_dexscreener_token_pools``
+    and consumed by the v3 ``helius_tokens`` source, which resolves REAL
+    fee-payer wallets from those tokens' recent swaps.
     """
     if cfg.mock:
         return _mock_candidates(chain, SOURCE_DEXSCREENER, cfg)
+    return []
 
-    # DexScreener uses 'solana'/'ethereum'/'base'/'bsc'... directly.
+
+async def fetch_dexscreener_token_pools(
+    session,
+    chain: str,
+    cfg: DiscoveryConfig,
+    rl: _RateLimiter,
+    *,
+    max_tokens: int = 10,
+) -> List[Dict]:
+    """DexScreener public search endpoint → the chain's highest 1h-volume
+    tokens/pools. Returns pool/token metadata (NEVER treated as wallets):
+
+        {chain, token_address, pool_address, symbol, volume_h1}
+
+    No API key required. Used as the token feed for the v3 ``helius_tokens``
+    discovery source, which pulls each token's recent swap txs and aggregates
+    REAL fee-payer wallets across sweeps.
+    """
+    if cfg.mock or session is None:
+        return []
     chain_param = chain.lower()
     url = f"https://api.dexscreener.com/latest/dex/search?q={chain_param}"
     await rl.acquire("api.dexscreener.com")
     data = await _safe_get_json(session, url, timeout=cfg.request_timeout_s)
     if not isinstance(data, dict):
         return []
-
-    candidates: List[DiscoveredCandidate] = []
     pairs = data.get("pairs") or []
     if not isinstance(pairs, list):
         return []
-
-    # Top 10 volume-1h pairs per chain — enough volume signal without
-    # blowing the per-source cap.
     pairs_sorted = sorted(
         [p for p in pairs if isinstance(p, dict) and p.get("chainId") == chain_param],
         key=lambda p: float((p.get("volume") or {}).get("h1") or 0),
         reverse=True,
-    )[:10]
-
-    # DexScreener doesn't expose buyers directly via the public REST
-    # API; the buyer/trader breakdown is on the pair detail page. We
-    # capture the pair's `pairCreatedAt` deployer / top-volume signal
-    # as a candidate when the upstream returns one.
+    )[: max(1, int(max_tokens))]
+    out: List[Dict] = []
     for p in pairs_sorted:
-        # Deployer / liquidity-provider address (top-of-stack signal).
-        deployer = (p.get("info") or {}).get("imageUrl") and None  # unused
-        for key in ("pairAddress", "deployerAddress"):
-            addr = p.get(key) if key != "deployerAddress" else (
-                (p.get("info") or {}).get("deployerAddress")
-            )
-            if isinstance(addr, str) and _looks_like_wallet(addr, chain):
-                candidates.append(DiscoveredCandidate(
-                    chain=chain,
-                    wallet_address=addr,
-                    source=SOURCE_DEXSCREENER,
-                    label=(p.get("baseToken") or {}).get("symbol"),
-                    raw={"pair": p.get("pairAddress"), "volume_h1": (p.get("volume") or {}).get("h1")},
-                ))
-        if len(candidates) >= cfg.max_candidates_per_source:
-            break
-
-    return candidates[: cfg.max_candidates_per_source]
+        base = p.get("baseToken") or {}
+        token_addr = base.get("address")
+        pool_addr = p.get("pairAddress")
+        if not isinstance(token_addr, str):
+            continue
+        out.append({
+            "chain": chain,
+            "token_address": token_addr,
+            "pool_address": pool_addr if isinstance(pool_addr, str) else None,
+            "symbol": base.get("symbol"),
+            "volume_h1": float((p.get("volume") or {}).get("h1") or 0),
+        })
+    return out
 
 
 async def fetch_birdeye_top_traders(
