@@ -49,12 +49,11 @@ logger.addHandler(error_handler)
 console = logging.StreamHandler()
 console.setFormatter(log_formatter)
 logger.addHandler(console)
+# Sub-loggers are children of "PolymarketModule" — records propagate to the
+# parent's handlers automatically. Attaching the same handlers again wrote
+# every sub-logger line TWICE (wave-F5 BUG-6); level-only setup is enough.
 for sub in ("PolymarketModule.Gamma", "PolymarketModule.Executor"):
-    sub_logger = logging.getLogger(sub)
-    sub_logger.setLevel(logging.INFO)
-    sub_logger.addHandler(main_handler)
-    sub_logger.addHandler(error_handler)
-    sub_logger.addHandler(console)
+    logging.getLogger(sub).setLevel(logging.INFO)
 
 from modules.polymarket.gamma_client import GammaClient, DEFAULT_GAMMA_BASE_URL  # noqa: E402
 from modules.polymarket.strategies import detect_risk_free_arb, score_momentum  # noqa: E402
@@ -105,6 +104,10 @@ class PolymarketEngine:
         self._prev_yes_prices: dict = {}
         self._prev_seen_at = None
         self._last_recorded: dict = {}  # (signal_type, market_id) -> monotonic ts
+        # market_id -> (direction, monotonic ts) of the last RECORDED momentum
+        # signal; a direction flip inside the cooldown window is suppressed
+        # (wave-F5: in-play books flip YES/NO within minutes — that is noise).
+        self._last_momentum_dir: dict = {}
         self.stats = {
             'cycles': 0, 'markets_seen': 0, 'arb_signals': 0,
             'momentum_signals': 0, 'last_cycle_at': None, 'last_error': None,
@@ -121,6 +124,22 @@ class PolymarketEngine:
         self._last_recorded[key] = now
         if len(self._last_recorded) > 5000:
             self._last_recorded.clear()
+        return False
+
+    def _flip_suppressed(self, market_id: str, direction: str) -> bool:
+        """True if this momentum signal flips direction inside the cooldown.
+
+        Cooldown counts from the last RECORDED signal, so a market that keeps
+        flip-flopping stays suppressed until it holds one direction long enough.
+        """
+        cooldown_s = float(self.config.get('momentum_flip_cooldown_minutes', 30)) * 60.0
+        now = time.monotonic()
+        last = self._last_momentum_dir.get(market_id)
+        if last is not None and last[0] != direction and (now - last[1]) < cooldown_s:
+            return True
+        self._last_momentum_dir[market_id] = (direction, now)
+        if len(self._last_momentum_dir) > 5000:
+            self._last_momentum_dir.clear()
         return False
 
     async def _save_signal(self, sig: dict) -> None:
@@ -166,6 +185,8 @@ class PolymarketEngine:
             markets,
             min_edge_bps=float(self.config.get('min_arb_edge_bps', 100)),
             fee_gas_buffer_bps=float(self.config.get('fee_gas_buffer_bps', 100)),
+            min_liquidity_usd=float(self.config.get('arb_min_liquidity_usd', 1000)),
+            max_edge_bps=float(self.config.get('arb_max_edge_bps', 500)),
         )
         for sig in arbs:
             if self._throttled('risk_free_arb', sig['market_id']):
@@ -189,14 +210,20 @@ class PolymarketEngine:
             )
 
         # (b) Event-momentum ADVICE signals (never traded automatically).
+        exclude_raw = str(self.config.get('momentum_exclude_categories', '') or '')
         moms = score_momentum(
             markets, self._prev_yes_prices, self._prev_seen_at,
             min_liquidity_usd=float(self.config.get('momentum_min_liquidity_usd', 10000)),
             min_volume_24h_usd=float(self.config.get('momentum_min_volume_24h_usd', 5000)),
             min_move_frac=float(self.config.get('momentum_min_move_frac', 0.05)),
             min_score=float(self.config.get('momentum_min_score', 0.3)),
+            exclude_categories={c.strip() for c in exclude_raw.split(',') if c.strip()},
+            new_market_max_age_hours=float(self.config.get('new_market_max_age_hours', 24)),
         )
         for sig in moms:
+            if (sig['signal_type'] == 'momentum'
+                    and self._flip_suppressed(sig['market_id'], sig['direction'])):
+                continue
             if self._throttled(sig['signal_type'], sig['market_id']):
                 continue
             self.stats['momentum_signals'] += 1

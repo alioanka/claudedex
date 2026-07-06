@@ -100,6 +100,9 @@ def parse_market(raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         "volume_24h": _as_float(raw.get("volume24hr")) or 0.0,
         "liquidity": _as_float(raw.get("liquidity")) or 0.0,
         "end_date": raw.get("endDate"),
+        # Creation timestamp (ISO string) — lets strategies verify a market is
+        # actually NEW instead of merely re-entering the top-volume window.
+        "created_at": raw.get("createdAt") or raw.get("startDate"),
         "active": bool(raw.get("active", False)),
         "closed": bool(raw.get("closed", False)),
     }
