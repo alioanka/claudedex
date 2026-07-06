@@ -106,6 +106,15 @@ explicitly-reviewed change.
 
 ## Logs
 `logs/basis_desk/` — `basis_desk.log` (all), `basis_desk_errors.log` (ERROR+).
+Wave-F5 observability fix: 20 days of `basis_carry_suggestions` 0-rows were
+unverifiable because venue-fetch exceptions swallowed by
+`asyncio.gather(return_exceptions=True)` were never logged and non-actionable
+plans logged only at DEBUG. Every cycle now emits one INFO summary —
+`basis tick: venues={bybit: ok:6, binance: error:TimeoutError} quotes=N
+actionable=N rejects={no_funding_edge: 8, ...} best=...` — and swallowed
+venue exceptions log at WARNING rate-limited to 1/venue/hour. Re-verdict
+rule: `venues=..ok..` with 0 actionable = working-by-design (funding does
+not clear the ~44bps cost model); persistent `error:` = broken fetch.
 
 ## DB tables (migration 131)
 - `basis_carry_suggestions` — advisory ledger, `is_simulated` default TRUE;
