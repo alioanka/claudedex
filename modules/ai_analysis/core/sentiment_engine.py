@@ -2230,7 +2230,13 @@ class SentimentEngine:
 
             amount = position['amount']
             entry_usd = position['amount_usd']
-            unrealized_usd = (amount * current_price) - entry_usd
+            # Wave-F5 SHORT-PnL sign fix: mirror the close-path fix for the live
+            # unrealized write. The LONG formula (mark*amount - entry_usd)
+            # inverted open SHORT positions' profit_loss on the dashboard.
+            if side == 'buy':
+                unrealized_usd = (amount * current_price) - entry_usd
+            else:
+                unrealized_usd = entry_usd - (amount * current_price)
 
             # Wave-16: write live PnL to ai_trades so the dashboard shows a
             # non-zero current value for open positions.  profit_loss stores
@@ -2352,7 +2358,18 @@ class SentimentEngine:
                     entry_price = position['entry_price']
                     entry_usd = position['amount_usd']
                     exit_usd = amount * exit_price
-                    pnl_usd = exit_usd - entry_usd
+                    # Wave-F5 SHORT-PnL sign fix (root cause): pnl_usd was
+                    # `exit_usd - entry_usd` (the LONG formula) for ALL sides,
+                    # so SHORT trades stored an inverted profit_loss (a short
+                    # that fell in price booked a loss). profit_loss_pct was
+                    # already side-aware; only this USD write was wrong. Make it
+                    # side-aware so the stored column is honest for every
+                    # downstream consumer (dashboard, rollups, orchestrator/meta
+                    # scoring). SHORT profit = entry_usd - exit_usd.
+                    if str(side).lower() in ('sell', 'short'):
+                        pnl_usd = entry_usd - exit_usd
+                    else:
+                        pnl_usd = exit_usd - entry_usd
 
                     async with self.db_pool.acquire() as conn:
                         await conn.execute("""
