@@ -1540,9 +1540,11 @@ class DashboardEndpoints:
                 jinja_env=self.jinja_env,
             )
             tr.setup_routes(self.app)
-            # GET /test-runner — render the page template.
+            # GET /test-runner — render the page template. Wave-F5:
+            # admin-gated dev/QA tool, no longer in the main sidebar
+            # (reach it by URL).
             self.app.router.add_get(
-                '/test-runner', require_auth(self._test_runner_page)
+                '/test-runner', require_auth(require_admin(self._test_runner_page))
             )
             logger.info("✅ Test Runner routes initialized")
         except Exception as e:
@@ -5791,14 +5793,12 @@ class DashboardEndpoints:
         )
 
     async def global_settings_page(self, request):
-        """Global settings editor page. Distinct from /settings (account
-        settings) — base.html nav uses page='global_settings' to
-        highlight it."""
-        template = self.jinja_env.get_template('global_settings.html')
-        return web.Response(
-            text=template.render(page='global_settings'),
-            content_type='text/html'
-        )
+        """Retired page — 302 to the generic settings engine (Wave-F5).
+        Its raw accordion duplicated /config; its unique Allocation-Guard
+        panel edited allocation_guard_config keys, which the typed
+        /config/allocation_guard_config editor covers with inline docs
+        and audit trail."""
+        raise web.HTTPFound('/config/allocation_guard_config')
 
     async def pro_controls_page(self, request):
         """Retired page — 302 to /modules (Wave-F5 IA consolidation).

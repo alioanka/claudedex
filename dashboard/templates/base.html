@@ -1233,15 +1233,10 @@
                  sidebar entry is at the top); both old URLs 302 there
                  and the unique Manual-Trade panel moved to /modules. -->
 
-            <!-- Global Settings -->
-            <li class="nav-item {% if page == 'global_settings' %}active{% endif %}">
-                <a href="/global-settings">
-                    <i class="fas fa-globe"></i>
-                    <span>Global Settings</span>
-                </a>
-            </li>
-
-            <!-- Universal Settings (every config_type, self-documenting) -->
+            <!-- Universal Settings (every config_type, self-documenting).
+                 Wave-F5: /global-settings retired — its accordion
+                 duplicated this page; its Allocation-Guard keys live at
+                 /config/allocation_guard_config (old URL 302s there). -->
             <li class="nav-item {% if page == 'generic_settings' %}active{% endif %}">
                 <a href="/config">
                     <i class="fas fa-list-check"></i>
@@ -1297,15 +1292,8 @@
                 </a>
             </li>
 
-            <!-- Test Runner — one-screen verification for session-18
-                 fixes; bundles UI clones, scripts, API probes, DB
-                 probes, and a Copy-All-Results button. -->
-            <li class="nav-item {% if page == 'test_runner' %}active{% endif %}">
-                <a href="/test-runner">
-                    <i class="fas fa-vial"></i>
-                    <span>Test Runner</span>
-                </a>
-            </li>
+            <!-- Test Runner (dev/QA) demoted out of the main sidebar in
+                 Wave-F5 — still reachable at /test-runner (admin-only). -->
 
             <!-- Backtest Replay — Phase 4A counterfactual simulator. -->
             <!-- Orchestrator AI + Allocation merged into /proposals
