@@ -166,3 +166,24 @@ VALUES ('ai_config', 'ai_confirmation_signal_enabled', 'true', 'bool',
         'new paid API calls.',
         NOW(), NOW())
 ON CONFLICT (config_type, key) DO NOTHING;
+
+-- ─────────────────────────────────────────────────────────────────────────
+-- AI historical SHORT-PnL correction (data backfill for the root-cause fix in
+-- modules/ai_analysis/core/sentiment_engine.py). The close-path wrote
+-- profit_loss = exit_usd - entry_usd (the LONG formula) for ALL sides, so
+-- closed SHORT rows stored a SIGN-INVERTED profit_loss. profit_loss_pct was
+-- already side-aware and is LEFT UNTOUCHED.
+--
+-- IDEMPOTENT BY CONSTRUCTION: we RECOMPUTE from prices rather than flipping the
+-- sign (a sign-flip would re-corrupt on a second run). SHORT profit =
+-- (entry_price - exit_price) * amount. Re-running yields the same value, and
+-- rows already fixed by the corrected engine recompute to the same number.
+-- Longs are excluded (their stored value was already correct). Only rows with
+-- the price/amount inputs present are touched.
+UPDATE ai_trades
+   SET profit_loss = (entry_price - exit_price) * amount
+ WHERE status = 'closed'
+   AND LOWER(COALESCE(side, 'buy')) IN ('sell', 'short')
+   AND entry_price IS NOT NULL
+   AND exit_price  IS NOT NULL
+   AND amount      IS NOT NULL;
