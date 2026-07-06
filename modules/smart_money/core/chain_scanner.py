@@ -49,6 +49,33 @@ DEFAULT_ANCHOR_TOKEN = {
 _GETLOGS_CHUNK_BLOCKS = 450          # stay under public-RPC getLogs range caps
 _DECIMALS_SELECTOR = "0x313ce567"    # decimals()
 
+# getLogs degradation visibility (Wave-F5): free-tier RPCs (the known Ankr
+# limitation) reject eth_getLogs over address+topic ranges, and the failure
+# was SILENT — 228/228 ticks on ethereum/arbitrum reported pairs>0 swaps=0
+# with no log line. WARN at most once/hour per chain; NO behavior change.
+_GETLOGS_WARN_INTERVAL_S = 3600.0
+_getlogs_warn_at: Dict[str, float] = {}
+_empty_scan_streak: Dict[str, int] = {}
+_EMPTY_SCAN_WARN_THRESHOLD = 24      # ~2h of consecutive all-empty 5-min scans
+
+
+def _warn_getlogs_degraded(chain: str, detail: str) -> None:
+    """Rate-limited (1/chain/hour) WARNING naming the RPC limitation and the
+    operator action. Logging only — the scan already fail-softs."""
+    now = time.monotonic()
+    last = _getlogs_warn_at.get(chain)
+    if last is not None and (now - last) < _GETLOGS_WARN_INTERVAL_S:
+        logger.debug("ingest[%s]: getLogs degraded (%s; suppressed repeat)",
+                     chain, detail)
+        return
+    _getlogs_warn_at[chain] = now
+    logger.warning(
+        "ingest[%s]: %s — free-tier RPCs reject or blank eth_getLogs over "
+        "address+topic ranges (known Ankr limitation), so this chain ingests "
+        "0 swaps while pair discovery succeeds. Operator action: point %s at "
+        "a getLogs-capable endpoint (Alchemy/dRPC) in /settings/rpc-api. "
+        "(warned at most once/hour)", chain, detail, chain)
+
 # (chain, token) -> decimals; tokens are few (watched pairs only), cache forever
 _decimals_cache: Dict[tuple, int] = {}
 
@@ -291,6 +318,7 @@ async def scan_chain(session, pool_engine, chain: str, pairs: List[dict],
     raw_swaps: List[dict] = []
 
     frm = start
+    saw_logs = False
     while frm <= head:
         to = min(frm + _GETLOGS_CHUNK_BLOCKS - 1, head)
         logs = await _rpc(session, pool_engine, chain, "eth_getLogs", [{
@@ -299,7 +327,12 @@ async def scan_chain(session, pool_engine, chain: str, pairs: List[dict],
             "topics": [[V2_SWAP_TOPIC, V3_SWAP_TOPIC]],
         }])
         if logs is None:
+            _warn_getlogs_degraded(
+                chain, f"eth_getLogs error over blocks {frm}-{to} "
+                       f"({len(pair_meta)} watched pairs)")
             return [], cursor       # keep cursor; retry the range next tick
+        if logs:
+            saw_logs = True
         for log in logs:
             meta = pair_meta.get((log.get("address") or "").lower())
             if not meta:
@@ -326,6 +359,19 @@ async def scan_chain(session, pool_engine, chain: str, pairs: List[dict],
                 "log_index": int(log.get("logIndex", "0x0"), 16),
             })
         frm = to + 1
+
+    # Consistently-empty detection: some providers return 200 + [] instead of
+    # an error for capped getLogs queries. Pair discovery succeeding while
+    # EVERY scan comes back log-free for hours is the same RPC limitation.
+    if not saw_logs:
+        streak = _empty_scan_streak.get(chain, 0) + 1
+        _empty_scan_streak[chain] = streak
+        if streak >= _EMPTY_SCAN_WARN_THRESHOLD:
+            _warn_getlogs_degraded(
+                chain, f"0 Swap logs in {streak} consecutive scans despite "
+                       f"{len(pair_meta)} watched pairs")
+    else:
+        _empty_scan_streak[chain] = 0
 
     # Wallet attribution: largest swaps first, capped by the RPC budget.
     raw_swaps.sort(key=lambda s: s["amount_usd"], reverse=True)
