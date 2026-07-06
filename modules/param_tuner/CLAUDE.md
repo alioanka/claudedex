@@ -88,6 +88,19 @@ Seeded registry (all documented non-risk entry-side knobs): DEX
 `trading/min_vol_liq_ratio` [0.01, 0.50], AI `ai_config/confidence_threshold`
 [0.20, 0.60], SNIPER `sniper_config/max_hold_minutes` [15, 240].
 
+Wave-F5 retargeting (mig 143): the three mig-129 targets closed ~0 trades
+per 6h reward window, so the bandit was reward-starved (arms at `pulls: 0`,
+`proposed=0` since Jun 16 — correct behavior, wrong knobs). Mig 143
+conditionally appends two tunables owned by the modules that DO close
+trades: FUTURES `futures_risk/atr_tp_rr_ratio` [0.8, 2.0] (TP R:R multiple —
+a target knob; stop/leverage keys remain hard-excluded in code) and SOLANA
+`solana_jupiter/jupiter_auto_exit` [0, 14400] (time-based exit seconds, the
+solana analogue of sniper max_hold_minutes). Both target rows are seeded at
+their exact code defaults (2.0 / 0) so the seed changes no runtime behavior;
+the registry append only runs while the registry is still exactly the three
+mig-129 entries (operator edits are never clobbered). Shadow-only posture
+unchanged: `auto_apply_enabled` stays false.
+
 ## Kill switch
 - Global: `logs/.killswitch` — tick skipped; auto-apply additionally re-checks
   it at the apply boundary.
