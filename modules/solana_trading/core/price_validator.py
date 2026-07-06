@@ -85,6 +85,7 @@ class PriceValidator:
         hard_jump_confirmations: int = 3,
         lastgood_ttl_s: float = 600.0,
         pending_window_s: float = 120.0,
+        quorum_required: bool = True,
     ):
         self._last_good: Dict[str, _LastGood] = {}
         self._pending: Dict[str, _Pending] = {}
@@ -95,6 +96,7 @@ class PriceValidator:
             hard_jump_confirmations=hard_jump_confirmations,
             lastgood_ttl_s=lastgood_ttl_s,
             pending_window_s=pending_window_s,
+            quorum_required=quorum_required,
         )
 
     def configure(
@@ -105,6 +107,7 @@ class PriceValidator:
         hard_jump_confirmations: Optional[int] = None,
         lastgood_ttl_s: Optional[float] = None,
         pending_window_s: Optional[float] = None,
+        quorum_required: Optional[bool] = None,
     ) -> None:
         """Update thresholds; clamps keep operator typos from disabling
         the guard entirely (soft >= 1.2, hard >= soft, confirmations >= 1)."""
@@ -122,6 +125,8 @@ class PriceValidator:
             self.lastgood_ttl_s = max(30.0, float(lastgood_ttl_s))
         if pending_window_s is not None:
             self.pending_window_s = max(10.0, float(pending_window_s))
+        if quorum_required is not None:
+            self.quorum_required = bool(quorum_required)
 
     # ------------------------------------------------------------------
     def seed(self, mint: str, price: float, source: str = "entry") -> None:
@@ -172,8 +177,29 @@ class PriceValidator:
 
         lg = self._last_good.get(mint)
 
-        # No anchor, or anchor too stale to be meaningful -> accept.
-        if lg is None or (now - lg.ts) > self.lastgood_ttl_s:
+        # No anchor -> accept (nothing to compare against yet).
+        if lg is None:
+            self._last_good[mint] = _LastGood(price=price, ts=now, source=source)
+            self._pending.pop(mint, None)
+            return price, True
+
+        ratio = price / lg.price if price >= lg.price else lg.price / price
+
+        # Anchor too stale to be meaningful. Under quorum, a stale anchor must
+        # NOT auto-accept a HARD jump: a wrong-denomination feed that echoes
+        # the same poisoned value would otherwise wedge through after the ttl
+        # quiet window and fire a fake exit. Keep holding the (stale) last-good
+        # for hard jumps — a held price can never trip TP/SL — and only auto-
+        # accept quotes within the hard band. (Wave-F5 bug-3.)
+        if (now - lg.ts) > self.lastgood_ttl_s:
+            if self.quorum_required and ratio > self.hard_jump_ratio:
+                logger.warning(
+                    "🛑 price-validator: last-good for %s is %.0fs old but incoming "
+                    "quote is a %.1fx HARD jump from %s ($%.10g) — quorum on: holding "
+                    "stale last-good $%.10g, marking price_stale (no exit can fire)",
+                    mint[:8], now - lg.ts, ratio, source, price, lg.price,
+                )
+                return lg.price, False
             if lg is not None:
                 logger.info(
                     "🧭 price-validator: last-good for %s is %.0fs old (> ttl %.0fs) — "
@@ -183,8 +209,6 @@ class PriceValidator:
             self._last_good[mint] = _LastGood(price=price, ts=now, source=source)
             self._pending.pop(mint, None)
             return price, True
-
-        ratio = price / lg.price if price >= lg.price else lg.price / price
 
         if ratio <= self.soft_jump_ratio:
             self._last_good[mint] = _LastGood(price=price, ts=now, source=source)
@@ -211,15 +235,25 @@ class PriceValidator:
         if ratio <= self.hard_jump_ratio:
             needed = self.jump_confirmations
         else:
-            # Hard jump: cross-source agreement counts as strong evidence
-            # (a denomination bug is source-specific).
-            needed = (
-                self.jump_confirmations
-                if len(pend.sources) > 1
-                else self.hard_jump_confirmations
-            )
+            # Hard jump (>hard_jump_ratio). A wrong-denomination bug is
+            # source-specific and echoes the SAME value every poll, so
+            # repetition from ONE source is not evidence the move is real —
+            # it is exactly the poison signature. Under quorum (default on)
+            # a hard jump may ONLY be accepted with cross-source agreement
+            # (>=2 independent sources within CONSISTENCY_BAND); a single
+            # source can never confirm it by count, so it holds the last-good
+            # forever and no fake +500k% TP / mirror -99.98% stop can fire.
+            # (Wave-F5 bug-3.)
+            if self.quorum_required and len(pend.sources) <= 1:
+                needed = None  # unreachable — single-source hard jump held
+            else:
+                needed = (
+                    self.jump_confirmations
+                    if len(pend.sources) > 1
+                    else self.hard_jump_confirmations
+                )
 
-        if pend.count >= needed:
+        if needed is not None and pend.count >= needed:
             logger.warning(
                 "🧭 price-validator: CONFIRMED %.1fx jump for %s — $%.10g -> $%.10g "
                 "after %d consistent reading(s) from %s; accepting",
@@ -230,11 +264,12 @@ class PriceValidator:
             self._pending.pop(mint, None)
             return price, True
 
+        needed_str = "quorum" if needed is None else str(needed)
         logger.warning(
             "🛑 price-validator: REJECTED unconfirmed %.1fx jump for %s — source=%s "
             "returned $%.10g vs last-good $%.10g (from %s, %.0fs ago); "
-            "holding last-good (%d/%d confirmations)",
+            "holding last-good (%d/%s confirmations, sources=%s)",
             ratio, mint[:8], source, price, lg.price, lg.source or "?",
-            now - lg.ts, pend.count, needed,
+            now - lg.ts, pend.count, needed_str, "/".join(sorted(pend.sources)),
         )
         return lg.price, False

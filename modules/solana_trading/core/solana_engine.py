@@ -3924,6 +3924,9 @@ class SolanaTradingEngine:
                 hard_jump_confirmations=int(cm.get('solana_price_hard_jump_confirmations', 3)),
                 lastgood_ttl_s=float(cm.get('solana_price_lastgood_ttl_s', 600)),
                 pending_window_s=float(cm.get('solana_price_pending_window_s', 120)),
+                quorum_required=str(
+                    cm.get('solana_price_quorum_required', True)
+                ).lower() in ('true', '1', 'yes'),
             )
         except Exception as exc:
             logger.debug(f"price-validator config refresh failed: {exc}")
@@ -3969,7 +3972,57 @@ class SolanaTradingEngine:
         if not accepted:
             self.jupiter_client._price_cache.pop(token_mint, None)
             self.jupiter_client._price_cache_time.pop(token_mint, None)
+            # Wave-F5 bug-3: a HELD hard jump under quorum needs a SECOND
+            # independent source to agree before it can be accepted. Fetch one
+            # explicitly (different provider than `source`) and re-validate
+            # with its own tag so a GENUINE large move confirms via cross-
+            # source quorum, while a source-specific denomination bug stays
+            # rejected. Bounded to the rare pending-jump case.
+            corroborated = await self._corroborate_price(token_mint, float(raw), source)
+            if corroborated is not None:
+                validated2, accepted2 = self.price_validator.validate(
+                    token_mint, corroborated, self._corroboration_source_for(source)
+                )
+                if accepted2:
+                    return validated2
         return validated
+
+    def _corroboration_source_for(self, primary_source: str) -> str:
+        """Pick a source tag distinct from the primary so the validator sees
+        two independent providers (quorum). Just a label — the actual fetch
+        is done in _corroborate_price."""
+        return 'coingecko' if primary_source != 'coingecko' else 'jupiter'
+
+    async def _corroborate_price(
+        self, token_mint: str, candidate: float, primary_source: str
+    ) -> Optional[float]:
+        """Fetch a price from a provider OTHER than primary_source and return
+        it only if it agrees with `candidate` within the validator's
+        consistency band (so it is genuine corroboration, not a fresh guess).
+        Fail-soft: any error / no alternate source -> None (stays rejected)."""
+        try:
+            jc = self.jupiter_client
+            session = await jc._get_session()
+            alt = None
+            # Prefer CoinGecko (independent of DexScreener/Jupiter); fall back
+            # to Jupiter's own price API when the mint has no CoinGecko id.
+            if primary_source != 'coingecko' and token_mint in getattr(jc, 'COINGECKO_IDS', {}):
+                alt = await jc._get_price_coingecko(session, token_mint)
+            if (alt is None or alt <= 0) and primary_source != 'jupiter':
+                alt = await jc._get_price_jupiter(session, token_mint)
+            if (alt is None or alt <= 0) and primary_source != 'dexscreener':
+                alt = await jc._get_price_dexscreener(session, token_mint)
+            if alt is None or alt <= 0:
+                return None
+            hi = max(alt, candidate)
+            lo = min(alt, candidate)
+            band = 1.0 + self.price_validator.CONSISTENCY_BAND
+            if lo > 0 and (hi / lo) <= band:
+                return float(alt)
+            return None
+        except Exception as exc:
+            logger.debug(f"price corroboration failed for {token_mint[:8]}: {exc}")
+            return None
 
     async def _late_confirm_rescue(self, token_symbol: str) -> Optional[str]:
         """Recheck a broadcast-but-unconfirmed buy before declaring it failed.
