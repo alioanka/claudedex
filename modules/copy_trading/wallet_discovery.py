@@ -153,22 +153,48 @@ class DiscoveredCandidate:
 # -----------------------------------------------------------------------
 
 
+async def _pool_rotated_key(provider_type: str, fallback: Optional[str]) -> Optional[str]:
+    """Wave-F5 multi-key: CURRENT rotated key from pool_engine for this
+    provider, falling back to the static cfg key. Fetching per call (not at
+    cfg build time) means a 429-cooled account rotates out mid-sweep and
+    sibling keys share the quota burn. Fail-soft."""
+    try:
+        from config.rpc_provider import RPCProvider
+        res = await RPCProvider.get_api_key(provider_type)
+        if res and res[0]:
+            return res[0]
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[discovery] pool key lookup {provider_type} failed: {e}")
+    return fallback
+
+
 async def _safe_get_json(
     session,
     url: str,
     *,
     headers: Optional[Dict[str, str]] = None,
     timeout: float = DEFAULT_DISCOVERY_TIMEOUT_S,
+    rate_limit_key: Optional[str] = None,
 ) -> Optional[object]:
     """Bounded GET → JSON. Returns None on any failure mode so callers
     can `if data is None: return []` without re-implementing the
-    try/except dance."""
+    try/except dance.
+
+    rate_limit_key: when set, an HTTP 429 is reported to pool_engine against
+    that API key so the offending account cools and rotation hands the next
+    call a sibling key (fail-soft no-op when the pool isn't running)."""
     if session is None:
         return None
     host = url.split("/")[2] if "://" in url else url
     try:
         async with session.get(url, headers=headers or {}, timeout=timeout) as resp:
             if resp.status != 200:
+                if resp.status == 429 and rate_limit_key:
+                    try:
+                        from config.rpc_provider import RPCProvider
+                        await RPCProvider.report_key_rate_limit(rate_limit_key, 60)
+                    except Exception:
+                        pass
                 _warn_rate_limited(
                     f"http:{host}",
                     f"[discovery] GET {host} -> HTTP {resp.status} "
@@ -270,13 +296,17 @@ async def fetch_birdeye_top_traders(
         # a 401.
         return []
 
+    # Wave-F5: rotated key per call — a cooled Birdeye account rotates out.
+    birdeye_key = await _pool_rotated_key('BIRDEYE_API', cfg.birdeye_api_key)
     url = "https://public-api.birdeye.so/defi/v2/tokens/top_traders?sort_by=volume&sort_type=desc"
     headers = {
         "x-chain": "solana",
-        "X-API-KEY": cfg.birdeye_api_key,
+        "X-API-KEY": birdeye_key,
     }
     await rl.acquire("public-api.birdeye.so")
-    data = await _safe_get_json(session, url, headers=headers, timeout=cfg.request_timeout_s)
+    data = await _safe_get_json(session, url, headers=headers,
+                                timeout=cfg.request_timeout_s,
+                                rate_limit_key=birdeye_key)
     if not isinstance(data, dict):
         return []
 
@@ -360,12 +390,17 @@ async def fetch_helius_active(
     excluded = {*dex_programs}
     seen: Dict[str, int] = {}
     for prog in dex_programs:
+        # Wave-F5: rotated key per program call so the sweep's quota burn
+        # spreads across sibling Helius accounts; a 429 (reported inside
+        # _safe_get_json) cools the account and the next call rotates.
+        helius_key = await _pool_rotated_key('HELIUS_API', cfg.helius_api_key)
         url = (
             f"https://api.helius.xyz/v0/addresses/{prog}/transactions"
-            f"?api-key={cfg.helius_api_key}&limit=100&type=SWAP"
+            f"?api-key={helius_key}&limit=100&type=SWAP"
         )
         await rl.acquire("api.helius.xyz")
-        data = await _safe_get_json(session, url, timeout=cfg.request_timeout_s)
+        data = await _safe_get_json(session, url, timeout=cfg.request_timeout_s,
+                                    rate_limit_key=helius_key)
         if not isinstance(data, list):
             continue
         for tx in data:

@@ -36,6 +36,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Sequence, Tuple
@@ -330,19 +331,47 @@ def parse_helius_swaps(wallet: str, txs: Sequence[Dict],
 
 # --- Helius daily call budget (persistent, shared across sweeps) ----------
 
+def _helius_key_count() -> int:
+    """Distinct healthy Helius keys registered in pool_engine (>=1).
+
+    Wave-F5 multi-key: helius_daily_call_budget (mig 141) is interpreted as
+    a PER-KEY allowance. With round-robin rotation spreading discovery's
+    calls evenly across sibling accounts, the aggregate ceiling scales as
+    budget x key_count — no schema change to copy_helius_budget needed.
+    Fail-soft: any lookup problem returns 1 (exact mig-141 behaviour).
+    """
+    try:
+        from config.pool_engine import PoolEngine
+        pool = PoolEngine.get_instance_sync()
+        if not pool.initialized:
+            return 1
+        provider = pool.providers.get('HELIUS_API')
+        if not provider:
+            return 1
+        keys = {e.api_key or e.url for e in provider.endpoints
+                if e.is_enabled and e.status.value != 'disabled'}
+        return max(1, len(keys))
+    except Exception:
+        return 1
+
+
 async def _helius_budget_remaining(db_pool, budget: int) -> int:
-    """Calls left in today's (UTC) Helius budget. Fail-soft: on DB error
-    assume budget available so a transient DB blip doesn't wedge discovery."""
+    """Calls left in today's (UTC) Helius budget. Budget is PER KEY: the
+    effective daily ceiling is budget x number-of-registered-Helius-keys
+    (rotation spreads calls evenly, so each account stays under its own
+    allowance). Fail-soft: on DB error assume budget available so a
+    transient DB blip doesn't wedge discovery."""
     if db_pool is None or budget <= 0:
         return 0 if budget <= 0 else 10 ** 9
+    effective_budget = int(budget) * _helius_key_count()
     try:
         async with db_pool.acquire() as conn:
             used = await conn.fetchval(
                 "SELECT calls FROM copy_helius_budget WHERE day = CURRENT_DATE")
-        return max(0, int(budget) - int(used or 0))
+        return max(0, effective_budget - int(used or 0))
     except Exception as e:  # noqa: BLE001
         logger.debug(f"helius budget read failed: {e}")
-        return int(budget)
+        return effective_budget
 
 
 async def _helius_budget_consume(db_pool, n: int = 1) -> None:
@@ -359,11 +388,40 @@ async def _helius_budget_consume(db_pool, n: int = 1) -> None:
         logger.debug(f"helius budget consume failed: {e}")
 
 
+def _current_helius_url_key(url: str) -> Optional[str]:
+    """api-key query value embedded in a Helius URL (None if absent)."""
+    m = re.search(r'api-key=([^&]+)', url)
+    return m.group(1) if m else None
+
+
+async def _rotate_helius_url_key(url: str) -> str:
+    """Swap the api-key in ``url`` for the CURRENT rotated pool key.
+
+    Wave-F5: called after a 429 has been reported (which cools the offending
+    key), so pool_engine hands back a sibling account. Fail-soft: no pool /
+    no sibling == the original URL unchanged.
+    """
+    try:
+        from config.rpc_provider import RPCProvider
+        res = await RPCProvider.get_api_key('HELIUS_API')
+        if res and res[0] and res[0] != _current_helius_url_key(url):
+            return re.sub(r'(api-key=)[^&]+', r'\g<1>' + res[0], url)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"helius key rotation skipped: {e}")
+    return url
+
+
 async def _helius_get_json(session, url: str, db_pool, cfg: "DiscoveryV3Config",
                            *, max_attempts: int = 3):
-    """Budgeted Helius GET with exponential backoff on 429. Returns parsed
-    JSON or None. Every attempt that actually reaches Helius consumes one unit
-    of the daily budget (checked BEFORE the request)."""
+    """Budgeted Helius GET with key rotation + exponential backoff on 429.
+    Returns parsed JSON or None. Every attempt that actually reaches Helius
+    consumes one unit of the daily budget (checked BEFORE the request).
+
+    Wave-F5 429 handling order: (1) report the offending KEY to pool_engine
+    so it cools, (2) ROTATE to a sibling account and retry immediately —
+    rotation happens BEFORE backoff kicks in, (3) only when every retry is
+    still limited does the exponential sleep apply."""
+    rotated = False
     for attempt in range(max_attempts):
         if await _helius_budget_remaining(db_pool, cfg.helius_daily_call_budget) <= 0:
             logger.debug("helius daily budget exhausted; skipping request")
@@ -372,6 +430,21 @@ async def _helius_get_json(session, url: str, db_pool, cfg: "DiscoveryV3Config",
         try:
             async with session.get(url, timeout=12) as resp:
                 if resp.status == 429:
+                    # Cool THIS key in the pool so rotation skips it.
+                    key = _current_helius_url_key(url)
+                    if key:
+                        try:
+                            from config.rpc_provider import RPCProvider
+                            await RPCProvider.report_key_rate_limit(key, 60)
+                        except Exception:
+                            pass
+                    if not rotated:
+                        # First 429: rotate to a sibling key, retry NOW.
+                        rotated = True
+                        new_url = await _rotate_helius_url_key(url)
+                        if new_url != url:
+                            url = new_url
+                            continue
                     # Exponential backoff: 0.5s, 1.0s, 2.0s ... then give up.
                     await asyncio.sleep(0.5 * (2 ** attempt))
                     continue
