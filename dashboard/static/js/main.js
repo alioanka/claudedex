@@ -468,11 +468,14 @@ async function updateBotStatus() {
 function startPeriodicUpdates() {
     // ✅ Load top bar data ONCE on startup
     loadTopBarData();
-    
+
     // ✅ Update ONLY notification badge and positions count every 10 seconds (was 2)
     setInterval(loadDashboardData, 10000);
-    
-    // Update bot status every 5 seconds
+
+    // Update bot status every 5 seconds — and ONCE immediately.
+    // setInterval alone left the header pill on "Loading..." for the
+    // first 5s of every page view (flagged on /help in the F5 audit).
+    updateBotStatus();
     setInterval(updateBotStatus, 5000);
     
     // ✅ Refresh top bar portfolio/P&L every 5 minutes (not every 2 seconds!)

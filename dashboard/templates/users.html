@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<!-- Admin user management. Served RAW (open().read()) by
+     monitoring/auth_routes.py users_page — no Jinja, keep this file
+     standalone. The route previously 500'd because this template did
+     not exist (Wave-F5 audit, orphan table row /users). -->
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>User Management - DexScreener Trading Bot</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 24px;
+    background: #0f172a; color: #f1f5f9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 900px; margin: 0 auto; }
+  a { color: #38bdf8; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  .sub { color: #94a3b8; font-size: 0.85rem; margin-bottom: 20px; }
+  .card {
+    background: #1e293b; border: 1px solid #334155;
+    border-radius: 10px; padding: 16px; margin-bottom: 18px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid #334155; }
+  th { color: #94a3b8; font-weight: 600; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; }
+  .badge.admin { background: rgba(239,68,68,0.25); color: #fca5a5; }
+  .badge.trader { background: rgba(59,130,246,0.25); color: #93c5fd; }
+  .badge.viewer { background: rgba(100,116,139,0.3); color: #cbd5e1; }
+  button {
+    background: #3b82f6; color: #fff; border: none; border-radius: 6px;
+    padding: 6px 12px; font-size: 0.8rem; cursor: pointer;
+  }
+  button.danger { background: #ef4444; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  input, select {
+    background: #0f172a; color: #f1f5f9; border: 1px solid #334155;
+    border-radius: 6px; padding: 7px 10px; font-size: 0.85rem;
+  }
+  form.create { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  form.create label { display: block; font-size: 0.72rem; color: #94a3b8; margin-bottom: 3px; }
+  #msg { margin: 10px 0; font-size: 0.85rem; min-height: 1.2em; }
+  #msg.err { color: #f87171; }
+  #msg.ok { color: #34d399; }
+  .muted { color: #64748b; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>User Management</h1>
+  <div class="sub">
+    Admin-only. Deleting deactivates the account (you cannot delete yourself).
+    <a href="/control-center">&larr; Back to dashboard</a>
+  </div>
+
+  <div id="msg"></div>
+
+  <div class="card">
+    <table>
+      <thead>
+        <tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th><th>Actions</th></tr>
+      </thead>
+      <tbody id="users-tbody">
+        <tr><td colspan="5" class="muted">Loading…</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="card">
+    <h1 style="font-size:1.05rem;">Create user</h1>
+    <form class="create" onsubmit="return false;">
+      <div><label for="nu-name">Username</label><input id="nu-name" autocomplete="off"></div>
+      <div><label for="nu-email">Email (optional)</label><input id="nu-email" type="email" autocomplete="off"></div>
+      <div><label for="nu-pass">Password (min 8)</label><input id="nu-pass" type="password" autocomplete="new-password"></div>
+      <div>
+        <label for="nu-role">Role</label>
+        <select id="nu-role">
+          <option value="viewer">viewer</option>
+          <option value="trader">trader</option>
+          <option value="admin">admin</option>
+        </select>
+      </div>
+      <div><button onclick="createUser()">Create</button></div>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  function csrfHeaders() {
+    const m = (document.cookie.match(/(?:^|;\s*)csrf_token=([^;]+)/) || [])[1] || '';
+    return { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(m) };
+  }
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+      ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  function setMsg(text, ok) {
+    const el = document.getElementById('msg');
+    el.textContent = text || '';
+    el.className = text ? (ok ? 'ok' : 'err') : '';
+  }
+
+  async function load() {
+    const tbody = document.getElementById('users-tbody');
+    try {
+      const r = await fetch('/api/auth/users');
+      const d = await r.json();
+      if (!r.ok || !d.success) throw new Error(d.error || ('HTTP ' + r.status));
+      const users = d.users || [];
+      if (!users.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="muted">No users.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = users.map(u => {
+        const role = String(u.role || 'viewer').toLowerCase();
+        return '<tr>'
+          + '<td>' + esc(u.id) + '</td>'
+          + '<td>' + esc(u.username) + '</td>'
+          + '<td>' + esc(u.email || '—') + '</td>'
+          + '<td><span class="badge ' + esc(role) + '">' + esc(role) + '</span> '
+          + '<select data-id="' + esc(u.id) + '" class="role-sel">'
+          + ['viewer', 'trader', 'admin'].map(x =>
+              '<option value="' + x + '"' + (x === role ? ' selected' : '') + '>' + x + '</option>').join('')
+          + '</select> '
+          + '<button data-id="' + esc(u.id) + '" class="role-save">Set role</button></td>'
+          + '<td><button class="danger del-user" data-id="' + esc(u.id) + '" data-name="'
+          + esc(u.username) + '">Deactivate</button></td>'
+          + '</tr>';
+      }).join('');
+      tbody.querySelectorAll('.role-save').forEach(b => b.addEventListener('click', setRole));
+      tbody.querySelectorAll('.del-user').forEach(b => b.addEventListener('click', delUser));
+    } catch (e) {
+      tbody.innerHTML = '<tr><td colspan="5" class="muted">Failed to load: ' + esc(e.message) + '</td></tr>';
+    }
+  }
+
+  async function setRole(ev) {
+    const id = ev.currentTarget.dataset.id;
+    const sel = document.querySelector('.role-sel[data-id="' + id + '"]');
+    try {
+      const r = await fetch('/api/auth/users/' + encodeURIComponent(id), {
+        method: 'PUT', headers: csrfHeaders(),
+        body: JSON.stringify({ role: sel.value }),
+      });
+      const d = await r.json();
+      setMsg(d.success ? 'Role updated.' : ('Failed: ' + (d.error || r.statusText)), !!d.success);
+    } catch (e) { setMsg('Failed: ' + e.message, false); }
+    load();
+  }
+
+  async function delUser(ev) {
+    const id = ev.currentTarget.dataset.id;
+    const name = ev.currentTarget.dataset.name;
+    if (!confirm('Deactivate user "' + name + '"?')) return;
+    try {
+      const r = await fetch('/api/auth/users/' + encodeURIComponent(id), {
+        method: 'DELETE', headers: csrfHeaders(),
+      });
+      const d = await r.json();
+      setMsg(d.success ? 'User deactivated.' : ('Failed: ' + (d.error || r.statusText)), !!d.success);
+    } catch (e) { setMsg('Failed: ' + e.message, false); }
+    load();
+  }
+
+  window.createUser = async function () {
+    const username = document.getElementById('nu-name').value.trim();
+    const email = document.getElementById('nu-email').value.trim();
+    const password = document.getElementById('nu-pass').value;
+    const role = document.getElementById('nu-role').value;
+    if (!username || password.length < 8) {
+      setMsg('Username and a password of at least 8 characters are required.', false);
+      return;
+    }
+    try {
+      const r = await fetch('/api/auth/users', {
+        method: 'POST', headers: csrfHeaders(),
+        body: JSON.stringify({ username, password, role, email: email || null }),
+      });
+      const d = await r.json();
+      setMsg(d.success ? 'User created.' : ('Failed: ' + (d.error || r.statusText)), !!d.success);
+      if (d.success) {
+        document.getElementById('nu-name').value = '';
+        document.getElementById('nu-email').value = '';
+        document.getElementById('nu-pass').value = '';
+      }
+    } catch (e) { setMsg('Failed: ' + e.message, false); }
+    load();
+  };
+
+  load();
+})();
+</script>
+</body>
+</html>

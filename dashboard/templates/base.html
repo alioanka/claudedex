@@ -1021,6 +1021,14 @@
                             <span>Wallet Monitor</span>
                         </a>
                     </li>
+                    <!-- Wave-F5: /copytrading/leaders was routed +
+                         templated but never linked (orphan). -->
+                    <li class="nav-item {% if page == 'copytrading_leaders' %}active{% endif %}">
+                        <a href="/copytrading/leaders">
+                            <i class="fas fa-trophy"></i>
+                            <span>Leaders</span>
+                        </a>
+                    </li>
                     <li class="nav-item {% if page == 'copytrading_settings' %}active{% endif %}">
                         <a href="/copytrading/settings">
                             <i class="fas fa-cog"></i>

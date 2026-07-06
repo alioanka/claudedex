@@ -1080,11 +1080,13 @@ async function executeManualTrade() {
 }
 
 function configureModule(moduleName) {
-    window.location.href = `/modules/${moduleName}/configure`;
+    // Wave-F5: per-module config lives in the generic settings engine.
+    window.location.href = `/config/${moduleName}_config`;
 }
 
 function viewModuleDetails(moduleName) {
-    window.location.href = `/modules/${moduleName}/details`;
+    // Wave-F5: generic panel; unknown keys fall back to /modules.
+    window.location.href = `/module/${moduleName}`;
 }
 
 function showToast(message, type = 'info') {
