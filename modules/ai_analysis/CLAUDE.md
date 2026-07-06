@@ -52,6 +52,59 @@ points in `core/sentiment_engine.py` (or `_execute_dry_run`/`_close_position`
 in `core/ai_trading_engine.py`). Until wired, AI still appears in the periodic
 summary/dashboard topics built from `ai_trades`. See `docs/TELEGRAM_SETUP.md`.
 
+## Wave-F5 changes (2026-07-06) — un-starve the funnel + honest P&L
+Source: `docs/agents/wave-f5/02_futures_ai.md`. Over 20 days the module ran only
+**~1.6% of its 15-min cycles as real LLM analyses** (30 of 1,910): a bot-wide
+10-call/day LLM budget was drained by the Advisor within ~25 min of midnight UTC,
+so AI won the race for only the first 1–3 calls each day and produced
+`provider=none, score=0` the rest. CryptoCompare 401'd every cycle for 20 days
+(free news/v2 now needs a key). And the dashboard AI P&L was sign-inverted for
+shorts.
+
+### Budget redesign (`core/llm_budget.py`)
+- Default daily cap raised **25 → 150** (~$0.15/day at measured ~$0.001/call);
+  env `BOT_LLM_DAILY_MAX_CALLS` still wins.
+- **Per-module reservations** so the Advisor can never starve AI again:
+  `ai` reserved **40**, `kap_classify` reserved **30**, `advisor` (advice_*)
+  capped at **60**, remainder is a shared pool. `try_consume` is backward-
+  compatible (`kind` unchanged; optional `module=`); state file
+  `logs/.llm_budget.json` stays readable by old code (top-level `count` = total,
+  new `counts` map added). Overrides: `llm_reserve_ai` /
+  `llm_reserve_kap_classify` / `llm_cap_advisor` (fail-soft to defaults).
+
+### New / changed knobs (mig 139; conditional seeds)
+| Key (`ai_config`) | Old | New | Why |
+|---|---|---|---|
+| `stop_loss_pct` | -3 | **-2** | Match majors' daily vol so exits are informative, not 24h coin-flips (SL internally `-abs()`). |
+| `take_profit_pct` | 6 | **2.5** | TP never fired at 6% in the sample. |
+| `max_hold_hours` | 24 | **48** | Give the tighter TP/SL room to resolve. |
+| `ai_max_positions_per_signal` | — (new) | **1** | One market-wide score must not open a BTC+ETH+SOL correlated basket (was one 3× bet). 0 = fall back to global `ai_max_positions`. |
+| `ai_confirmation_signal_enabled` | false | **true** | Cross-source tape confirmation, filter-only (can only SKIP entries), no LLM spend. |
+
+Code-only: **CryptoCompare** is now key-gated (`CRYPTOCOMPARE_API_KEY`) — skipped
+with a one-time WARNING when absent (kills ~1,900 junk 401 warnings; headline
+supply falls through to CoinDesk/CoinTelegraph RSS).
+
+### SHORT-PnL sign fix (root cause + display + backfill)
+The engine wrote `profit_loss = exit_usd − entry_usd` (LONG formula) for ALL
+sides, so closed/open SHORT rows stored an inverted `profit_loss`
+(`profit_loss_pct` was already side-aware). Fixed at three layers:
+`sentiment_engine._close_position` + the unrealized monitor write now compute
+SHORT = `entry − exit`; the dashboard `/api/ai/performance` recomputes P&L
+side-aware from prices (so historical rows display correctly regardless of the
+stored column); mig 139 idempotently **recomputes** (not sign-flips) historical
+closed SHORT `profit_loss` from prices. Verified: SHORT SOL 68.23→64.13 now
+books a PROFIT. Any orchestrator/meta scoring that consumes `ai_trades` P&L must
+re-run against the corrected column before an ACTIVATE decision.
+
+### A/B discipline
+Do NOT judge the sentiment thesis on the pre-fix sample — 20 days at one stale
+reading/day is not a test. After A1–A6 land, run **3–4 weeks at the true 15-min
+cadence in DRY_RUN**, then evaluate against the same PF/win-rate bar as futures.
+The 0.50→0.35 confidence-threshold change was a no-op (the budget gate was the
+binding constraint) — do not credit/blame it in future tuning.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/AI_*.md` (quant / analyst / backend).
 - Canonical engine API: `docs/engines.md`.
+- Wave-F5 diagnosis: `docs/agents/wave-f5/02_futures_ai.md`.
