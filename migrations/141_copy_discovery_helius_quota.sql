@@ -63,7 +63,10 @@ VALUES
     -- Helius quota discipline (item 4).
     ('copytrading_config', 'helius_daily_call_budget', '500', 'number'),
     ('copytrading_config', 'helius_tx_sample',         '100', 'number'),
-    ('copytrading_config', 'discovery_min_swaps',      '3',   'number')
+    ('copytrading_config', 'discovery_min_swaps',      '3',   'number'),
+    -- smart_money_scores source floor (item 6): smart_money_wallet_scores
+    -- score threshold to propose an EVM wallet into copy_leader_candidates.
+    ('copytrading_config', 'copy_sm_min_score',        '0.6', 'number')
 ON CONFLICT (config_type, key) DO NOTHING;
 
 COMMIT;

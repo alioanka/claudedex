@@ -575,6 +575,63 @@ async def _propose_candidate(db_pool, s: WalletScore, sources: List[str]) -> Non
         )
 
 
+async def _propose_smart_money_scores(db_pool, cfg: DiscoveryV3Config) -> int:
+    """smart_money_scores source (Wave-F5): read smart_money_wallet_scores
+    (mig 133), take EVM wallets with score >= copy_sm_min_score, and propose
+    the top-N directly into copy_leader_candidates as PENDING for operator
+    approval. This bypasses the realized-PnL event scorer on purpose — the
+    smart_money module already scored these on forward-return; requiring our
+    own event history would exclude exactly the EVM wallets we cannot yet see.
+
+    NEVER trades: proposal only, operator-approval gate unchanged. Fail-soft
+    when the smart_money table is absent (module not deployed). Returns the
+    number of wallets proposed."""
+    if db_pool is None:
+        return 0
+    try:
+        async with db_pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT chain, wallet, score FROM smart_money_wallet_scores "
+                "WHERE score >= $1 AND chain <> 'solana' AND score IS NOT NULL "
+                "ORDER BY score DESC LIMIT $2",
+                float(cfg.sm_min_score), int(cfg.max_candidates_per_sweep))
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"smart_money_scores source unavailable: {e}")
+        return 0
+    proposed = 0
+    for r in rows:
+        chain, wallet, sm_score = r["chain"], r["wallet"], float(r["score"] or 0)
+        try:
+            async with db_pool.acquire() as conn:
+                await conn.execute(
+                    """
+                    INSERT INTO copy_leader_candidates (
+                        chain, wallet_address, source, label, score, metrics,
+                        status, score_breakdown, provenance
+                    ) VALUES ($1,$2,'smart_money_scores',NULL,$3,$4,'pending',$5,$6)
+                    ON CONFLICT (chain, wallet_address) DO UPDATE SET
+                        score = EXCLUDED.score,
+                        metrics = EXCLUDED.metrics,
+                        provenance = EXCLUDED.provenance,
+                        proposed_at = NOW()
+                    WHERE copy_leader_candidates.status = 'pending'
+                    """,
+                    chain, wallet, round(sm_score * 100.0, 2),
+                    json.dumps({"smart_money_score": sm_score,
+                                "source": "smart_money_wallet_scores"}),
+                    json.dumps({"smart_money_score": sm_score}),
+                    json.dumps(["smart_money_scores"]),
+                )
+            proposed += 1
+        except Exception as e:  # noqa: BLE001
+            logger.debug(f"smart_money_scores propose {str(wallet)[:8]} failed: {e}")
+    if proposed:
+        logger.info(
+            f"[discovery-v3] smart_money_scores proposed {proposed} EVM "
+            f"candidate(s) (score >= {cfg.sm_min_score})")
+    return proposed
+
+
 async def _shadow_quality(db_pool, chain: str, wallet: str) -> Tuple[int, float]:
     """(simulated fill count, realized shadow PnL) for the promotion gate."""
     async with db_pool.acquire() as conn:
@@ -697,6 +754,18 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
     if "helius_tokens" in cfg.sources:
         await _add("helius_tokens", _helius_tokens_candidates(db_pool, cfg, session))
 
+    # smart_money_scores proposes EVM wallets DIRECTLY into
+    # copy_leader_candidates (bypasses the realized-PnL event scorer — see the
+    # function docstring). Counted separately from provenance-based sources.
+    sm_scores_proposed = 0
+    if "smart_money_scores" in cfg.sources:
+        try:
+            sm_scores_proposed = await _propose_smart_money_scores(db_pool, cfg)
+            per_source_counts["smart_money_scores"] = sm_scores_proposed
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"[discovery-v3] source=smart_money_scores FAILED: {e}")
+            per_source_counts["smart_money_scores"] = -1
+
     # 2. Build realized-event history per wallet (merge sources), score.
     scored: List[Tuple[WalletScore, List[str], str]] = []
     enriched = 0
@@ -775,6 +844,7 @@ async def run_discovery_sweep(db_pool, cfg: Optional[DiscoveryV3Config] = None) 
         "candidates": len(provenance),
         "scored": len(scored),
         "proposed": len(proposed),
+        "sm_scores_proposed": sm_scores_proposed,
         "promoted": promoted,
         "rpc_enriched": enriched,
     }
