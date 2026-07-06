@@ -12,6 +12,9 @@ Gates (all configurable via advisor_config DB keys):
                           passes the open-sim count for the CURRENT market only,
                           so this cap applies independently to crypto, BIST, US,
                           etc. (e.g. 10 each) rather than as one global cap.
+                          Wave-F5: a full cap no longer rejects the advice — it
+                          only demotes sim_enabled to False (gate the sim, never
+                          the advice).
   - blocked_symbols     : comma-sep list, default "" (blocklist)
   - horizon_filter      : "short,mid,long" or subset (default all)
 """
@@ -124,9 +127,17 @@ class AdvisorRiskEngine:
         # open_sim_count is the PER-CHANNEL open count (migration 077), so the cap
         # is enforced independently per channel — gems and kap have their own 15
         # slots and never consume crypto/us/fx slots.
+        #
+        # Wave-F5 fix 2: a full channel gates ONLY the sim open — the advice
+        # itself is still published, with sim_enabled demoted to False.
+        # Previously this returned (False, ...) and silenced the ADVICE: once
+        # all channels saturated (75/75 observed) the bot published 0
+        # advice/day for every market. The demotion reason is recorded in
+        # result.extra['sim_skipped_reason'] for the cycle summary + dashboard.
         if result.sim_enabled and open_sim_count >= self.sim_cap_per_channel:
             ch = channel or result.market.value
-            return False, (
+            result.sim_enabled = False
+            result.extra["sim_skipped_reason"] = (
                 f"per-channel sim cap reached for {ch}: "
                 f"{open_sim_count}/{self.sim_cap_per_channel}"
             )

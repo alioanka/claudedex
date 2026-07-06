@@ -90,6 +90,11 @@ class AdviceEngine:
         self._cycle_count = 0
         self._last_cycle_at: Optional[datetime] = None
         self._last_advice_at: Optional[datetime] = None
+        # Per-cycle publish-gate accounting (Wave-F5 fix 9): reject reasons and
+        # sim-cap demotions are aggregated and logged at INFO once per cycle so
+        # "0 advice(s) published" is always explainable from the logs.
+        self._cycle_rejects: Dict[str, int] = {}
+        self._cycle_sim_demotions: Dict[str, int] = {}
         # Track last ML tick date so we run at most once per calendar day.
         self._last_ml_tick_date: Optional[str] = None
         # Discovery cadence: in-memory last-run timestamp (seeded from the
@@ -107,6 +112,8 @@ class AdviceEngine:
         """
         self._cycle_count += 1
         self._last_cycle_at = datetime.now(timezone.utc)
+        self._cycle_rejects = {}
+        self._cycle_sim_demotions = {}
         published: List[AdviceResult] = []
 
         enabled_markets = self._enabled_markets()
@@ -171,11 +178,44 @@ class AdviceEngine:
         # ML daily tick — runs at most once per calendar day.
         await self._ml_learning_tick()
 
+        # One INFO summary per cycle for the publish gate (Wave-F5 fix 9):
+        # rejects were previously DEBUG-only, so a saturated/misconfigured gate
+        # produced an unexplainable "0 advice(s) published".
+        if self._cycle_rejects:
+            logger.info(
+                "[advice] Cycle #%d publish-gate rejects: %s",
+                self._cycle_count,
+                ", ".join(
+                    f"{reason} x{count}"
+                    for reason, count in sorted(self._cycle_rejects.items())
+                ),
+            )
+        if self._cycle_sim_demotions:
+            logger.info(
+                "[advice] Cycle #%d sim-cap demotions (advice published, sim "
+                "skipped): %s",
+                self._cycle_count,
+                ", ".join(
+                    f"{ch} x{count}"
+                    for ch, count in sorted(self._cycle_sim_demotions.items())
+                ),
+            )
+
         logger.info(
             "[advice] Cycle #%d complete: %d advice(s) published.",
             self._cycle_count, len(published),
         )
         return published
+
+    @staticmethod
+    def _reject_category(reason: str) -> str:
+        """Collapse a per-symbol reject reason into a stable aggregation key."""
+        if reason.startswith("confidence="):
+            return "below_min_confidence"
+        if "blocked_symbols" in reason:
+            return "blocked_symbol"
+        # data_source_status=<value> is already stable per status.
+        return reason
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -268,7 +308,16 @@ class AdviceEngine:
             logger.debug(
                 "[advice] %s/%s rejected: %s", symbol, horizon.value, reject_reason
             )
+            cat = self._reject_category(reject_reason)
+            self._cycle_rejects[cat] = self._cycle_rejects.get(cat, 0) + 1
             return None
+
+        # A full sim channel demotes sim_enabled (Wave-F5 fix 2) — the advice
+        # is still published; count it for the per-cycle INFO summary.
+        if result.extra.get("sim_skipped_reason"):
+            self._cycle_sim_demotions[channel] = (
+                self._cycle_sim_demotions.get(channel, 0) + 1
+            )
 
         # Persist.
         advice_id = await self._persist_advice(result, origin=origin)
