@@ -2125,11 +2125,26 @@ class EVMArbitrageEngine:
             or 'api key' in e
         )
 
+    @staticmethod
+    def _redact_rpc_error(msg: str) -> str:
+        """Strip URL paths/queries from an RPC error string before it hits
+        logs or near-miss records. web3/requests errors embed the full
+        endpoint URL ('... for url: https://rpc.ankr.com/eth/<key>') and
+        Ankr/Alchemy keys live in the URL path, Helius keys in the query —
+        keep only scheme+host."""
+        import re
+        try:
+            return re.sub(r'(https?|wss?)://([^/\s?"\']+)[^\s"\']*',
+                          r'\1://\2/<redacted>', msg or '')
+        except Exception:
+            return '<unparseable-error>'
+
     async def _handle_rpc_infra_failure(self, error_msg: str) -> None:
         """Wave-F5 RC-A1: report auth/permission RPC failures to pool_engine
         and re-resolve the endpoint instead of poisoning the liquidity
         blacklist. Rotation debounced to once/60s (scan tick is 2s);
         operator-facing WARNING once/hour while the chain is auth-blind."""
+        error_msg = self._redact_rpc_error(error_msg)
         now = datetime.now()
         self._rpc_infra_fail_count += 1
         self._rpc_infra_last_fail_at = now
