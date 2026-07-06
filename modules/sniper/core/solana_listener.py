@@ -27,6 +27,20 @@ from config.rpc_provider import RPCProvider
 logger = logging.getLogger("SolanaListener")
 
 
+def _redact_url(url: Optional[str], fallback: str = 'NONE') -> str:
+    """Log-safe RPC/WSS URL: strip the query string entirely (Helius/Alchemy
+    style keys live in `?api-key=` / path segments are host-identifying only).
+    A naive `url[:50]` slice leaked the first chars of the api-key because
+    `https://mainnet.helius-rpc.com/?api-key=` is exactly 40 chars long."""
+    if not url:
+        return fallback
+    try:
+        base = url.split('?', 1)[0]
+        return f"{base}?<redacted>" if '?' in url else base
+    except Exception:
+        return '<unparseable-url>'
+
+
 class PoolSource(Enum):
     """Source of pool detection"""
     RAYDIUM_V4 = "raydium_v4"
@@ -304,12 +318,12 @@ class SolanaListener:
     async def initialize(self):
         """Initialize the Solana listener"""
         logger.info("🔌 Initializing Solana Listener (MULTI-AMM VERSION)...")
-        logger.info(f"   RPC: {self.rpc_url[:50] if self.rpc_url else 'NOT CONFIGURED'}...")
+        logger.info(f"   RPC: {_redact_url(self.rpc_url, 'NOT CONFIGURED')}")
         logger.info(f"   Poll Interval: {self.poll_interval}s")
         logger.info(f"   Enabled AMMs: {[s.value for s in self.enabled_sources]}")
         logger.info(f"   Listener Mode: {self.listener_mode.upper()}")
         if self.listener_mode == 'wss':
-            logger.info(f"   WSS URL: {(self.wss_url or 'NONE')[:60]}...")
+            logger.info(f"   WSS URL: {_redact_url(self.wss_url)}")
 
         # Wave-F5: never a permanent zombie. A failed RPC verification (a
         # rotated Alchemy key, an expired Helius WSS, a transient outage) used
@@ -343,7 +357,7 @@ class SolanaListener:
                 self.use_websocket = False
                 self.poll_task = asyncio.create_task(self._run_polling_listener())
             else:
-                logger.info(f"📡 Starting WSS listener: {self.wss_url[:60]}...")
+                logger.info(f"📡 Starting WSS listener: {_redact_url(self.wss_url)}")
                 self.wss_task = asyncio.create_task(self._run_wss_listener())
                 # Still run polling as a backstop until Phase 1.5 wires WSS
                 # into the downstream queue.
@@ -374,7 +388,7 @@ class SolanaListener:
                 if attempt > 1:
                     logger.warning(
                         f"🟢 Solana listener RPC RECOVERED after {attempt} attempt(s) "
-                        f"— resuming detection on {self.rpc_url[:50]}..."
+                        f"— resuming detection on {_redact_url(self.rpc_url)}"
                     )
                 self._stats['listener_status'] = 'ok'
                 self._stats['rpc_verify_failures'] = 0
@@ -398,7 +412,7 @@ class SolanaListener:
         msg = (
             f"❌ Solana listener RPC verification FAILED (attempt {attempt}, "
             f"{self._stats.get('rpc_verify_failures', 0)} total) — "
-            f"rpc={self.rpc_url[:50] if self.rpc_url else 'NONE'}; "
+            f"rpc={_redact_url(self.rpc_url)}; "
             f"self-healing via pool_engine, retrying with backoff. "
             f"listener_status=rpc_auth_failed (0 pools will be detected until recovery)."
         )
@@ -450,7 +464,7 @@ class SolanaListener:
             if new_url and new_url != self.rpc_url:
                 logger.warning(
                     f"🔄 Solana listener rotating RPC endpoint ({reason}): "
-                    f"{new_url[:50]}..."
+                    f"{_redact_url(new_url)}"
                 )
                 self.rpc_url = new_url
                 self._stats['rpc_endpoint_rotations'] = (
@@ -727,7 +741,7 @@ class SolanaListener:
                             if new_wss:
                                 self.wss_url = new_wss
                                 logger.info(
-                                    f"WSS rotated to new endpoint: {self.wss_url[:60]}"
+                                    f"WSS rotated to new endpoint: {_redact_url(self.wss_url)}"
                                 )
                     except Exception as rpc_err:
                         logger.debug(f"WSS RPC rotation failed: {rpc_err}")
