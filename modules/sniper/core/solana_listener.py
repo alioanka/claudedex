@@ -210,7 +210,18 @@ class SolanaListener:
             # surfaces these via sniper_runtime_stats.
             'wss_dispatched': 0,
             'wss_inflight_peak': 0,
+            # Wave-F5: listener health. 'starting' until RPC verifies, 'ok'
+            # once polling/WSS is live, 'rpc_auth_failed' while the startup
+            # supervisor cannot verify the RPC (was a SILENT permanent zombie
+            # since 2026-06-15 — the dashboard showed a healthy scanner while
+            # 0 pools were detected across 16.9M scans). The supervisor
+            # self-heals via pool_engine rotation instead of returning.
+            'listener_status': 'starting',
+            'rpc_verify_failures': 0,
+            'rpc_endpoint_rotations': 0,
         }
+        self._supervisor_task: Optional[asyncio.Task] = None
+        self._last_rpc_error_log_ts: float = 0.0
         self._log_interval = timedelta(minutes=1)
         self._max_signatures = 500  # Per source
 
