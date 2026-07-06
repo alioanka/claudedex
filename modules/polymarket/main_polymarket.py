@@ -60,6 +60,11 @@ from modules.polymarket.gamma_client import GammaClient, DEFAULT_GAMMA_BASE_URL 
 from modules.polymarket.strategies import detect_risk_free_arb, score_momentum  # noqa: E402
 from modules.polymarket.executor import PolymarketExecutor  # noqa: E402
 
+# Forward-outcome horizons (label -> seconds). Marked LATE like smart_money:
+# a horizon is written only after it has FULLY elapsed, from the price
+# observed at mark time — never an early estimate.
+OUTCOME_HORIZONS = (("1h", 3600), ("6h", 21600), ("24h", 86400))
+
 
 async def load_config(db_pool) -> dict:
     """Load config_type='polymarket_config' rows (mirrors arbitrage loader)."""
@@ -109,9 +114,11 @@ class PolymarketEngine:
         # signal; a direction flip inside the cooldown window is suppressed
         # (wave-F5: in-play books flip YES/NO within minutes — that is noise).
         self._last_momentum_dir: dict = {}
+        self._last_snapshot_prune = 0.0
         self.stats = {
             'cycles': 0, 'markets_seen': 0, 'arb_signals': 0,
-            'momentum_signals': 0, 'last_cycle_at': None, 'last_error': None,
+            'momentum_signals': 0, 'snapshots_last_cycle': 0,
+            'outcomes_marked': 0, 'last_cycle_at': None, 'last_error': None,
         }
 
     def _throttled(self, signal_type: str, market_id: str) -> bool:
@@ -235,8 +242,149 @@ class PolymarketEngine:
                 f"score={sig['score']} yes={sig['yes_price']}"
             )
 
+        # (c) Per-cycle price snapshots (dashboard charts + LATE outcome marks).
+        await self._save_snapshots(markets)
+        # (d) Forward-outcome marking for past signals (edge proof).
+        await self._mark_outcomes({m['market_id']: m for m in markets})
+
         self._prev_yes_prices = {m['market_id']: m['yes_price'] for m in markets}
         self._prev_seen_at = time.time()
+
+    async def _save_snapshots(self, markets: list) -> None:
+        """Write one polymarket_price_snapshots row per top-N watched market
+        each cycle; prune old rows hourly. Fail-soft."""
+        if not self.db_pool:
+            return
+        top_n = int(self.config.get('snapshot_top_n_markets', 50))
+        rows = sorted(markets, key=lambda m: m.get('volume_24h') or 0.0,
+                      reverse=True)[:max(top_n, 0)]
+        if not rows:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                await conn.executemany(
+                    """
+                    INSERT INTO polymarket_price_snapshots
+                        (market_id, question, category, yes_price, no_price,
+                         best_bid, best_ask, volume_24h, liquidity)
+                    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+                    """,
+                    [(m['market_id'], m.get('question', ''), m.get('category', ''),
+                      m.get('yes_price'), m.get('no_price'),
+                      m.get('best_bid'), m.get('best_ask'),
+                      m.get('volume_24h'), m.get('liquidity')) for m in rows],
+                )
+                self.stats['snapshots_last_cycle'] = len(rows)
+                # Retention: prune at most once an hour (disk discipline).
+                if time.monotonic() - self._last_snapshot_prune > 3600.0:
+                    self._last_snapshot_prune = time.monotonic()
+                    days = int(self.config.get('snapshot_retention_days', 14))
+                    await conn.execute(
+                        "DELETE FROM polymarket_price_snapshots "
+                        "WHERE ts < NOW() - make_interval(days => $1)", max(days, 1))
+        except Exception as e:
+            logger.error(f"polymarket_price_snapshots insert failed: {e}")
+
+    async def _mark_outcomes(self, markets_by_id: dict) -> None:
+        """LATE forward-outcome marks for polymarket_signals (edge proof).
+
+        Mirrors smart_money: each horizon (1h/6h/24h) is marked only after it
+        has FULLY elapsed, using the yes_price observed NOW — from the current
+        cycle if the market is still watched, else the latest snapshot.
+        fwd_return_* is probability points x100, SIGNED by direction (positive
+        = the signal pointed the right way). Signals older than 48h with no
+        price source left are closed out honestly with NULL returns.
+        """
+        if not self.db_pool:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    """
+                    SELECT s.id, s.market_id, s.signal_type, s.direction,
+                           s.yes_price, s.created_at,
+                           (o.signal_id IS NOT NULL) AS has_row,
+                           o.yes_price_1h, o.yes_price_6h, o.yes_price_24h
+                    FROM polymarket_signals s
+                    LEFT JOIN polymarket_signal_outcomes o ON o.signal_id = s.id
+                    WHERE s.created_at <= NOW() - INTERVAL '1 hour'
+                      AND s.created_at >= NOW() - INTERVAL '7 days'
+                      AND (o.signal_id IS NULL OR NOT o.fully_marked)
+                    ORDER BY s.created_at ASC
+                    LIMIT 200
+                    """
+                )
+                if not rows:
+                    return
+                missing = list({r['market_id'] for r in rows
+                                if r['market_id'] not in markets_by_id})
+                snap_prices: dict = {}
+                if missing:
+                    snaps = await conn.fetch(
+                        """
+                        SELECT DISTINCT ON (market_id) market_id, yes_price
+                        FROM polymarket_price_snapshots
+                        WHERE market_id = ANY($1::text[])
+                        ORDER BY market_id, ts DESC
+                        """, missing)
+                    snap_prices = {s['market_id']: s['yes_price'] for s in snaps}
+                now = time.time()
+                marked = 0
+                for r in rows:
+                    market = markets_by_id.get(r['market_id'])
+                    price_now = market['yes_price'] if market \
+                        else snap_prices.get(r['market_id'])
+                    sig_ts = r['created_at'].timestamp()
+                    abandoned = price_now is None and (now - sig_ts) > 48 * 3600
+                    if (price_now is None and not abandoned) or r['yes_price'] is None:
+                        continue
+                    sign = -1.0 if r['direction'] == 'NO' else 1.0
+                    prices, returns = {}, {}
+                    for label, secs in OUTCOME_HORIZONS:
+                        existing = r[f'yes_price_{label}'] if r['has_row'] else None
+                        if existing is not None:
+                            val = float(existing)
+                        elif price_now is not None and sig_ts + secs <= now:
+                            val = float(price_now)  # horizon fully elapsed: LATE mark
+                        else:
+                            val = None
+                        prices[label] = val
+                        returns[label] = (
+                            round((val - float(r['yes_price'])) * 100.0 * sign, 4)
+                            if val is not None else None)
+                    fully = abandoned or all(v is not None for v in prices.values())
+                    if not fully and all(
+                            prices[label] == (r[f'yes_price_{label}'] if r['has_row'] else None)
+                            for label, _ in OUTCOME_HORIZONS):
+                        continue  # nothing new to write this tick
+                    await conn.execute(
+                        """
+                        INSERT INTO polymarket_signal_outcomes
+                            (signal_id, market_id, signal_type, direction,
+                             yes_price_at_signal, yes_price_1h, yes_price_6h,
+                             yes_price_24h, fwd_return_1h, fwd_return_6h,
+                             fwd_return_24h, fully_marked, updated_at)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+                        ON CONFLICT (signal_id) DO UPDATE SET
+                            yes_price_1h  = EXCLUDED.yes_price_1h,
+                            yes_price_6h  = EXCLUDED.yes_price_6h,
+                            yes_price_24h = EXCLUDED.yes_price_24h,
+                            fwd_return_1h  = EXCLUDED.fwd_return_1h,
+                            fwd_return_6h  = EXCLUDED.fwd_return_6h,
+                            fwd_return_24h = EXCLUDED.fwd_return_24h,
+                            fully_marked   = EXCLUDED.fully_marked,
+                            updated_at     = NOW()
+                        """,
+                        r['id'], r['market_id'], r['signal_type'], r['direction'],
+                        float(r['yes_price']), prices['1h'], prices['6h'],
+                        prices['24h'], returns['1h'], returns['6h'],
+                        returns['24h'], fully,
+                    )
+                    marked += 1
+                if marked:
+                    self.stats['outcomes_marked'] += marked
+        except Exception as e:
+            logger.error(f"outcome marking failed (continuing): {e}")
 
     async def run(self) -> None:
         self.running = True

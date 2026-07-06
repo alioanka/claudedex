@@ -79,4 +79,64 @@ VALUES
      NOW(), NOW())
 ON CONFLICT (config_type, key) DO NOTHING;
 
+-- ── forward-outcome tracking (edge proof; wave-F5 gap 8) ──
+INSERT INTO config_settings (config_type, key, value, value_type, description, created_at, updated_at)
+VALUES
+    ('polymarket_config', 'snapshot_top_n_markets', '50', 'int',
+     'Per-cycle price snapshots are written for the top-N watched markets '
+     'by 24h volume (polymarket_price_snapshots — feeds the dashboard '
+     'charts and the LATE outcome marks).', NOW(), NOW()),
+
+    ('polymarket_config', 'snapshot_retention_days', '14', 'int',
+     'Disk discipline: price snapshots older than this are pruned hourly.',
+     NOW(), NOW())
+ON CONFLICT (config_type, key) DO NOTHING;
+
+-- Per-cycle price/liquidity snapshots for watched markets. Feeds the
+-- /polymarket dashboard charts and the outcome marker below.
+CREATE TABLE IF NOT EXISTS polymarket_price_snapshots (
+    id          BIGSERIAL PRIMARY KEY,
+    market_id   TEXT NOT NULL,
+    question    TEXT,
+    category    TEXT,
+    yes_price   DOUBLE PRECISION,
+    no_price    DOUBLE PRECISION,
+    best_bid    DOUBLE PRECISION,
+    best_ask    DOUBLE PRECISION,
+    volume_24h  DOUBLE PRECISION,
+    liquidity   DOUBLE PRECISION,
+    ts          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pm_snapshots_market_ts
+    ON polymarket_price_snapshots (market_id, ts DESC);
+CREATE INDEX IF NOT EXISTS idx_pm_snapshots_ts
+    ON polymarket_price_snapshots (ts);
+
+-- Forward outcomes per signal, marked LATE (mirrors smart_money): each
+-- horizon is written only after it has FULLY elapsed, using the yes_price
+-- observed at mark time (current cycle or latest snapshot) — never an early
+-- estimate. fwd_return_* is in probability points x100 (yes moved 0.05 =
+-- 5.0), SIGNED by signal direction (positive = the signal was right).
+CREATE TABLE IF NOT EXISTS polymarket_signal_outcomes (
+    signal_id            BIGINT PRIMARY KEY
+                         REFERENCES polymarket_signals(id) ON DELETE CASCADE,
+    market_id            TEXT NOT NULL,
+    signal_type          TEXT NOT NULL,
+    direction            TEXT,
+    yes_price_at_signal  DOUBLE PRECISION,
+    yes_price_1h         DOUBLE PRECISION,
+    yes_price_6h         DOUBLE PRECISION,
+    yes_price_24h        DOUBLE PRECISION,
+    fwd_return_1h        DOUBLE PRECISION,
+    fwd_return_6h        DOUBLE PRECISION,
+    fwd_return_24h       DOUBLE PRECISION,
+    fully_marked         BOOLEAN NOT NULL DEFAULT FALSE,
+    created_at           TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at           TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pm_outcomes_type
+    ON polymarket_signal_outcomes (signal_type, fully_marked);
+CREATE INDEX IF NOT EXISTS idx_pm_outcomes_market
+    ON polymarket_signal_outcomes (market_id);
+
 COMMIT;
