@@ -15186,6 +15186,10 @@ class DashboardEndpoints:
 
             wallets = []
             data_source = 'live'
+            # Per-source diagnostics so the UI can show WHY discovery is empty
+            # instead of silently serving the local fallback as real discovery
+            # (Wave-F5 honesty fix — see docs/agents/wave-f5/04_copy_aitrader.md).
+            source_status = {}
 
             if search_type == 'analyze_wallet' and wallet_address:
                 # Analyze specific wallet - validate it first
@@ -15205,32 +15209,51 @@ class DashboardEndpoints:
             else:
                 # Try Helius FIRST - more commonly available (free tier works well)
                 if helius_api_key:
-                    wallets = await self._discover_wallets_helius(
+                    helius_wallets = await self._discover_wallets_helius(
                         helius_api_key, search_type, min_win_rate, min_trades, max_results
                     )
-                    if wallets:
+                    source_status['helius'] = {
+                        'candidates': len(helius_wallets),
+                        'error': None if helius_wallets else 'returned_0_or_rate_limited',
+                    }
+                    if helius_wallets:
+                        wallets = helius_wallets
                         data_source = 'helius_api'
                         logger.info(f"Discovered {len(wallets)} wallets via Helius API")
+                else:
+                    source_status['helius'] = {'candidates': 0, 'error': 'no_helius_key'}
 
                 # If no Helius results, try Birdeye (may require paid plan for top_traders)
                 if not wallets and birdeye_api_key:
-                    wallets = await self._discover_wallets_birdeye(
+                    birdeye_wallets = await self._discover_wallets_birdeye(
                         birdeye_api_key, search_type, min_win_rate, min_trades, min_pnl, max_results
                     )
-                    if wallets:
+                    source_status['birdeye'] = {
+                        'candidates': len(birdeye_wallets),
+                        'error': None if birdeye_wallets else 'returned_0_or_paid_plan_required',
+                    }
+                    if birdeye_wallets:
+                        wallets = birdeye_wallets
                         data_source = 'birdeye_api'
                         logger.info(f"Discovered {len(wallets)} wallets via Birdeye API")
+                elif not birdeye_api_key:
+                    source_status['birdeye'] = {'candidates': 0, 'error': 'no_birdeye_key'}
 
-                # If both upstream APIs are unavailable or returned 0,
-                # fall back to the operator's own configured target_wallets
-                # + active wallets from copytrading_trades. This guarantees
-                # the discovery page is never empty as long as the operator
-                # has configured at least one wallet OR the engine has copied
-                # at least one trade. Same data wallet_discovery uses on
-                # /copytrading/leaders.
+                # If both upstream APIs are unavailable or returned 0, fall back
+                # to the operator's own configured target_wallets + active
+                # wallets from copytrading_trades. HONESTY: this fallback can
+                # ONLY return already-tracked wallets — it is NOT new discovery.
+                # Rows are flagged fallback=true / already_tracked=true so the
+                # UI never presents them as fresh finds.
                 if not wallets:
                     try:
                         wallets = await self._discover_wallets_local_fallback(max_results)
+                        source_status['local_fallback'] = {
+                            'candidates': len(wallets),
+                            'error': None,
+                            'note': ('operator target_wallets + copytrading_trades — '
+                                     'already-tracked wallets, NOT new discovery'),
+                        }
                         if wallets:
                             data_source = 'operator_targets+onchain'
                             logger.info(
@@ -15238,12 +15261,39 @@ class DashboardEndpoints:
                                 f"local fallback (target_wallets + copytrading_trades)"
                             )
                     except Exception as e:
+                        source_status['local_fallback'] = {'candidates': 0, 'error': str(e)}
                         logger.warning(f"local-fallback discovery failed: {e}")
 
                 # If still no wallets, return helpful message
                 if not wallets:
                     data_source = 'none'
                     logger.warning("No wallets found - API may need configuration or min_trades filter too high")
+
+                # Flag already-tracked wallets so the UI can separate them from
+                # genuinely-new discoveries (inline target_wallets read — kept
+                # local to this handler to stay surgical).
+                tracked = set()
+                try:
+                    if self.db and self.db.pool:
+                        async with self.db.pool.acquire() as conn:
+                            raw_t = await conn.fetchval(
+                                "SELECT value FROM config_settings "
+                                "WHERE config_type='copytrading_config' "
+                                "  AND key='target_wallets'")
+                        if raw_t:
+                            import json as _json
+                            _tw = _json.loads(raw_t) if isinstance(raw_t, str) else raw_t
+                            if isinstance(_tw, list):
+                                tracked = {str(w).split('@')[0].strip() for w in _tw if w}
+                except Exception as e:
+                    logger.debug(f"tracked-set read failed: {e}")
+                is_fallback = (data_source == 'operator_targets+onchain')
+                for w in wallets:
+                    a = (w.get('address') or '').split('@')[0].strip()
+                    if 'already_tracked' not in w:
+                        w['already_tracked'] = a in tracked
+                    if is_fallback:
+                        w['fallback'] = True
 
                 # Sort by score and limit
                 wallets.sort(key=lambda x: x.get('score', 0), reverse=True)
@@ -15266,6 +15316,8 @@ class DashboardEndpoints:
                 'count': len(wallets),
                 'search_type': search_type,
                 'data_source': data_source,
+                'source_status': source_status,
+                'already_tracked_count': sum(1 for w in wallets if w.get('already_tracked')),
                 'note': note,
                 'manual_discovery_tips': [
                     'Birdeye Leaderboard: https://birdeye.so/leaderboard',
@@ -15728,6 +15780,11 @@ class DashboardEndpoints:
 
         wallets: list = []
         seen: set = set()
+        # Every wallet this fallback can return is already-tracked by
+        # construction (operator target_wallets + wallets we already mirror in
+        # copytrading_trades). Load the target set up-front so onchain rows are
+        # flagged honestly too, not just the operator_targets rows.
+        target_set: set = set()
         try:
             async with self.db.pool.acquire() as conn:
                 # (1) FIRST — active source_wallets from copytrading_trades.
@@ -15755,6 +15812,20 @@ class DashboardEndpoints:
                     """,
                     max(max_results, 10),
                 )
+
+                # Load operator target_wallets once for already_tracked flagging.
+                try:
+                    _raw_ts = await conn.fetchval(
+                        "SELECT value FROM config_settings "
+                        "WHERE config_type='copytrading_config' "
+                        "  AND key='target_wallets'")
+                    if _raw_ts:
+                        import json as _json_ts
+                        _tw_list = _json_ts.loads(_raw_ts) if isinstance(_raw_ts, str) else _raw_ts
+                        if isinstance(_tw_list, list):
+                            target_set = {str(w).split('@')[0].strip() for w in _tw_list if w}
+                except Exception as _e_ts:
+                    logger.debug(f"target_set read failed: {_e_ts}")
 
                 # Wave-5: pull OPEN rows for the same source_wallets so
                 # we can compute live unrealized PnL. ONE query + ONE
@@ -15849,6 +15920,8 @@ class DashboardEndpoints:
                         'category': 'onchain_active',
                         'verified': True,
                         'data_source': 'copytrading_trades',
+                        'fallback': True,
+                        'already_tracked': (addr in target_set) or (n_trades > 0),
                         'note': ' '.join(note_parts),
                     })
 
@@ -15886,6 +15959,8 @@ class DashboardEndpoints:
                                 'category': 'operator_targets',
                                 'verified': True,
                                 'data_source': 'operator_configured',
+                                'fallback': True,
+                                'already_tracked': True,
                                 'note': (
                                     'Configured by operator in /copytrading/settings '
                                     'target_wallets — no mirror history yet.'
