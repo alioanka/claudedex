@@ -1158,6 +1158,17 @@ class EVMArbitrageEngine:
         self._rpc_infra_last_warn_at: Optional[datetime] = None
         self._rpc_infra_last_rotate_at: Optional[datetime] = None
 
+        # Wave-F5 RC-A2: reserve-math price-impact pre-filter threshold (bps,
+        # one-way, at configured flash_loan_amount; mig 142 seeds 50) and the
+        # rolling hourly round-trip spread sample buffer for the hourly
+        # distribution summary log.
+        try:
+            self._max_price_impact_bps = float(config.get('arb_max_price_impact_bps', 50.0))
+        except (TypeError, ValueError):
+            self._max_price_impact_bps = 50.0
+        self._spread_samples_hour: deque = deque(maxlen=5000)
+        self._spread_summary_last: datetime = datetime.now()
+
         self._stats = {
             'scans': 0,
             'opportunities_found': 0,
@@ -2200,6 +2211,29 @@ class EVMArbitrageEngine:
         now = datetime.now()
         elapsed = (now - self._stats['last_stats_log']).total_seconds()
 
+        # Wave-F5 RC-A2: hourly round-trip spread-distribution summary so the
+        # operator can see at a glance whether the venue set EVER produces a
+        # positive spread (3 weeks of per-5min lines hid 'median -162bps,
+        # zero positive samples').
+        if (now - self._spread_summary_last).total_seconds() >= 3600:
+            self._spread_summary_last = now
+            if self._spread_samples_hour:
+                _vals = sorted(self._spread_samples_hour)
+                _n = len(_vals)
+                self.logger.info(
+                    f"📈 [{self.chain_name.upper()}] SPREAD DISTRIBUTION (last hour, "
+                    f"{_n} samples): median {_vals[_n // 2]:+.1f}bps | "
+                    f"p25 {_vals[_n // 4]:+.1f}bps | best {_vals[-1]:+.1f}bps "
+                    f"(round-trip at {self._flash_loan_eth:g} ETH incl. fees+impact; "
+                    f"real cross-DEX divergence on liquid pairs is 1-30bps)"
+                )
+            else:
+                self.logger.info(
+                    f"📈 [{self.chain_name.upper()}] SPREAD DISTRIBUTION (last hour): "
+                    f"no samples — check rpc_health / pair filters"
+                )
+            self._spread_samples_hour.clear()
+
         if elapsed >= 300:  # 5 minutes
             # Enhanced logging with spread visibility
             self.logger.info(f"📊 [{self.chain_name.upper()}] STATS (Last 5 min): "
@@ -2512,6 +2546,26 @@ class EVMArbitrageEngine:
                     if tvl is not None and tvl < _min_pool_tvl_usd:
                         buy_errors[name] = f"thin_pool tvl=${tvl:.0f}<${_min_pool_tvl_usd:.0f}"
                         continue
+                    # Wave-F5 RC-A2: reserve-math price-impact pre-filter.
+                    # WETH reserve is recoverable from the TVL approximation
+                    # (tvl = 2 * weth_reserve * eth_price — no extra RPC call).
+                    # Constant-product one-way impact for exact-in dx against
+                    # reserve R is ~dx/(R+dx); if the configured borrow size
+                    # implies more impact than the threshold, the quote is a
+                    # size artifact, not an opportunity — skip it.
+                    if tvl is not None and tvl > 0 and self._max_price_impact_bps > 0:
+                        _weth_reserve_eth = tvl / (2.0 * _reserve_eth_price)
+                        _borrow_eth = borrow_amount / 1e18
+                        _impact_bps = (
+                            _borrow_eth / (_weth_reserve_eth + _borrow_eth) * 10_000
+                            if _weth_reserve_eth > 0 else 10_000.0
+                        )
+                        if _impact_bps > self._max_price_impact_bps:
+                            buy_errors[name] = (
+                                f"price_impact {_impact_bps:.0f}bps"
+                                f">{self._max_price_impact_bps:.0f}bps at {_borrow_eth:g} ETH"
+                            )
+                            continue
                 try:
                     amounts = contract.functions.getAmountsOut(borrow_amount, [weth_checksum, token_checksum]).call()
                     buy_prices[name] = amounts[1]  # How many tokens we get for our WETH
@@ -2723,6 +2777,8 @@ class EVMArbitrageEngine:
                 if raw_spread > self._best_spread_seen:
                     self._best_spread_seen = raw_spread
                     self._best_spread_pair = spread_pair_key
+                # Wave-F5 RC-A2: feed the hourly spread-distribution summary.
+                self._spread_samples_hour.append(raw_spread * 10_000)
 
             if weth_returned <= amount_owed:
                 # Sample sparsely - a negative raw spread is the common case.
