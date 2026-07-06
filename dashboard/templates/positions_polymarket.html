@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}Polymarket - Positions{% endblock %}
+
+{% block extra_head %}
+<style>
+    .dashboard-container { padding: 20px; }
+    .dashboard-header { margin-bottom: 24px; }
+    .dashboard-title { font-size: 2rem; font-weight: 700; color: var(--text-primary); }
+    .dashboard-subtitle { color: var(--text-secondary); font-size: 1rem; margin-top: 4px; }
+    .section-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .section-title { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 14px; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .data-table th, .data-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+    .data-table th { color: var(--text-secondary); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
+    .shadow-banner { background: rgba(245,158,11,0.12); border: 1px solid rgba(245,158,11,0.4);
+                     border-radius: 10px; padding: 14px 18px; color: var(--text-primary); margin-bottom: 24px; }
+    .pnl-pos { color: #10b981; font-weight: 600; }
+    .pnl-neg { color: #dc2626; font-weight: 600; }
+    .sim-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600;
+                 background: rgba(245,158,11,0.15); color: #f59e0b; }
+    .live-badge { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600;
+                  background: rgba(16,185,129,0.15); color: #10b981; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <div class="dashboard-title"><i class="fas fa-layer-group"></i> Polymarket Positions</div>
+        <div class="dashboard-subtitle">Net LIVE exposure per market/outcome, marked to the latest snapshot</div>
+    </div>
+
+    <div class="shadow-banner" id="shadow-banner" style="display:none;">
+        <i class="fas fa-info-circle"></i>
+        <strong>Shadow mode:</strong> no live positions exist — every detected opportunity is recorded
+        as a simulated ledger row, not a position. The trade ledger below shows recent records.
+    </div>
+
+    <div class="section-card">
+        <div class="section-title"><i class="fas fa-wallet"></i> Live Positions</div>
+        <div style="overflow-x:auto;">
+            <table class="data-table">
+                <thead><tr>
+                    <th>Market</th><th>Outcome</th><th>Net Notional</th><th>Avg Entry</th>
+                    <th>Mark YES</th><th>Mark NO</th><th>Value Now</th><th>Unrealized</th>
+                    <th>Legs</th><th>Last Trade</th>
+                </tr></thead>
+                <tbody id="positionsBody"><tr><td colspan="10" style="text-align:center;">Loading…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="section-card">
+        <div class="section-title"><i class="fas fa-receipt"></i> Recent Trade Ledger (simulated + live)</div>
+        <div style="overflow-x:auto;">
+            <table class="data-table">
+                <thead><tr>
+                    <th>Time</th><th>Market</th><th>Strategy</th><th>Side</th><th>Outcome</th>
+                    <th>Price</th><th>Size</th><th>Edge bps</th><th>Status</th><th>Skip Reason</th><th>Mode</th>
+                </tr></thead>
+                <tbody id="tradesBody"><tr><td colspan="11" style="text-align:center;">Loading…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+function fmtUsd(v) { return v === null || v === undefined ? '--' : '$' + Number(v).toFixed(2); }
+function fmtP(v) { return (v === null || v === undefined) ? '-' : Number(v).toFixed(3); }
+
+async function loadPositions() {
+    try {
+        const [pResp, oResp] = await Promise.all([
+            fetch('/api/polymarket/positions'),
+            fetch('/api/polymarket/overview'),
+        ]);
+        const pBody = await pResp.json();
+        const oBody = await oResp.json();
+        const shadow = oBody.success && oBody.data.gates.shadow_mode;
+        document.getElementById('shadow-banner').style.display = shadow ? 'block' : 'none';
+        const rows = pBody.data || [];
+        const tb = document.getElementById('positionsBody');
+        if (!rows.length) {
+            tb.innerHTML = `<tr><td colspan="10" style="text-align:center;">${
+                shadow ? 'No live positions — module is in shadow mode.'
+                       : 'No open live positions.'}</td></tr>`;
+            return;
+        }
+        tb.innerHTML = rows.map(p => {
+            const u = p.unrealized_usd;
+            const cls = u === undefined || u === null ? '' : (u >= 0 ? 'pnl-pos' : 'pnl-neg');
+            return `
+            <tr>
+                <td title="${p.market_id}">${(p.question || p.market_id).slice(0, 60)}</td>
+                <td>${p.outcome || '-'}</td>
+                <td>${fmtUsd(p.net_usd)}</td>
+                <td>${fmtP(p.avg_entry)}</td>
+                <td>${fmtP(p.mark_yes)}</td>
+                <td>${fmtP(p.mark_no)}</td>
+                <td>${fmtUsd(p.value_now_usd)}</td>
+                <td class="${cls}">${fmtUsd(u)}</td>
+                <td>${p.legs}</td>
+                <td>${(p.last_trade_at || '').slice(5, 19).replace('T', ' ')}</td>
+            </tr>`;
+        }).join('');
+    } catch (e) { /* fail-soft */ }
+}
+
+async function loadTrades() {
+    try {
+        const resp = await fetch('/api/polymarket/trades?limit=50');
+        const body = await resp.json();
+        const rows = body.data || [];
+        const tb = document.getElementById('tradesBody');
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="11" style="text-align:center;">No trade records yet.</td></tr>';
+            return;
+        }
+        tb.innerHTML = rows.map(t => `
+            <tr>
+                <td>${(t.created_at || '').slice(5, 19).replace('T', ' ')}</td>
+                <td title="${t.market_id}">${(t.market_question || t.market_id).slice(0, 50)}</td>
+                <td>${t.strategy}</td>
+                <td>${t.side || '-'}</td>
+                <td>${t.outcome || '-'}</td>
+                <td>${fmtP(t.price)}</td>
+                <td>${fmtUsd(t.size_usd)}</td>
+                <td>${t.expected_edge_bps ?? '-'}</td>
+                <td>${t.status || '-'}</td>
+                <td>${t.skip_reason || '-'}</td>
+                <td>${t.is_simulated ? '<span class="sim-badge">SIM</span>' : '<span class="live-badge">LIVE</span>'}</td>
+            </tr>`).join('');
+    } catch (e) { /* fail-soft */ }
+}
+
+loadPositions();
+loadTrades();
+setInterval(() => { loadPositions(); loadTrades(); }, 30000);
+</script>
+{% endblock %}

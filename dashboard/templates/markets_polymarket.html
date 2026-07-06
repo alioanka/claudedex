@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+
+{% block title %}Polymarket - Markets{% endblock %}
+
+{% block extra_head %}
+<style>
+    .dashboard-container { padding: 20px; }
+    .dashboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
+    .dashboard-title { font-size: 2rem; font-weight: 700; color: var(--text-primary); }
+    .dashboard-subtitle { color: var(--text-secondary); font-size: 1rem; margin-top: 4px; }
+    .section-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .section-title { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 14px; }
+    .section-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px; }
+    .chart-container { position: relative; height: 320px; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .data-table th, .data-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+    .data-table th { color: var(--text-secondary); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; cursor: pointer; }
+    .data-table tbody tr { cursor: pointer; }
+    .data-table tbody tr:hover { background: rgba(59,130,246,0.08); }
+    .arb-glow { color: #10b981; font-weight: 700; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <div>
+            <div class="dashboard-title"><i class="fas fa-store"></i> Polymarket Markets</div>
+            <div class="dashboard-subtitle">Latest snapshot per watched market — click a row for its price history</div>
+        </div>
+        <input id="market-search" class="form-control" style="max-width:280px;" placeholder="Filter by question/category…" oninput="renderTable()">
+    </div>
+
+    <div class="section-card" id="detail-card" style="display:none;">
+        <div class="section-header">
+            <div class="section-title" style="margin-bottom:0;" id="detail-title">Market</div>
+            <div>
+                <select id="detail-hours" class="form-select form-select-sm" style="width:auto; display:inline-block;" onchange="loadDetail()">
+                    <option value="24" selected>24h</option>
+                    <option value="72">3d</option>
+                    <option value="168">7d</option>
+                </select>
+                <button class="btn btn-sm btn-secondary" onclick="document.getElementById('detail-card').style.display='none'">Close</button>
+            </div>
+        </div>
+        <div class="chart-container"><canvas id="priceChart"></canvas></div>
+    </div>
+
+    <div class="section-card">
+        <div class="section-title"><i class="fas fa-table"></i> Catalog
+            <span style="font-size:0.78rem; color:var(--text-secondary); font-weight:400;" id="catalog-count"></span>
+        </div>
+        <div style="overflow-x:auto;">
+            <table class="data-table">
+                <thead><tr>
+                    <th onclick="sortBy('question')">Market</th>
+                    <th onclick="sortBy('category')">Category</th>
+                    <th onclick="sortBy('yes_price')">YES</th>
+                    <th onclick="sortBy('no_price')">NO</th>
+                    <th onclick="sortBy('pair_cost')">Pair Cost</th>
+                    <th onclick="sortBy('spread')">Bid/Ask</th>
+                    <th onclick="sortBy('liquidity')">Liquidity</th>
+                    <th onclick="sortBy('volume_24h')">Vol 24h</th>
+                    <th onclick="sortBy('signals_24h')">Signals 24h</th>
+                    <th>Updated</th>
+                </tr></thead>
+                <tbody id="marketsBody"><tr><td colspan="10" style="text-align:center;">Loading…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+let allMarkets = [], sortKey = 'volume_24h', sortDir = -1, currentMarket = null, priceChart = null;
+
+function fmtUsd(v) { return v === null || v === undefined ? '--' : '$' + Number(v).toLocaleString(undefined, {maximumFractionDigits: 0}); }
+function fmtP(v) { return (v === null || v === undefined) ? '-' : Number(v).toFixed(3); }
+
+function sortBy(key) {
+    sortDir = (sortKey === key) ? -sortDir : -1;
+    sortKey = key;
+    renderTable();
+}
+
+function renderTable() {
+    const q = (document.getElementById('market-search').value || '').toLowerCase();
+    let rows = allMarkets.filter(m => !q
+        || (m.question || '').toLowerCase().includes(q)
+        || (m.category || '').toLowerCase().includes(q));
+    rows.sort((a, b) => {
+        const av = a[sortKey] ?? -Infinity, bv = b[sortKey] ?? -Infinity;
+        return (av < bv ? -1 : av > bv ? 1 : 0) * sortDir;
+    });
+    document.getElementById('catalog-count').textContent = `(${rows.length} markets)`;
+    const tb = document.getElementById('marketsBody');
+    if (!rows.length) {
+        tb.innerHTML = '<tr><td colspan="10" style="text-align:center;">No snapshots yet — the engine writes polymarket_price_snapshots each cycle once mig 137 is applied and the module runs.</td></tr>';
+        return;
+    }
+    tb.innerHTML = rows.map(m => `
+        <tr onclick="openDetail('${m.market_id}')">
+            <td title="${m.market_id}">${(m.question || m.market_id).slice(0, 80)}</td>
+            <td>${m.category || '-'}</td>
+            <td>${fmtP(m.yes_price)}</td>
+            <td>${fmtP(m.no_price)}</td>
+            <td class="${m.pair_cost !== null && m.pair_cost < 0.99 ? 'arb-glow' : ''}">${m.pair_cost ?? '-'}</td>
+            <td>${fmtP(m.best_bid)} / ${fmtP(m.best_ask)}</td>
+            <td>${fmtUsd(m.liquidity)}</td>
+            <td>${fmtUsd(m.volume_24h)}</td>
+            <td>${m.signals_24h}</td>
+            <td>${(m.ts || '').slice(11, 19)}</td>
+        </tr>`).join('');
+}
+
+async function loadMarkets() {
+    try {
+        const resp = await fetch('/api/polymarket/markets');
+        const body = await resp.json();
+        allMarkets = (body.data || []).map(m => ({
+            ...m,
+            spread: (m.best_ask !== null && m.best_bid !== null) ? m.best_ask - m.best_bid : null,
+        }));
+        renderTable();
+    } catch (e) { /* fail-soft */ }
+}
+
+function openDetail(marketId) {
+    currentMarket = marketId;
+    document.getElementById('detail-card').style.display = 'block';
+    const m = allMarkets.find(x => x.market_id === marketId);
+    document.getElementById('detail-title').textContent = m ? m.question : marketId;
+    loadDetail();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function loadDetail() {
+    if (!currentMarket) return;
+    const hours = document.getElementById('detail-hours').value;
+    try {
+        const resp = await fetch(`/api/polymarket/market/${encodeURIComponent(currentMarket)}/history?hours=${hours}`);
+        const body = await resp.json();
+        const pts = body.data || [];
+        const labels = pts.map(p => p.ts.slice(5, 16).replace('T', ' '));
+        if (priceChart) priceChart.destroy();
+        priceChart = new Chart(document.getElementById('priceChart'), {
+            type: 'line',
+            data: { labels, datasets: [
+                { label: 'YES', data: pts.map(p => p.yes_price), borderColor: '#10b981', pointRadius: 0, tension: 0.2 },
+                { label: 'NO', data: pts.map(p => p.no_price), borderColor: '#dc2626', pointRadius: 0, tension: 0.2 },
+            ] },
+            options: { responsive: true, maintainAspectRatio: false,
+                       scales: { y: { min: 0, max: 1 } },
+                       plugins: { legend: { position: 'top' } } }
+        });
+    } catch (e) { /* fail-soft */ }
+}
+
+loadMarkets();
+setInterval(loadMarkets, 30000);
+</script>
+{% endblock %}

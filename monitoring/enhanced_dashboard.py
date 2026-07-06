@@ -1369,6 +1369,27 @@ class DashboardEndpoints:
         # Derives from futures_funding_payments.predicted_usd × intervals/24h.
         self.app.router.add_get('/api/futures/funding-forecast', self.api_futures_funding_forecast)
 
+        # API - Polymarket module (wave-F5 dedicated dashboard). All read-only
+        # and fail-soft: a missing table (mig 137 not applied) or dead health
+        # port renders an empty panel, never a 500.
+        self.app.router.add_get('/api/polymarket/overview', self.api_polymarket_overview)
+        self.app.router.add_get('/api/polymarket/signal-stats', self.api_polymarket_signal_stats)
+        self.app.router.add_get('/api/polymarket/signals', self.api_polymarket_signals)
+        self.app.router.add_get('/api/polymarket/markets', self.api_polymarket_markets)
+        self.app.router.add_get('/api/polymarket/market/{market_id}/history',
+                                self.api_polymarket_market_history)
+        self.app.router.add_get('/api/polymarket/trades', self.api_polymarket_trades)
+        self.app.router.add_get('/api/polymarket/positions', self.api_polymarket_positions)
+        self.app.router.add_get('/api/polymarket/performance', self.api_polymarket_performance)
+        # Polymarket dedicated pages. Registered unconditionally (not in the
+        # fallback branch): monitoring/module_routes.py has no polymarket
+        # pages, so there is no collision in either branch.
+        self.app.router.add_get('/polymarket/dashboard', self._polymarket_dashboard_page)
+        self.app.router.add_get('/polymarket/markets', self._polymarket_markets_page)
+        self.app.router.add_get('/polymarket/signals', self._polymarket_signals_page)
+        self.app.router.add_get('/polymarket/positions', self._polymarket_positions_page)
+        self.app.router.add_get('/polymarket/performance', self._polymarket_performance_page)
+
         # API - Trading controls
         self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
         self.app.router.add_post('/api/position/close', self.api_close_position)
@@ -3003,9 +3024,14 @@ class DashboardEndpoints:
             'port_env': ('POLYMARKET_HEALTH_PORT', 8089),
             'config_type': 'polymarket_config', 'gate': True,
             'tables': ('polymarket_signals', 'polymarket_trades'),
+            # Wave-F5: the dedicated page set replaces the generic panel as
+            # the primary surface; /module/polymarket keeps resolving as the
+            # raw-table fallback.
+            'panel': '/polymarket/dashboard',
             'desc': 'Shadow-first prediction markets (YES+NO<1 arb + momentum); '
                     'LIVE CLOB gated behind shadow_mode=false AND '
-                    'live_execution_enabled=true.',
+                    'live_execution_enabled=true. Dedicated dashboard: '
+                    '/polymarket/dashboard.',
             'category': 'Trading',
         },
     }
@@ -3237,6 +3263,448 @@ class DashboardEndpoints:
             logger.debug(f"table panel failed for {table}: {e}")
             panel.update({'exists': False, 'rows': [], 'columns': []})
         return panel
+
+    # ===== Polymarket dedicated dashboard (wave-F5) =====
+    # Read-only JSON for /polymarket/* pages. Every handler is fail-soft:
+    # no DB pool / missing mig-137 tables / dead health port -> empty data.
+
+    async def _polymarket_dashboard_page(self, request):
+        template = self.jinja_env.get_template('dashboard_polymarket.html')
+        return web.Response(text=template.render(page='polymarket_dashboard'),
+                            content_type='text/html')
+
+    async def _polymarket_markets_page(self, request):
+        template = self.jinja_env.get_template('markets_polymarket.html')
+        return web.Response(text=template.render(page='polymarket_markets'),
+                            content_type='text/html')
+
+    async def _polymarket_signals_page(self, request):
+        template = self.jinja_env.get_template('signals_polymarket.html')
+        return web.Response(text=template.render(page='polymarket_signals'),
+                            content_type='text/html')
+
+    async def _polymarket_positions_page(self, request):
+        template = self.jinja_env.get_template('positions_polymarket.html')
+        return web.Response(text=template.render(page='polymarket_positions'),
+                            content_type='text/html')
+
+    async def _polymarket_performance_page(self, request):
+        template = self.jinja_env.get_template('performance_polymarket.html')
+        return web.Response(text=template.render(page='polymarket_performance'),
+                            content_type='text/html')
+
+    async def api_polymarket_overview(self, request):
+        """GET /api/polymarket/overview — live gate-chain state + engine
+        /status proxy + headline tiles for /polymarket/dashboard."""
+        from pathlib import Path as _Path
+        data = {
+            'gates': {
+                'shadow_mode': True,
+                'live_execution_enabled': False,
+                'dry_run': True,
+                'killswitch': _Path('logs/.killswitch').exists(),
+                'paused': _Path('logs/.pause_polymarket').exists(),
+            },
+            'engine': None,
+            'tiles': {},
+        }
+        if self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch(
+                        "SELECT key, value FROM config_settings "
+                        "WHERE config_type = 'polymarket_config' "
+                        "AND key IN ('shadow_mode', 'live_execution_enabled', 'dry_run')")
+                    cfg = {r['key']: str(r['value']).strip().lower() == 'true'
+                           for r in rows}
+                    data['gates']['shadow_mode'] = cfg.get('shadow_mode', True)
+                    data['gates']['live_execution_enabled'] = cfg.get(
+                        'live_execution_enabled', False)
+                    if 'dry_run' in cfg:
+                        data['gates']['dry_run'] = cfg['dry_run']
+                    tiles = await conn.fetchrow("""
+                        SELECT
+                          (SELECT COUNT(*) FROM polymarket_signals
+                           WHERE created_at > NOW() - INTERVAL '24 hours') AS signals_24h,
+                          (SELECT COUNT(*) FROM polymarket_signals
+                           WHERE signal_type = 'risk_free_arb') AS arb_signals_total,
+                          (SELECT COUNT(*) FROM polymarket_trades
+                           WHERE created_at > NOW() - INTERVAL '24 hours') AS trades_24h,
+                          (SELECT COUNT(*) FROM polymarket_trades
+                           WHERE is_simulated = FALSE) AS live_trades_total
+                    """)
+                    data['tiles'] = {k: (int(v) if v is not None else 0)
+                                     for k, v in dict(tiles).items()}
+                    by_type = await conn.fetch(
+                        "SELECT signal_type, COUNT(*) AS n FROM polymarket_signals "
+                        "WHERE created_at > NOW() - INTERVAL '24 hours' "
+                        "GROUP BY signal_type")
+                    data['tiles']['signals_24h_by_type'] = {
+                        r['signal_type']: int(r['n']) for r in by_type}
+                    # mig-137 tables may not exist yet — probe separately.
+                    try:
+                        extra = await conn.fetchrow("""
+                            SELECT
+                              (SELECT COUNT(*) FROM polymarket_signal_outcomes
+                               WHERE fully_marked) AS outcomes_marked,
+                              (SELECT COUNT(DISTINCT market_id)
+                               FROM polymarket_price_snapshots
+                               WHERE ts > NOW() - INTERVAL '10 minutes') AS markets_watched
+                        """)
+                        for k, v in dict(extra).items():
+                            data['tiles'][k] = int(v) if v is not None else 0
+                    except Exception:
+                        data['tiles']['outcomes_marked'] = None
+                        data['tiles']['markets_watched'] = None
+            except Exception as e:
+                logger.debug(f"polymarket overview DB probe failed: {e}")
+                data['warning'] = str(e)
+        try:
+            import aiohttp
+            port = int(os.getenv('POLYMARKET_HEALTH_PORT', '8089'))
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'http://localhost:{port}/status',
+                                       timeout=3) as resp:
+                    if resp.status == 200:
+                        data['engine'] = await resp.json()
+        except Exception:
+            pass  # engine offline: dashboard falls back to DB-only view
+        if isinstance(data['engine'], dict) and 'dry_run' in data['engine']:
+            data['gates']['dry_run'] = bool(data['engine']['dry_run'])
+        return web.json_response({'success': True, 'data': data})
+
+    async def api_polymarket_signal_stats(self, request):
+        """GET /api/polymarket/signal-stats?hours= — hourly signal buckets by
+        type + daily avg forward return by type (edge-over-time)."""
+        try:
+            hours = max(1, min(int(request.query.get('hours', '24')), 720))
+        except (TypeError, ValueError):
+            hours = 24
+        hourly, daily_edge = [], []
+        if self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT date_trunc('hour', created_at) AS bucket,
+                               signal_type, COUNT(*) AS n
+                        FROM polymarket_signals
+                        WHERE created_at > NOW() - make_interval(hours => $1)
+                        GROUP BY 1, 2 ORDER BY 1
+                    """, hours)
+                    hourly = [{'bucket': _iso_utc(r['bucket']),
+                               'signal_type': r['signal_type'],
+                               'n': int(r['n'])} for r in rows]
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT date_trunc('day', created_at) AS day,
+                                   signal_type,
+                                   AVG(fwd_return_24h) AS avg_fwd_24h,
+                                   COUNT(fwd_return_24h) AS n
+                            FROM polymarket_signal_outcomes
+                            WHERE created_at > NOW() - INTERVAL '30 days'
+                            GROUP BY 1, 2 ORDER BY 1
+                        """)
+                        daily_edge = [
+                            {'day': _iso_utc(r['day']),
+                             'signal_type': r['signal_type'],
+                             'avg_fwd_24h': (round(float(r['avg_fwd_24h']), 4)
+                                             if r['avg_fwd_24h'] is not None else None),
+                             'n': int(r['n'])} for r in rows]
+                    except Exception:
+                        pass  # outcomes table absent (mig 137 not applied)
+            except Exception as e:
+                logger.debug(f"polymarket signal-stats failed: {e}")
+        return web.json_response({'success': True, 'hours': hours,
+                                  'hourly': hourly, 'daily_edge': daily_edge})
+
+    async def api_polymarket_signals(self, request):
+        """GET /api/polymarket/signals?hours=&type=&min_score=&limit= —
+        signal stream with LATE outcome columns when available."""
+        try:
+            hours = max(1, min(int(request.query.get('hours', '24')), 720))
+        except (TypeError, ValueError):
+            hours = 24
+        sig_type = (request.query.get('type', '') or '').strip()
+        try:
+            min_score = float(request.query.get('min_score', '0') or 0)
+        except (TypeError, ValueError):
+            min_score = 0.0
+        try:
+            limit = max(5, min(int(request.query.get('limit', '100')), 500))
+        except (TypeError, ValueError):
+            limit = 100
+        signals = []
+        if self.db_pool:
+            base = """
+                SELECT s.id, s.signal_type, s.market_id, s.market_question,
+                       s.direction, s.yes_price, s.no_price, s.edge_bps,
+                       s.score, s.created_at{outcome_cols}
+                FROM polymarket_signals s{outcome_join}
+                WHERE s.created_at > NOW() - make_interval(hours => $1)
+                  AND ($2 = '' OR s.signal_type = $2)
+                  AND COALESCE(s.score, 0) >= $3
+                ORDER BY s.created_at DESC
+                LIMIT $4
+            """
+            variants = (
+                {'outcome_cols': ", o.fwd_return_1h, o.fwd_return_6h, "
+                                 "o.fwd_return_24h, o.fully_marked",
+                 'outcome_join': " LEFT JOIN polymarket_signal_outcomes o "
+                                 "ON o.signal_id = s.id"},
+                {'outcome_cols': '', 'outcome_join': ''},  # pre-mig-137 fallback
+            )
+            for v in variants:
+                try:
+                    async with self.db_pool.acquire() as conn:
+                        rows = await conn.fetch(base.format(**v), hours,
+                                                sig_type, min_score, limit)
+                    for r in rows:
+                        d = dict(r)
+                        d['created_at'] = _iso_utc(r['created_at'])
+                        signals.append(d)
+                    break
+                except Exception as e:
+                    logger.debug(f"polymarket signals query failed: {e}")
+                    signals = []
+        return web.json_response({'success': True, 'data': signals})
+
+    async def api_polymarket_markets(self, request):
+        """GET /api/polymarket/markets — latest snapshot per watched market
+        + its 24h signal count (market catalog)."""
+        markets = []
+        if self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT DISTINCT ON (market_id)
+                               market_id, question, category, yes_price,
+                               no_price, best_bid, best_ask, volume_24h,
+                               liquidity, ts
+                        FROM polymarket_price_snapshots
+                        WHERE ts > NOW() - INTERVAL '2 hours'
+                        ORDER BY market_id, ts DESC
+                    """)
+                    counts = {}
+                    try:
+                        crows = await conn.fetch(
+                            "SELECT market_id, COUNT(*) AS n FROM polymarket_signals "
+                            "WHERE created_at > NOW() - INTERVAL '24 hours' "
+                            "GROUP BY market_id")
+                        counts = {r['market_id']: int(r['n']) for r in crows}
+                    except Exception:
+                        pass
+                    for r in rows:
+                        d = dict(r)
+                        d['ts'] = _iso_utc(r['ts'])
+                        d['signals_24h'] = counts.get(r['market_id'], 0)
+                        yes, no = r['yes_price'], r['no_price']
+                        d['pair_cost'] = (round(yes + no, 4)
+                                          if yes is not None and no is not None
+                                          else None)
+                        markets.append(d)
+                    markets.sort(key=lambda m: m.get('volume_24h') or 0,
+                                 reverse=True)
+            except Exception as e:
+                logger.debug(f"polymarket markets query failed (mig 137?): {e}")
+        return web.json_response({'success': True, 'data': markets})
+
+    async def api_polymarket_market_history(self, request):
+        """GET /api/polymarket/market/{market_id}/history?hours= — snapshot
+        series for one market (YES/NO chart), downsampled to <=500 points."""
+        market_id = str(request.match_info.get('market_id', '') or '')
+        try:
+            hours = max(1, min(int(request.query.get('hours', '24')), 336))
+        except (TypeError, ValueError):
+            hours = 24
+        points = []
+        if self.db_pool and market_id:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT yes_price, no_price, volume_24h, liquidity, ts
+                        FROM polymarket_price_snapshots
+                        WHERE market_id = $1
+                          AND ts > NOW() - make_interval(hours => $2)
+                        ORDER BY ts ASC
+                    """, market_id, hours)
+                step = max(1, len(rows) // 500)
+                for r in rows[::step]:
+                    points.append({'ts': _iso_utc(r['ts']),
+                                   'yes_price': r['yes_price'],
+                                   'no_price': r['no_price'],
+                                   'volume_24h': r['volume_24h'],
+                                   'liquidity': r['liquidity']})
+            except Exception as e:
+                logger.debug(f"polymarket history query failed: {e}")
+        return web.json_response({'success': True, 'market_id': market_id,
+                                  'hours': hours, 'data': points})
+
+    async def api_polymarket_trades(self, request):
+        """GET /api/polymarket/trades?limit= — recent trade-ledger rows
+        (simulated + live), newest first."""
+        try:
+            limit = max(5, min(int(request.query.get('limit', '50')), 500))
+        except (TypeError, ValueError):
+            limit = 50
+        trades = []
+        if self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT id, market_id, market_question, strategy, side,
+                               outcome, price, size_usd, expected_edge_bps,
+                               status, order_id, skip_reason, is_simulated,
+                               created_at
+                        FROM polymarket_trades
+                        ORDER BY created_at DESC
+                        LIMIT $1
+                    """, limit)
+                for r in rows:
+                    d = dict(r)
+                    d['created_at'] = _iso_utc(r['created_at'])
+                    trades.append(d)
+            except Exception as e:
+                logger.debug(f"polymarket trades query failed: {e}")
+        return web.json_response({'success': True, 'data': trades})
+
+    async def api_polymarket_positions(self, request):
+        """GET /api/polymarket/positions — net LIVE exposure per
+        (market, outcome) from the non-simulated ledger, marked to the latest
+        snapshot. Empty in shadow mode (honest: shadow records are not
+        positions)."""
+        positions = []
+        if self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT market_id, MAX(market_question) AS question,
+                               outcome,
+                               SUM(CASE WHEN side = 'SELL' THEN -size_usd
+                                        ELSE size_usd END) AS net_usd,
+                               AVG(price) FILTER (WHERE side = 'BUY') AS avg_entry,
+                               MAX(created_at) AS last_trade_at,
+                               COUNT(*) AS legs
+                        FROM polymarket_trades
+                        WHERE is_simulated = FALSE
+                          AND status IN ('live_filled', 'live_leg2_failed',
+                                         'live_unwound', 'live_unwind_failed',
+                                         'live_submitted')
+                        GROUP BY market_id, outcome
+                        HAVING SUM(CASE WHEN side = 'SELL' THEN -size_usd
+                                        ELSE size_usd END) > 0.01
+                    """)
+                    marks = {}
+                    if rows:
+                        try:
+                            mrows = await conn.fetch("""
+                                SELECT DISTINCT ON (market_id)
+                                       market_id, yes_price, no_price, ts
+                                FROM polymarket_price_snapshots
+                                WHERE market_id = ANY($1::text[])
+                                ORDER BY market_id, ts DESC
+                            """, [r['market_id'] for r in rows])
+                            marks = {m['market_id']: m for m in mrows}
+                        except Exception:
+                            pass
+                    for r in rows:
+                        d = dict(r)
+                        d['last_trade_at'] = _iso_utc(r['last_trade_at'])
+                        d['net_usd'] = round(float(r['net_usd']), 2)
+                        mark = marks.get(r['market_id'])
+                        d['mark_yes'] = mark['yes_price'] if mark else None
+                        d['mark_no'] = mark['no_price'] if mark else None
+                        # Mark-to-snapshot estimate: BOTH pairs redeem $1/share.
+                        entry = r['avg_entry']
+                        try:
+                            if mark and entry:
+                                if r['outcome'] == 'BOTH':
+                                    cur = (mark['yes_price'] or 0) + (mark['no_price'] or 0)
+                                elif r['outcome'] == 'NO':
+                                    cur = mark['no_price']
+                                else:
+                                    cur = mark['yes_price']
+                                if cur is not None:
+                                    d['value_now_usd'] = round(
+                                        float(r['net_usd']) / float(entry) * float(cur), 2)
+                                    d['unrealized_usd'] = round(
+                                        d['value_now_usd'] - d['net_usd'], 2)
+                        except Exception:
+                            pass
+                        positions.append(d)
+            except Exception as e:
+                logger.debug(f"polymarket positions query failed: {e}")
+        return web.json_response({'success': True, 'data': positions})
+
+    async def api_polymarket_performance(self, request):
+        """GET /api/polymarket/performance?days= — cumulative SIMULATED arb
+        PnL (expected edge, honestly labeled — no realized settlement yet),
+        win rate + forward-return table by signal type and horizon."""
+        try:
+            days = max(1, min(int(request.query.get('days', '30')), 365))
+        except (TypeError, ValueError):
+            days = 30
+        daily_pnl, horizon_table = [], []
+        if self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT date_trunc('day', created_at) AS day,
+                               SUM(size_usd * COALESCE(expected_edge_bps, 0)
+                                   / 10000.0) AS expected_pnl,
+                               COUNT(*) AS trades
+                        FROM polymarket_trades
+                        WHERE strategy = 'risk_free_arb'
+                          AND created_at > NOW() - make_interval(days => $1)
+                        GROUP BY 1 ORDER BY 1
+                    """, days)
+                    cum = 0.0
+                    for r in rows:
+                        val = float(r['expected_pnl'] or 0.0)
+                        cum += val
+                        daily_pnl.append({'day': _iso_utc(r['day']),
+                                          'expected_pnl': round(val, 2),
+                                          'cumulative': round(cum, 2),
+                                          'trades': int(r['trades'])})
+                    try:
+                        rows = await conn.fetch("""
+                            SELECT signal_type,
+                                   COUNT(fwd_return_1h)  AS n_1h,
+                                   AVG(fwd_return_1h)    AS avg_1h,
+                                   AVG((fwd_return_1h > 0)::int::float)
+                                       FILTER (WHERE fwd_return_1h IS NOT NULL) AS hit_1h,
+                                   COUNT(fwd_return_6h)  AS n_6h,
+                                   AVG(fwd_return_6h)    AS avg_6h,
+                                   AVG((fwd_return_6h > 0)::int::float)
+                                       FILTER (WHERE fwd_return_6h IS NOT NULL) AS hit_6h,
+                                   COUNT(fwd_return_24h) AS n_24h,
+                                   AVG(fwd_return_24h)   AS avg_24h,
+                                   AVG((fwd_return_24h > 0)::int::float)
+                                       FILTER (WHERE fwd_return_24h IS NOT NULL) AS hit_24h
+                            FROM polymarket_signal_outcomes
+                            WHERE created_at > NOW() - make_interval(days => $1)
+                            GROUP BY signal_type
+                        """, days)
+                        for r in rows:
+                            d = {'signal_type': r['signal_type']}
+                            for h in ('1h', '6h', '24h'):
+                                d[f'n_{h}'] = int(r[f'n_{h}'] or 0)
+                                d[f'avg_{h}'] = (round(float(r[f'avg_{h}']), 4)
+                                                 if r[f'avg_{h}'] is not None else None)
+                                d[f'hit_{h}'] = (round(float(r[f'hit_{h}']), 4)
+                                                 if r[f'hit_{h}'] is not None else None)
+                            horizon_table.append(d)
+                    except Exception:
+                        pass  # outcomes table absent (mig 137 not applied)
+            except Exception as e:
+                logger.debug(f"polymarket performance query failed: {e}")
+        return web.json_response({
+            'success': True, 'days': days,
+            # Honesty: expected edge on simulated pairs, NOT realized PnL —
+            # settlement/redemption accounting does not exist yet.
+            'pnl_basis': 'expected_edge_simulated',
+            'daily_pnl': daily_pnl,
+            'horizon_table': horizon_table,
+        })
 
     async def api_module_data(self, request):
         """GET /api/module-data/{module} — read-only recent rows from an
@@ -3614,7 +4082,7 @@ class DashboardEndpoints:
          'desc': 'LLM-assisted signal generation with budget gate and per-trade '
                  'notional ceiling.'},
         {'key': 'polymarket', 'name': 'Polymarket', 'env': 'POLYMARKET_MODULE_ENABLED',
-         'panel': '/module/polymarket', 'settings': '/config/polymarket_config',
+         'panel': '/polymarket/dashboard', 'settings': '/config/polymarket_config',
          'desc': 'Shadow-first prediction markets (YES+NO<1 arb + momentum); '
                  'LIVE CLOB gated behind shadow_mode=false AND live_execution_enabled=true.'},
         {'key': 'advisor', 'name': 'Financial Advisor', 'env': 'ADVISOR_MODULE_ENABLED',
@@ -16288,24 +16756,43 @@ class DashboardEndpoints:
             }
             if self.db:
                 async with self.db.pool.acquire() as conn:
+                    # Wave-F5: SHORT-PnL sign fix. The stored profit_loss column
+                    # was written with the LONG formula (exit_usd - entry_usd)
+                    # for ALL sides, so SHORT trades were sign-inverted (a SHORT
+                    # that fell in price showed a LOSS). Recompute pnl side-aware
+                    # from prices here so the aggregate is honest regardless of
+                    # the stored column: LONG = (exit-entry)*amount,
+                    # SHORT = (entry-exit)*amount  ≡ (entry-exit)/entry × notional.
                     row = await conn.fetchrow("""
+                        WITH t AS (
+                            SELECT
+                                CASE WHEN LOWER(COALESCE(side, 'buy')) IN ('sell', 'short')
+                                     THEN (entry_price - exit_price) * amount
+                                     ELSE (exit_price - entry_price) * amount
+                                END AS cpnl,
+                                sentiment_score,
+                                exit_timestamp, entry_timestamp
+                            FROM ai_trades
+                            WHERE status = 'closed'
+                              AND exit_timestamp IS NOT NULL
+                              AND entry_timestamp IS NOT NULL
+                              AND entry_price IS NOT NULL
+                              AND exit_price IS NOT NULL
+                        )
                         SELECT
                             COUNT(*) as trades,
-                            COALESCE(SUM(profit_loss), 0) as pnl,
-                            COUNT(*) FILTER (WHERE profit_loss > 0) as wins,
+                            COALESCE(SUM(cpnl), 0) as pnl,
+                            COUNT(*) FILTER (WHERE cpnl > 0) as wins,
                             COALESCE(AVG(sentiment_score), 0) as avg_sentiment,
-                            COALESCE(MAX(profit_loss), 0) as best_trade,
-                            COALESCE(MIN(profit_loss), 0) as worst_trade,
+                            COALESCE(MAX(cpnl), 0) as best_trade,
+                            COALESCE(MIN(cpnl), 0) as worst_trade,
                             -- Avg hold time in seconds across all closed
                             -- trades. Frontend formats to hours/minutes.
                             COALESCE(
                                 AVG(EXTRACT(EPOCH FROM (exit_timestamp - entry_timestamp))),
                                 0
                             ) as avg_hold_seconds
-                        FROM ai_trades
-                        WHERE status = 'closed'
-                          AND exit_timestamp IS NOT NULL
-                          AND entry_timestamp IS NOT NULL
+                        FROM t
                     """)
                     if row and row['trades'] > 0:
                         metrics['trades'] = row['trades']

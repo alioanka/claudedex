@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+
+{% block title %}Polymarket - Signals{% endblock %}
+
+{% block extra_head %}
+<style>
+    .dashboard-container { padding: 20px; }
+    .dashboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 10px; }
+    .dashboard-title { font-size: 2rem; font-weight: 700; color: var(--text-primary); }
+    .dashboard-subtitle { color: var(--text-secondary); font-size: 1rem; margin-top: 4px; }
+    .section-card { background: var(--card-bg); border: 1px solid var(--border-color); border-radius: 12px; padding: 20px; margin-bottom: 24px; }
+    .section-title { font-size: 1.1rem; font-weight: 600; color: var(--text-primary); margin-bottom: 14px; }
+    .chart-container { position: relative; height: 300px; }
+    .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .data-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    .data-table th, .data-table td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border-color); color: var(--text-primary); }
+    .data-table th { color: var(--text-secondary); font-weight: 600; font-size: 0.78rem; text-transform: uppercase; }
+    .badge-type { padding: 2px 8px; border-radius: 10px; font-size: 0.72rem; font-weight: 600; }
+    .badge-risk_free_arb { background: rgba(16,185,129,0.15); color: #10b981; }
+    .badge-momentum { background: rgba(59,130,246,0.15); color: #3b82f6; }
+    .badge-new_market { background: rgba(245,158,11,0.15); color: #f59e0b; }
+    .ret-pos { color: #10b981; font-weight: 600; }
+    .ret-neg { color: #dc2626; font-weight: 600; }
+    .ret-none { color: var(--text-secondary); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="dashboard-container">
+    <div class="dashboard-header">
+        <div>
+            <div class="dashboard-title"><i class="fas fa-bolt"></i> Polymarket Signals</div>
+            <div class="dashboard-subtitle">Signal stream with LATE forward-outcome marks (1h/6h/24h, probability points signed by direction)</div>
+        </div>
+        <div class="filters">
+            <select id="f-type" class="form-select form-select-sm" style="width:auto;" onchange="loadSignals()">
+                <option value="">All types</option>
+                <option value="risk_free_arb">risk_free_arb</option>
+                <option value="momentum">momentum</option>
+                <option value="new_market">new_market</option>
+            </select>
+            <select id="f-hours" class="form-select form-select-sm" style="width:auto;" onchange="loadSignals()">
+                <option value="24" selected>24h</option>
+                <option value="72">3d</option>
+                <option value="168">7d</option>
+            </select>
+            <input id="f-score" class="form-control form-control-sm" style="width:110px;" placeholder="min score" oninput="loadSignals()">
+        </div>
+    </div>
+
+    <div class="section-card">
+        <div class="section-title"><i class="fas fa-chart-line"></i> Edge Over Time — daily avg 24h forward return by type</div>
+        <div style="font-size:0.8rem; color:var(--text-secondary); margin-bottom:10px;">
+            Positive = signals pointed the right way on average. Requires outcome marks (mig 137);
+            empty until the tracker has run for 24h+.
+        </div>
+        <div class="chart-container"><canvas id="edgeChart"></canvas></div>
+    </div>
+
+    <div class="section-card">
+        <div class="section-title"><i class="fas fa-stream"></i> Stream</div>
+        <div style="overflow-x:auto;">
+            <table class="data-table">
+                <thead><tr>
+                    <th>Time</th><th>Type</th><th>Market</th><th>Dir</th>
+                    <th>YES</th><th>Edge bps</th><th>Score</th>
+                    <th>Fwd 1h</th><th>Fwd 6h</th><th>Fwd 24h</th>
+                </tr></thead>
+                <tbody id="signalsBody"><tr><td colspan="10" style="text-align:center;">Loading…</td></tr></tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+let edgeChart = null;
+
+function fmtRet(v) {
+    if (v === null || v === undefined) return '<span class="ret-none">—</span>';
+    const cls = v > 0 ? 'ret-pos' : (v < 0 ? 'ret-neg' : 'ret-none');
+    return `<span class="${cls}">${v > 0 ? '+' : ''}${Number(v).toFixed(2)}pp</span>`;
+}
+
+async function loadSignals() {
+    const type = document.getElementById('f-type').value;
+    const hours = document.getElementById('f-hours').value;
+    const score = parseFloat(document.getElementById('f-score').value) || 0;
+    try {
+        const resp = await fetch(`/api/polymarket/signals?hours=${hours}&type=${type}&min_score=${score}&limit=200`);
+        const body = await resp.json();
+        const rows = body.data || [];
+        const tb = document.getElementById('signalsBody');
+        if (!rows.length) {
+            tb.innerHTML = '<tr><td colspan="10" style="text-align:center;">No signals in this window.</td></tr>';
+            return;
+        }
+        tb.innerHTML = rows.map(s => `
+            <tr>
+                <td>${(s.created_at || '').slice(5, 19).replace('T', ' ')}</td>
+                <td><span class="badge-type badge-${s.signal_type}">${s.signal_type}</span></td>
+                <td title="${s.market_id}">${(s.market_question || s.market_id).slice(0, 60)}</td>
+                <td>${s.direction || '-'}</td>
+                <td>${s.yes_price?.toFixed ? s.yes_price.toFixed(3) : s.yes_price}</td>
+                <td>${s.edge_bps ?? '-'}</td>
+                <td>${s.score ?? '-'}</td>
+                <td>${fmtRet(s.fwd_return_1h)}</td>
+                <td>${fmtRet(s.fwd_return_6h)}</td>
+                <td>${fmtRet(s.fwd_return_24h)}</td>
+            </tr>`).join('');
+    } catch (e) { /* fail-soft */ }
+}
+
+async function loadEdgeChart() {
+    try {
+        const resp = await fetch('/api/polymarket/signal-stats?hours=24');
+        const body = await resp.json();
+        const rows = body.daily_edge || [];
+        const days = [...new Set(rows.map(r => r.day))].sort();
+        const types = [...new Set(rows.map(r => r.signal_type))];
+        const colors = { risk_free_arb: '#10b981', momentum: '#3b82f6', new_market: '#f59e0b' };
+        const datasets = types.map(tp => ({
+            label: tp,
+            data: days.map(d => {
+                const r = rows.find(x => x.day === d && x.signal_type === tp);
+                return r ? r.avg_fwd_24h : null;
+            }),
+            borderColor: colors[tp] || '#8b5cf6', tension: 0.2, spanGaps: true,
+        }));
+        if (edgeChart) edgeChart.destroy();
+        edgeChart = new Chart(document.getElementById('edgeChart'), {
+            type: 'line',
+            data: { labels: days.map(d => d.slice(0, 10)), datasets },
+            options: { responsive: true, maintainAspectRatio: false,
+                       plugins: { legend: { position: 'top' } },
+                       scales: { y: { title: { display: true, text: 'avg fwd 24h (probability points)' } } } }
+        });
+    } catch (e) { /* fail-soft */ }
+}
+
+loadSignals();
+loadEdgeChart();
+setInterval(() => { loadSignals(); loadEdgeChart(); }, 30000);
+</script>
+{% endblock %}
