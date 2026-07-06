@@ -110,6 +110,38 @@ def _normalize_datetime(dt: Optional[datetime]) -> Optional[datetime]:
     return dt
 
 
+# Wave-F5 multi-key support: numbered env/secret variants (KEY, KEY_2 .. KEY_9)
+# each become their OWN Endpoint row at equal priority so the round-robin
+# selection in ProviderEndpoints.get_next_endpoint rotates across accounts.
+MAX_NUMBERED_KEYS = 9
+
+
+def _clean_env_value(value: Optional[str]) -> Optional[str]:
+    """Strip quotes/placeholders. Returns None for unset/placeholder values."""
+    if not value:
+        return None
+    value = value.strip().strip('"').strip("'")
+    if not value or value in ('null', 'None') or value.startswith('your_'):
+        return None
+    return value
+
+
+def _numbered_env_values(env_var: str) -> List[Tuple[str, str]]:
+    """[(name, value)] for VAR, VAR_2 .. VAR_9 — skips unset/placeholder slots.
+
+    Lets the operator provision several accounts per provider (e.g. 3-4
+    Helius keys) without touching the DB: HELIUS_API_KEY=..., HELIUS_API_KEY_2=...
+    Fail-soft: zero extra vars set == exactly today's single-key behaviour.
+    """
+    out: List[Tuple[str, str]] = []
+    for i in range(1, MAX_NUMBERED_KEYS + 1):
+        name = env_var if i == 1 else f"{env_var}_{i}"
+        value = _clean_env_value(os.getenv(name))
+        if value:
+            out.append((name, value))
+    return out
+
+
 class EndpointStatus(Enum):
     """Endpoint status enumeration"""
     ACTIVE = 'active'
@@ -403,6 +435,12 @@ class PoolEngine:
                 success = await self._load_from_database()
                 if success and self._has_endpoints():
                     logger.info(f"Loaded {self._count_endpoints()} endpoints from database")
+                    # Multi-key bootstrap: register any numbered API keys the
+                    # operator added to secrets/.env since the pool was seeded.
+                    try:
+                        await self._load_keys_from_secrets()
+                    except Exception as e:
+                        logger.debug(f"secrets key probe skipped: {e}")
                     self.initialized = True
                     self._start_health_check_task()
                     return True
@@ -416,6 +454,12 @@ class PoolEngine:
             # Seed database if pool is available
             if db_pool and self._has_endpoints():
                 await self._seed_database()
+
+            # Multi-key bootstrap: DB-stored encrypted keys (fail-soft).
+            try:
+                await self._load_keys_from_secrets()
+            except Exception as e:
+                logger.debug(f"secrets key probe skipped: {e}")
 
             self._start_health_check_task()
             return True
@@ -534,13 +578,15 @@ class PoolEngine:
             'SOLANA_WS_URL': ('SOLANA_WS', 'solana'),
         }
 
-        # API mappings
+        # API mappings — every var also supports numbered _2.._9 variants,
+        # one Endpoint per key at EQUAL priority (round-robin rotation).
         api_mappings = {
             'GOPLUS_API_KEY': ('GOPLUS_API', None, 'https://api.gopluslabs.io'),
             '1INCH_API_KEY': ('1INCH_API', None, 'https://api.1inch.io'),
             'HELIUS_API_KEY': ('HELIUS_API', 'solana', None),  # URL built from key
             'ETHERSCAN_API_KEY': ('ETHERSCAN_API', 'ethereum', 'https://api.etherscan.io'),
             'JUPITER_API_KEY': ('JUPITER_API', 'solana', None),  # Uses JUPITER_API_URL
+            'BIRDEYE_API_KEY': ('BIRDEYE_API', 'solana', 'https://public-api.birdeye.so'),
         }
 
         endpoint_id = 0
@@ -564,34 +610,35 @@ class PoolEngine:
                         self._add_endpoint(endpoint)
                         self._endpoint_cache[url] = endpoint
 
-        # Load single RPC URLs
+        # Load single RPC URLs (numbered variants: ETHEREUM_RPC_URL_2 .. _9
+        # register as equal-priority siblings so rotation spreads load).
         for env_var, (provider_type, chain) in single_rpc_mappings.items():
-            value = os.getenv(env_var, '')
-            if value and value not in ('null', 'None', ''):
+            base_priority = 50 if 'PROVIDER' in env_var or 'BACKUP' not in env_var else 150
+            for name, value in _numbered_env_values(env_var):
                 # Check if already added
                 if value not in self._endpoint_cache:
                     endpoint_id += 1
-                    priority = 50 if 'PROVIDER' in env_var or 'BACKUP' not in env_var else 150
                     endpoint = Endpoint(
                         id=endpoint_id,
                         provider_type=provider_type,
-                        name=env_var,
+                        name=name,
                         url=value,
                         chain=chain,
-                        priority=priority
+                        priority=base_priority
                     )
                     self._add_endpoint(endpoint)
                     self._endpoint_cache[value] = endpoint
 
-        # Load WebSocket URLs
+        # Load WebSocket URLs (numbered variants supported: SOLANA_WS_URL_2 ...)
         for env_var, (provider_type, chain) in ws_mappings.items():
-            value = os.getenv(env_var, '')
-            if value and value not in ('null', 'None', ''):
+            for name, value in _numbered_env_values(env_var):
+                if value in self._endpoint_cache:
+                    continue
                 endpoint_id += 1
                 endpoint = Endpoint(
                     id=endpoint_id,
                     provider_type=provider_type,
-                    name=env_var,
+                    name=name,
                     url=value,
                     chain=chain,
                     supports_ws=True
@@ -599,24 +646,19 @@ class PoolEngine:
                 self._add_endpoint(endpoint)
                 self._endpoint_cache[value] = endpoint
 
-        # Load APIs
+        # Load APIs — numbered variants (HELIUS_API_KEY_2 ...) each become
+        # their own Endpoint at equal priority so get_next_endpoint round-robins
+        # across accounts instead of pinning one key for the process lifetime.
         for env_var, (provider_type, chain, base_url) in api_mappings.items():
-            api_key = os.getenv(env_var, '')
-            if api_key and api_key not in ('null', 'None', '', 'your_'):
+            for slot, (name, api_key) in enumerate(_numbered_env_values(env_var), start=1):
+                if self._has_api_key(provider_type, api_key):
+                    continue  # same key pasted into two slots
                 endpoint_id += 1
-
-                # Determine URL
-                if provider_type == 'HELIUS_API':
-                    url = f"https://mainnet.helius-rpc.com/?api-key={api_key}"
-                elif provider_type == 'JUPITER_API':
-                    url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag')
-                else:
-                    url = base_url or ''
-
+                url = self._api_url_for_key(provider_type, api_key, slot, base_url)
                 endpoint = Endpoint(
                     id=endpoint_id,
                     provider_type=provider_type,
-                    name=env_var,
+                    name=name,
                     url=url,
                     api_key=api_key,
                     chain=chain
@@ -670,6 +712,132 @@ class PoolEngine:
                 provider_type=endpoint.provider_type
             )
         self.providers[endpoint.provider_type].endpoints.append(endpoint)
+
+    def _has_api_key(self, provider_type: str, api_key: str) -> bool:
+        """True if this exact key is already registered for provider_type."""
+        provider = self.providers.get(provider_type)
+        if not provider:
+            return False
+        return any(e.api_key == api_key for e in provider.endpoints)
+
+    @staticmethod
+    def _api_url_for_key(provider_type: str, api_key: str, slot: int,
+                         base_url: Optional[str]) -> str:
+        """Endpoint URL for an API key. rpc_api_pool has UNIQUE(provider_type,
+        url), so keys sharing one base URL (Etherscan/Birdeye slot 2+) get a
+        harmless ?key_slot=N tag the upstream API ignores. Helius URLs embed
+        the key and are naturally unique; slot 1 keeps today's bare URL so
+        existing DB rows/seeds keep matching."""
+        if provider_type == 'HELIUS_API':
+            return f"https://mainnet.helius-rpc.com/?api-key={api_key}"
+        if provider_type == 'JUPITER_API':
+            url = os.getenv('JUPITER_API_URL', 'https://lite-api.jup.ag')
+        else:
+            url = base_url or ''
+        if slot > 1 and url:
+            sep = '&' if '?' in url else '?'
+            url = f"{url}{sep}key_slot={slot}"
+        return url
+
+    def _next_local_id(self) -> int:
+        """Next synthetic endpoint id for DB-less operation."""
+        ids = [e.id for p in self.providers.values() for e in p.endpoints]
+        return (max(ids) + 1) if ids else 1
+
+    # API-key secrets probed at initialize(): base name + _2.._9 variants.
+    # Keys can live Fernet-encrypted in the secure_credentials DB table
+    # instead of .env (secrets_manager get_async also falls back to env).
+    _SECRET_API_KEY_MAP = {
+        'HELIUS_API_KEY': ('HELIUS_API', 'solana', None),
+        'ETHERSCAN_API_KEY': ('ETHERSCAN_API', 'ethereum', 'https://api.etherscan.io'),
+        'BIRDEYE_API_KEY': ('BIRDEYE_API', 'solana', 'https://public-api.birdeye.so'),
+        'GOPLUS_API_KEY': ('GOPLUS_API', None, 'https://api.gopluslabs.io'),
+        '1INCH_API_KEY': ('1INCH_API', None, 'https://api.1inch.io'),
+    }
+
+    async def _load_keys_from_secrets(self) -> int:
+        """Probe the secrets manager for numbered API keys and register any
+        endpoint not already known (from DB or env). Idempotent + fail-soft:
+        import failure, no DB, decryption failure or zero keys == no-op, so
+        behaviour without extra keys is exactly today's.
+
+        Returns the number of endpoints added.
+        """
+        try:
+            from security.secrets_manager import secrets
+        except Exception:
+            return 0
+        try:
+            # Idempotent re-init is safe (Wave-13); ensures the DB-backed
+            # encrypted-credentials path is available before we probe.
+            if self.db_pool is not None and getattr(secrets, '_db_pool', None) is None:
+                secrets.initialize(self.db_pool)
+        except Exception as e:
+            logger.debug(f"secrets re-init skipped: {e}")
+
+        added = 0
+        for env_var, (provider_type, chain, base_url) in self._SECRET_API_KEY_MAP.items():
+            for slot in range(1, MAX_NUMBERED_KEYS + 1):
+                name = env_var if slot == 1 else f"{env_var}_{slot}"
+                try:
+                    value = _clean_env_value(
+                        await secrets.get_async(name, log_access=False)
+                    )
+                except Exception:
+                    value = None
+                if not value or self._has_api_key(provider_type, value):
+                    continue
+                url = self._api_url_for_key(provider_type, value, slot, base_url)
+                if url and url in self._endpoint_cache:
+                    continue
+                endpoint_id = await self._insert_endpoint_row(
+                    provider_type, name, url, value, chain
+                )
+                if endpoint_id is None:
+                    continue
+                endpoint = Endpoint(
+                    id=endpoint_id,
+                    provider_type=provider_type,
+                    name=name,
+                    url=url,
+                    api_key=value,
+                    chain=chain
+                )
+                self._add_endpoint(endpoint)
+                if url:
+                    self._endpoint_cache[url] = endpoint
+                added += 1
+        if added:
+            logger.info(f"Registered {added} API-key endpoint(s) from secrets manager")
+        return added
+
+    async def _insert_endpoint_row(
+        self, provider_type: str, name: str, url: str,
+        api_key: Optional[str], chain: Optional[str]
+    ) -> Optional[int]:
+        """Idempotent insert into rpc_api_pool; returns the new row id.
+        Returns None when the row already exists (e.g. operator-disabled —
+        we respect that and do NOT resurrect it in memory). Without a DB
+        pool, hands back a synthetic in-memory id."""
+        if not self.db_pool:
+            return self._next_local_id()
+        try:
+            async with self.db_pool.acquire() as conn:
+                row = await conn.fetchrow("""
+                    INSERT INTO rpc_api_pool (
+                        endpoint_type, provider_type, name, url, api_key,
+                        status, is_enabled, priority, weight, chain
+                    ) VALUES ($1, $2, $3, $4, $5, 'active', TRUE, 100, 100, $6)
+                    ON CONFLICT (provider_type, url) DO NOTHING
+                    RETURNING id
+                """,
+                    'rpc' if 'RPC' in provider_type else ('ws' if 'WS' in provider_type else 'api'),
+                    provider_type, name, url, api_key, chain
+                )
+                return row['id'] if row else None
+        except Exception as e:
+            logger.debug(f"secret-key endpoint insert failed ({name}): {e}")
+            return self._next_local_id()
 
     def _has_endpoints(self) -> bool:
         """Check if any endpoints are loaded"""
@@ -832,6 +1000,7 @@ class PoolEngine:
             'HELIUS_API': 'HELIUS_API_KEY',
             'ETHERSCAN_API': 'ETHERSCAN_API_KEY',
             'JUPITER_API': 'JUPITER_API_URL',
+            'BIRDEYE_API': 'BIRDEYE_API_KEY',
         }
 
         env_var = env_var_mappings.get(provider_type)
