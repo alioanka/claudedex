@@ -112,6 +112,23 @@ async def main() -> None:
     )
     logger.info(f"   DB pool connected to {db_host}:{db_port}/{db_name}")
 
+    # Secrets manager MUST be initialized with the DB pool BEFORE the first
+    # tick: discover_wallets() derives the observed wallet addresses from the
+    # secrets-managed private keys (PRIVATE_KEY / SOLANA_PRIVATE_KEY /
+    # SOLANA_MODULE_PRIVATE_KEY). Without this call every derivation returned
+    # None and — with the env address fallbacks unset — the module idled for
+    # 20 days with zero snapshots. Same pattern as options_vol/copy_trading.
+    # Fail-soft: on failure the tick still runs on env-address fallbacks.
+    try:
+        from security.secrets_manager import secrets
+        secrets.initialize(pool)
+        logger.info("   Secrets manager initialized (wallet addresses derive "
+                    "from the secrets-managed private keys)")
+    except Exception as exc:
+        logger.warning("Secrets manager init failed — wallet discovery falls "
+                       "back to env addresses (WALLET_ADDRESS/SOLANA_WALLET/"
+                       "SOLANA_MODULE_WALLET): %s", exc)
+
     # Connect the shared PoolEngine ONCE (idempotent; fail-soft to .env pool)
     # so get_endpoint() inside the tick hits the live pool, not per-call
     # fallbacks. READ-ONLY use: endpoint selection + health reports only.

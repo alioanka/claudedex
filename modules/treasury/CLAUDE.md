@@ -8,6 +8,18 @@ wallet, and logs alerts. It **NEVER signs, NEVER transfers, NEVER decrypts a
 key, and NEVER touches `logs/.killswitch`**. Phase 2 (gas top-up / profit
 sweep) is a separate, separately-gated build — none of it exists here.
 
+## Wave-F5 fix (2026-07): secrets init was missing → 20 days of zero snapshots
+`main_treasury.py` created the DB pool but never called
+`secrets.initialize(pool)` (the options_vol/copy_trading pattern), so every
+PK-based address derivation returned None and — with the env address
+fallbacks unset — `discover_wallets()` was `[]` on all 5,730 ticks since
+Jun 15 (`treasury_snapshots` 0 rows ever). Fixed: secrets manager is now
+initialized right after the pool (fail-soft to env addresses with a clear
+WARNING), and derivation failures log a ONE-SHOT WARNING instead of DEBUG so
+this failure class stays visible. Downstream: **yield_treasury idles on the
+same outage** (it only reads fresh `treasury_snapshots`) and **self-heals
+with no change of its own** once treasury writes its first snapshots.
+
 ## Entry point
 `modules/treasury/main_treasury.py` — launched by `main.py` when
 `TREASURY_MODULE_ENABLED=true` (default **false**). Health server on port 8093
