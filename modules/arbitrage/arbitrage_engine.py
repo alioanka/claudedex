@@ -1142,6 +1142,22 @@ class EVMArbitrageEngine:
         self._blacklist_threshold = 5  # Blacklist after 5 consecutive failures
         self._blacklist_duration = 3600  # Unblacklist after 1 hour (liquidity may return)
 
+        # Wave-F5 RC-A1: RPC-infra failure state. HTTP 401/403 auth errors
+        # used to be swallowed into buy_errors and blacklisted as "no
+        # liquidity" (a dead Ankr key left ETH auth-blind for 11 straight
+        # days while the dashboard said "Scanning"). The endpoint was also
+        # pinned at startup; re-resolve from pool_engine every
+        # arb_rpc_refresh_minutes (DB key, mig 142, default 15).
+        try:
+            self._rpc_refresh_minutes = float(config.get('arb_rpc_refresh_minutes', 15.0))
+        except (TypeError, ValueError):
+            self._rpc_refresh_minutes = 15.0
+        self._rpc_last_refresh: datetime = datetime.now()
+        self._rpc_infra_fail_count: int = 0
+        self._rpc_infra_last_fail_at: Optional[datetime] = None
+        self._rpc_infra_last_warn_at: Optional[datetime] = None
+        self._rpc_infra_last_rotate_at: Optional[datetime] = None
+
         self._stats = {
             'scans': 0,
             'opportunities_found': 0,
@@ -1509,6 +1525,28 @@ class EVMArbitrageEngine:
                 'last_error_at': (
                     self._last_error_at.isoformat() if self._last_error_at else None
                 ),
+                # Wave-F5 RC-A1: RPC health surface. auth_failing=true means an
+                # infra (401/403) failure hit within the last 15 min — the chain
+                # is quote-blind regardless of what "Scanning" says. Host only,
+                # never the full URL (Ankr-style URLs embed the API key).
+                'rpc_health': {
+                    'endpoint_host': (
+                        (self.rpc_url or '').split(',')[0]
+                        .split('//')[-1].split('/')[0] or None
+                    ),
+                    'infra_fail_count': int(self._rpc_infra_fail_count),
+                    'last_infra_fail_at': (
+                        self._rpc_infra_last_fail_at.isoformat()
+                        if self._rpc_infra_last_fail_at else None
+                    ),
+                    'auth_failing': bool(
+                        self._rpc_infra_last_fail_at is not None
+                        and (datetime.now() - self._rpc_infra_last_fail_at)
+                        .total_seconds() < 900
+                    ),
+                    'last_refresh_at': self._rpc_last_refresh.isoformat(),
+                    'refresh_minutes': self._rpc_refresh_minutes,
+                },
             }
             async with self.db_pool.acquire() as conn:
                 await conn.execute(
@@ -1971,6 +2009,18 @@ class EVMArbitrageEngine:
                 # Log stats every 5 minutes
                 await self._log_stats_if_needed()
 
+                # Wave-F5 RC-A1: periodic endpoint re-resolve from pool_engine.
+                # The URL used to be pinned at startup for the process
+                # lifetime, so a dead key was never swapped out. No-op when
+                # pool_engine returns the same URL.
+                if (
+                    self._rpc_refresh_minutes > 0
+                    and (datetime.now() - self._rpc_last_refresh).total_seconds()
+                    >= self._rpc_refresh_minutes * 60
+                ):
+                    self._rpc_last_refresh = datetime.now()
+                    await self._rotate_rpc_endpoint()
+
                 # Sleep between scans - adaptive delay based on spread activity
                 # In slow-scan mode (30min+ stale negative spreads), use longer delay
                 # to conserve RPC quota on chains with no V2 pool activity
@@ -2038,6 +2088,11 @@ class EVMArbitrageEngine:
                     # fresh one from pool_engine instead of re-hammering the
                     # same pinned URL forever.
                     await self._rotate_rpc_endpoint()
+                elif self._is_rpc_infra_error(err_str):
+                    # Wave-F5 RC-A1: 401/403/unauthorized escaping the scan is
+                    # an infra failure too — report + rotate, then keep going.
+                    await self._handle_rpc_infra_failure(str(e))
+                    await asyncio.sleep(5)
                 else:
                     # Reset streak on non-rate-limit errors so a single 429
                     # followed by an unrelated transient doesn't keep us in
@@ -2046,9 +2101,59 @@ class EVMArbitrageEngine:
                         self._rate_limit_streak = 0
                     await asyncio.sleep(5)
 
+    @staticmethod
+    def _is_rpc_infra_error(err: str) -> bool:
+        """Wave-F5 RC-A1: HTTP auth/permission failures are RPC-INFRA
+        problems, never market-liquidity signals."""
+        e = err.lower()
+        return (
+            '401' in e
+            or '403' in e
+            or 'unauthorized' in e
+            or 'forbidden' in e
+            or 'api key' in e
+        )
+
+    async def _handle_rpc_infra_failure(self, error_msg: str) -> None:
+        """Wave-F5 RC-A1: report auth/permission RPC failures to pool_engine
+        and re-resolve the endpoint instead of poisoning the liquidity
+        blacklist. Rotation debounced to once/60s (scan tick is 2s);
+        operator-facing WARNING once/hour while the chain is auth-blind."""
+        now = datetime.now()
+        self._rpc_infra_fail_count += 1
+        self._rpc_infra_last_fail_at = now
+        last_warn = self._rpc_infra_last_warn_at
+        if last_warn is None or (now - last_warn).total_seconds() >= 3600:
+            self._rpc_infra_last_warn_at = now
+            self.logger.warning(
+                f"🔒 [{self.chain_name.upper()}] RPC auth/permission failure "
+                f"(#{self._rpc_infra_fail_count}): {error_msg[:120]} — treating as "
+                f"INFRA, not liquidity; rotating endpoint via pool_engine. "
+                f"Check the {self.RPC_PROVIDER_KEY} key/quota."
+            )
+            self._record_near_miss('rpc_infra_error', detail=error_msg[:80])
+        # Demote the endpoint in pool_engine (fail-soft).
+        try:
+            from config.pool_engine import get_pool
+            pe = await get_pool()
+            if pe and self.rpc_url:
+                await pe.report_failure(
+                    self.RPC_PROVIDER_KEY,
+                    self.rpc_url.split(',')[0],
+                    error_type='auth',
+                    error_message=error_msg[:200],
+                )
+        except Exception:
+            pass
+        last_rot = self._rpc_infra_last_rotate_at
+        if last_rot is None or (now - last_rot).total_seconds() >= 60:
+            self._rpc_infra_last_rotate_at = now
+            await self._rotate_rpc_endpoint()
+
     async def _rotate_rpc_endpoint(self) -> None:
-        """Pull a fresh endpoint from pool_engine after a rate-limit penalty
-        and rebuild w3 + contract handles when the URL actually changed.
+        """Pull a fresh endpoint from pool_engine after a rate-limit/auth
+        penalty (or the periodic re-resolve) and rebuild w3 + contract
+        handles when the URL actually changed.
         Fail-soft: any error leaves the current connection in place."""
         try:
             from config.rpc_provider import RPCProvider
@@ -2085,7 +2190,7 @@ class EVMArbitrageEngine:
             if self.flashbots_executor:
                 self.flashbots_executor.w3 = w3
             self.logger.info(
-                f"🔁 [{self.chain_name.upper()}] Rotated RPC endpoint after rate-limit"
+                f"🔁 [{self.chain_name.upper()}] Rotated RPC endpoint via pool_engine"
             )
         except Exception as e:
             self.logger.debug(f"RPC rotation failed (non-fatal): {e}")
@@ -2399,6 +2504,7 @@ class EVMArbitrageEngine:
 
             buy_prices = {}
             buy_errors = {}
+            rpc_infra_error: Optional[str] = None
             for name, contract in self.router_contracts.items():
                 # Pool-reserve floor: skip DEXes with insufficient liquidity
                 if _reserve_eth_price and _reserve_eth_price > 0:
@@ -2410,7 +2516,13 @@ class EVMArbitrageEngine:
                     amounts = contract.functions.getAmountsOut(borrow_amount, [weth_checksum, token_checksum]).call()
                     buy_prices[name] = amounts[1]  # How many tokens we get for our WETH
                 except Exception as e:
-                    buy_errors[name] = str(e)[:50]
+                    # Wave-F5 RC-A1: 401/403/unauthorized is an RPC-INFRA
+                    # failure — never count it as a per-DEX quote error.
+                    err = str(e)
+                    if self._is_rpc_infra_error(err):
+                        rpc_infra_error = err
+                        continue
+                    buy_errors[name] = err[:50]
 
             # WAVE-17: V3 Quoter price discovery (Ethereum mainnet proof-of-concept).
             # quoteExactInputSingle probes all fee tiers; best amountOut is added to
@@ -2432,6 +2544,12 @@ class EVMArbitrageEngine:
                     self.logger.warning(f"⚠️ [{token_symbol}] No buy prices from any DEX. Errors: {buy_errors}")
 
             if len(buy_prices) < 2:
+                if rpc_infra_error is not None:
+                    # Wave-F5 RC-A1: auth failure — do NOT blacklist the pair
+                    # as no-liquidity (that poisons 60min of scanning per pair
+                    # for an infra problem). Report + rotate instead.
+                    await self._handle_rpc_infra_failure(rpc_infra_error)
+                    return False
                 # Need at least 2 DEXs for arbitrage
                 self._update_liquidity_blacklist(pair_key, has_liquidity=False)
                 return False
