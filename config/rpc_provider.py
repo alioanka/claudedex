@@ -197,18 +197,83 @@ class RPCProvider:
         fallback = cls._get_env_fallback(provider_type)
         return [fallback] if fallback else []
 
+    # Env-fallback rotation cursors for get_api_sync (Wave-F5 multi-key).
+    _sync_key_cursors: Dict[str, int] = {}
+
     @classmethod
     def get_api_sync(cls, provider_type: str) -> Optional[str]:
         """
-        Get an API key/URL synchronously
+        Get an API key/URL synchronously — ROTATES across configured keys.
 
-        Args:
-            provider_type: Type of provider
-
-        Returns:
-            str: API key or URL
+        Wave-F5: previously always returned the single base env var, pinning
+        one account for the process lifetime. Now: if the pool engine is
+        initialized, rotate through its healthy endpoints (returns the
+        endpoint's api_key when set, else its URL); otherwise round-robin
+        through numbered env vars (KEY, KEY_2 .. KEY_9). Single-key setups
+        behave exactly as before.
         """
+        # 1) Pool engine (health/rate-limit aware rotation)
+        if cls._pool_engine and cls._pool_engine.initialized:
+            try:
+                provider = cls._pool_engine.providers.get(provider_type)
+                if provider:
+                    endpoint = provider.get_next_endpoint()
+                    if endpoint:
+                        return endpoint.api_key or endpoint.get_effective_url()
+            except Exception as e:
+                logger.debug(f"get_api_sync pool lookup failed: {e}")
+
+        # 2) Numbered env rotation
+        keys = cls._get_env_api_keys(provider_type)
+        if keys:
+            cursor = cls._sync_key_cursors.get(provider_type, 0)
+            cls._sync_key_cursors[provider_type] = (cursor + 1) % len(keys)
+            return keys[cursor % len(keys)]
+
         return cls._get_env_api_fallback(provider_type)
+
+    # =========================================================================
+    # Rotated API keys (Wave-F5 multi-key)
+    # =========================================================================
+
+    @classmethod
+    async def get_api_key(cls, provider_type: str):
+        """CURRENT rotated healthy API key.
+
+        Returns (api_key, endpoint_id) or None. Report the outcome with
+        report_key_success / report_key_rate_limit / report_key_failure so a
+        429 cools this key and the next call hands back a sibling account.
+        endpoint_id -1 == env fallback (reports are no-ops).
+        """
+        pool = await cls._get_pool()
+        if pool:
+            try:
+                result = await pool.get_api_key(provider_type)
+                if result:
+                    return result
+            except Exception as e:
+                logger.debug(f"get_api_key({provider_type}) pool lookup failed: {e}")
+        key = cls.get_api_sync(provider_type)
+        return (key, -1) if key else None
+
+    @classmethod
+    async def report_key_success(cls, ref, latency_ms: int = None) -> None:
+        pool = await cls._get_pool()
+        if pool and pool.initialized:
+            await pool.report_key_success(ref, latency_ms)
+
+    @classmethod
+    async def report_key_rate_limit(cls, ref, duration_seconds: int = None) -> None:
+        pool = await cls._get_pool()
+        if pool and pool.initialized:
+            await pool.report_key_rate_limit(ref, duration_seconds)
+
+    @classmethod
+    async def report_key_failure(cls, ref, error_type: str = None,
+                                 error_message: str = None) -> None:
+        pool = await cls._get_pool()
+        if pool and pool.initialized:
+            await pool.report_key_failure(ref, error_type, error_message)
 
     # =========================================================================
     # Reporting Methods
@@ -401,19 +466,34 @@ class RPCProvider:
                 return [url for url in urls if url and url not in ('null', 'None', '')]
         return []
 
-    @staticmethod
-    @lru_cache(maxsize=16)
-    def _get_env_api_fallback(provider_type: str) -> Optional[str]:
-        """Get API key/URL fallback from environment variables"""
-        env_mappings = {
-            'GOPLUS_API': 'GOPLUS_API_KEY',
-            '1INCH_API': '1INCH_API_KEY',
-            'HELIUS_API': 'HELIUS_API_KEY',
-            'ETHERSCAN_API': 'ETHERSCAN_API_KEY',
-            'JUPITER_API': 'JUPITER_API_URL',
-        }
+    _API_ENV_MAPPINGS = {
+        'GOPLUS_API': 'GOPLUS_API_KEY',
+        '1INCH_API': '1INCH_API_KEY',
+        'HELIUS_API': 'HELIUS_API_KEY',
+        'ETHERSCAN_API': 'ETHERSCAN_API_KEY',
+        'JUPITER_API': 'JUPITER_API_URL',
+        'BIRDEYE_API': 'BIRDEYE_API_KEY',
+    }
 
-        env_var = env_mappings.get(provider_type)
+    @classmethod
+    def _get_env_api_keys(cls, provider_type: str) -> List[str]:
+        """All numbered env values (VAR, VAR_2 .. VAR_9) for a provider."""
+        env_var = cls._API_ENV_MAPPINGS.get(provider_type)
+        if not env_var:
+            return []
+        try:
+            from config.pool_engine import _numbered_env_values
+            return [v for _, v in _numbered_env_values(env_var)]
+        except Exception:
+            value = os.getenv(env_var)
+            if value and value not in ('null', 'None', ''):
+                return [value.strip()]
+            return []
+
+    @classmethod
+    def _get_env_api_fallback(cls, provider_type: str) -> Optional[str]:
+        """Get API key/URL fallback from environment variables"""
+        env_var = cls._API_ENV_MAPPINGS.get(provider_type)
         if env_var:
             value = os.getenv(env_var)
             if value and value not in ('null', 'None', ''):
