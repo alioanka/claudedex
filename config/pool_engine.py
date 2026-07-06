@@ -399,6 +399,10 @@ class PoolEngine:
         self._default_rps = 8.0   # ~8 req/s — under Helius free ~10 req/s
         self._default_burst = 8
 
+        # Wave-F5 — env-fallback rotation cursors for get_api_key() so even
+        # a DB-less bootstrap round-robins through numbered env keys.
+        self._env_key_cursors: Dict[str, int] = {}
+
         logger.info("PoolEngine initialized (not yet connected)")
 
     @classmethod
@@ -929,6 +933,121 @@ class PoolEngine:
         """
         endpoints = await self.get_all_endpoints(provider_type)
         return endpoints[:max_fallbacks] if endpoints else []
+
+    # =========================================================================
+    # Public API - Rotated API keys (Wave-F5 multi-key)
+    # =========================================================================
+
+    def _select_endpoint(self, provider_type: str) -> Optional[Endpoint]:
+        """Rotated healthy endpoint (same policy as get_endpoint, object form)."""
+        provider = self.providers.get(provider_type)
+        if not provider:
+            return None
+        return provider.get_next_endpoint()
+
+    @staticmethod
+    def _extract_api_key(endpoint: Endpoint) -> Optional[str]:
+        """API key for an endpoint: the api_key column, else parsed from a
+        key-in-URL style endpoint (Helius ?api-key=...)."""
+        if endpoint.api_key:
+            return endpoint.api_key
+        if endpoint.url and 'api-key=' in endpoint.url:
+            try:
+                import urllib.parse as _up
+                qs = _up.parse_qs(_up.urlparse(endpoint.url).query)
+                return (qs.get('api-key') or qs.get('apikey') or [None])[0]
+            except Exception:
+                return None
+        return None
+
+    async def get_api_key(self, provider_type: str) -> Optional[Tuple[str, int]]:
+        """
+        CURRENT rotated healthy API key for a provider type.
+
+        Consumers should call this per call-batch (not once at init) so a
+        429-cooled key rotates out and sibling accounts share the load, then
+        report the outcome via report_key_success / report_key_rate_limit /
+        report_key_failure using the returned endpoint id.
+
+        Returns:
+            (api_key, endpoint_id) or None. endpoint_id -1 means the key came
+            from the .env fallback (reports against it are no-ops).
+        """
+        if self.initialized:
+            endpoint = self._select_endpoint(provider_type)
+            if endpoint:
+                key = self._extract_api_key(endpoint)
+                if key:
+                    full_logger.debug(
+                        f"KEY SELECTED: {provider_type} -> {endpoint.name} (id={endpoint.id})"
+                    )
+                    return (key, endpoint.id)
+        # .env fallback — rotate through numbered vars so even DB-less
+        # bootstrap spreads load across configured keys.
+        env_var = {
+            'HELIUS_API': 'HELIUS_API_KEY',
+            'ETHERSCAN_API': 'ETHERSCAN_API_KEY',
+            'BIRDEYE_API': 'BIRDEYE_API_KEY',
+            'GOPLUS_API': 'GOPLUS_API_KEY',
+            '1INCH_API': '1INCH_API_KEY',
+            'JUPITER_API': 'JUPITER_API_KEY',
+        }.get(provider_type)
+        if not env_var:
+            return None
+        values = [v for _, v in _numbered_env_values(env_var)]
+        if not values:
+            return None
+        cursor = self._env_key_cursors.get(provider_type, 0)
+        self._env_key_cursors[provider_type] = (cursor + 1) % len(values)
+        return (values[cursor % len(values)], -1)
+
+    def _find_endpoint_by_ref(self, ref) -> Optional[Endpoint]:
+        """Resolve an endpoint by id (int), api key or URL (str)."""
+        if ref is None:
+            return None
+        if isinstance(ref, int):
+            if ref < 0:
+                return None  # env-fallback sentinel
+            for provider in self.providers.values():
+                for ep in provider.endpoints:
+                    if ep.id == ref:
+                        return ep
+            return None
+        if isinstance(ref, str):
+            ep = self._endpoint_cache.get(ref)
+            if ep:
+                return ep
+            for provider in self.providers.values():
+                for ep in provider.endpoints:
+                    if ep.api_key == ref or ep.url == ref or self._extract_api_key(ep) == ref:
+                        return ep
+        return None
+
+    async def report_key_success(self, ref, latency_ms: int = None) -> None:
+        """report_success by endpoint id / api key (from get_api_key)."""
+        endpoint = self._find_endpoint_by_ref(ref)
+        if endpoint:
+            await self.report_success(endpoint.provider_type, endpoint.url, latency_ms)
+
+    async def report_key_rate_limit(self, ref, duration_seconds: int = None,
+                                    error_message: str = None) -> None:
+        """report_rate_limit by endpoint id / api key. Cools THIS key so the
+        next get_api_key returns a sibling account. No-op for env-fallback
+        sentinel (-1) or unknown refs — fail-soft."""
+        endpoint = self._find_endpoint_by_ref(ref)
+        if endpoint:
+            await self.report_rate_limit(
+                endpoint.provider_type, endpoint.url, duration_seconds, error_message
+            )
+
+    async def report_key_failure(self, ref, error_type: str = None,
+                                 error_message: str = None) -> None:
+        """report_failure by endpoint id / api key."""
+        endpoint = self._find_endpoint_by_ref(ref)
+        if endpoint:
+            await self.report_failure(
+                endpoint.provider_type, endpoint.url, error_type, error_message
+            )
 
     # =========================================================================
     # Public API - Outbound Pacing (FEATURE 2/3)
