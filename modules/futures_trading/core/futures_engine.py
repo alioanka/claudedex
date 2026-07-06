@@ -166,6 +166,10 @@ class Trade:
     closed_at: datetime
     close_reason: str  # stop_loss, take_profit, manual, signal
     is_simulated: bool = False
+    # Wave-F5 (F10): funding-cost honesty. DRY_RUN PnL never simulates funding
+    # accrual (0 funding lines in 20 days of logs), so paper looks better than
+    # live will. Stash an estimate here at close so the ledger is honest.
+    metadata: Optional[dict] = None
 
 
 @dataclass
@@ -1447,6 +1451,28 @@ class FuturesTradingEngine:
 
                 # Calculate PnL in USD
                 position.unrealized_pnl = position.notional_value * (pnl_pct / 100)
+
+                # Wave-F5 (F3): early trailing-stop arm. When the position is up
+                # +trailing_stop_arm_pct in PRICE terms (pnl_pct is unleveraged),
+                # arm the trailing stop immediately instead of waiting for TP2
+                # (which almost never hit in the 20-day sample). The trail
+                # distance stays the fixed `trailing_stop_distance` (no dynamic
+                # widening). Once armed, the high/low tracking above trails it.
+                _arm_pct = float(getattr(self, 'trailing_stop_arm_pct', 0.0) or 0.0)
+                if (_arm_pct > 0 and self.trailing_stop_enabled
+                        and not position.trailing_stop_active
+                        and pnl_pct >= _arm_pct):
+                    position.trailing_stop_active = True
+                    if position.side == TradeSide.LONG:
+                        peak = position.highest_price or current_price
+                        position.trailing_stop_price = peak * (1 - self.trailing_stop_distance / 100)
+                    else:
+                        peak = position.lowest_price or current_price
+                        position.trailing_stop_price = peak * (1 + self.trailing_stop_distance / 100)
+                    logger.info(
+                        f"🎚️ {position.symbol}: TSL armed early at +{pnl_pct:.2f}% "
+                        f"(arm {_arm_pct:.2f}%) -> ${position.trailing_stop_price:.4f}"
+                    )
 
                 # Check for partial TP hits first
                 tp_hit = await self._check_tp_levels(position, current_price)
@@ -2889,6 +2915,28 @@ class FuturesTradingEngine:
                     self._alert_edge_gate_breach(symbol, side, edge, tp1_dist_pct)
                     return
 
+            # Wave-F5: fee-aware entry honesty. Log the expected TP1-at-1R edge
+            # net of the round-trip taker fee on EVERY entry, and hard-skip any
+            # entry whose TP1 win wouldn't even clear 2× taker (a structurally
+            # guaranteed net loss). With rr=1.0 and a 1.5% SL floor this rarely
+            # binds — it is primarily a false-green tripwire that surfaces the
+            # fee-vs-edge math the -$56 fee-bleed book never logged.
+            _tp1_dist_pct = float(tp_levels[0]['pct']) if tp_levels else float(self.take_profit_pct)
+            _taker = self.BINANCE_TAKER_FEE if self.exchange == 'binance' else self.BYBIT_TAKER_FEE
+            _rt_fee_pct = _taker * 2 * 100.0
+            _net_of_fee_pct = _tp1_dist_pct - _rt_fee_pct
+            logger.info(
+                f"💵 {symbol} fee-aware edge: TP1={_tp1_dist_pct:.2f}% "
+                f"- 2x taker {_rt_fee_pct:.3f}% = {_net_of_fee_pct:+.3f}% net"
+            )
+            if _net_of_fee_pct <= 0:
+                logger.warning(
+                    f"⏭️  Wave-F5 fee gate refused {side.value.upper()} {symbol}: "
+                    f"TP1-at-1R {_tp1_dist_pct:.2f}% <= 2x taker fee "
+                    f"{_rt_fee_pct:.3f}% (guaranteed net loss even on a win)"
+                )
+                return
+
             if side == TradeSide.LONG:
                 stop_loss_price = current_price * (1 - sl_pct / 100)
                 take_profit_price = tp_levels[0]['price'] if tp_levels else current_price * (1 + self.take_profit_pct / 100)
@@ -3144,6 +3192,34 @@ class FuturesTradingEngine:
                     logger.error(f"❌ Close order failed: {e}")
                     return
 
+            # Wave-F5 (F10): estimate funding cost accrued over the hold and
+            # stash it in trade metadata for DRY_RUN honesty. Funding is
+            # 8h-periodic; a directional book pays (or earns) funding once per
+            # interval held. We estimate intervals from the hold duration and
+            # multiply by the last-known per-interval rate × notional. Sign:
+            # LONG pays positive funding, SHORT pays negative — a positive
+            # est_funding_usd here means COST to the book. Best-effort; never
+            # blocks the close and is NOT applied to net_pnl (kept as a visible
+            # honesty line so paper vs live drift is measurable, not hidden).
+            est_funding_usd = None
+            try:
+                hold_hours = max(
+                    0.0, (datetime.now() - position.opened_at).total_seconds() / 3600.0
+                )
+                intervals = hold_hours / 8.0
+                frate = await self._get_funding_rate_cached(symbol)
+                if frate is not None and intervals > 0:
+                    signed = float(frate) if position.side == TradeSide.LONG else -float(frate)
+                    est_funding_usd = signed * position.notional_value * intervals
+                    logger.info(
+                        f"   💸 Est. funding cost (DRY_RUN honesty): "
+                        f"${est_funding_usd:+.4f} over {hold_hours:.1f}h "
+                        f"(~{intervals:.2f} intervals @ {float(frate)*100:.4f}%/int) "
+                        f"— NOT applied to net_pnl"
+                    )
+            except Exception as _fe:
+                logger.debug(f"funding-cost estimate skipped for {symbol}: {_fe}")
+
             # Record trade
             trade = Trade(
                 trade_id=str(uuid.uuid4()),
@@ -3160,7 +3236,8 @@ class FuturesTradingEngine:
                 opened_at=position.opened_at,
                 closed_at=datetime.now(),
                 close_reason=reason,
-                is_simulated=position.is_simulated
+                is_simulated=position.is_simulated,
+                metadata={'est_funding_usd': est_funding_usd},
             )
             self.trade_history.append(trade)
 
