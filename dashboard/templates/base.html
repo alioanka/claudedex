@@ -806,28 +806,10 @@
                             <span>Performance</span>
                         </a>
                     </li>
-                    <li class="nav-item {% if page == 'backtest' %}active{% endif %}">
-                        <a href="/dex/backtest">
-                            <i class="fas fa-history"></i>
-                            <span>Backtesting</span>
-                        </a>
-                    </li>
-                    <li class="nav-item {% if page == 'reports' %}active{% endif %}">
-                        <a href="/dex/reports">
-                            <i class="fas fa-file-alt"></i>
-                            <span>Reports</span>
-                        </a>
-                    </li>
-                    <li class="nav-item {% if page == 'analysis' %}active{% endif %}">
-                        <a href="/dex/analysis">
-                            <i class="fas fa-chart-pie"></i>
-                            <span>Analysis</span>
-                        </a>
-                    </li>
-                    <!-- /analytics moved to the top-level sidebar (above
-                         "Main Overview") per FAILURE B; it is cross-module,
-                         not DEX-specific. Removed from the DEX submenu to
-                         avoid the duplicate nav-item highlight bug. -->
+                    <!-- Wave-F5: legacy Backtesting/Reports/Analysis pages
+                         retired — their routes 302 to /backtest-replay and
+                         /dex/performance. DEX is now the standard 5-page
+                         module set. /analytics is top-level (cross-module). -->
                     <li class="nav-item {% if page == 'dex_settings' %}active{% endif %}">
                         <a href="/dex/settings">
                             <i class="fas fa-cog"></i>

@@ -1197,23 +1197,31 @@ class DashboardEndpoints:
         self.app.router.add_get('/', self.index)
         self.app.router.add_get('/full-dashboard', self.full_dashboard_page)
         self.app.router.add_get('/dashboard', self.dashboard_page)  # 301 → /dex/dashboard
-        # DEX module pages — root-prefixed URLs are kept for back-compat.
-        # /dex/* aliases give URL consistency with /futures/*, /solana/*,
-        # /sniper/*, etc. Audit agent 1 #5.
-        self.app.router.add_get('/trades', self.trades_page)
+        # Wave-F5 IA: /dex/* is canonical (consistent with /futures/*,
+        # /solana/*, /sniper/*). The unprefixed legacy aliases 302 to
+        # their successors so bookmarks keep working. The legacy DEX
+        # backtest/reports/analysis pages are retired — reports/analysis
+        # fold into /dex/performance, backtest into /backtest-replay
+        # (the maintained counterfactual simulator). This also cuts DEX
+        # to the standard 5-page module set.
+        def _redirect(target):
+            async def _handler(request, _t=target):
+                raise web.HTTPFound(_t)
+            return _handler
+        self.app.router.add_get('/trades', _redirect('/dex/trades'))
         self.app.router.add_get('/dex/trades', self.trades_page)
-        self.app.router.add_get('/positions', self.positions_page)
+        self.app.router.add_get('/positions', _redirect('/dex/positions'))
         self.app.router.add_get('/dex/positions', self.positions_page)
-        self.app.router.add_get('/performance', self.performance_page)
+        self.app.router.add_get('/performance', _redirect('/dex/performance'))
         self.app.router.add_get('/dex/performance', self.performance_page)
         self.app.router.add_get('/settings', self.settings_page)
-        self.app.router.add_get('/reports', self.reports_page)
-        self.app.router.add_get('/dex/reports', self.reports_page)
-        self.app.router.add_get('/backtest', self.backtest_page)
-        self.app.router.add_get('/dex/backtest', self.backtest_page)
+        self.app.router.add_get('/reports', _redirect('/dex/performance'))
+        self.app.router.add_get('/dex/reports', _redirect('/dex/performance'))
+        self.app.router.add_get('/backtest', _redirect('/backtest-replay'))
+        self.app.router.add_get('/dex/backtest', _redirect('/backtest-replay'))
         self.app.router.add_get('/logs', self.logs_page)
-        self.app.router.add_get('/analysis', self.analysis_page)
-        self.app.router.add_get('/dex/analysis', self.analysis_page)
+        self.app.router.add_get('/analysis', _redirect('/dex/performance'))
+        self.app.router.add_get('/dex/analysis', _redirect('/dex/performance'))
         # /analytics intentionally NOT registered here — the real
         # implementation lives in monitoring/analytics_routes.py
         # (AnalyticsRoutes.analytics_page) and was shadowed by a
@@ -5768,21 +5776,11 @@ class DashboardEndpoints:
             content_type='text/html'
         )
     
-    async def reports_page(self, request):
-        """Reports generation page (DEX)"""
-        template = self.jinja_env.get_template('reports.html')
-        return web.Response(
-            text=template.render(page='reports'),
-            content_type='text/html'
-        )
-
-    async def backtest_page(self, request):
-        """Backtesting interface page (DEX)"""
-        template = self.jinja_env.get_template('backtest.html')
-        return web.Response(
-            text=template.render(page='backtest'),
-            content_type='text/html'
-        )
+    # reports_page / backtest_page / analysis_page removed in Wave-F5:
+    # the legacy DEX-scoped reports/analysis pages folded into
+    # /dex/performance and legacy backtest into /backtest-replay (their
+    # routes 302 there — see _setup_routes). /api/reports/* and
+    # /api/backtest/* endpoints are intentionally preserved.
 
     async def logs_page(self, request):
         """Logs viewer page"""
@@ -5810,14 +5808,6 @@ class DashboardEndpoints:
         raise web.HTTPFound('/modules')
 
     # ==================== API - DATA ENDPOINTS ====================
-
-    async def analysis_page(self, request):
-        """Trade analysis page (DEX)"""
-        template = self.jinja_env.get_template('analysis.html')
-        return web.Response(
-            text=template.render(page='analysis'),
-            content_type='text/html'
-        )
 
     # analytics_page removed — was a redirect stub that shadowed the
     # real AnalyticsRoutes.analytics_page (monitoring/analytics_routes.py).
