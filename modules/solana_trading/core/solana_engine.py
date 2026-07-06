@@ -2520,6 +2520,14 @@ class SolanaTradingEngine:
                 continue
 
             self.active_positions[mint] = position
+            # Wave-F5 bug-2: re-anchor the validator on restart so a resumed
+            # position is protected from the first poll onward (docstring
+            # promise: "seeded from entry price on open / reconcile").
+            if entry_price > 0:
+                try:
+                    self.price_validator.seed(mint, entry_price, source='reconcile')
+                except Exception as _seed_err:
+                    logger.debug(f"price_validator.seed (reconcile) failed: {_seed_err}")
             self.risk_metrics.current_exposure_sol += position.value_sol
             restored += 1
             logger.info(f"♻️ Restored position: {position.token_symbol} ({balance:.4f} tokens)")
@@ -3596,7 +3604,14 @@ class SolanaTradingEngine:
                 if token_mint in self.active_positions:
                     continue
 
-                price = await self.jupiter_client.get_price(token_mint)
+                # Wave-F5 bug-1: route the scan/momentum price through the
+                # PriceValidator (raw get_price bypassed it, so a
+                # wrong-denomination quote (real USD × ~5000) fed the momentum
+                # signal as "+499900% momentum" -> instant BUY). The validated
+                # wrapper holds the last-good price on an unconfirmed jump, so
+                # a single poisoned poll can no longer fabricate a momentum
+                # signal or seed a poisoned entry.
+                price = await self._get_token_price(token_mint)
                 if not price:
                     continue
 
@@ -4331,11 +4346,29 @@ class SolanaTradingEngine:
                 except Exception as e:
                     logger.debug(f"   DexScreener price fetch failed: {e}")
 
-            # 3. Fall back to Jupiter for established tokens
-            if not current_price:
-                current_price = await self._get_token_price(token_mint)
-                if current_price:
-                    logger.debug(f"   Using price from Jupiter: ${current_price:.10f}")
+            # 3. Cross-check against the VALIDATED quote (Wave-F5 bug-1/2).
+            # metadata['price'] / the DexScreener step above can carry a
+            # wrong-denomination quote (real USD price × ~5000). Whatever
+            # entry price we picked must agree with the PriceValidator's
+            # validated quote; if it disagrees beyond the hard ratio the
+            # candidate is poisoned -> use the validated price instead. The
+            # validated call also serves as the Jupiter fallback for
+            # established tokens when metadata/DexScreener yielded nothing.
+            validated_price = await self._get_token_price(token_mint)
+            if validated_price and validated_price > 0:
+                if current_price and current_price > 0:
+                    hi = max(current_price, validated_price)
+                    lo = min(current_price, validated_price)
+                    if lo > 0 and (hi / lo) > self.price_validator.hard_jump_ratio:
+                        logger.warning(
+                            f"⛔ {token_symbol}: candidate entry ${current_price:.10f} "
+                            f"disagrees with validated ${validated_price:.10f} "
+                            f"({hi / lo:.0f}x) — discarding poisoned quote, using validated price"
+                        )
+                        current_price = validated_price
+                else:
+                    current_price = validated_price
+                    logger.debug(f"   Using validated price: ${current_price:.10f}")
 
             if current_price is None or current_price <= 0:
                 logger.warning(f"Could not get price for {token_symbol} from any source")
@@ -4628,6 +4661,13 @@ class SolanaTradingEngine:
 
             # Add to positions
             self.active_positions[token_mint] = position
+            # Wave-F5 bug-2: anchor the PriceValidator at the entry price so
+            # the monitor's first poisoned quote is rejected against a known
+            # baseline instead of being auto-accepted as the first reading.
+            try:
+                self.price_validator.seed(token_mint, current_price, source='entry')
+            except Exception as _seed_err:
+                logger.debug(f"price_validator.seed failed: {_seed_err}")
             await self._save_position_to_db(position)
             self.risk_metrics.current_exposure_sol += amount_sol
 
@@ -5052,6 +5092,14 @@ class SolanaTradingEngine:
                 # Full close: Remove position (DB first, then in-memory dict)
                 await self._remove_position_from_db(token_mint)
                 del self.active_positions[token_mint]
+
+                # Wave-F5 bug-2: forget the validator anchor on close so a
+                # future re-entry of the same mint starts from its own entry
+                # price, not a stale last-good from the previous position.
+                try:
+                    self.price_validator.drop(token_mint)
+                except Exception as _drop_err:
+                    logger.debug(f"price_validator.drop failed: {_drop_err}")
 
                 # Set cooldown
                 self.token_cooldowns[token_mint] = datetime.now() + self.cooldown_duration
