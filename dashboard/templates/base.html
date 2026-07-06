@@ -578,7 +578,7 @@
          box-shadow:0 2px 4px rgba(0,0,0,0.3);">
         <i class="fas fa-bolt"></i>
         <span id="cb-alert-banner-text"></span>
-        <a href="/orchestrator" style="color:#1a1a1a; text-decoration:underline; margin-left:12px;">View trips</a>
+        <a href="/proposals#orchestrator" style="color:#1a1a1a; text-decoration:underline; margin-left:12px;">View trips</a>
     </div>
     <script>
     // Global CSRF helper (MB-27 double-submit cookie). The dashboard's CSRF
@@ -1328,27 +1328,13 @@
                 </a>
             </li>
 
-            <!-- Orchestrator AI — advisory recommendations page. -->
-            <li class="nav-item {% if page == 'orchestrator' %}active{% endif %}">
-                <a href="/orchestrator">
-                    <i class="fas fa-robot"></i>
-                    <span>Orchestrator AI</span>
-                </a>
-            </li>
-
             <!-- Backtest Replay — Phase 4A counterfactual simulator. -->
+            <!-- Orchestrator AI + Allocation merged into /proposals
+                 (Wave-F5); their old URLs 302 to /proposals anchors. -->
             <li class="nav-item {% if page == 'backtest_replay' %}active{% endif %}">
                 <a href="/backtest-replay">
                     <i class="fas fa-history"></i>
                     <span>Backtest Replay</span>
-                </a>
-            </li>
-
-            <!-- Portfolio Allocation — Phase 4B per-module capital sizing. -->
-            <li class="nav-item {% if page == 'allocation' %}active{% endif %}">
-                <a href="/allocation">
-                    <i class="fas fa-chart-pie"></i>
-                    <span>Allocation</span>
                 </a>
             </li>
 

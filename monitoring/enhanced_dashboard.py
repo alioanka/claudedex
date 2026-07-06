@@ -1551,14 +1551,10 @@ class DashboardEndpoints:
         )
 
     async def _orchestrator_page(self, request):
-        """Render dashboard/templates/orchestrator.html — Phase 3 D5
-        advisory recommendations view. Operator sees pending recs,
-        clicks Approve / Reject, audit trail tracks who did what."""
-        template = self.jinja_env.get_template('orchestrator.html')
-        return web.Response(
-            text=template.render(page='orchestrator'),
-            content_type='text/html',
-        )
+        """Merged into /proposals (Wave-F5 approvals consolidation).
+        The recommendation inbox + score-trend table live there;
+        /api/orchestrator/* endpoints are unchanged."""
+        raise web.HTTPFound('/proposals#orchestrator')
 
     def _setup_rpc_pool_routes(self):
         """Setup RPC/API Pool management routes"""
@@ -4902,11 +4898,9 @@ class DashboardEndpoints:
 
     # ---- Phase 4B: portfolio allocator surface ----
     async def _allocation_page(self, request):
-        template = self.jinja_env.get_template('allocation.html')
-        return web.Response(
-            text=template.render(page='allocation'),
-            content_type='text/html',
-        )
+        """Merged into /proposals (Wave-F5 approvals consolidation).
+        The allocation panel lives there; APIs are unchanged."""
+        raise web.HTTPFound('/proposals#allocation')
 
     async def _api_alloc_list(self, request):
         """GET /api/portfolio/allocations?status=pending|approved|all
