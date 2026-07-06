@@ -144,10 +144,13 @@ RUN pip install --no-cache-dir --timeout=300 einops huggingface_hub safetensors 
 #   imports `tefas`/`tefasfon`; without these it falls to the dead BindHistoryInfo
 #   scrape and 404s). requirements.txt is NOT pip-installed by this Dockerfile,
 #   so they MUST be listed here to reach the image.
+# borsapy: BIST price fallback (TradingView feed, ~15min delayed). Already in
+#   requirements.txt:101 but was never baked into the image, so the designed
+#   Fonoloji -> borsapy -> yfinance chain silently skipped it (Wave-F5 fix 5).
 # Baked into the image (requirements.txt is NOT pip-installed by this Dockerfile).
 # Retried once, then fail-soft so the build never breaks on a transient PyPI hiccup.
-RUN pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai tefas-crawler tefasfon || \
-    pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai tefas-crawler tefasfon || \
+RUN pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai tefas-crawler tefasfon borsapy || \
+    pip install --no-cache-dir --timeout=300 'yfinance<0.2.59' anthropic openai tefas-crawler tefasfon borsapy || \
     echo "⚠️ advisor data/LLM deps failed (US-equities/FX/rationale degraded)" && \
     echo "✅ Advisor data/LLM deps install attempted"
 
