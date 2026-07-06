@@ -81,10 +81,10 @@ services:
     restart: "no"
     # Resource ceiling — even if a Python subprocess leaks badly, the
     # kernel OOM-killer reaps the container instead of taking the
-    # whole VPS down. 4 GB / 3 CPUs is generous for the current
-    # SNIPER+ARBITRAGE workload (steady-state ~1.3 GB total).
-    mem_limit: 4g
-    memswap_limit: 4g
+    # whole VPS down.
+    # Wave-F5 RC-D2: 4g sized for the old SNIPER+ARBITRAGE workload; 28 modules incl. two ~1GB TF processes (DEX+Advisor) got cgroup-OOM-killed together twice at 4g.
+    mem_limit: 6g
+    memswap_limit: 6g
     cpus: 3.0
     ports:
       - "8080:8080"
