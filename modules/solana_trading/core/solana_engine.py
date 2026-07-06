@@ -5225,8 +5225,12 @@ class SolanaTradingEngine:
                 'pnl_pct': pnl_pct,
                 'reason': reason,
                 'win': pnl_sol > 0,
-                'opened_at': position.opened_at.isoformat() + 'Z',
-                'closed_at': datetime.utcnow().isoformat() + 'Z',
+                # Wave-F5: opened_at is tz-aware; isoformat() already emits
+                # +00:00, so appending 'Z' produced invalid ISO
+                # (2026-...+00:00Z) -> JS Date=NaN -> "NaNm" ages. Emit a
+                # single valid UTC offset instead.
+                'opened_at': _as_utc(position.opened_at).isoformat(),
+                'closed_at': datetime.now(timezone.utc).isoformat(),
                 'duration_seconds': duration_seconds
             })
 
@@ -5305,7 +5309,7 @@ class SolanaTradingEngine:
                 'token_amount': pos.amount,
                 'current_value_sol': pos.value_sol,
                 'unrealized_pnl_usd': pos.unrealized_pnl * self.sol_price_usd if hasattr(pos, 'unrealized_pnl') else 0,
-                'opened_at': pos.opened_at.isoformat() + 'Z' if pos.opened_at else None,  # Add 'Z' to indicate UTC
+                'opened_at': _as_utc(pos.opened_at).isoformat() if pos.opened_at else None,  # tz-aware -> valid +00:00 ISO (no double 'Z')
                 'stop_loss': stop_loss_pct / 100,  # Convert to decimal for UI (e.g., -0.05 for -5%)
                 'take_profit': take_profit_pct / 100,  # Convert to decimal for UI (e.g., 0.10 for 10%)
                 'is_simulated': pos.is_simulated

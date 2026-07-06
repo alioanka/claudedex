@@ -2129,10 +2129,14 @@ class DashboardEndpoints:
                         logger.debug(f"futures_trades table error: {e}")
 
                     # ==================== SOLANA TRADES (from 'solana_trades' table) ====================
+                    # Wave-F5 bug-5: exclude poisoned/voided rows
+                    # (metadata.excluded=true) from PnL/win-rate so a
+                    # wrong-denomination fake can't inflate the aggregate.
                     try:
                         solana_trades = await conn.fetch("""
                             SELECT pnl_sol, exit_reason
                             FROM solana_trades
+                            WHERE NOT COALESCE((metadata->>'excluded')::boolean, false)
                             ORDER BY exit_time DESC
                             LIMIT 10000
                         """)
@@ -2143,6 +2147,14 @@ class DashboardEndpoints:
                             solana_metrics['pnl'] = sum(float(t['pnl_sol'] or 0) for t in solana_trades)
                             solana_metrics['win_rate'] = (len(solana_wins) / len(solana_trades) * 100) if solana_trades else 0
                             logger.info(f"Solana metrics from DB: trades={solana_metrics['total_trades']}, pnl={solana_metrics['pnl']:.4f} SOL")
+                        try:
+                            excl_row = await conn.fetchrow("""
+                                SELECT COUNT(*) AS n FROM solana_trades
+                                WHERE COALESCE((metadata->>'excluded')::boolean, false)
+                            """)
+                            solana_metrics['excluded_trades'] = int(excl_row['n'] or 0) if excl_row else 0
+                        except Exception:
+                            solana_metrics['excluded_trades'] = 0
                     except Exception as e:
                         logger.debug(f"solana_trades table error: {e}")
 
@@ -10361,6 +10373,10 @@ class DashboardEndpoints:
             if self.db_pool:
                 try:
                     async with self.db_pool.acquire() as conn:
+                        # Wave-F5 bug-5: exclude poisoned/voided rows
+                        # (metadata.excluded=true) from the PnL feed; surface
+                        # them only as a separate count so pages built from
+                        # this feed stop reporting fabricated wins.
                         rows = await conn.fetch("""
                             SELECT
                                 trade_id, token_symbol, token_mint, strategy,
@@ -10368,9 +10384,18 @@ class DashboardEndpoints:
                                 pnl_pct, fees_sol, exit_reason, entry_time, exit_time,
                                 duration_seconds, is_simulated, sol_price_usd
                             FROM solana_trades
+                            WHERE NOT COALESCE((metadata->>'excluded')::boolean, false)
                             ORDER BY exit_time DESC NULLS LAST
                             LIMIT $1
                         """, limit)
+                        try:
+                            _excl = await conn.fetchrow("""
+                                SELECT COUNT(*) AS n FROM solana_trades
+                                WHERE COALESCE((metadata->>'excluded')::boolean, false)
+                            """)
+                            excluded_count = int(_excl['n'] or 0) if _excl else 0
+                        except Exception:
+                            excluded_count = 0
 
                         # NULL-safe casts: rows for open trades (entry
                         # written, exit pending) and legacy bad-exit rows
@@ -10408,7 +10433,10 @@ class DashboardEndpoints:
 
                         if trades:
                             logger.debug(f"Loaded {len(trades)} Solana trades from database")
-                            return web.json_response({'success': True, 'trades': trades, 'source': 'database'})
+                            return web.json_response({
+                                'success': True, 'trades': trades,
+                                'source': 'database', 'excluded_count': excluded_count,
+                            })
                 except Exception as db_error:
                     logger.warning(f"Could not fetch from solana_trades table: {db_error}")
 
