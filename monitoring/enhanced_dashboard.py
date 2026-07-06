@@ -3017,12 +3017,20 @@ class DashboardEndpoints:
         """
         return cls._AUX_MODULES.get(key) or cls._PANEL_TRADING_MODULES.get(key)
 
+    @classmethod
+    def _aux_runtime_spec(cls, key: str):
         """Synthesize a _RUNTIME_STATUS_MODULES-shaped spec for an aux
         module so _resolve_module_runtime covers all 16 without 16 bespoke
         entries. Port probe is authoritative (every aux module binds a
         health server); shadow-gated modules resolve dry_run from their
         shadow_mode/live_execution_enabled pair, advisory ones stay
-        dry_run=True (honest: they can never trade)."""
+        dry_run=True (honest: they can never trade).
+
+        Wave-F5 regression fix: cd86101 accidentally replaced this method's
+        SIGNATURE with _panel_module_meta's, leaving this body orphaned dead
+        code — so self._aux_runtime_spec() raised AttributeError for every
+        aux module and all 16 Intelligence & Ops badges degraded to UNKNOWN
+        while the supervisor showed the processes RUNNING."""
         m = cls._AUX_MODULES.get(key)
         if not m:
             return None
