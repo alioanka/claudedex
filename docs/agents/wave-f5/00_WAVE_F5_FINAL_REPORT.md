@@ -6,7 +6,7 @@ transactions, no unintended flag flips), all 48 changed Python files compile, ze
 method definitions in the multi-agent hotspot `monitoring/enhanced_dashboard.py`, cross-agent
 seams verified (llm_budget signatures, pool_engine rotation accessors, deleted-template
 references, mig-139 key consumption), and two api-key log-leak defects found and fixed during
-the gate itself (`2986ae6`, `45ed245`).
+the gate itself (`f7ad031`, `9092796`).
 
 Root-cause evidence for every claim below: `docs/agents/wave-f5/01..08`.
 
@@ -35,7 +35,7 @@ Root-cause evidence for every claim below: `docs/agents/wave-f5/01..08`.
   thin V2 pools, drowning the real 1-30bps divergence.
 - **Fixed**: `25b0952` (auth failures classified as INFRA: rotate endpoint, never blacklist,
   hourly WARN, `rpc_health` in runtime stats), `68b660d` (1 ETH scan size via mig 142 +
-  price-impact pre-filter + hourly `SPREAD DISTRIBUTION` log), `45ed245` (PM gate: redact
+  price-impact pre-filter + hourly `SPREAD DISTRIBUTION` log), `9092796` (PM gate: redact
   endpoint URLs from the new infra-error logs — Ankr keys are path-based).
 - **You do**: provision fresh EVM RPC URLs per `docs/RPC_API_KEYS_GUIDE.md`.
 - **Watch**: hourly `SPREAD DISTRIBUTION` lines in `logs/arbitrage/arbitrage.log` and
@@ -94,7 +94,7 @@ Root-cause evidence for every claim below: `docs/agents/wave-f5/01..08`.
   status, daily-loss halt `sniper_max_daily_loss_usd` + entry cooldown), `1339b6e` (trades
   page filter), `485c9c1` (multi-key Helius rotation in listener + safety checker), mig 140
   Part B hard tuning (liquidity 25k, taxes 5%, safety score 70, 0.05 SOL size, 25-position
-  cap, 240min time-stop), `2986ae6` (PM gate: api-key redaction in listener logs).
+  cap, 240min time-stop), `f7ad031` (PM gate: api-key redaction in listener logs).
 - **You do**: **create the Helius accounts** — the listener detects nothing without a working
   key (see deploy steps).
 - **Watch**: `sniper_runtime_stats.listener_status` must read `ok` (not `rpc_auth_failed`);
@@ -234,7 +234,7 @@ Root-cause evidence for every claim below: `docs/agents/wave-f5/01..08`.
    exception carries it. INFO file handlers filter DEBUG today, so exposure requires an
    operator to enable DEBUG. Proper fix: a global `logging.Filter` that redacts
    `api-key=`/path-key patterns — recommended next wave. (The INFO/WARN/ERROR-level leaks
-   found during the gate were fixed: `2986ae6`, `45ed245`.)
+   found during the gate were fixed: `f7ad031`, `9092796`.)
 2. **`/api/rpc-pool/endpoints` returns full keyed URLs** to authenticated dashboard users.
    Pre-existing and arguably intended (it IS the key-management UI), but a `mask_urls=true`
    default would be safer if the dashboard is ever exposed beyond the operator.
