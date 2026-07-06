@@ -296,6 +296,23 @@ float/Decimal PnL math). All fixed; DRY_RUN behavior byte-identical.
   (engine now pre-scales); RiskManager owner should implement
   `get_available_balance` natively.
 
+## Wave-F5 fixes (2026-07-06) — "DEX dead 20 days" root causes
+Report: `docs/agents/wave-f5/01_dex_arbitrage.md`. Three fixes, none touching trade logic:
+- **RC-D1 orchestrator latch (`main.py`)**: the 1h-uptime restart-budget reset lived only inside
+  `ModuleProcess.restart()`, but the health monitor gated on `restart_count < max_restarts` BEFORE calling
+  it — once latched (3 OOM kills on 2026-06-15) DEX could never restart. The reset is now evaluated in the
+  gate path (`maybe_reset_restart_budget`), so a latched module gets one retry per hour. The
+  "failed permanently" log is rate-limited to 1/hour/module (was 26,228 lines), and
+  `logs/.restart_dex` now explicitly clears the latch + budget before restarting (operator recovery path).
+- **RC-D2 memory (`docker-compose.yml`)**: `mem_limit` 4g→6g — 28 subprocesses incl. two ~1GB TF processes
+  (DEX + Advisor) were cgroup-OOM-killed simultaneously twice during the TF model-load window.
+- **RC-D3 numpy close-path crash**: every position close failed the DB update with
+  `Type is not JSON serializable: numpy.float64` (`core/engine.py:_close_position` →
+  `data/storage/database.py:update_trade`), leaving rows stuck OPEN. Fixed at the jsonb boundary
+  (all `orjson.dumps` in database.py route through `_dumps()` with `OPT_SERIALIZE_NUMPY` +
+  Decimal/datetime `default=`) AND at the engine write site (`_jsonable_metadata`, both DRY_RUN and
+  LIVE close paths). Operator follow-up: reconcile the 3 rows stuck OPEN since Jun 15 (SPACEMOON ×2, MIZU).
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/DEX_*.md` (smartcontract / quant / analyst).
 - Wave-2 campaign report: `docs/agents/reports/DEX_CAMPAIGN.md`.

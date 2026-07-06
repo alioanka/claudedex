@@ -12,6 +12,31 @@ import asyncpg
 from asyncpg.pool import Pool
 import orjson
 
+
+def _json_default(obj):
+    """orjson fallback for jsonb payloads: Decimal, datetime, numpy scalars.
+
+    Wave-F5 RC-D3: DEX close-path metadata carried numpy.float64 values,
+    orjson.dumps raised 'Type is not JSON serializable' and the trade row
+    stayed OPEN forever. Numpy scalars are handled via duck-typed .item()
+    so this module never has to import numpy.
+    """
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    item = getattr(obj, 'item', None)
+    if callable(item):
+        return item()
+    raise TypeError(f"Type is not JSON serializable: {type(obj).__name__}")
+
+
+def _dumps(value) -> str:
+    """JSON-encode a value for a jsonb column; tolerant of numpy/Decimal/datetime."""
+    return orjson.dumps(
+        value, default=_json_default, option=orjson.OPT_SERIALIZE_NUMPY
+    ).decode()
+
 logger = logging.getLogger(__name__)
 
 
@@ -452,7 +477,7 @@ class DatabaseManager:
                 trade['entry_timestamp'], 
                 trade.get('exit_timestamp'),
                 trade.get('status', 'open'),
-                orjson.dumps(trade.get('metadata', {})).decode()
+                _dumps(trade.get('metadata', {}))
             )
             
             logger.info(f"Saved trade: {result['trade_id']}")
@@ -467,7 +492,7 @@ class DatabaseManager:
             for i, (key, value) in enumerate(updates.items(), 1):
                 if key == 'metadata':
                     set_clauses.append(f"{key} = ${i}::jsonb")
-                    values.append(orjson.dumps(value).decode())
+                    values.append(_dumps(value))
                 else:
                     set_clauses.append(f"{key} = ${i}")
                     values.append(value)
@@ -510,12 +535,12 @@ class DatabaseManager:
                 position['position_id'], position['token_address'], position['chain'],
                 position['entry_price'], position.get('current_price'),
                 position.get('stop_loss'),
-                orjson.dumps(position.get('take_profit', [])).decode(),
+                _dumps(position.get('take_profit', [])),
                 position['amount'], position['usd_value'],
                 position.get('unrealized_pnl'), position.get('unrealized_pnl_percentage'),
                 position.get('risk_score'), position.get('correlation_score'),
                 position['opened_at'], position.get('status', 'open'),
-                orjson.dumps(position.get('metadata', {})).decode()
+                _dumps(position.get('metadata', {}))
             )
             
             logger.info(f"Saved position: {result['position_id']}")
@@ -530,7 +555,7 @@ class DatabaseManager:
             for i, (key, value) in enumerate(updates.items(), 1):
                 if key in ['metadata', 'take_profit']:
                     set_clauses.append(f"{key} = ${i}::jsonb")
-                    values.append(orjson.dumps(value).decode())
+                    values.append(_dumps(value))
                 else:
                     set_clauses.append(f"{key} = ${i}")
                     values.append(value)
@@ -578,7 +603,7 @@ class DatabaseManager:
                 data.get('sell_count_5m'), data.get('unique_buyers_5m'),
                 data.get('unique_sellers_5m'), data.get('price_change_5m'),
                 data.get('price_change_1h'), data.get('price_change_24h'),
-                orjson.dumps(data.get('metadata', {})).decode()
+                _dumps(data.get('metadata', {}))
             )
     
     async def save_market_data_batch(self, data_points: List[Dict[str, Any]]) -> None:
@@ -593,7 +618,7 @@ class DatabaseManager:
                     d.get('sell_count_5m'), d.get('unique_buyers_5m'),
                     d.get('unique_sellers_5m'), d.get('price_change_5m'),
                     d.get('price_change_1h'), d.get('price_change_24h'),
-                    orjson.dumps(d.get('metadata', {})).decode()
+                    _dumps(d.get('metadata', {}))
                 )
                 for d in data_points
             ]
@@ -802,7 +827,7 @@ class DatabaseManager:
                 analysis.get('holder_score'), analysis.get('contract_score'),
                 analysis.get('developer_score'), analysis.get('social_score'),
                 analysis.get('technical_score'), analysis.get('volume_score'),
-                orjson.dumps(analysis.get('metadata', {})).decode()
+                _dumps(analysis.get('metadata', {}))
             )
     
     async def get_token_analysis(
@@ -845,7 +870,7 @@ class DatabaseManager:
                 metrics.get('avg_win'), metrics.get('avg_loss'),
                 metrics.get('best_trade'), metrics.get('worst_trade'),
                 metrics.get('var_95'), metrics.get('cvar_95'),
-                orjson.dumps(metrics.get('metadata', {})).decode()
+                _dumps(metrics.get('metadata', {}))
             )
     
     async def cleanup_old_data(self, days: int = 90) -> None:
