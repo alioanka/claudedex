@@ -349,7 +349,7 @@ class MidasFundsAnalyzer(BaseAnalyzer):
                 ),
             )
 
-        return self._build_nav_result(
+        return await self._build_nav_result(
             symbol, horizon,
             signals=signals,
             actual_status=DataSourceStatus.AVAILABLE,
@@ -468,7 +468,7 @@ class MidasFundsAnalyzer(BaseAnalyzer):
                 ),
             )
 
-        return self._build_nav_result(
+        return await self._build_nav_result(
             symbol, horizon,
             signals=signals,
             actual_status=DataSourceStatus.AVAILABLE,
@@ -590,7 +590,7 @@ class MidasFundsAnalyzer(BaseAnalyzer):
                 ),
             )
 
-        return self._build_nav_result(
+        return await self._build_nav_result(
             symbol, horizon,
             signals=signals,
             actual_status=DataSourceStatus.DEGRADED,
@@ -731,7 +731,7 @@ class MidasFundsAnalyzer(BaseAnalyzer):
                 ),
             )
 
-        return self._build_nav_result(
+        return await self._build_nav_result(
             symbol, horizon,
             signals=signals,
             actual_status=DataSourceStatus.DEGRADED,

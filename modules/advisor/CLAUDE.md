@@ -3,6 +3,72 @@
 ## What it does
 Standalone financial advisor — **ADVICE-ONLY, no trade execution**. Generates Long/Short/Neutral signals for CRYPTO, US equities (NASDAQ/NYSE), BIST (Borsa Istanbul), FX including metals (XAU/XAG), and Turkish Midas funds. Operator executes manually on Midas exchange. Completely isolated from all trading modules.
 
+## Wave-F5 repairs (2026-07-06, migration 138)
+Five stacked defects fixed (analysis: `docs/agents/wave-f5/06_advisor_bist.md`):
+1. **Midas total outage**: `midas_funds.py` returned the bare coroutine from the async
+   `_build_nav_result` at all four call sites — every fund, every source, every cycle
+   errored. Now awaited; all Midas fund advice revived.
+2. **Sim-cap publish blocker**: a FULL sim channel used to reject the ADVICE itself in
+   `risk_engine.should_publish` gate 4 — with all channels saturated (75/75) the bot
+   published 0 advice/day for every market. The gate now publishes the advice with
+   `sim_enabled=False` (`extra['sim_skipped_reason']` records why); only the sim open is
+   capped. Publish-gate rejects + sim demotions are logged at INFO once per cycle.
+   Mig 138 conditionally reseeds `sim_horizon_days_long` 365→90 (only `WHERE value='365'`)
+   so LONG sims stop squatting slots for a year.
+3. **NaN-safe JSON**: `/api/advisor/advice` + `/api/advisor/simulations` serialize via a
+   shared NaN→null dumps (`allow_nan=False` backstop); `levels.horizon_levels` rejects
+   non-finite close/vol; `portfolio_engine` refuses non-finite entry/mark prices; mig 138
+   one-off-cleans stored `'NaN'::numeric` rows (NaN-entry open sims closed as
+   `nan_entry_cleanup`).
+4. **Fonoloji HTTP 451 circuit breaker** + BIST source swap — see the BIST source chain
+   section below. borsapy is now baked into the Docker image (was in requirements.txt
+   only, never installed).
+5. **BIST universe**: default now the curated `bist50` snapshot (mig 138 conditional —
+   the old `auto` live list was ~88% garbage: Midas-US symbols like AAPLUS/AAPLO/ADBEUS
+   plus funds/options/ISINs). `universes._fonoloji_bist_list` now drops Midas-US rows
+   (row market/exchange field authoritative; else known-US-base + US/O/N suffix rule;
+   BIST-50 names like PGSUS always protected) and the over-cap fill rotates daily
+   (UTC day-of-year) instead of alphabetical head-fill. Plus: KAP re-queue (below),
+   scheme-aware sliding session cookie (`monitoring/auth_routes.py`), and the per-symbol
+   "All BIST data sources failed" WARNs aggregated into one summary line per cycle.
+
+## BIST source chain (Wave-F5)
+Order inside `BISTAnalyzer._analyze_internal`, preference decided by
+`core/data/activation.py`:
+1. **Fonoloji** (`prefer_fonoloji_bist`) — tried FIRST when a key is present and
+   auto-prefer is on, **UNLESS the HTTP-451 circuit breaker is tripped**.
+2. **borsapy** (TradingView feed, ~15 min delayed) — now installed in the image.
+3. **yfinance `.IS`** (DEGRADED) — proven working from the deployment VPS.
+
+**451 circuit breaker** (`fonoloji_client.py`): Fonoloji's `/stocks/*/price|chart`
+endpoints have returned HTTP 451 (legally restricted) since 2026-07-01. On the first 451
+the client WARNs once ("HTTP 451 legally restricted — BIST price data disabled by
+provider") and short-circuits further price/chart calls for the rest of the UTC day so
+the 3,000/day budget is not burned on dead endpoints. `bist_price_451_active()` is
+consulted by `activation.prefer_fonoloji_bist` AND `prefer_fonoloji_prices` (KAP price
+path), so **yfinance/borsapy are tried first for BIST price series while the 451
+persists**. The breaker re-arms at UTC midnight — when the provider restores the
+endpoints, the Fonoloji preference is auto-restored with no operator action. All
+NON-price Fonoloji uses (stocks/list universe, screener/movers discovery, fund NAV,
+gold, market live, recommendations) are untouched and keep working.
+
+## KAP re-queue semantics (Wave-F5)
+Budget-starved disclosures are stamped `classifier_stage='unclassified'` and used to be
+permanently "done" (the dedupe join treated any stamp as classified). Now
+`kap_store.get_unclassified(..., reclassify_after_hours=...)` also returns stamps older
+than `advisor_kap_reclassify_after_hours` (mig 138, default **24**, `0` disables),
+flagged `requeued=True`. Bounds: never-classified rows always sort first; the batch
+LIMIT (100) caps each cycle; `store_classification` re-stamps `classified_at` on every
+attempt so a row retries at most once per window; the worker honors a re-queued row at
+most once per process run (the store-failure runaway guard stays intact); and
+`core/llm_budget.try_consume(kind="kap_classify")` remains the hard cost gate — a
+budget-less retry is a cheap local no-op. Stage-1 rule taxonomy extended with the
+standard KAP subject templates (Kâr Payı Dağıtım / Pay Geri Alım / Birleşme / Genel
+Kurul İşlemlerine İlişkin Bildirim, Finansal Rapor, Faaliyet Raporu, Geri Alınan
+Paylar, broad bedelsiz/bedelli with mutual excludes) — the generic "Özel Durum
+Açıklaması" wrapper is deliberately NOT a rule trigger so real events still reach the
+LLM stage.
+
 ## Advice quality: horizon-aware levels + real confidence (migration 067)
 All analyzers now derive entry/target/stop and confidence from one shared, transparent
 module: `modules/advisor/core/analyzers/levels.py`. This fixes two real defects observed
@@ -67,6 +133,9 @@ ADVICE-ONLY: no orders are placed. Self-check: `python -m modules.advisor.core.a
 | `advisor_sim_cap_per_channel` | int | 15 | Open-sim cap PER CHANNEL (migration 077; replaces per-market cap) |
 | `max_sim_positions` | int | 20 | LEGACY/FALLBACK for the per-channel cap (alias) |
 | `advisor_kap_sim_enabled` | bool | true | Open KAP strong-polarity BIST sims in the 'kap' channel |
+| `advisor_kap_reclassify_after_hours` | float | 24 | Wave-F5: re-queue stamped-UNCLASSIFIED KAP rows after N hours (0 disables) |
+| `sim_horizon_days_long` | int | 90 | Max hold days for LONG sims (Wave-F5 mig 138: 365→90 conditional reseed) |
+| `advisor_bist_universe` | string | bist50 | Wave-F5 default: curated BIST-50 snapshot (was `auto` = garbage-prone live list) |
 | `sim_default_enabled` | bool | false | Auto-open sim position per advice |
 | `sim_default_amount_usd` | float | 1000.0 | Default sim notional |
 | `watchlist_crypto` | string | BTC/USDT,ETH/USDT,SOL/USDT | Crypto pairs (ccxt format) |
@@ -107,7 +176,9 @@ operator must press **Start** on the advisor bot DM once.
 |---|---|---|---|
 | CRYPTO | ccxt (public REST) | YES (no key) | None |
 | US EQUITIES | yfinance (Yahoo Finance) | YES (no key) | None |
-| BIST (degraded) | yfinance `.IS` suffix | YES | None (partial coverage) |
+| BIST (preferred) | Fonoloji API — price paths auto-suspended while HTTP 451 persists (Wave-F5) | Quota'd plan | `ADVISOR_FONOLOJI_API_KEY` |
+| BIST (fallback 1) | borsapy (TradingView, ~15 min delayed; in the image since Wave-F5) | YES | None |
+| BIST (fallback 2 / degraded) | yfinance `.IS` suffix | YES | None (partial coverage) |
 | BIST (full) | Matriks API | NO (paid) | `ADVISOR_BIST_API_KEY` in Secure Credentials |
 | FX / Metals | yfinance (default) | YES | None |
 | FX / Metals | Alpha Vantage | NO (free tier 25 req/day) | `ADVISOR_FX_ALPHAVANTAGE_KEY` in Secure Credentials |

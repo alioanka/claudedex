@@ -51,6 +51,12 @@ _DEFAULT_INTERVAL_S = 60
 _DEFAULT_BATCH_LIMIT = 100
 _DEFAULT_ALERT_MIN_CONF = 0.5
 _DEFAULT_ALERT_MAX_PER_CYCLE = 10
+# Wave-F5 fix 7: re-queue budget-starved UNCLASSIFIED stamps after this many
+# hours (0 disables). Bounded: kap_store returns never-classified rows FIRST,
+# the batch LIMIT caps the cycle, and every attempt re-stamps classified_at so
+# a row retries at most once per window. llm_budget.try_consume remains the
+# hard cost backstop — a budget-less retry is a cheap local no-op (no API call).
+_DEFAULT_RECLASSIFY_AFTER_HOURS = 24.0
 
 
 class KapClassifierWorker:
@@ -84,6 +90,11 @@ class KapClassifierWorker:
         # re-attempt the same disclosure within a run; a process restart retries
         # once. The global llm_budget cap is the second, hard backstop.
         self._attempted_ids: set = set()
+        # Wave-F5 fix 7: aged-UNCLASSIFIED rows re-surfaced by the re-queue may
+        # bypass _attempted_ids ONCE per process run (a second in-run retry is
+        # only possible if the re-stamp failed to persist — exactly the store-
+        # failure loop the guard exists for, so it stays blocked).
+        self._requeue_attempted_ids: set = set()
         self._store_failure_warned = False
 
     # ------------------------------------------------------------------
@@ -114,6 +125,17 @@ class KapClassifierWorker:
             return int(self.config.get("advisor_kap_alert_max_per_cycle", _DEFAULT_ALERT_MAX_PER_CYCLE))
         except (ValueError, TypeError):
             return _DEFAULT_ALERT_MAX_PER_CYCLE
+
+    @property
+    def reclassify_after_hours(self) -> float:
+        """Hours after which a stamped-UNCLASSIFIED row is retried (Wave-F5
+        fix 7). advisor_kap_reclassify_after_hours, default 24; 0 disables."""
+        try:
+            return max(0.0, float(self.config.get(
+                "advisor_kap_reclassify_after_hours",
+                _DEFAULT_RECLASSIFY_AFTER_HOURS)))
+        except (ValueError, TypeError):
+            return _DEFAULT_RECLASSIFY_AFTER_HOURS
 
     @property
     def kap_sim_enabled(self) -> bool:
@@ -167,7 +189,10 @@ class KapClassifierWorker:
 
     async def _classify_cycle(self) -> None:
         """One cycle: pull unclassified disclosures, classify, persist, alert."""
-        rows = await get_unclassified(self.db_pool, limit=_DEFAULT_BATCH_LIMIT)
+        rows = await get_unclassified(
+            self.db_pool, limit=_DEFAULT_BATCH_LIMIT,
+            reclassify_after_hours=self.reclassify_after_hours,
+        )
         if not rows:
             return
 
@@ -183,8 +208,18 @@ class KapClassifierWorker:
             # Runaway-loop hard-stop: never re-attempt a disclosure already
             # classified this run. Without this, a persistent store failure
             # re-LLM's the same rows every cycle (the cost runaway).
+            # EXCEPTION (Wave-F5 fix 7): rows flagged requeued=True came back
+            # through the aged-UNCLASSIFIED re-queue — their previous stamp DID
+            # persist (store works), and kap_store only re-surfaces them after
+            # advisor_kap_reclassify_after_hours. Honor the retry AT MOST ONCE
+            # per process run (each attempt re-stamps classified_at, so the DB
+            # window bounds retries across runs).
+            is_requeue = bool(row.get("requeued"))
             if row_id in self._attempted_ids:
-                continue
+                if not is_requeue or row_id in self._requeue_attempted_ids:
+                    continue
+            if is_requeue:
+                self._requeue_attempted_ids.add(row_id)
 
             # The classifier reads disclosure['id'] / 'subject' / 'text'.
             # kap_disclosures stores body text under 'full_text'.

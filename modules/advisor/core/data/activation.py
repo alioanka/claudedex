@@ -31,7 +31,10 @@ from __future__ import annotations
 import logging
 from typing import Dict
 
-from modules.advisor.core.data.fonoloji_client import resolve_api_key
+from modules.advisor.core.data.fonoloji_client import (
+    bist_price_451_active,
+    resolve_api_key,
+)
 
 logger = logging.getLogger("advisor.data.activation")
 
@@ -57,8 +60,17 @@ def fonoloji_active(config: dict) -> bool:
 def prefer_fonoloji_bist(config: dict) -> bool:
     """Should the BIST analyzer try Fonoloji FIRST for price series?
     Explicit 'fonoloji' or legacy '' always prefer (pre-083 behaviour);
-    auto-prefer extends that to any non-'matriks' source value."""
+    auto-prefer extends that to any non-'matriks' source value.
+
+    Wave-F5 fix 5: while the HTTP-451 circuit breaker is tripped (provider
+    legally restricted its /stocks/*/price|chart endpoints) the price-series
+    preference is suspended so borsapy/yfinance are tried first. The breaker
+    re-arms at UTC midnight, so a provider restore auto-recovers the
+    preference. NON-price Fonoloji preferences (universe list, Midas NAV,
+    gold, screener/movers) are intentionally NOT affected."""
     if not resolve_api_key(config):
+        return False
+    if bist_price_451_active():
         return False
     source = _src(config, "advisor_bist_data_source")
     if source in ("fonoloji", ""):
@@ -83,7 +95,11 @@ def prefer_fonoloji_midas(config: dict) -> bool:
 
 def prefer_fonoloji_prices(config: dict) -> bool:
     """Should the KAP price lookups / forward-return accumulator try the
-    Fonoloji /stocks endpoints FIRST?"""
+    Fonoloji /stocks endpoints FIRST? These are the same /stocks/*/price
+    endpoints covered by the HTTP-451 circuit breaker, so the preference is
+    suspended while the breaker is tripped (Wave-F5 fix 5)."""
+    if bist_price_451_active():
+        return False
     return fonoloji_active(config)
 
 
@@ -236,6 +252,19 @@ def _self_test() -> int:
           == "bist50", "explicit bist50 universe")
     check(effective_universe_mode({"advisor_bist_universe": "fonoloji"})
           == "snapshot", "fonoloji universe without key -> snapshot")
+
+    # HTTP-451 circuit breaker suspends the PRICE preferences only
+    # (Wave-F5 fix 5); universe + Midas NAV preferences stay intact.
+    from modules.advisor.core.data import fonoloji_client as _fc
+    _fc.clear_cache()
+    _fc._trip_451("/stocks/THYAO/chart")
+    check(not prefer_fonoloji_bist(KEY), "451 breaker suspends bist preference")
+    check(not prefer_fonoloji_prices(KEY), "451 breaker suspends KAP prices")
+    check(prefer_fonoloji_midas(KEY), "451 breaker must NOT touch Midas NAV")
+    check(effective_universe_mode(KEY) == "fonoloji",
+          "451 breaker must NOT touch the universe mode")
+    _fc.clear_cache()
+    check(prefer_fonoloji_bist(KEY), "bist preference restored after breaker reset")
 
     # resolve_sources returns the four diagnostic keys.
     src = resolve_sources(KEY)

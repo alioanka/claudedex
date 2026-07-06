@@ -56,6 +56,64 @@ _BIST_TICKER_RE = re.compile(r"^[A-Z][A-Z0-9]{2,5}$")
 def _valid_bist_ticker(sym: str) -> bool:
     return bool(_BIST_TICKER_RE.match((sym or "").strip().upper()))
 
+
+# ---------------------------------------------------------------------------
+# Midas-US row rejection (Wave-F5 fix 6). Fonoloji's /stocks/list also carries
+# the Midas-tradable US symbols with an exchange suffix glued on (AAPLUS/
+# ADBEUS/AAOIUS = <US base>+US; AAPLO = AAPL+O; ABBVN = ABBV+N). Those pass
+# _BIST_TICKER_RE, flood the 60-slot universe alphabetically (53/60 garbage
+# observed) and fail all three BIST price sources every cycle. Preference
+# order: a row-level market/exchange field is authoritative when present;
+# otherwise reject suffix-decorated known US bases (and the bare bases
+# themselves). BIST_50 constituents are always protected (PGSUS ends in 'US'
+# and must survive).
+# ---------------------------------------------------------------------------
+_ROW_MARKET_KEYS = ("market", "exchange", "borsa", "market_code",
+                    "exchange_code", "market_type", "venue")
+_BIST_MARKET_FRAGS = ("BIST", "XIST", "BORSA", "IST")
+_US_MARKET_FRAGS = ("NASDAQ", "NYSE", "US", "AMEX", "ARCA", "MIDAS")
+# Known Midas-tradable US bases (mega-caps + the common Midas menu). Snapshot;
+# used ONLY for the fallback suffix rule when the row has no market field.
+_US_BASES = frozenset({
+    "AAPL", "AAOI", "ABBV", "ABNB", "ADBE", "AMD", "AMZN", "AVGO", "BA",
+    "BABA", "BAC", "C", "CCL", "COIN", "CRM", "CSCO", "CVX", "DAL", "DIS",
+    "F", "GE", "GM", "GOOG", "GOOGL", "HOOD", "IBM", "INTC", "JNJ", "JPM",
+    "KO", "LCID", "MA", "MCD", "META", "MRK", "MSFT", "MU", "NFLX", "NKE",
+    "NVDA", "ORCL", "PEP", "PFE", "PLTR", "PYPL", "QCOM", "RIVN", "SBUX",
+    "SHOP", "SNAP", "SOFI", "SQ", "T", "TSLA", "TXN", "UBER", "V", "VZ",
+    "WMT", "XOM",
+})
+_US_SUFFIXES = ("US", "O", "N")
+
+
+def _is_midas_us_row(sym: str, row=None) -> bool:
+    """True when a /stocks/list row is a Midas-US symbol, not a BIST equity."""
+    s = (sym or "").strip().upper()
+    if not s:
+        return False
+    # Positive rule first: an explicit market/exchange field is authoritative.
+    if isinstance(row, dict):
+        for key in _ROW_MARKET_KEYS:
+            val = row.get(key) or row.get(key.capitalize())
+            if val is None or str(val).strip() == "":
+                continue
+            v = str(val).strip().upper()
+            if any(frag in v for frag in _BIST_MARKET_FRAGS):
+                return False
+            if any(frag in v for frag in _US_MARKET_FRAGS):
+                return True
+            break  # unknown venue value -> fall through to the suffix rule
+    # Known BIST constituents are always protected (PGSUS ends in 'US').
+    if s in _BIST50_SET:
+        return False
+    # Bare US base (AAPL) or suffix-decorated US base (AAPLUS/AAPLO/ABBVN).
+    if s in _US_BASES:
+        return True
+    for suf in _US_SUFFIXES:
+        if s.endswith(suf) and s[: -len(suf)] in _US_BASES:
+            return True
+    return False
+
 # ---------------------------------------------------------------------------
 # BIST constituent lists — bare tickers (no .IS). Snapshot 2026-06; maintained.
 # BIST-30 is the most-liquid blue-chip subset; BIST-50 adds the next tier.
@@ -75,6 +133,9 @@ _BIST_50_EXTRA: List[str] = [
 ]
 
 BIST_50: List[str] = BIST_30 + _BIST_50_EXTRA
+
+# Set form for the Midas-US filter (protects PGSUS & co. from the *US rule).
+_BIST50_SET = frozenset(BIST_50)
 
 # ---------------------------------------------------------------------------
 # FX + metals universes (yfinance format: "EURUSD=X", metals via futures "GC=F").
@@ -144,10 +205,10 @@ def _fonoloji_bist_list(config: dict) -> List[str]:
     if not isinstance(rows, list):
         return []
 
-    out: List[str] = []
+    out: List[tuple] = []  # (symbol, source_row_or_None)
     for r in rows:
         if isinstance(r, str) and r.strip():
-            out.append(r.strip().upper().removesuffix(".IS"))
+            out.append((r.strip().upper().removesuffix(".IS"), None))
             continue
         if not isinstance(r, dict):
             continue
@@ -158,18 +219,24 @@ def _fonoloji_bist_list(config: dict) -> List[str]:
             if s.endswith(".IS"):
                 s = s[:-3]
             if s:
-                out.append(s)
+                out.append((s, r))
     # Fonoloji's /stocks/list returns the WHOLE TEFAS/BIST universe — funds,
     # warrants, option codes (030E0626P1600), ISINs (0K0060615755), and broken
     # fund names (100 TL PORSFOY) — which 404 the per-stock chart endpoint and
     # flood the BIST analyzer (~70% of calls per Fonoloji's own advice). Keep
     # only well-formed equity tickers: a letter-led short alnum code (THYAO,
     # A1CAP). Everything garbage starts with a digit or has spaces/symbols.
-    cleaned = [s for s in out if _valid_bist_ticker(s)]
+    # Wave-F5 fix 6: the list ALSO carries Midas-tradable US symbols
+    # (AAPLO/AAPLUS/ADBEUS/...) that pass the shape check — drop those too
+    # (row market/exchange field when present, else US-base suffix rule).
+    cleaned = [s for s, r in out
+               if _valid_bist_ticker(s) and not _is_midas_us_row(s, r)]
+    n_shape = sum(1 for s, _ in out if not _valid_bist_ticker(s))
+    n_us = len(out) - n_shape - len(cleaned)
     if len(cleaned) != len(out):
         logger.info("[universes] Fonoloji list: kept %d valid BIST tickers, "
-                    "dropped %d non-equity rows (funds/options/ISINs).",
-                    len(cleaned), len(out) - len(cleaned))
+                    "dropped %d non-equity rows (funds/options/ISINs) + %d "
+                    "Midas-US rows.", len(cleaned), n_shape, n_us)
     return cleaned
 
 
@@ -224,9 +291,19 @@ def expand_bist_universe(config: dict, watchlist: List[str]) -> List[str]:
     out = _dedupe_preserve(merged)
     cap = _max(config)
     if len(out) > cap:
-        # Keep watchlist tickers, then fill from the preset/custom head.
+        # Keep watchlist tickers, then fill the remaining slots with a DAILY
+        # ROTATION through the rest (Wave-F5 fix 6). The old alphabetical
+        # head-fill meant a large live list only ever scanned the A-names;
+        # rotating by UTC day-of-year covers the whole universe over time
+        # while staying deterministic within a day (cache-friendly).
         wl = [w for w in (watchlist or [])]
         rest = [s for s in out if s not in wl]
+        if rest:
+            from datetime import datetime, timezone
+            slots = max(1, cap - len(_dedupe_preserve(wl)))
+            offset = (datetime.now(timezone.utc).timetuple().tm_yday
+                      * slots) % len(rest)
+            rest = rest[offset:] + rest[:offset]
         out = _dedupe_preserve(wl + rest)[:cap]
     return out
 
@@ -290,6 +367,15 @@ def _selftest() -> None:
     # FX extended.
     fx = expand_fx_universe({"advisor_fx_universe": "extended"}, [])
     assert "EURUSD=X" in fx and "USDTRY=X" in fx and "GC=F" in fx
+
+    # Midas-US row rejection (Wave-F5 fix 6).
+    for bad in ("AAPLUS", "AAPLO", "ABBVN", "ADBEUS", "AAOIUS", "AAPL"):
+        assert _is_midas_us_row(bad), f"{bad} must be rejected as Midas-US"
+    for good in ("THYAO", "PGSUS", "GARAN", "A1CAP"):
+        assert not _is_midas_us_row(good), f"{good} must survive the US filter"
+    # Row market/exchange field is authoritative in both directions.
+    assert _is_midas_us_row("XYZAB", {"market": "NASDAQ"}), "market field US"
+    assert not _is_midas_us_row("AAPLUS", {"market": "BIST"}), "market field BIST"
 
     # Fonoloji mode with NO key => fail-soft to the BIST-50 snapshot.
     flive = expand_bist_universe({"advisor_bist_universe": "fonoloji"}, ["XYZ"])

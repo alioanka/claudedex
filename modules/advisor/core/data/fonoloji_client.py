@@ -98,6 +98,78 @@ _DAILY_LOCK = threading.Lock()
 # Last rate-limit headers seen (startup diagnostics / dashboard surface).
 _LAST_QUOTA: Dict[str, Any] = {}
 
+# HTTP 451 circuit breaker (Wave-F5 fix 4). Since 2026-07-01 the provider
+# returns HTTP 451 (legally restricted) on the /stocks/*/price and
+# /stocks/*/chart endpoints while the non-price endpoints (stocks/list,
+# screener, movers, fund NAV, gold, market) keep working. 451 is a HARD
+# unavailability — retrying burns the 3,000/day local budget on dead
+# endpoints (observed: budget exhausted by ~16:00, refusing even the WORKING
+# endpoints). When a price path 451s we WARN once and short-circuit further
+# /stocks/*/price|chart calls for the rest of the UTC day; the breaker
+# re-arms at UTC midnight so a provider restore is picked up automatically.
+_H451 = {"day": "", "tripped": False, "warned_paths": set()}
+_H451_LOCK = threading.Lock()
+
+
+def _utc_day() -> str:
+    import datetime as _dt
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%d")
+
+
+def _is_stock_price_path(path: str) -> bool:
+    """True for the Fonoloji BIST price-series endpoints
+    (/stocks/{T}/price and /stocks/{T}/chart) — the paths covered by the
+    HTTP-451 circuit breaker. /stocks/list and /stocks/{T}/recommendations
+    are NOT price paths and stay live."""
+    p = str(path or "")
+    return p.startswith("/stocks/") and (
+        p.endswith("/price") or p.endswith("/chart")
+    )
+
+
+def bist_price_451_active() -> bool:
+    """True while the HTTP-451 circuit breaker is tripped for TODAY (UTC).
+    Consumed by activation.prefer_fonoloji_bist so the BIST analyzer tries
+    yfinance/borsapy first while the provider's price data stays legally
+    restricted."""
+    today = _utc_day()
+    with _H451_LOCK:
+        return bool(_H451["tripped"]) and _H451["day"] == today
+
+
+def _trip_451(path: str) -> None:
+    """Trip the UTC-day breaker for the price paths; WARN exactly once/day."""
+    today = _utc_day()
+    with _H451_LOCK:
+        first = not (_H451["tripped"] and _H451["day"] == today)
+        if _H451["day"] != today:
+            _H451["warned_paths"] = set()
+        _H451.update(day=today, tripped=True)
+    if first:
+        logger.warning(
+            "[fonoloji] HTTP 451 (legally restricted) on %s — BIST price "
+            "data disabled by provider. Short-circuiting /stocks/*/price and "
+            "/stocks/*/chart calls for the rest of the UTC day (no budget "
+            "burn); non-price endpoints (stocks/list, screener, movers, fund "
+            "NAV, gold) keep working. The BIST analyzer falls back to "
+            "yfinance/borsapy.", path,
+        )
+
+
+def _warn_451_nonprice(path: str) -> None:
+    """A 451 on a NON-price endpoint is unexpected — WARN once/day per path."""
+    today = _utc_day()
+    with _H451_LOCK:
+        if _H451["day"] != today:
+            _H451.update(day=today, tripped=False, warned_paths=set())
+        if path in _H451["warned_paths"]:
+            return
+        _H451["warned_paths"].add(path)
+    logger.warning(
+        "[fonoloji] HTTP 451 (legally restricted) on non-price endpoint %s.",
+        path,
+    )
+
 
 def resolve_api_key(config: dict) -> str:
     """Resolve the Fonoloji API key from config (Secure Credentials injection)
@@ -364,6 +436,12 @@ class FonolojiClient:
             if (now - ts) <= self._ttl_for(path):
                 return payload
 
+        # HTTP-451 circuit breaker (Wave-F5 fix 4): while tripped, price-path
+        # calls are dead for the UTC day — serve stale cache or None WITHOUT
+        # consuming the daily budget.
+        if _is_stock_price_path(path) and bist_price_451_active():
+            return cached[1] if cached is not None else None
+
         # Local daily-budget guard: when exhausted, prefer stale cache.
         if not self._budget_allows():
             return cached[1] if cached is not None else None
@@ -453,6 +531,17 @@ class FonolojiClient:
 
             if status == 404:
                 logger.debug("[fonoloji] %s not found (404).", path)
+                return None
+
+            if status == 451:
+                # Legally restricted — hard-unavailable, like 401 (Wave-F5
+                # fix 4). Observed on /stocks/*/price|chart since 2026-07-01.
+                # WARN once and trip the UTC-day breaker so we stop burning
+                # the daily budget on dead endpoints.
+                if _is_stock_price_path(path):
+                    _trip_451(path)
+                else:
+                    _warn_451_nonprice(path)
                 return None
 
             if status in (429, 503):
@@ -599,11 +688,14 @@ def _daily_warn_pct(config: dict) -> float:
 
 
 def clear_cache() -> None:
-    """Test hook: drop the process-wide cache + reset the daily counter."""
+    """Test hook: drop the process-wide cache + reset the daily counter and
+    the HTTP-451 circuit breaker."""
     with _CACHE_LOCK:
         _CACHE.clear()
     with _DAILY_LOCK:
         _DAILY.update(day="", count=0, warned=False, exhausted=False)
+    with _H451_LOCK:
+        _H451.update(day="", tripped=False, warned_paths=set())
 
 
 # ---------------------------------------------------------------------------
@@ -830,6 +922,36 @@ def _self_test() -> int:
         print("FAIL: budget exhaustion must still serve cache")
         failures += 1
     clear_cache()
+
+    # --- HTTP-451 circuit breaker (Wave-F5 fix 4). ---
+    clear_cache()
+    calls451 = {"n": 0}
+
+    def transport_451(url, headers, params, timeout):
+        calls451["n"] += 1
+        if url.endswith("/chart") or url.endswith("/price"):
+            return _MockResponse(451, headers={})
+        return _MockResponse(200, {"ok": True}, {})
+
+    c451 = FonolojiClient(cfg, transport=transport_451)
+    if c451.stock_chart("THYAO") is not None:
+        print("FAIL: 451 chart must return None")
+        failures += 1
+    if not bist_price_451_active():
+        print("FAIL: 451 on a price path must trip the breaker")
+        failures += 1
+    n451 = calls451["n"]
+    if c451.stock_price("MGROS") is not None or calls451["n"] != n451:
+        print("FAIL: tripped breaker must short-circuit price calls "
+              f"(calls={calls451['n']}, expected {n451})")
+        failures += 1
+    if c451.stock_list() != {"ok": True}:
+        print("FAIL: non-price endpoints must keep working under the breaker")
+        failures += 1
+    clear_cache()
+    if bist_price_451_active():
+        print("FAIL: clear_cache must reset the 451 breaker")
+        failures += 1
 
     print("SELF-TEST", "PASS" if failures == 0 else f"FAIL ({failures})")
     return 1 if failures else 0

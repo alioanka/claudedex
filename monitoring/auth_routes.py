@@ -10,6 +10,61 @@ from auth.models import UserRole
 
 logger = logging.getLogger(__name__)
 
+# Session cookie lifetime per (re-)issue. Matches AuthService.session_timeout
+# (default 3600s): the DB session slides on every validated request, and the
+# sliding-refresh middleware below re-issues the cookie in step with it.
+SESSION_COOKIE_MAX_AGE = 3600
+
+
+def _cookie_secure(request) -> bool:
+    """Scheme-aware Secure-cookie decision (Wave-F5 fix 8; mirrors the
+    DASHBOARD_HTTPS=auto pattern in auth/csrf.py, commit 76698e4).
+
+    Secure=True on a plain-HTTP deployment (the normal :8080 setup) makes
+    browsers silently drop the cookie — every request then 401s. 'auto'
+    (default): Secure only when the request is actually HTTPS (direct or via
+    X-Forwarded-Proto behind a TLS-terminating proxy). Explicit
+    DASHBOARD_HTTPS=true/false still forces the choice."""
+    env = os.getenv('DASHBOARD_HTTPS', 'auto').lower()
+    if env in ('false', '0', 'no'):
+        return False
+    if env in ('true', '1', 'yes'):
+        return True
+    fwd = request.headers.get('X-Forwarded-Proto', '').lower()
+    return request.scheme == 'https' or fwd == 'https'
+
+
+def _set_session_cookie(response, request, session_id: str) -> None:
+    """Issue/refresh the session_id cookie with consistent attributes."""
+    response.set_cookie(
+        'session_id',
+        session_id,
+        httponly=True,
+        secure=_cookie_secure(request),
+        samesite='Lax',
+        max_age=SESSION_COOKIE_MAX_AGE,
+        path='/',
+    )
+
+
+@web.middleware
+async def session_cookie_refresh_middleware(request, handler):
+    """Sliding re-issue of the session cookie (Wave-F5 fix 8).
+
+    The DB session slides its expiry on every validated request
+    (AuthService.validate_session), but the cookie used to be set ONCE at
+    login with max_age=3600 — so an actively-used dashboard tab started
+    401'ing after exactly 1 hour. Re-issue the cookie on every authenticated
+    response so the browser expiry slides in step with the DB session. Only
+    fires when the auth middleware already validated the session
+    ('user' attached to the request) — it never extends an invalid session.
+    """
+    response = await handler(request)
+    session_id = request.cookies.get('session_id')
+    if session_id and 'user' in request and hasattr(response, 'set_cookie'):
+        _set_session_cookie(response, request, session_id)
+    return response
+
 
 class AuthRoutes:
     """Authentication routes"""
@@ -18,6 +73,12 @@ class AuthRoutes:
         self.app = app
         self.auth_service = auth_service
         self._setup_routes()
+        # Sliding session-cookie refresh (see middleware docstring). Appended
+        # AFTER the auth middleware, so it runs inside it and sees
+        # request['user']. AuthRoutes is constructed during app setup (same
+        # phase as route registration), so the middleware list is not frozen.
+        if session_cookie_refresh_middleware not in app.middlewares:
+            app.middlewares.append(session_cookie_refresh_middleware)
 
     def _setup_routes(self):
         """Setup authentication routes"""
@@ -103,15 +164,11 @@ class AuthRoutes:
                 'user': user.to_dict()
             })
 
-            # MB-28: default-secure; opt-out for local dev via DASHBOARD_HTTPS=false
-            response.set_cookie(
-                'session_id',
-                session_id,
-                httponly=True,
-                secure=os.getenv('DASHBOARD_HTTPS', 'true').lower() not in ('false', '0', 'no'),
-                samesite='Lax',
-                max_age=3600  # 1 hour
-            )
+            # Wave-F5 fix 8 (supersedes MB-28 default-secure): scheme-aware
+            # Secure flag (DASHBOARD_HTTPS=auto) — Secure=True over the plain
+            # HTTP :8080 deployment made browsers drop the cookie. Expiry now
+            # slides via session_cookie_refresh_middleware.
+            _set_session_cookie(response, request, session_id)
 
             logger.info(f"User {username} logged in successfully")
             return response

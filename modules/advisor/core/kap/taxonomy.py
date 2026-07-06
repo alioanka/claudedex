@@ -233,6 +233,9 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
             r"bedelsiz\s+hisse",
             r"iç\s+kaynaktan\s+sermaye\s+art[ıi]r[ıi]m[ıi]",
             r"kar\s+pay[ıi]\s+sermayeye\s+ekleme",
+            # Wave-F5: broad form — 'bedelsiz' in a KAP context is virtually
+            # always a bonus issue; the bedelli exclude below still vetoes.
+            r"bedelsiz\b",
         ],
         exclude_patterns=[
             r"bedelli",
@@ -263,6 +266,9 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
             r"rüçhan\s+hakkı",                 # pre-emptive rights
             r"rüçhan\s+hak\s+kullan[ıi]m[ıi]",
             r"d[ıi][şs]\s+kaynaktan\s+sermaye\s+art[ıi]r[ıi]m[ıi]",
+            # Wave-F5: broad form — 'bedelli' in a KAP context is virtually
+            # always a rights issue; the bedelsiz exclude below still vetoes.
+            r"bedelli\b",
         ],
         exclude_patterns=[
             r"bedelsiz",
@@ -292,6 +298,9 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
             r"kar\s+da[gğ][ıi]t[ıi]m\b",
             r"nakit\s+temettü",
             r"kar\s+pay[ıi]\s+oranı",
+            # Wave-F5: standard KAP subject templates ('Kâr Payı Dağıtım
+            # İşlemlerine İlişkin Bildirim'; k[âa]r covers the circumflex).
+            r"k[âa]r\s+pay[ıi]\s+da[gğ][ıi]t[ıi]m",
         ],
         exclude_patterns=[
             r"bedelsiz.*sermaye",
@@ -507,6 +516,9 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
             r"hisse\s+sat[ıi]n\s+al[ıi]m\s+karar[ıi]",   # share acquisition
             r"i[şs]tirak\s+sat[ıi]n\s+al[ıi]m[ıi]",       # subsidiary purchase
             r"tamamen\s+devral[ıi]nd[ıi]",
+            # Wave-F5: standard KAP subject templates.
+            r"birle[şs]me\s+i[şs]lemlerine\s+ili[şs]kin",
+            r"devralma\s+yoluyla\s+birle[şs]me",
         ],
         exclude_patterns=[
             r"pay\s+geri\s+al[ıi]m",   # not a buyback
@@ -553,6 +565,10 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
             r"geri\s+al[ıi]m\s+program[ıi]",
             r"öz\s+hisse\s+al[ıi]m[ıi]",
             r"kendi\s+pay[ıi]n[ıi]\s+sat[ıi]n\s+al",
+            # Wave-F5: standard KAP subject templates ('Pay Geri Alım
+            # İşlemlerine İlişkin Bildirim', 'Geri Alınan Paylara ...').
+            r"pay\s+geri\s+al[ıi]m",
+            r"geri\s+al[ıi]nan\s+paylar",
         ],
         base_polarity=BasePolarity.POSITIVE,
         notes=(
@@ -649,6 +665,11 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
             r"yıllık\s+sonuçlar\s+aç[ıi]kland[ıi]",
             r"dönem\s+sonu\s+finansal",
             r"faaliyet\s+sonuçlar[ıi]",
+            # Wave-F5: standard KAP subject templates ('Finansal Rapor' is the
+            # literal subject of every periodic statement; 'Faaliyet Raporu'
+            # is the annual/interim activity report).
+            r"finansal\s+rapor",
+            r"faaliyet\s+raporu",
         ],
         base_polarity=BasePolarity.NEUTRAL,
         notes=(
@@ -734,6 +755,10 @@ TAXONOMY: dict[KapEventType, TaxonomyEntry] = {
             r"genel\s+kurul\s+toplant[ıi]s[ıi]",
             r"genel\s+kurul\s+davet",
             r"genel\s+kurul\s+kararlar[ıi]",
+            # Wave-F5: standard KAP subject templates ('Genel Kurul
+            # İşlemlerine İlişkin Bildirim', 'Genel Kurul Sonuçları').
+            r"genel\s+kurul\s+i[şs]lemlerine\s+ili[şs]kin",
+            r"genel\s+kurul\s+sonu[çc]",
         ],
         base_polarity=BasePolarity.NEUTRAL,
         notes=(
