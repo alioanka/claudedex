@@ -1942,8 +1942,9 @@ class DashboardEndpoints:
         return web.Response(text=template.render(page='solana_settings'), content_type='text/html')
 
     async def _fallback_module_control(self, request):
-        template = self.jinja_env.get_template('module_control.html')
-        return web.Response(text=template.render(page='module_control'), content_type='text/html')
+        """Retired page — /modules is the single module-control hub
+        (Wave-F5 IA consolidation)."""
+        raise web.HTTPFound('/modules')
 
     async def _fallback_modules_page(self, request):
         template = self.jinja_env.get_template('modules.html')
@@ -5802,12 +5803,11 @@ class DashboardEndpoints:
         )
 
     async def pro_controls_page(self, request):
-        """Pro controls page"""
-        template = self.jinja_env.get_template('pro_controls.html')
-        return web.Response(
-            text=template.render(page='pro_controls'),
-            content_type='text/html'
-        )
+        """Retired page — 302 to /modules (Wave-F5 IA consolidation).
+        Its unique Manual-Trade panel moved into modules.html; module
+        start/stop toggles and PANIC SELL duplicated /modules and the
+        sidebar Emergency Exit button respectively."""
+        raise web.HTTPFound('/modules')
 
     # ==================== API - DATA ENDPOINTS ====================
 

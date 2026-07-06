@@ -782,14 +782,9 @@ class ModuleRoutes:
             return web.Response(text=f"Error: {e}", status=500)
 
     async def module_control_page(self, request: web.Request) -> web.Response:
-        """Render module control page"""
-        try:
-            template = self.jinja_env.get_template('module_control.html')
-            html = template.render(page='module_control')
-            return web.Response(text=html, content_type='text/html')
-        except Exception as e:
-            self.logger.error(f"Error rendering module control: {e}", exc_info=True)
-            return web.Response(text=f"Error: {e}", status=500)
+        """Retired page — /modules is the single module-control hub
+        (Wave-F5 IA consolidation). Old bookmarks 302 there."""
+        raise web.HTTPFound('/modules')
 
     async def bot_start(self, request: web.Request) -> web.Response:
         """Start all enabled modules"""

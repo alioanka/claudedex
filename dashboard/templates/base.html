@@ -1238,21 +1238,10 @@
 
             <li class="nav-divider"></li>
 
-            <!-- Module Control -->
-            <li class="nav-item {% if page == 'module_control' %}active{% endif %}">
-                <a href="/module-control">
-                    <i class="fas fa-sliders-h"></i>
-                    <span>Module Control</span>
-                </a>
-            </li>
-
-            <!-- Pro Controls -->
-            <li class="nav-item {% if page == 'pro_controls' %}active{% endif %}">
-                <a href="/pro-controls">
-                    <i class="fas fa-gamepad"></i>
-                    <span>Pro Controls</span>
-                </a>
-            </li>
+            <!-- Module Control + Pro Controls retired in Wave-F5:
+                 /modules is the single enable/disable/pause hub (its
+                 sidebar entry is at the top); both old URLs 302 there
+                 and the unique Manual-Trade panel moved to /modules. -->
 
             <!-- Global Settings -->
             <li class="nav-item {% if page == 'global_settings' %}active{% endif %}">

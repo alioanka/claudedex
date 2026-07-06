@@ -855,6 +855,53 @@
         {% endif %}
     </div>
 
+    <!-- Manual Trade — ported from the retired /pro-controls page
+         (Wave-F5 IA consolidation). Posts to /api/trade/execute; the
+         server rejects it when no order engine is attached. -->
+    <div class="capital-section" style="margin-top:24px;">
+        <div class="capital-title"><i class="fas fa-hand-pointer"></i> Manual Trade</div>
+        <form id="manual-trade-form" onsubmit="return false;"
+              style="display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; align-items:end;">
+            <div>
+                <label class="form-label" for="trade-module">Module</label>
+                <select class="form-select" id="trade-module">
+                    <option value="dex">DEX</option>
+                    <option value="futures">Futures</option>
+                    <option value="solana">Solana</option>
+                    <option value="sniper">Sniper</option>
+                    <option value="ai_analysis">AI Analysis</option>
+                    <option value="arbitrage">Arbitrage</option>
+                    <option value="copy_trading">Copy Trading</option>
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="trade-token">Token Address / Symbol</label>
+                <input type="text" class="form-control" id="trade-token">
+            </div>
+            <div>
+                <label class="form-label" for="trade-side">Side</label>
+                <select class="form-select" id="trade-side">
+                    <option value="buy">Buy / Long</option>
+                    <option value="sell">Sell / Short</option>
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="trade-amount">Amount (USD)</label>
+                <input type="number" class="form-control" id="trade-amount" min="0" step="0.01">
+            </div>
+            <div>
+                <button type="button" class="refresh-btn" style="width:100%;" onclick="executeManualTrade()">
+                    <i class="fas fa-bolt"></i> Execute
+                </button>
+            </div>
+        </form>
+        <p style="font-size:0.75rem; opacity:0.7; margin:10px 0 0;">
+            Manual orders go through the same order engine and risk gates as automated
+            trades. For an instant all-stop use the red <strong>Emergency Exit</strong>
+            button in the sidebar (writes <code>logs/.killswitch</code>).
+        </p>
+    </div>
+
     <!-- Intelligence & Ops modules (Waves 26+): fail-soft, fed by
          /api/aux-modules/overview; hidden entirely when the API is down. -->
     <div id="aux-modules-section" style="display:none; margin-top:24px;">
@@ -1008,6 +1055,27 @@ async function disableModule(moduleName) {
         }
     } catch (error) {
         showToast('Error: ' + error.message, 'error');
+    }
+}
+
+// Manual Trade — ported from the retired /pro-controls page. Uses
+// main.js's apiPost so the CSRF double-submit header is attached.
+async function executeManualTrade() {
+    const module = document.getElementById('trade-module').value;
+    const token = document.getElementById('trade-token').value.trim();
+    const side = document.getElementById('trade-side').value;
+    const amount = parseFloat(document.getElementById('trade-amount').value);
+    if (!token || !(amount > 0)) {
+        showToast('Token and a positive USD amount are required', 'error');
+        return;
+    }
+    if (!confirm(`Execute MANUAL ${side.toUpperCase()} of $${amount} on ${module} for ${token}?`)) return;
+    try {
+        const data = await apiPost('/api/trade/execute', { module, token, side, amount });
+        showToast(data.success ? 'Trade submitted' : ('Trade failed: ' + (data.error || 'unknown')),
+                  data.success ? 'success' : 'error');
+    } catch (e) {
+        showToast('Trade failed: ' + e.message, 'error');
     }
 }
 
