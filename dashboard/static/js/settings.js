@@ -25,19 +25,17 @@ class SettingsManager {
             saveButton.addEventListener('click', () => this.saveAllSettings());
         }
 
-        // Password change form
+        // Password change form (optional — the Wave-F5 DEX settings
+        // rebuild moved account settings to /settings; kept for any
+        // template that still embeds the form).
         const passwordForm = document.getElementById('changePasswordForm');
         if (passwordForm) {
-            console.log('Password form found, attaching event listener');
             passwordForm.addEventListener('submit', (e) => {
-                console.log('Password form submitted');
                 e.preventDefault();
                 e.stopPropagation();
                 this.handlePasswordChange(e);
                 return false;
             });
-        } else {
-            console.error('Password form not found in DOM');
         }
 
         // Sensitive config management
@@ -79,10 +77,10 @@ class SettingsManager {
             section.style.display = 'block';
         }
 
-        // Hide/show save buttons based on tab
+        // Hide/show save buttons based on tab (guide is read-only docs)
         const pageActions = document.querySelector('.page-actions');
         if (pageActions) {
-            if (category === 'account' || category === 'sensitive') {
+            if (category === 'account' || category === 'sensitive' || category === 'guide') {
                 pageActions.style.display = 'none';
             } else {
                 pageActions.style.display = 'flex';

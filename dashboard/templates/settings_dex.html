@@ -4,7 +4,11 @@
 
 {% block content %}
 <div style="background:#1e293b;border:1px solid #334155;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:.85rem;color:#cbd5e1">
-  💡 <strong>All Settings:</strong> this page curates the most-used DEX knobs. The <a href="/config" style="color:#38bdf8;text-decoration:underline">unified settings editor</a> exposes <em>every</em> key across all DEX config groups (trading / risk_management / position_management / ml_models / …) with inline docs &amp; validation.
+  💡 <strong>Module-scoped page.</strong> This page edits the DEX engine's own config groups.
+  App-global settings (account, API keys, monitoring, feature flags, secrets) live in the
+  <a href="/config" style="color:#38bdf8;text-decoration:underline">unified settings editor</a>
+  (every key, typed validation, inline docs, audit trail) and in
+  <a href="/credentials" style="color:#38bdf8;text-decoration:underline">Secure Credentials</a>.
 </div>
 <div class="page-header">
     <h1>DEX Settings</h1>
@@ -18,93 +22,35 @@
     </div>
 </div>
 
-<!-- Settings Tabs -->
+<!-- Settings Tabs — Wave-F5 rebuild. Only the six config groups the DEX
+     engine actually reads, plus a Guide tab (arbitrage/advisor pattern)
+     and a link-out to the generic /config engine. The old 14-tab layout
+     (Account/Modules/General/Portfolio/API/Monitoring/Features/Sensitive)
+     was the pre-per-module app-global settings page relabeled "DEX";
+     the Modules tab had been permanently broken (no JS ever filled
+     #modules-container). -->
 <div class="tabs">
-    <button class="tab-btn active category-tab" data-category="account">Account</button>
-    <button class="tab-btn category-tab" data-category="modules">📦 Modules</button>
-    <button class="tab-btn category-tab" data-category="general">General</button>
-    <button class="tab-btn category-tab" data-category="portfolio">Portfolio</button>
+    <button class="tab-btn active category-tab" data-category="trading">Trading</button>
     <button class="tab-btn category-tab" data-category="risk_management">Risk</button>
-    <button class="tab-btn category-tab" data-category="trading">Trading</button>
     <button class="tab-btn category-tab" data-category="strategies">Strategies</button>
     <button class="tab-btn category-tab" data-category="chain">Chains</button>
     <button class="tab-btn category-tab" data-category="position_management">Positions</button>
-    <button class="tab-btn category-tab" data-category="api">API</button>
-    <button class="tab-btn category-tab" data-category="monitoring">Monitoring</button>
     <button class="tab-btn category-tab" data-category="ml_models">ML Models</button>
-    <button class="tab-btn category-tab" data-category="feature_flags">Features</button>
-    <button class="tab-btn category-tab" data-category="sensitive">Sensitive</button>
+    <button class="tab-btn category-tab" data-category="guide">📖 Guide</button>
+    <a class="tab-btn" href="/config" title="Open the app-global unified settings editor">
+        <i class="fas fa-arrow-up-right-from-square"></i> App Settings
+    </a>
 </div>
 
 <!-- Settings Sections -->
 <div id="settings-container">
-    <div id="account-settings" class="settings-section card">
-        <div class="card-header"><h3 class="card-title">Account & Security</h3></div>
-        <div class="card-body">
-            <div class="setting-group">
-                <h4>Change Password</h4>
-                <form id="changePasswordForm" method="post" action="#" onsubmit="return false;">
-                    <div class="form-group">
-                        <label for="currentPassword">Current Password</label>
-                        <input type="password" id="currentPassword" name="currentPassword"
-                               class="form-control" required autocomplete="current-password">
-                    </div>
-                    <div class="form-group">
-                        <label for="newPassword">New Password</label>
-                        <input type="password" id="newPassword" name="newPassword"
-                               class="form-control" required minlength="8" autocomplete="new-password">
-                        <small class="form-text">Minimum 8 characters</small>
-                    </div>
-                    <div class="form-group">
-                        <label for="confirmPassword">Confirm New Password</label>
-                        <input type="password" id="confirmPassword" name="confirmPassword"
-                               class="form-control" required minlength="8" autocomplete="new-password">
-                    </div>
-                    <div class="form-actions">
-                        <button type="submit" class="btn btn-primary">
-                            <i class="fas fa-key"></i> Change Password
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-    </div>
-    <div id="modules-settings" class="settings-section card" style="display: none;">
-        <div class="card-header">
-            <h3 class="card-title">📦 Trading Modules</h3>
-            <p style="margin-top: 10px; font-size: 0.9em; color: #666;">
-                Manage independent trading modules (DEX, Futures, Arbitrage). Each module operates with its own wallet, capital allocation, and strategies.
-            </p>
-        </div>
-        <div class="card-body" id="modules-container">
-            <div style="text-align: center; padding: 40px;">
-                <i class="fas fa-spinner fa-spin" style="font-size: 2em; color: #667eea;"></i>
-                <p style="margin-top: 10px;">Loading modules...</p>
-            </div>
-        </div>
-    </div>
-    <div id="general-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">General Configuration</h3></div>
-        <div class="card-body" id="general-settings-form"></div>
-    </div>
-    <div id="portfolio-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Portfolio Configuration</h3></div>
-        <div class="card-body" id="portfolio-settings-form"></div>
+    <div id="trading-settings" class="settings-section card">
+        <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
+        <div class="card-body" id="trading-settings-form"></div>
     </div>
     <div id="risk_management-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">Risk Management</h3></div>
         <div class="card-body" id="risk_management-settings-form"></div>
-    </div>
-    <div id="trading-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Trading Configuration</h3></div>
-        <div class="card-body">
-            <div id="trading-settings-form"></div>
-            <div class="alert alert-info mt-2" style="font-size:0.82em;">
-                <strong>Wave-13 key:</strong> <code>min_vol_liq_ratio</code> (float, default: 0.05) —
-                minimum 24h-volume/liquidity ratio to allow a pair into scoring. Ghost pools (0 volume)
-                are blocked; active pairs typically run 0.1–1.0. If this key is missing, seed it via DB.
-            </div>
-        </div>
     </div>
     <div id="strategies-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">Trading Strategies Configuration</h3></div>
@@ -118,127 +64,101 @@
         <div class="card-header"><h3 class="card-title">Position Management</h3></div>
         <div class="card-body" id="position_management-settings-form"></div>
     </div>
-    <div id="api-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">API & Connections</h3></div>
-        <div class="card-body" id="api-settings-form"></div>
-    </div>
-    <div id="monitoring-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Monitoring & Logging</h3></div>
-        <div class="card-body" id="monitoring-settings-form"></div>
-    </div>
     <div id="ml_models-settings" class="settings-section card" style="display: none;">
         <div class="card-header"><h3 class="card-title">ML Models Configuration</h3></div>
         <div class="card-body">
-            <!-- Ensemble status banner (wave-13 agent-2 handoff) -->
             <div class="alert alert-info mb-3" id="ensemble-status-banner" style="font-size:0.85em;">
                 <i class="fas fa-spinner fa-spin me-1"></i> Checking ML ensemble status...
             </div>
             <div id="ml_models-settings-form"></div>
-            <hr>
-            <div class="alert alert-warning mt-3" style="font-size:0.82em;">
-                <strong>Wave-13 new keys:</strong> The following config keys were added by the wave-13 ML agent.
-                If they do not appear above, seed them via the admin DB query or a migration:<br>
-                <code>ml_retrain_enabled</code> (bool, default: true),
-                <code>ml_retrain_interval_hours</code> (int, default: 24),
-                <code>ml_retrain_days</code> (int, default: 90),
-                <code>ml_retrain_min_trades</code> (int, default: 50),
-                <code>ensemble_version</code> (string, updated by retrain script).
-            </div>
         </div>
     </div>
-    <div id="feature_flags-settings" class="settings-section card" style="display: none;">
-        <div class="card-header"><h3 class="card-title">Feature Flags</h3></div>
-        <div class="card-body" id="feature_flags-settings-form"></div>
-    </div>
-    <div id="sensitive-settings" class="settings-section card" style="display: none;">
-        <div class="card-header">
-            <h3 class="card-title">Sensitive Configuration (Encrypted)</h3>
-        </div>
-        <div class="card-body">
-            <div class="alert alert-warning">
-                <i class="fas fa-exclamation-triangle"></i>
-                <strong>Warning:</strong> This section contains encrypted sensitive data like API keys and private keys.
-                Only administrators can access this section.
+
+    <!-- Guide tab: static documentation, arbitrage/advisor 2-tab pattern. -->
+    <div id="guide-settings" class="settings-section card" style="display: none;">
+        <div class="card-header"><h3 class="card-title">📖 DEX Module Guide</h3></div>
+        <div class="card-body" style="font-size:0.9rem; line-height:1.55;">
+            <h4>What this module does</h4>
+            <p>
+                The DEX module scans DexScreener pairs across EVM chains, scores candidates
+                (volume/liquidity, safety filters, optional ML ensemble), opens spot positions
+                through on-chain swaps, and manages exits via stop-loss / take-profit and a
+                DB-first exit watchdog. It runs as its own subprocess
+                (<code>DEX_MODULE_ENABLED=true</code> in <code>.env</code>) and logs to
+                <code>logs/dex_trading/</code>.
+            </p>
+
+            <h4>Key knobs (defaults → what to consider)</h4>
+            <div style="overflow-x:auto;">
+            <table class="table" style="font-size:0.85rem;">
+                <thead><tr><th>Key (tab)</th><th>Default</th><th>Notes</th></tr></thead>
+                <tbody>
+                <tr><td><code>trading.min_vol_liq_ratio</code> (Trading)</td><td>0.05</td>
+                    <td>Minimum 24h-volume/liquidity ratio to allow a pair into scoring.
+                        Blocks ghost pools; active pairs typically run 0.1–1.0. Raising it
+                        trades fewer, higher-conviction entries.</td></tr>
+                <tr><td><code>trading.max_trades_per_day</code> (Trading)</td><td>seeded per mig 095</td>
+                    <td>Hard daily entry cap; the engine stops opening once hit.</td></tr>
+                <tr><td><code>trading.chain_weights</code> (Trading)</td><td>seeded JSON</td>
+                    <td>Relative scan/entry weighting per chain. Zero a chain to skip it
+                        without disabling its RPC pool.</td></tr>
+                <tr><td><code>risk_management.stop_loss_pct</code> (Risk)</td><td>seeded</td>
+                    <td>Position SL, read at position-manage time — changes apply to new
+                        evaluations without a restart.</td></tr>
+                <tr><td><code>risk_management.take_profit_pct</code> (Risk)</td><td>seeded</td>
+                    <td>Position TP, same read path as SL.</td></tr>
+                <tr><td><code>ml_models.ml_retrain_enabled</code> (ML)</td><td>true</td>
+                    <td>Auto-retrain loop. Needs 50+ closed trades
+                        (<code>ml_retrain_min_trades</code>); interval
+                        <code>ml_retrain_interval_hours</code> (24), window
+                        <code>ml_retrain_days</code> (90). Until an ensemble exists the
+                        engine scores with <em>heuristic_fallback</em>.</td></tr>
+                <tr><td><code>ml_models.ensemble_version</code> (ML)</td><td>—</td>
+                    <td>Written by <code>scripts/train_ensemble.py</code>; shown in the
+                        banner on the ML tab.</td></tr>
+                </tbody>
+            </table>
             </div>
 
-            <div class="form-actions" style="margin-bottom: 20px;">
-                <button class="btn btn-primary" id="addSensitiveConfigBtn">
-                    <i class="fas fa-plus"></i> Add New Sensitive Config
-                </button>
-            </div>
+            <h4>Going LIVE safely</h4>
+            <ol>
+                <li>Run in <strong>DRY_RUN</strong> (the default) until the stats on
+                    <a href="/dex/performance">Performance</a> look sane over multiple days.</li>
+                <li>Flip <code>dry_run=false</code> for the module (Control Center → DEX →
+                    Go-LIVE, or <code>/config/dex_config</code>) and restart the subprocess.</li>
+                <li>LIVE broadcasts are gated fail-closed: <code>RiskManager.validate_trade</code>,
+                    the global kill-switch (<code>logs/.killswitch</code>) and the module pause
+                    flag (<code>logs/.pause_dex</code>) are all checked at the broadcast
+                    boundary. The exit watchdog auto-closes only in DRY_RUN; LIVE closes go
+                    through the on-chain sell path.</li>
+                <li>Emergency stop: the red sidebar button writes the kill-switch that every
+                    module polls.</li>
+            </ol>
 
-            <div id="sensitive-configs-list">
-                <table class="table">
-                    <thead>
-                        <tr>
-                            <th>Key</th>
-                            <th>Description</th>
-                            <th>Last Rotated</th>
-                            <th>Rotation Interval</th>
-                            <th>Actions</th>
-                        </tr>
-                    </thead>
-                    <tbody id="sensitive-configs-tbody">
-                        <tr>
-                            <td colspan="5" class="text-center">Loading...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
-</div>
-
-<!-- Add/Edit Sensitive Config Modal -->
-<div id="sensitiveConfigModal" class="modal" style="display: none;">
-    <div class="modal-content">
-        <div class="modal-header">
-            <h3 id="sensitiveConfigModalTitle">Add Sensitive Configuration</h3>
-            <button class="close-modal" id="closeSensitiveConfigModal">&times;</button>
-        </div>
-        <div class="modal-body">
-            <form id="sensitiveConfigForm">
-                <div class="form-group">
-                    <label for="sensitiveConfigKey">Key *</label>
-                    <input type="text" id="sensitiveConfigKey" class="form-control"
-                           placeholder="e.g., OPENAI_API_KEY, PRIVATE_KEY_ETH" required>
-                    <small class="form-text">Unique identifier for this configuration</small>
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigValue">Value *</label>
-                    <textarea id="sensitiveConfigValue" class="form-control" rows="3"
-                              placeholder="Enter sensitive value (will be encrypted)" required></textarea>
-                    <small class="form-text">This value will be encrypted before storage</small>
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigDescription">Description</label>
-                    <input type="text" id="sensitiveConfigDescription" class="form-control"
-                           placeholder="Optional description">
-                </div>
-                <div class="form-group">
-                    <label for="sensitiveConfigRotation">Rotation Interval (days)</label>
-                    <input type="number" id="sensitiveConfigRotation" class="form-control"
-                           value="30" min="1" max="365">
-                    <small class="form-text">Recommended rotation interval for this secret</small>
-                </div>
-            </form>
-        </div>
-        <div class="modal-footer">
-            <button class="btn btn-secondary" id="cancelSensitiveConfigBtn">Cancel</button>
-            <button class="btn btn-primary" id="saveSensitiveConfigBtn">Save</button>
+            <h4>Where things live</h4>
+            <ul>
+                <li>Pages: <a href="/dex/dashboard">Dashboard</a> ·
+                    <a href="/dex/positions">Positions</a> ·
+                    <a href="/dex/trades">Trades</a> ·
+                    <a href="/dex/performance">Performance</a></li>
+                <li>Every key with inline docs + audit trail:
+                    <a href="/config">All Settings</a></li>
+                <li>RPC endpoints come from the pool engine —
+                    <a href="/settings/rpc-api">RPC/API Config</a></li>
+                <li>Counterfactual replays: <a href="/backtest-replay">Backtest Replay</a></li>
+            </ul>
         </div>
     </div>
 </div>
-
 {% endblock %}
 
 {% block extra_js %}
-<script src="/static/js/settings.js?v=4"></script>
+<script src="/static/js/settings.js?v=5"></script>
 <script src="/static/js/dry_run_widget.js?v={{ asset_version or 'dev' }}"></script>
 <script>document.addEventListener('DOMContentLoaded', function () {
     DryRunWidget.init('dex');
-    // Wave-13: surface ensemble_version from ml_models config.
-    // Reads from /api/settings/all after settingsManager has loaded it.
+    // Surface ensemble_version from ml_models config. Reads from
+    // /api/settings/all after settingsManager has loaded it.
     setTimeout(async function() {
         var banner = document.getElementById('ensemble-status-banner');
         if (!banner) return;
