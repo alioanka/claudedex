@@ -2576,42 +2576,81 @@ class SolanaTradingEngine:
             )
             trade_metadata = None
 
+            # Wave-F5 bug-4: an implausible exit/entry price is a poisoned
+            # quote, NOT a real fill. The old guard PINNED exit to 50x entry
+            # and booked notional×49 (~+8.5 SOL) as a WINNING row tagged
+            # excluded — poisoning PnL/win-rate for anyone who forgot the tag.
+            # Void it instead: compute PnL from the LAST VALIDATED price when
+            # the validator still has one (honest realized move), otherwise
+            # book a flat zero. Never fabricate phantom profit.
             implausible_exit = False
-            if entry_price > 0 and exit_price_out > 0:
-                ratio = exit_price_out / entry_price
-                if ratio > max_ratio or ratio < (1.0 / max_ratio):
-                    implausible_exit = True
-                    orig_exit = exit_price_out
-                    if ratio > max_ratio:
-                        exit_price_out = entry_price * max_ratio
-                    else:
-                        exit_price_out = entry_price / max_ratio
-                    # Long-only on Solana: recompute pct from pinned exit, then
-                    # rebuild pnl_sol/pnl_usd from notional so the row is self-
-                    # consistent rather than carrying the blown-up pnl.
+            last_validated = None
+            try:
+                last_validated = self.price_validator.last_good(trade.token_mint)
+            except Exception:
+                last_validated = None
+
+            def _implausible(px: float) -> bool:
+                if entry_price <= 0 or px <= 0:
+                    return False
+                r = px / entry_price
+                return r > max_ratio or r < (1.0 / max_ratio)
+
+            # An implausible EXIT, OR an entry that is itself implausible vs the
+            # last validated price (the both-sides-poisoned class), voids the row.
+            entry_poisoned = (
+                last_validated is not None
+                and last_validated > 0
+                and entry_price > 0
+                and (
+                    (entry_price / last_validated) > max_ratio
+                    or (last_validated / entry_price) > max_ratio
+                )
+            )
+            if (_implausible(exit_price_out) and entry_price > 0) or entry_poisoned:
+                implausible_exit = True
+                orig_exit = exit_price_out
+                orig_ratio = (exit_price_out / entry_price) if entry_price > 0 else 0.0
+                if last_validated is not None and last_validated > 0 and not entry_poisoned:
+                    # Honest realized exit from the last price the validator
+                    # accepted (long-only on Solana).
+                    exit_price_out = float(last_validated)
                     pnl_pct_out = ((exit_price_out - entry_price) / entry_price) * 100
                     notional_sol = float(getattr(trade, 'amount', 0) or 0)
                     pnl_sol_out = notional_sol * (pnl_pct_out / 100.0)
                     pnl_usd_out = pnl_sol_out * self.sol_price_usd
-                    logger.warning(
-                        f"🛑 Implausible exit_price for {trade.token_symbol}: "
-                        f"entry=${entry_price:.8f} exit=${orig_exit:.8f} "
-                        f"(ratio {ratio:.1f}x vs guard {max_ratio:.0f}x) -> "
-                        f"pinned exit=${exit_price_out:.8f}, pnl recomputed to "
-                        f"{pnl_sol_out:.4f} SOL ({pnl_pct_out:+.2f}%). Likely a "
-                        f"SOL/USD or wrong-token price-unit mixup; row tagged "
-                        f"excluded."
+                    reason = 'implausible_exit_price_voided_to_last_validated'
+                else:
+                    # No trustworthy price anywhere on this trade -> flat void.
+                    exit_price_out = entry_price if entry_price > 0 else exit_price_out
+                    pnl_pct_out = 0.0
+                    pnl_sol_out = 0.0
+                    pnl_usd_out = 0.0
+                    reason = (
+                        'implausible_entry_and_exit_voided'
+                        if entry_poisoned else 'implausible_exit_price_voided'
                     )
-                    trade_metadata = json.dumps({
-                        'excluded': True,
-                        'exclude_reason': 'implausible_exit_price',
-                        'original_exit_price': orig_exit,
-                        'original_pnl_sol': float(trade.pnl_sol or 0),
-                        'original_pnl_pct': float(trade.pnl_pct or 0),
-                        'exit_entry_ratio': ratio,
-                        'guard_max_ratio': max_ratio,
-                        'sanitized_at': datetime.utcnow().isoformat(),
-                    })
+                logger.warning(
+                    f"🛑 Voiding poisoned trade {trade.token_symbol}: "
+                    f"entry=${entry_price:.8f} exit=${orig_exit:.8f} "
+                    f"(ratio {orig_ratio:.1f}x vs guard {max_ratio:.0f}x, "
+                    f"last_validated={last_validated}) -> exit=${exit_price_out:.8f}, "
+                    f"pnl={pnl_sol_out:.4f} SOL ({pnl_pct_out:+.2f}%); reason={reason}. "
+                    f"Row tagged excluded (no phantom profit booked)."
+                )
+                trade_metadata = json.dumps({
+                    'excluded': True,
+                    'exclusion_reason': reason,
+                    'exclude_reason': reason,  # back-compat alias
+                    'original_exit_price': orig_exit,
+                    'original_entry_price': entry_price,
+                    'original_pnl_sol': float(trade.pnl_sol or 0),
+                    'original_pnl_pct': float(trade.pnl_pct or 0),
+                    'exit_entry_ratio': orig_ratio,
+                    'last_validated_price': last_validated,
+                    'guard_max_ratio': max_ratio,
+                    'sanitized_at': datetime.utcnow().isoformat(),
+                })
 
             # Secondary clamp: cap pnl_pct to [-100, 2000]% in case some other
             # path (entry_price <= 0, etc.) still produced an out-of-range pct.
