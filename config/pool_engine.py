@@ -366,6 +366,8 @@ class PoolEngine:
 
         # Cache for quick lookups
         self._endpoint_cache: Dict[str, Endpoint] = {}  # url -> endpoint
+        # endpoint.id -> last time report_success persisted it (throttle)
+        self._last_success_persist: Dict[int, datetime] = {}
 
         # Rate limit backoff settings
         self._default_rate_limit_duration = 300  # 5 minutes
@@ -1242,6 +1244,7 @@ class PoolEngine:
         if not endpoint:
             return
 
+        prev_status = endpoint.status
         endpoint.success_count += 1
         endpoint.last_success_at = datetime.utcnow()
         endpoint.consecutive_failures = 0
@@ -1288,6 +1291,21 @@ class PoolEngine:
             f"latency={latency_ms}ms | priority={endpoint.priority} | "
             f"health={endpoint.health_score:.1f}"
         )
+
+        # Persist to rpc_api_pool so the dashboard (which reads the DB, not
+        # this process's memory) reflects recovery/latency/score. Only the
+        # failure/rate-limit paths persisted before, so a 'rate_limited'
+        # status stuck in the DB forever and the Test button never updated
+        # ping or health. Throttled: always on a status change (recovery),
+        # otherwise at most once per 60s per endpoint — report_success fires
+        # on every RPC call and must not become a DB write storm.
+        if endpoint.id is not None and self.db_pool:
+            now = datetime.utcnow()
+            last = self._last_success_persist.get(endpoint.id)
+            if (endpoint.status != prev_status or last is None
+                    or (now - last).total_seconds() >= 60):
+                self._last_success_persist[endpoint.id] = now
+                asyncio.create_task(self._update_endpoint_status(endpoint))
 
         # Log usage (don't await to avoid blocking)
         asyncio.create_task(self._log_usage(endpoint, True, latency_ms=latency_ms))
