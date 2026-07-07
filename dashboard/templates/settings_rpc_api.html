@@ -899,9 +899,11 @@ function formatProviderType(type) {
 }
 
 function maskUrl(url) {
-    // Mask sensitive parts of URL
-    return url.replace(/api[-_]?key=([^&]+)/i, 'api-key=***')
-              .replace(/\/v\d\/([a-f0-9]{20,})/i, '/v2/***');
+    // Mask sensitive parts of URL but keep the first 6 chars of the key so
+    // the operator can tell WHICH key a row uses (multi-key rotation rows
+    // are otherwise indistinguishable, e.g. 5 Helius endpoints).
+    return url.replace(/(api[-_]?key=)([^&]{6})[^&]*/i, '$1$2…')
+              .replace(/(\/v\d\/)([A-Za-z0-9_-]{6})[A-Za-z0-9_-]{10,}/, '$1$2…');
 }
 
 async function addEndpoint() {
