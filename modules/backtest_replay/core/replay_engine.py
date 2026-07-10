@@ -20,11 +20,19 @@ Replay model:
     windows where the operator's actual behaviour and the simulated
     strategy disagree.
 
-The engine assumes the trade's pnl_usd is the same in live and dry
-mode. This is a simplification — real live trading has slippage +
-fees that DRY_RUN underestimates. We track this as a TODO for a
-follow-up enhancement that applies a configurable per-module
-slippage haircut.
+Live-window cost haircut (Wave-F7 — external audit: "dry-run PnL
+understates fees", and worse: the counterfactual NEVER differed from
+actual because flip_ts was computed but unused). Trades that fall
+inside the simulated "would have been live" window now subtract
+`live_haircut_usd_per_trade` (strategy_params, default 0.5) from
+their pnl — a flat per-trade estimate of the extra live costs
+(slippage, gas variance, adverse selection, failed tx amortisation)
+DRY_RUN never pays. Flat-USD because TradeRow deliberately carries no
+notional; a bps-of-notional model is the documented follow-up (needs
+per-table notional columns in trade_loader). Set the param to 0 to
+reproduce the old cost-free counterfactual — the report always
+surfaces `n_live_window_trades` so a zero-haircut run is visibly
+optimistic.
 """
 
 from __future__ import annotations
@@ -50,6 +58,10 @@ class ModuleReplayResult:
     max_drawdown_pct: float = 0.0
     sharpe: Optional[float] = None
     equity_curve: List[Tuple[str, float]] = field(default_factory=list)
+    # Wave-F7: trades that fell in the simulated live window (haircut
+    # applied) + the total haircut taken, so the cost model is auditable.
+    n_live_window_trades: int = 0
+    live_haircut_usd: float = 0.0
 
 
 @dataclass
@@ -155,14 +167,27 @@ def run_replay(
         cum_counter_curve: List[float] = []
         per_trade_pnls: List[float] = []
         flip_ts = live_at.get(module)
+        # Wave-F7 live-window cost haircut (see module docstring). Flat
+        # USD per trade; default 0.5 keeps the counterfactual honestly
+        # pessimistic vs cost-free DRY_RUN fills. 0 restores old behavior.
+        try:
+            haircut = max(0.0, float(params.get(
+                "live_haircut_usd_per_trade", 0.5)))
+        except (TypeError, ValueError):
+            haircut = 0.5
         for t in trades:
             cum_actual += t.pnl_usd
             # Counterfactual: same pnl when DRY (no operator change);
-            # in the future we'll apply a slippage haircut when the
-            # trade falls into the "would have been live" window.
-            cum_counter += t.pnl_usd
+            # in the simulated live window, subtract the per-trade live
+            # cost estimate DRY_RUN fills never pay.
+            counter_pnl = t.pnl_usd
+            if flip_ts is not None and t.ts >= flip_ts and haircut > 0:
+                counter_pnl -= haircut
+                result.n_live_window_trades += 1
+                result.live_haircut_usd += haircut
+            cum_counter += counter_pnl
             cum_counter_curve.append(cum_counter)
-            per_trade_pnls.append(t.pnl_usd)
+            per_trade_pnls.append(counter_pnl)
         result.actual_pnl_usd = cum_actual
         result.counterfactual_pnl_usd = cum_counter
         result.pnl_delta_usd = cum_counter - cum_actual
