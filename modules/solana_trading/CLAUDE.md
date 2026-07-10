@@ -2,7 +2,7 @@
 ## What it does
 Solana spot trading via Jupiter aggregator with trailing-stop ladder, plus optional pump.fun launch sniping and Drift perp leg. Canonical module dir for all SOL strategies.
 ## Entry point
-`modules/solana_trading/main_solana.py` — launched as a subprocess by `main.py` when `SOLANA_MODULE_ENABLED=true`. Engine: `modules/solana_trading/core/solana_engine.py`. The sibling dir `modules/solana_strategies/` holds helper utilities only (`jupiter_helper.py`, `drift_helper.py`, a duplicate `solana_config_manager.py`); it intentionally has no `CLAUDE.md`.
+`modules/solana_trading/main_solana.py` — launched as a subprocess by `main.py` when `SOLANA_MODULE_ENABLED=true`. Engine: `modules/solana_trading/core/solana_engine.py`. The sibling dir `modules/solana_strategies/` holds helper utilities only (`jupiter_helper.py`, `drift_helper.py`); it intentionally has no `CLAUDE.md`. Its duplicate `solana_config_manager.py` was deleted in Wave-F7 (SOL-14, zero importers) — the canonical config manager is `modules/solana_trading/config/solana_config_manager.py`.
 ## Key config (DB-backed via `solana_config_manager.py`)
 - `position_size_sol` — base SOL committed per Jupiter entry
 - `jupiter_slippage_bps` — Jupiter quote slippage cap (default 50)
