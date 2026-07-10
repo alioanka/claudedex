@@ -64,6 +64,33 @@ Report: `docs/agents/wave-f5/01_dex_arbitrage.md`.
 - **RC-A1 RPC-auth blindness**: HTTP 401/403 during quoting was swallowed into `buy_errors` and the pair blacklisted as "no liquidity"; the endpoint was pinned at startup, so a dead Ankr ETH key left the chain quote-blind for 11 straight days while the dashboard said "Scanning". Now `_is_rpc_infra_error` (401/403/unauthorized/'api key') routes to `_handle_rpc_infra_failure`: never touches the liquidity blacklist, reports `pool_engine.report_failure`, rotates the endpoint (debounced 60s), WARNs hourly, records a `rpc_infra_error` near-miss, and the endpoint is re-resolved every `arb_rpc_refresh_minutes` regardless. `arbitrage_runtime_stats.stats.rpc_health` surfaces `endpoint_host` (host only, never the key), `infra_fail_count`, `auth_failing` (infra failure within 15 min).
 - **RC-A2 economics**: mig 142 shrinks the untouched `flash_loan_amount` default 10 → 1 ETH (conditional `WHERE value='10'`); a reserve-math pre-filter skips quoting any DEX whose WETH reserve implies >`arb_max_price_impact_bps` (50) one-way impact at the configured size (derived from the existing TVL probe — zero extra RPC calls); an hourly per-chain `SPREAD DISTRIBUTION` log line (median/p25/best, sample count) makes "zero positive samples" visible at a glance.
 
+### Wave-F6 phantom-PnL closure (2026-07-10) — triangular DRY PnL is NOT evidence of edge
+Audit: `docs/agents/wave-f6/02_arbitrage_audit.md`. Every dollar of the
+control-center's arbitrage PnL (+1085 USD 7D / +3250 USD all-time, 100% win,
+Sharpe 3.00) was **fabricated** by the triangular engine's DRY_RUN branch:
+gross quote-time spread with zero gas/fee subtraction, ~2,400× notional
+inflation on non-WETH cycles (1 CRV mislabeled as 1 "ETH"), instant
+`status='closed'` (a loss was unrepresentable), on a path that **cannot
+execute live at all** (MB-05 atomic-receiver guard). The honest spatial
+engines simultaneously measured every spread negative (ETH hourly median
+≈ −97 bps). Fixes:
+- `triangular_engine._log_trade` now books **net-of-estimated-gas**
+  (gross/est_gas/net stored in `metadata`), flags `notional_unit_suspect`
+  for non-WETH/stable token_a, and tags every DRY row
+  `metadata.excluded=true` (reason `tri_dry_unexecutable_mb05_simulated_no_cost`)
+  so PnL aggregates that honor the tag skip it — same pattern as Solana
+  mig 140A.
+- **Mig 150 PART A** retro-tags all historical simulated triangular rows
+  `metadata.excluded=true` (rows kept for audit; idempotent). Expected
+  post-repair tile: ≈ $0, which is the truth.
+- Dashboard aggregates must filter `metadata.excluded` for
+  `arbitrage_trades` (dashboard agent's work item — the solana filter is
+  the template). Never feed triangular DRY rows to meta_controller /
+  portfolio_allocator scoring.
+**Do not treat any triangular DRY profit as evidence of edge**: the quoted
+spreads are dust-size static-reserve phantoms on thin V2 pools, and the
+strategy has no execution path until an atomic-receiver contract ships.
+
 ### Honest economics verdict (operator-facing)
 Executable legs are **V2-only** (the flash-loan receiver only supports V2 `swapExactTokensForTokens`; the V3 quoter is price-discovery only and a V3 best-buy is downgraded to the best V2 quote). Real cross-DEX divergence on liquid majors is **1–30 bps**, while the structural round-trip cost floor is ~65 bps+ (2×30 bps V2 fees + 5 bps Aave flash fee) BEFORE price impact and gas — the observed 3-week median best spread of **-162 bps** was 10-ETH size impact on dead V2 pools, not a formula bug. `Opportunities: 0` is the correct output of this venue set. **Expected edge ≈ 0 until (a) the V3 execution leg ships in the receiver contract and (b) quoting moves from 2s HTTP polling to event-driven** (HTTP polling against public mempools loses to MEV bots on latency; `modules/execution_gateway` exists but nothing is wired to it). Keep SHADOW and judge by whether the hourly spread summary ever prints a positive median after the Wave-F5 fixes.
 

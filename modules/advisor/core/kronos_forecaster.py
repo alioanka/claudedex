@@ -357,8 +357,25 @@ def _prepare_ohlcv(df_klines, max_history: int):
 
     required = ["open", "high", "low", "close"]
     if not all(c in df.columns for c in required):
-        raise ValueError(
-            f"klines missing OHLC columns; have {list(df.columns)}"
+        # Wave-F6: some analyzers hand Kronos a close-only frame (e.g. NAV or
+        # degraded BIST sources). Synthesise the missing OHLC columns from
+        # close instead of raising 1,650 errors/run: open = previous close,
+        # high/low = envelope of open/close. Degenerate but shape-valid for
+        # the forecaster; genuinely close-less frames still raise.
+        if "close" not in df.columns:
+            raise ValueError(
+                f"klines missing OHLC columns; have {list(df.columns)}"
+            )
+        close = pd.to_numeric(df["close"], errors="coerce")
+        if "open" not in df.columns:
+            df["open"] = close.shift(1).fillna(close)
+        if "high" not in df.columns:
+            df["high"] = pd.concat([df["open"], close], axis=1).max(axis=1)
+        if "low" not in df.columns:
+            df["low"] = pd.concat([df["open"], close], axis=1).min(axis=1)
+        logger.debug(
+            "[kronos] Synthesised missing OHLC columns from close-only frame "
+            "(had %s)", list(df_klines.columns)
         )
 
     keep = required + [c for c in ("volume", "amount") if c in df.columns]
