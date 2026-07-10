@@ -276,6 +276,39 @@ class RPCProvider:
             await pool.report_key_failure(ref, error_type, error_message)
 
     # =========================================================================
+    # Wave-F7 — Governor passthroughs (pacing + attribution)
+    # =========================================================================
+
+    @classmethod
+    async def acquire_rate_limit(cls, provider_type: str, tokens: float = 1.0,
+                                 module: str = None, priority: str = None,
+                                 method: str = None) -> None:
+        """Pace an outbound request through the per-(module, provider)
+        governor (AIMD backoff, spam clamp, execution priority). Fail-soft:
+        pool unavailable == no pacing, never raises."""
+        pool = await cls._get_pool()
+        if pool:
+            try:
+                await pool.acquire_rate_limit(
+                    provider_type, tokens, module=module,
+                    priority=priority, method=method,
+                )
+            except Exception as e:
+                logger.debug(f"acquire_rate_limit({provider_type}) no-op: {e}")
+
+    @classmethod
+    async def coalesce(cls, key: str, factory, ttl: float = None):
+        """Share one in-flight result among identical concurrent idempotent
+        reads (governor dedup map). Falls back to calling factory directly."""
+        pool = await cls._get_pool()
+        if pool:
+            try:
+                return await pool.coalesce(key, factory, ttl)
+            except Exception as e:
+                logger.debug(f"coalesce({key[:40]}) direct fallback: {e}")
+        return await factory()
+
+    # =========================================================================
     # Reporting Methods
     # =========================================================================
 
@@ -509,3 +542,17 @@ get_rpc_sync = RPCProvider.get_rpc_sync
 report_rate_limit = RPCProvider.report_rate_limit
 report_success = RPCProvider.report_success
 report_failure = RPCProvider.report_failure
+
+# Wave-F7 — attribution helpers re-exported for optional explicit tagging
+# (module name is otherwise inferred from the process; see rpc_governor).
+try:
+    from config.rpc_governor import set_calling_module, governed_call  # noqa: F401
+except Exception:  # pragma: no cover — governor absent == no-op helpers
+    def set_calling_module(name):  # type: ignore
+        pass
+
+    import contextlib as _ctx
+
+    @_ctx.contextmanager
+    def governed_call(module=None, priority=None):  # type: ignore
+        yield

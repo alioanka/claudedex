@@ -37,6 +37,15 @@ from enum import Enum
 from pathlib import Path
 import aiohttp
 
+# Wave-F7 — smart per-(module, provider) governor (AIMD backoff, spam clamp,
+# execution priority, coalescing). Pure/self-tested core in
+# config/rpc_governor.py; imported fail-soft so a governor problem can never
+# take the pool down — every hook below degrades to legacy behaviour.
+try:
+    from config.rpc_governor import get_governor as _get_governor
+except Exception:  # pragma: no cover — governor missing == legacy behaviour
+    _get_governor = None
+
 # =========================================================================
 # Dedicated Pool Engine Logging
 # =========================================================================
@@ -404,6 +413,11 @@ class PoolEngine:
         # Wave-F5 — env-fallback rotation cursors for get_api_key() so even
         # a DB-less bootstrap round-robins through numbered env keys.
         self._env_key_cursors: Dict[str, int] = {}
+
+        # Wave-F7 — governor status flush (per-module consumption rows for
+        # the dashboard, since each module is its own process).
+        self._governor_flush_task: Optional[asyncio.Task] = None
+        self._governor_flush_interval = 30  # seconds
 
         logger.info("PoolEngine initialized (not yet connected)")
 
@@ -950,16 +964,28 @@ class PoolEngine:
     # Public API - Endpoint Selection
     # =========================================================================
 
-    async def get_endpoint(self, provider_type: str) -> Optional[str]:
+    async def get_endpoint(self, provider_type: str, module: str = None,
+                           priority: str = None, method: str = None) -> Optional[str]:
         """
         Get the best available endpoint URL for a provider type
 
+        Wave-F7: the call is attributed to the calling module (contextvar /
+        process inference / ``module=``) and paced by that module's OWN
+        adaptive governor rate — a module that re-resolves per request is
+        automatically slowed when it spams, without touching anyone else.
+        Modules that resolve once and reuse the URL are still attributed via
+        report_success/report_rate_limit. Pacing waits are capped; fail-soft.
+
         Args:
             provider_type: Type of provider (e.g., 'ETHEREUM_RPC', 'SOLANA_RPC')
+            module: optional calling-module override (defaults to contextvar)
+            priority: 'execution'/'quote' for the reserved execution share
+            method: upstream method name (selects governor credit cost)
 
         Returns:
             str: Best available endpoint URL, or None if none available
         """
+        await self._governor_pace(provider_type, module, priority, method)
         if not self.initialized:
             logger.warning("PoolEngine not initialized, using .env fallback")
             return self._get_env_fallback(provider_type)
@@ -1055,7 +1081,8 @@ class PoolEngine:
                 return None
         return None
 
-    async def get_api_key(self, provider_type: str) -> Optional[Tuple[str, int]]:
+    async def get_api_key(self, provider_type: str, module: str = None,
+                          priority: str = None, method: str = None) -> Optional[Tuple[str, int]]:
         """
         CURRENT rotated healthy API key for a provider type.
 
@@ -1064,10 +1091,14 @@ class PoolEngine:
         report the outcome via report_key_success / report_key_rate_limit /
         report_key_failure using the returned endpoint id.
 
+        Wave-F7: paced + attributed per (module, provider) via the governor —
+        same contract as get_endpoint (capped wait, fail-soft).
+
         Returns:
             (api_key, endpoint_id) or None. endpoint_id -1 means the key came
             from the .env fallback (reports against it are no-ops).
         """
+        await self._governor_pace(provider_type, module, priority, method)
         if self.initialized:
             endpoint = self._select_endpoint(provider_type)
             if endpoint:
@@ -1171,20 +1202,46 @@ class PoolEngine:
                 # Reconfigure in place so live tokens aren't reset to full.
                 existing.rate = rps
                 existing.capacity = max(1.0, cap)
+            # Wave-F7 — the configured rate is also the governor's provider
+            # CEILING: per-module AIMD rates recover up to (never beyond) it.
+            gov = self._governor()
+            if gov:
+                gov.set_provider_ceiling(provider_type, rps, cap)
             logger.debug(
                 f"Rate limiter configured: {provider_type} -> {rps:.1f} req/s (burst {cap:.0f})"
             )
         except Exception as e:
             logger.debug(f"configure_rate_limiter({provider_type}) ignored: {e}")
 
-    async def acquire_rate_limit(self, provider_type: str, tokens: float = 1.0) -> None:
+    async def acquire_rate_limit(
+        self, provider_type: str, tokens: float = 1.0,
+        module: str = None, priority: str = None, method: str = None,
+    ) -> None:
         """
         Wait for outbound capacity on ``provider_type`` before a request.
 
-        Lazily creates a conservative default limiter (``_default_rps``) the
-        first time a provider is seen, so callers get sane pacing even without
-        an explicit ``configure_rate_limiter`` call. Fail-soft: never raises.
+        Wave-F7: routed through the per-(module, provider) GOVERNOR — the
+        calling module (contextvar / process inference, or the optional
+        ``module=`` kwarg) gets its OWN adaptive AIMD rate, so one spamming
+        module no longer drains a shared bucket for everyone. ``priority=
+        'execution'`` (or an execution-class ``method``) draws from the
+        reserved execution share and is never starved by scans. ``method``
+        also selects the credit cost (Helius enhanced-tx=100 vs getHealth=1).
+
+        Fail-soft: any governor problem falls back to the legacy shared
+        per-provider TokenBucket. Never raises.
         """
+        gov = self._governor()
+        if gov is not None and gov.enabled:
+            try:
+                await gov.acquire(
+                    provider_type, module=module, priority=priority,
+                    method=method, tokens=(tokens if tokens != 1.0 else None),
+                )
+                return
+            except Exception as e:
+                logger.debug(f"governor acquire({provider_type}) fell back: {e}")
+        # Legacy shared limiter (governor disabled or unavailable).
         try:
             limiter = self._rate_limiters.get(provider_type)
             if limiter is None:
@@ -1193,6 +1250,166 @@ class PoolEngine:
             await limiter.acquire(tokens)
         except Exception as e:
             logger.debug(f"acquire_rate_limit({provider_type}) no-op: {e}")
+
+    # =========================================================================
+    # Wave-F7 — RPC Governor plumbing
+    # =========================================================================
+
+    def _governor(self):
+        """Governor singleton, or None (fail-soft)."""
+        if _get_governor is None:
+            return None
+        try:
+            return _get_governor()
+        except Exception:
+            return None
+
+    async def _governor_pace(
+        self, provider_type: str, module: str = None,
+        priority: str = None, method: str = None,
+    ) -> None:
+        """Attribution + pacing hook for get_endpoint/get_api_key. The wait
+        is capped inside the governor (background 15s / execution 2s default)
+        so selection can never hang; errors are swallowed."""
+        gov = self._governor()
+        if gov is None or not gov.enabled:
+            return
+        try:
+            await gov.acquire(provider_type, module=module,
+                              priority=priority, method=method)
+        except Exception as e:
+            logger.debug(f"governor pace({provider_type}) no-op: {e}")
+
+    def _governor_outcome(self, provider_type: str, outcome: str) -> None:
+        """Feed request outcomes into the AIMD loop (fail-soft, sync)."""
+        gov = self._governor()
+        if gov is None:
+            return
+        try:
+            if outcome == 'rate_limit':
+                gov.on_rate_limit(provider_type)
+            elif outcome == 'success':
+                gov.on_success(provider_type)
+        except Exception as e:
+            logger.debug(f"governor outcome({provider_type}) no-op: {e}")
+
+    async def coalesce(self, key: str, factory, ttl: float = None):
+        """Share one in-flight result among identical concurrent idempotent
+        reads (see rpc_governor.coalesce). Falls back to calling ``factory``
+        directly when the governor is unavailable."""
+        gov = self._governor()
+        if gov is not None:
+            return await gov.coalesce(key, factory, ttl)
+        return await factory()
+
+    def _start_governor_tasks(self) -> None:
+        """Load governor knobs from DB + start the status flush loop."""
+        if self._governor() is None:
+            return
+        if self._governor_flush_task is None or self._governor_flush_task.done():
+            self._governor_flush_task = asyncio.create_task(self._governor_flush_loop())
+
+    async def _load_governor_config(self) -> None:
+        """Read config_type='rpc_governor' knobs (mig 151). Fail-soft: no DB,
+        no table, no rows == code defaults."""
+        gov = self._governor()
+        if gov is None or not self.db_pool:
+            return
+        try:
+            async with self.db_pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT key, value FROM config_settings "
+                    "WHERE config_type = 'rpc_governor'"
+                )
+            if rows:
+                gov.configure({r['key']: r['value'] for r in rows})
+        except Exception as e:
+            logger.debug(f"governor config load skipped: {e}")
+
+    async def _governor_flush_loop(self) -> None:
+        """Periodically upsert this process's per-(module, provider) rows to
+        rpc_governor_status so the dashboard (a separate process) can show
+        every module's consumption + throttle state. Fail-soft: no DB or no
+        table (pre-mig-151) == silent no-op."""
+        await self._load_governor_config()
+        while True:
+            try:
+                await asyncio.sleep(self._governor_flush_interval)
+                gov = self._governor()
+                if gov is None or not self.db_pool:
+                    continue
+                rows = [r for r in gov.snapshot()
+                        if r.get('requests_per_min') or r.get('state') != 'OK']
+                if not rows:
+                    continue
+                async with self.db_pool.acquire() as conn:
+                    for r in rows:
+                        await conn.execute("""
+                            INSERT INTO rpc_governor_status (
+                                module, provider_type, requests_per_min,
+                                requests_per_hour, credits_per_min, rate429_pct,
+                                current_rps, ceiling_rps, state, clamped,
+                                throttle_events, updated_at
+                            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+                            ON CONFLICT (module, provider_type) DO UPDATE SET
+                                requests_per_min = EXCLUDED.requests_per_min,
+                                requests_per_hour = EXCLUDED.requests_per_hour,
+                                credits_per_min = EXCLUDED.credits_per_min,
+                                rate429_pct = EXCLUDED.rate429_pct,
+                                current_rps = EXCLUDED.current_rps,
+                                ceiling_rps = EXCLUDED.ceiling_rps,
+                                state = EXCLUDED.state,
+                                clamped = EXCLUDED.clamped,
+                                throttle_events = EXCLUDED.throttle_events,
+                                updated_at = NOW()
+                        """,
+                            r['module'], r['provider_type'],
+                            r['requests_per_min'], r['requests_per_hour'],
+                            r['credits_per_min'], r['rate429_pct'],
+                            r['current_rps'], r['ceiling_rps'],
+                            r['state'], r['clamped'], r['throttle_events'],
+                        )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"governor flush skipped: {e}")
+
+    async def get_governor_status(self) -> List[Dict[str, Any]]:
+        """Per-(module, provider) consumption + throttle rows for the
+        dashboard: recent DB rows from ALL module processes, overlaid with
+        this process's live snapshot. Fail-soft: returns what it can."""
+        merged: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        if self.db_pool:
+            try:
+                async with self.db_pool.acquire() as conn:
+                    rows = await conn.fetch("""
+                        SELECT module, provider_type, requests_per_min,
+                               requests_per_hour, credits_per_min, rate429_pct,
+                               current_rps, ceiling_rps, state, clamped,
+                               throttle_events, updated_at
+                        FROM rpc_governor_status
+                        WHERE updated_at > NOW() - INTERVAL '15 minutes'
+                        ORDER BY module, provider_type
+                    """)
+                for row in rows:
+                    d = dict(row)
+                    for k, v in list(d.items()):
+                        if isinstance(v, datetime):
+                            d[k] = v.isoformat()
+                        elif v is not None and not isinstance(v, (str, bool, int, float)):
+                            d[k] = float(v)
+                    merged[(d['module'], d['provider_type'])] = d
+            except Exception as e:
+                logger.debug(f"governor status DB read skipped: {e}")
+        gov = self._governor()
+        if gov is not None:
+            try:
+                for r in gov.snapshot():
+                    r['updated_at'] = datetime.utcnow().isoformat()
+                    merged[(r['module'], r['provider_type'])] = r
+            except Exception:
+                pass
+        return sorted(merged.values(), key=lambda r: (r['module'], r['provider_type']))
 
     def _get_env_fallback(self, provider_type: str) -> Optional[str]:
         """Get fallback from environment variable"""
@@ -1245,6 +1462,11 @@ class PoolEngine:
             duration_seconds: How long until rate limit resets (default: 5 min)
             error_message: Optional error message for logging
         """
+        # Wave-F7 — feed the AIMD loop FIRST (even for unknown endpoints):
+        # the 429 is attributed to the calling module (contextvar / process),
+        # multiplicatively decreasing THAT module's rate on this provider.
+        self._governor_outcome(provider_type, 'rate_limit')
+
         endpoint = self._find_endpoint(provider_type, url)
         if not endpoint:
             return
@@ -1333,6 +1555,9 @@ class PoolEngine:
             url: The endpoint URL
             latency_ms: Request latency in milliseconds
         """
+        # Wave-F7 — clean-window signal for the AIMD additive recovery.
+        self._governor_outcome(provider_type, 'success')
+
         endpoint = self._find_endpoint(provider_type, url)
         if not endpoint:
             return
@@ -1558,6 +1783,8 @@ class PoolEngine:
             logger.info("Started health check background task")
         # FEATURE 4 — also start the slow keep-alive rotation alongside.
         self._start_keepalive_task()
+        # Wave-F7 — governor: load DB knobs + start the status flush loop.
+        self._start_governor_tasks()
 
     async def _health_check_loop(self) -> None:
         """Background loop for periodic health checks"""
@@ -2046,6 +2273,13 @@ class PoolEngine:
             self._keepalive_task.cancel()
             try:
                 await self._keepalive_task
+            except asyncio.CancelledError:
+                pass
+
+        if self._governor_flush_task:
+            self._governor_flush_task.cancel()
+            try:
+                await self._governor_flush_task
             except asyncio.CancelledError:
                 pass
 
