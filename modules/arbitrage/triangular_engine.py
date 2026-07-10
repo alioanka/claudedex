@@ -1104,9 +1104,50 @@ class TriangularArbitrageEngine:
             # Calculate values
             amount_eth = amount_in / 1e18 if symbol_a not in ['USDC', 'USDT'] else amount_in / 1e6 / self._eth_price
             entry_usd = amount_eth * self._eth_price
-            profit_usd = entry_usd * profit_pct
+            gross_profit_usd = entry_usd * profit_pct
 
-            logger.info(f"💰 Triangular [{cycle_key}]: ${entry_usd:.2f} | Profit: ${profit_usd:.2f}")
+            # Wave-F6 PnL honesty (docs/agents/wave-f6/02_arbitrage_audit.md):
+            # 1) NEVER book gross quote-time spread as clean profit — subtract
+            #    the same 500k-gas estimate the dynamic threshold already uses.
+            #    Flash fee / MEV / revert risk are NOT modelled, so even this
+            #    net number is optimistic.
+            # 2) For non-WETH/stable token_a, `amount_in/1e18` is 1 TOKEN (e.g.
+            #    1 CRV ~ $0.75) mislabeled as 1 "ETH" (~$1,778) — a ~2,400x
+            #    notional inflation. Flag it so consumers can discount it.
+            # 3) DRY_RUN triangular fills simulate a path that CANNOT execute
+            #    live (MB-05 atomic-receiver guard) — tag them excluded=true
+            #    (mirrors the Solana mig-140A pattern) so dashboard PnL
+            #    aggregates skip them while the rows stay auditable.
+            try:
+                est_gas_usd = self.gas_oracle.calculate_gas_cost_usd(500_000, self._eth_price)
+            except Exception:
+                est_gas_usd = 0.0
+            profit_usd = gross_profit_usd - est_gas_usd
+            notional_unit_suspect = symbol_a not in ('WETH', 'USDC', 'USDT')
+
+            trade_meta = {
+                'type': 'triangular',
+                'cycle': cycle_key,
+                'route': route,
+                'symbols': [symbol_a, symbol_b, symbol_c],
+                'dexes': dexes,
+                'gas_price': self.gas_oracle.current_gas_gwei,
+                'dry_run': self.dry_run,
+                'gross_profit_usd': round(gross_profit_usd, 6),
+                'est_gas_usd': round(est_gas_usd, 6),
+                'net_profit_usd': round(profit_usd, 6),
+                'notional_unit_suspect': notional_unit_suspect,
+            }
+            if self.dry_run:
+                trade_meta['excluded'] = True
+                trade_meta['exclusion_reason'] = 'tri_dry_unexecutable_mb05_simulated_no_cost'
+
+            logger.info(
+                f"💰 Triangular [{cycle_key}]: ${entry_usd:.2f} | "
+                f"Gross: ${gross_profit_usd:.2f} | Est gas: ${est_gas_usd:.2f} | "
+                f"Net: ${profit_usd:.2f}"
+                + (" | SIMULATED/EXCLUDED (MB-05 path cannot execute live)" if self.dry_run else "")
+            )
 
             trade_id = f"tri_arb_{uuid.uuid4().hex[:12]}"
 
@@ -1133,7 +1174,7 @@ class TriangularArbitrageEngine:
                     entry_usd,
                     entry_usd + profit_usd,
                     profit_usd,
-                    profit_pct * 100,
+                    (profit_usd / entry_usd * 100) if entry_usd else 0.0,
                     profit_pct * 100,
                     'closed',
                     self.dry_run,
@@ -1141,15 +1182,7 @@ class TriangularArbitrageEngine:
                     datetime.now(),
                     tx_hash,
                     self._eth_price,
-                    json.dumps({
-                        'type': 'triangular',
-                        'cycle': cycle_key,
-                        'route': route,
-                        'symbols': [symbol_a, symbol_b, symbol_c],
-                        'dexes': dexes,
-                        'gas_price': self.gas_oracle.current_gas_gwei,
-                        'dry_run': self.dry_run
-                    })
+                    json.dumps(trade_meta)
                 )
             logger.debug(f"💾 Logged triangular arb: {trade_id}")
 
