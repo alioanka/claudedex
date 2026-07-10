@@ -65,6 +65,10 @@ class RPCPoolRoutes:
         app.router.add_post('/api/rpc-pool/test-all', require_auth(require_operator(self.test_all_endpoints)))
         app.router.add_get('/api/rpc-pool/provider-types', self.get_provider_types)
         app.router.add_get('/api/rpc-pool/stats', self.get_usage_stats)
+        # Wave-F7: per-(module, provider) governor consumption + throttle
+        # state. Read-only aggregates (no URLs/keys) — viewer-safe, same
+        # precedent as /stats.
+        app.router.add_get('/api/rpc-pool/governor', self.get_governor_status)
         app.router.add_post('/api/rpc-pool/health-check', require_auth(require_operator(self.run_health_check)))
 
         self.logger.info("RPC Pool routes registered")
@@ -602,6 +606,26 @@ class RPCPoolRoutes:
                 'success': False,
                 'error': str(e)
             }, status=500)
+
+    async def get_governor_status(self, request: web.Request) -> web.Response:
+        """
+        Wave-F7: per-(module, provider) RPC consumption + throttle state.
+
+        Rows come from the rpc_governor_status table (each module subprocess
+        flushes its own governor snapshot every ~30s) overlaid with this
+        process's live snapshot. Fail-soft: pre-migration-151 or no DB
+        returns an empty list, never an error the page can't render.
+        """
+        try:
+            if not self.pool_engine:
+                return web.json_response({'success': True, 'rows': [],
+                                          'note': 'pool engine not initialized'})
+            rows = await self.pool_engine.get_governor_status()
+            return web.json_response({'success': True, 'rows': rows})
+        except Exception as e:
+            self.logger.error(f"Error getting governor status: {e}", exc_info=True)
+            return web.json_response({'success': True, 'rows': [],
+                                      'note': str(e)})
 
     async def run_health_check(self, request: web.Request) -> web.Response:
         """

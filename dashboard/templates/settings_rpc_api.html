@@ -328,6 +328,46 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Wave-F7: Per-module governor consumption + throttle state -->
+            <div class="settings-section">
+                <div class="settings-title d-flex justify-content-between align-items-center">
+                    <span>
+                        <i class="fas fa-traffic-light text-primary"></i>
+                        Per-Module Consumption &amp; Governor Throttle State
+                    </span>
+                    <button class="btn btn-outline-secondary btn-sm" onclick="loadGovernorStatus()">
+                        <i class="fas fa-sync me-1"></i>Refresh
+                    </button>
+                </div>
+                <p class="text-muted small mb-2">
+                    Each module gets its own adaptive rate per provider (AIMD): a 429 halves that
+                    module's rate; clean traffic recovers it up to the provider ceiling. A module
+                    exceeding its request/credit budget is <span class="badge bg-danger">CLAMPED</span>
+                    to the floor and named in the logs. Execution/quote calls have a reserved share
+                    and are never starved by scans. Rows refresh from each module process every ~30s.
+                </p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle" id="governorTable">
+                        <thead>
+                            <tr>
+                                <th>Module</th>
+                                <th>Provider</th>
+                                <th class="text-end">Req/min</th>
+                                <th class="text-end">Credits/min</th>
+                                <th class="text-end">429-rate</th>
+                                <th class="text-end">Current rps</th>
+                                <th class="text-end">Ceiling rps</th>
+                                <th>State</th>
+                                <th>Updated</th>
+                            </tr>
+                        </thead>
+                        <tbody id="governorRows">
+                            <tr><td colspan="9" class="text-muted text-center">Loading…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
         </div>
 
         <!-- Guide Tab -->
@@ -656,7 +696,65 @@ let endpoints = [];
 document.addEventListener('DOMContentLoaded', function() {
     loadEndpoints();
     loadUsageStats();
+    loadGovernorStatus();
+    // Keep the governor panel live while the page is open (30s cadence
+    // matches the per-process flush interval).
+    setInterval(loadGovernorStatus, 30000);
 });
+
+// Wave-F7: per-module consumption + governor throttle-state panel.
+async function loadGovernorStatus() {
+    const tbody = document.getElementById('governorRows');
+    if (!tbody) return;
+    try {
+        const response = await fetch('/api/rpc-pool/governor');
+        const data = await response.json();
+        const rows = (data && data.rows) || [];
+        if (!rows.length) {
+            tbody.innerHTML = `
+                <tr><td colspan="9" class="text-muted text-center">
+                    No governor activity yet — rows appear once modules make RPC/API
+                    calls (each module process reports every ~30s; requires migration 151).
+                </td></tr>`;
+            return;
+        }
+        const esc = s => String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        tbody.innerHTML = rows.map(r => {
+            const state = (r.state || 'OK').toUpperCase();
+            const badge = state === 'CLAMPED' ? 'bg-danger'
+                        : state === 'THROTTLED' ? 'bg-warning text-dark'
+                        : 'bg-success';
+            const r429 = Number(r.rate429_pct || 0);
+            const r429Cls = r429 >= 25 ? 'text-danger fw-bold'
+                          : r429 >= 5 ? 'text-warning' : 'text-muted';
+            let updated = '';
+            if (r.updated_at) {
+                const ageS = Math.max(0, (Date.now() - new Date(r.updated_at).getTime()) / 1000);
+                updated = ageS < 90 ? `${Math.round(ageS)}s ago` : `${Math.round(ageS / 60)}m ago`;
+            }
+            return `
+                <tr>
+                    <td><strong>${esc(r.module)}</strong></td>
+                    <td>${esc(r.provider_type)}</td>
+                    <td class="text-end">${Number(r.requests_per_min || 0).toFixed(0)}</td>
+                    <td class="text-end">${Number(r.credits_per_min || 0).toFixed(0)}</td>
+                    <td class="text-end ${r429Cls}">${r429.toFixed(1)}%</td>
+                    <td class="text-end">${Number(r.current_rps || 0).toFixed(2)}</td>
+                    <td class="text-end text-muted">${r.ceiling_rps != null ? Number(r.ceiling_rps).toFixed(1) : '-'}</td>
+                    <td><span class="badge ${badge}">${esc(state)}</span></td>
+                    <td class="text-muted small">${esc(updated)}</td>
+                </tr>`;
+        }).join('');
+    } catch (error) {
+        console.error('Failed to load governor status:', error);
+        tbody.innerHTML = `
+            <tr><td colspan="9" class="text-muted text-center">
+                Governor status unavailable (network error) —
+                <a href="#" onclick="loadGovernorStatus(); return false;">retry</a>
+            </td></tr>`;
+    }
+}
 
 async function loadEndpoints() {
     try {
