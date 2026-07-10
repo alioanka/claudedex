@@ -4287,6 +4287,7 @@ class DashboardEndpoints:
                 COUNT(*) FILTER (WHERE status = 'closed' AND profit_loss > 0) AS wins,
                 COUNT(*) FILTER (WHERE status = 'open') AS open_n
             FROM arbitrage_trades
+            WHERE NOT COALESCE((metadata->>'excluded')::boolean, false)
         """,
         'copy_trading': """
             SELECT
@@ -4470,7 +4471,9 @@ class DashboardEndpoints:
             SELECT COALESCE(exit_timestamp, entry_timestamp) AS ts,
                    profit_loss AS pnl
             FROM arbitrage_trades
-            WHERE status = 'closed' {cutoff}
+            WHERE status = 'closed'
+              AND NOT COALESCE((metadata->>'excluded')::boolean, false)
+              {cutoff}
             ORDER BY 1 ASC LIMIT 5000
         """,
         'copy_trading': """
