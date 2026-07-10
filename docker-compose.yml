@@ -87,6 +87,20 @@ services:
     memswap_limit: 6g
     cpus: 3.0
     ports:
+      # ⚠️ SECURITY (Wave-F6): this publishes the DASHBOARD CONTROL PLANE —
+      # trade execution, settings, module control, RPC/credential management —
+      # on 0.0.0.0:8080 of the host, i.e. the public internet on a VPS.
+      # The ops sweep recorded live attacks against it (Mirai RCE probes,
+      # /api/.env fishing, credential-stuffing logins). Auth + CSRF + RBAC
+      # held, but password auth on plain HTTP is NOT an acceptable long-term
+      # posture for a trading bot. Operators SHOULD either:
+      #   1. firewall 8080 to operator IPs (ufw allow from <ip> to any port 8080),
+      #   2. bind it privately ("127.0.0.1:8080:8080") and reach it via
+      #      SSH tunnel / VPN (wireguard), or
+      #   3. put a TLS-terminating reverse proxy (nginx/caddy) in front and
+      #      set DASHBOARD_HTTPS accordingly (see .env.example).
+      # The binding is left public here ONLY so the operator keeps access
+      # while migrating; treat firewalling as a required deployment step.
       - "8080:8080"
     environment:
       # Non-sensitive configuration
