@@ -57,8 +57,15 @@ from modules.sentinel.core.price_board import (
 
 # Single-source the per-module trade-table schema from orchestrator_ai so the
 # meta layers never drift on table/column names (same pattern as
-# modules/meta_controller/core/meta_engine.py).
-from modules.orchestrator_ai.core.orchestrator_engine import _MODULE_QUERIES
+# modules/meta_controller/core/meta_engine.py). EXCLUDED_ROW_FILTER drops
+# metadata.excluded=true rows (poisoned/phantom history — migs 140A/150A, and
+# arbitrage's triangular DRY fills which self-tag excluded at insert) so the
+# loss-velocity / correlated-drawdown detectors never fire on fabricated PnL
+# (Wave-F7).
+from modules.orchestrator_ai.core.orchestrator_engine import (
+    EXCLUDED_ROW_FILTER,
+    _MODULE_QUERIES,
+)
 
 logger = logging.getLogger("sentinel")
 
@@ -86,6 +93,11 @@ DEFAULT_CONFIG: Dict[str, object] = {
     "autopilot_dwell_minutes": 360,
     "unfreeze_clear_minutes": 60,
     "anomaly_refire_minutes": 30,
+    # Wave-F7 lifecycle: an OPEN anomaly (resolved_at IS NULL) that has not
+    # re-fired for this many minutes is auto-stamped resolved_at, so a stale
+    # critical record (the audit's "retained critical record" complaint) is
+    # distinguishable from an active condition. 0 disables. Mig 152.
+    "anomaly_auto_resolve_minutes": 240,
     "alive_window_hours": 24,
     "price_fetch_timeout_seconds": 8,
     "depeg_enabled": True,
@@ -195,7 +207,7 @@ async def _window_pnl(conn, module: str, window_minutes: float) -> Optional[tupl
         closed_filter = "status='closed' AND " if schema.get("has_status") else ""
         row = await conn.fetchrow(
             f"SELECT COALESCE(SUM({schema['pnl_col']}),0) AS pnl, COUNT(*) AS n "
-            f"FROM {schema['table']} WHERE {closed_filter}"
+            f"FROM {schema['table']} WHERE {EXCLUDED_ROW_FILTER}{closed_filter}"
             f"{schema['time_col']} > NOW() - INTERVAL '{int(window_minutes)} minutes'"
         )
         if row is None or int(row["n"] or 0) == 0:
@@ -312,20 +324,41 @@ async def collect_anomalies(pool, cfg: dict) -> List[Anomaly]:
 
 async def _persist_anomaly(conn, a: Anomaly, refire_minutes: float) -> None:
     """Insert, or refresh the open row for the same (detector, subject,
-    severity) if it last fired within the refire window (dedup)."""
+    severity) if it last fired within the refire window (dedup).
+
+    Wave-F7 lifecycle: only UNRESOLVED rows are refreshed — a condition that
+    re-fires after its row was auto-resolved is a NEW incident and gets a new
+    row. Falls back to the pre-152 query when the resolved_at column is not
+    there yet (migration not applied), so persistence never breaks."""
     try:
-        updated = await conn.fetchval(
-            "UPDATE sentinel_anomalies SET last_seen_at = NOW(), "
-            "fire_count = fire_count + 1, value = $4, message = $5, "
-            "details = $6 "
-            "WHERE id = (SELECT id FROM sentinel_anomalies "
-            "            WHERE detector = $1 AND subject = $2 AND severity = $3 "
-            "              AND last_seen_at > NOW() - ($7 || ' minutes')::interval "
-            "            ORDER BY last_seen_at DESC LIMIT 1) "
-            "RETURNING id",
-            a.detector, a.subject, a.severity, float(a.value), a.message,
-            json.dumps(a.details, default=str), str(float(refire_minutes)),
-        )
+        try:
+            updated = await conn.fetchval(
+                "UPDATE sentinel_anomalies SET last_seen_at = NOW(), "
+                "fire_count = fire_count + 1, value = $4, message = $5, "
+                "details = $6 "
+                "WHERE id = (SELECT id FROM sentinel_anomalies "
+                "            WHERE detector = $1 AND subject = $2 AND severity = $3 "
+                "              AND resolved_at IS NULL "
+                "              AND last_seen_at > NOW() - ($7 || ' minutes')::interval "
+                "            ORDER BY last_seen_at DESC LIMIT 1) "
+                "RETURNING id",
+                a.detector, a.subject, a.severity, float(a.value), a.message,
+                json.dumps(a.details, default=str), str(float(refire_minutes)),
+            )
+        except Exception:
+            # resolved_at column absent (mig 152 not applied) — legacy dedup.
+            updated = await conn.fetchval(
+                "UPDATE sentinel_anomalies SET last_seen_at = NOW(), "
+                "fire_count = fire_count + 1, value = $4, message = $5, "
+                "details = $6 "
+                "WHERE id = (SELECT id FROM sentinel_anomalies "
+                "            WHERE detector = $1 AND subject = $2 AND severity = $3 "
+                "              AND last_seen_at > NOW() - ($7 || ' minutes')::interval "
+                "            ORDER BY last_seen_at DESC LIMIT 1) "
+                "RETURNING id",
+                a.detector, a.subject, a.severity, float(a.value), a.message,
+                json.dumps(a.details, default=str), str(float(refire_minutes)),
+            )
         if updated is not None:
             return
         await conn.execute(
@@ -340,6 +373,30 @@ async def _persist_anomaly(conn, a: Anomaly, refire_minutes: float) -> None:
     except Exception as exc:
         logger.error("sentinel_anomalies persist failed (%s/%s): %s",
                      a.detector, a.subject, exc)
+
+
+async def _auto_resolve_stale(conn, auto_resolve_minutes: float) -> int:
+    """Wave-F7 anomaly lifecycle: stamp resolved_at on OPEN anomalies that
+    have not re-fired for auto_resolve_minutes. Keeps every row for audit —
+    a stale sniper-100%-rejection critical no longer reads as an ACTIVE
+    condition forever. Fail-soft (returns 0 pre-mig-152); 0 disables."""
+    if auto_resolve_minutes <= 0:
+        return 0
+    try:
+        result = await conn.execute(
+            "UPDATE sentinel_anomalies SET resolved_at = NOW() "
+            "WHERE resolved_at IS NULL "
+            "  AND last_seen_at < NOW() - ($1 || ' minutes')::interval",
+            str(float(auto_resolve_minutes)),
+        )
+        n = int(result.split()[-1])
+        if n:
+            logger.info("auto-resolved %d stale anomaly row(s) (quiet > %.0fm)",
+                        n, auto_resolve_minutes)
+        return n
+    except Exception as exc:
+        logger.debug("auto-resolve fail-soft (mig 152 applied?): %s", exc)
+        return 0
 
 
 async def _record_action(conn, module: str, action: str, detector: str,
@@ -516,6 +573,11 @@ async def run_tick(pool, cfg: dict) -> dict:
             log("ANOMALY [%s] %s/%s: %s", a.severity.upper(), a.detector,
                 a.subject, a.message)
             await _persist_anomaly(conn, a, float(cfg["anomaly_refire_minutes"]))
+
+        # Wave-F7 lifecycle: close out OPEN rows that stopped re-firing so a
+        # retained critical record is never mistaken for an active condition.
+        summary["auto_resolved"] = await _auto_resolve_stale(
+            conn, float(cfg.get("anomaly_auto_resolve_minutes", 240) or 0))
 
         # Actuate ONLY when autopilot is on AND the killswitch is absent.
         if autopilot and not killswitch_blocks:

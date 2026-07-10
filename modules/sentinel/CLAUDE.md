@@ -59,6 +59,7 @@ silent-module detector in v1**.
 | `autopilot_dwell_minutes` | 360 | Min gap between freezes of the same module |
 | `unfreeze_clear_minutes` | 60 | Anomaly-clear time before sentinel removes its own pause |
 | `anomaly_refire_minutes` | 30 | Dedup window — persisting condition bumps `last_seen_at`/`fire_count` instead of new rows |
+| `anomaly_auto_resolve_minutes` | 240 | Wave-F7 lifecycle: OPEN rows quiet for this long are stamped `resolved_at` (kept for audit); 0 disables (mig 152) |
 | `alive_window_hours` | 24 | Module considered in-scope if it traded within this window |
 | `price_fetch_timeout_seconds` | 8 | Price-board HTTP timeout |
 | `depeg_*`, `divergence_*`, `silent_module_*`, `full_rejection_*`, `loss_velocity_*`, `corr_drawdown_*` | see table above | Per-detector enable flags + thresholds |
@@ -74,10 +75,28 @@ Env knobs: `SENTINEL_MODULE_ENABLED` (gate, default false),
 ## Logs
 `logs/sentinel/` — `sentinel.log` (INFO), `sentinel_errors.log` (ERROR+).
 
-## DB tables (migration 122)
+## DB tables (migration 122 + 152)
 - `sentinel_anomalies` — one open row per (detector, subject, severity) with
-  refire dedup (`fire_count`, `last_seen_at`).
+  refire dedup (`fire_count`, `last_seen_at`). Wave-F7 (mig 152) adds
+  lifecycle columns: `resolved_at` (auto-stamped by the tick once an OPEN row
+  is quiet longer than `anomaly_auto_resolve_minutes`; a condition that
+  re-fires after resolution opens a NEW row = new incident) plus
+  `acknowledged_at`/`acknowledged_by` (schema-ready; dashboard ack route is a
+  documented follow-up). Rows are never deleted — resolved history stays for
+  audit. Partial index `idx_sentinel_anomalies_open` keeps open-row queries
+  cheap.
 - `sentinel_actions` — audit log of every autopilot freeze/unfreeze.
+
+## Wave-F7 honesty fixes (2026-07-10)
+- **Anomaly lifecycle** (external-audit sentinel row: "retained critical
+  record needs lifecycle/acknowledgement"): see mig 152 columns above +
+  `_auto_resolve_stale` in `sentinel_engine.py`. The refire dedup now only
+  refreshes UNRESOLVED rows (fail-soft legacy fallback pre-mig-152).
+- **Fabricated-PnL exclusion**: `_window_pnl` (feeds `loss_velocity` +
+  `corr_drawdown`) now applies the shared `EXCLUDED_ROW_FILTER`
+  (`metadata.excluded=true` rows — poisoned Solana history, arbitrage
+  triangular DRY fills which self-tag excluded at insert) so the detectors
+  neither fire on, nor are masked by, phantom PnL.
 
 ## Isolation / safety
 Fail-soft everywhere: any per-detector or per-module error is logged and
