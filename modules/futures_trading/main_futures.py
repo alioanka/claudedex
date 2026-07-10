@@ -1031,6 +1031,19 @@ async def main():
     # ('DRY_RUN')` checks in the engine pick up the per-module flip.
     os.environ['DRY_RUN'] = 'true' if is_dry_run else 'false'
 
+    # Kill-switch poller: logs/.killswitch flips the process-wide gate read
+    # by core.dry_run.should_skip_live at the engine's order boundaries
+    # (futures_engine.py open/close paths). This subprocess is NOT a
+    # BaseModule, so without its own poller the emergency-stop flag file
+    # was never observed and could not block live orders. Fail-soft: a
+    # poller failure must not prevent startup (DRY_RUN default still holds).
+    try:
+        from core.dry_run import start_killswitch_poller
+        start_killswitch_poller()
+        logger.info("Killswitch poller started (logs/.killswitch)")
+    except Exception as e:
+        logger.warning(f"Could not start killswitch poller: {e}")
+
     if args.debug:
         logging.getLogger().setLevel(logging.DEBUG)
 

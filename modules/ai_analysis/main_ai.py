@@ -157,12 +157,19 @@ async def main():
     # should_skip_live() picks up the resolved value before the LLM
     # signal pipeline starts.
     try:
-        from core.dry_run import resolve_module_dry_run
+        from core.dry_run import resolve_module_dry_run, start_killswitch_poller
         ai_dry = resolve_module_dry_run('ai', default=True)
         os.environ['DRY_RUN'] = 'true' if ai_dry else 'false'
         logger.info(f"   DRY_RUN (resolved per-module): {ai_dry}")
+        # Kill-switch poller: logs/.killswitch flips the process-wide gate
+        # read by should_skip_live in sentiment_engine's execute path. This
+        # subprocess is NOT a BaseModule, so without its own poller the
+        # emergency-stop flag file was never observed and could not block
+        # live orders. Fail-soft: startup must survive a poller failure.
+        start_killswitch_poller()
+        logger.info("   Killswitch poller started (logs/.killswitch)")
     except Exception as e:
-        logger.warning(f"   Could not resolve per-module DRY_RUN: {e}")
+        logger.warning(f"   Could not resolve per-module DRY_RUN / killswitch: {e}")
 
     # Wave-6 fix: API keys live in the encrypted `secure_credentials` DB
     # table, NOT in .env. The previous code read `secrets.get(...)` BEFORE
