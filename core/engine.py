@@ -3367,18 +3367,43 @@ class TradingBotEngine:
                 return False
             logger.info(f"   ✅ Volatility acceptable")
             
-            # 6. Verify contract is verified (if available)
-            # Wave-9 quant audit: default is now FALSE (was True). An absent or
-            # unknown verification result must NOT be treated as "verified" —
-            # that was an optimistic default that silenced this caution whenever
-            # the (now honest) _check_smart_contract returned no positive signal.
-            # This remains a WARN, not a hard reject: the binding contract-risk
-            # gate is RiskScore.contract_risk inside _calculate_opportunity_score
-            # (which rejects on a missing/worst-case risk assessment).
+            # 6. Contract-verification gate (Wave-F6, adjudication #15).
+            # Wave-9 made this honest (absent result != verified) but left it
+            # WARN-only, claiming the binding gate was RiskScore.contract_risk
+            # in the scorer. Verified this wave: that is only a WEIGHTED score
+            # component, not a hard gate — an unverifiable contract could still
+            # enter on volume/liquidity alone. Per the F5 principle (an
+            # unverifiable safety signal must not pass), the gate now fails
+            # CLOSED by default. DB knob `trading.block_unverified_contracts`
+            # (mig 147, default true) is the operator escape hatch back to
+            # warn-only. A positive signal from EITHER source passes: the
+            # engine-level contract_safety metadata (currently an honest
+            # always-unverified stub) or RiskScore.verified_contract (real
+            # chain-collector signal when available).
             logger.info(f"   Checking contract verification...")
-            contract_safety = opportunity.metadata.get('contract_safety', {})
-            if not contract_safety.get('verified', False):
-                logger.warning(f"   ⚠️  Contract not verified - proceeding with caution")
+            contract_safety = opportunity.metadata.get('contract_safety', {}) or {}
+            rs = getattr(opportunity, 'risk_score', None)
+            is_verified = bool(
+                contract_safety.get('verified', False)
+                or getattr(rs, 'verified_contract', False)
+            )
+            if not is_verified:
+                block_unverified = str(
+                    (self.config.get('trading', {}) or {}).get(
+                        'block_unverified_contracts', True
+                    )
+                ).strip().lower() not in ('false', '0', 'no', 'off')
+                if block_unverified:
+                    logger.warning(
+                        f"   ❌ CONTRACT NOT VERIFIED: {token_symbol} — REJECTING "
+                        f"(fail-closed; set trading.block_unverified_contracts=false "
+                        f"to restore warn-only)"
+                    )
+                    return False
+                logger.warning(
+                    f"   ⚠️  Contract not verified - proceeding with caution "
+                    f"(trading.block_unverified_contracts=false)"
+                )
             
             logger.info(f"✅ All safety checks PASSED for {token_symbol}")
             return True
