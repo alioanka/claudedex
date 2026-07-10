@@ -3373,13 +3373,21 @@ class TradingBotEngine:
             # in the scorer. Verified this wave: that is only a WEIGHTED score
             # component, not a hard gate — an unverifiable contract could still
             # enter on volume/liquidity alone. Per the F5 principle (an
-            # unverifiable safety signal must not pass), the gate now fails
-            # CLOSED by default. DB knob `trading.block_unverified_contracts`
-            # (mig 147, default true) is the operator escape hatch back to
-            # warn-only. A positive signal from EITHER source passes: the
-            # engine-level contract_safety metadata (currently an honest
-            # always-unverified stub) or RiskScore.verified_contract (real
-            # chain-collector signal when available).
+            # unverifiable safety signal must not pass), the gate fails CLOSED
+            # in LIVE mode. PM adjudication (Wave-F6 final gate): the gate is
+            # DRY_RUN-AWARE — the engine-level verifier is an always-unverified
+            # stub, so a mode-blind hard gate would block 100% of DRY_RUN DEX
+            # entries and end the operator's data collection. Semantics:
+            #   * DRY_RUN (module flag / kill-switch / pause): WARN-only —
+            #     entries proceed so paper data keeps flowing; every miss is
+            #     logged for the future real-verifier rollout.
+            #   * LIVE: fail-closed — unverifiable contract REJECTED.
+            #   * DB knob `trading.block_unverified_contracts` (mig 147,
+            #     default true) stays the operator override: 'false' restores
+            #     warn-only in BOTH modes (including LIVE — explicit opt-out).
+            # A positive signal from EITHER source passes: the engine-level
+            # contract_safety metadata (currently the honest stub) or
+            # RiskScore.verified_contract (real chain-collector signal).
             logger.info(f"   Checking contract verification...")
             contract_safety = opportunity.metadata.get('contract_safety', {}) or {}
             rs = getattr(opportunity, 'risk_score', None)
@@ -3393,16 +3401,16 @@ class TradingBotEngine:
                         'block_unverified_contracts', True
                     )
                 ).strip().lower() not in ('false', '0', 'no', 'off')
-                if block_unverified:
+                if block_unverified and not self._effective_dry_run():
                     logger.warning(
                         f"   ❌ CONTRACT NOT VERIFIED: {token_symbol} — REJECTING "
-                        f"(fail-closed; set trading.block_unverified_contracts=false "
-                        f"to restore warn-only)"
+                        f"(LIVE fail-closed; set trading.block_unverified_contracts"
+                        f"=false to restore warn-only)"
                     )
                     return False
                 logger.warning(
-                    f"   ⚠️  Contract not verified - proceeding with caution "
-                    f"(trading.block_unverified_contracts=false)"
+                    f"   ⚠️  Contract not verified — proceeding "
+                    f"({'DRY_RUN warn-only (LIVE would reject)' if block_unverified else 'trading.block_unverified_contracts=false'})"
                 )
             
             logger.info(f"✅ All safety checks PASSED for {token_symbol}")

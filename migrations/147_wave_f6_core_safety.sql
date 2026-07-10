@@ -8,13 +8,14 @@
 --    unverifiable contract could enter on volume/liquidity alone. The
 --    engine now hard-rejects entries whose contract verification signal is
 --    absent/negative unless this knob is 'false' (warn-only escape hatch).
---    NOTE (honesty): the engine-level verifier is an always-unverified
---    stub and RiskScore.verified_contract is only populated when the chain
---    collector's contract analysis succeeds — with today's collectors this
---    gate blocks ALL new DEX entries. That is the intended fail-closed
---    posture per the F5 "unverifiable safety signal must not pass"
---    principle; flip to 'false' to restore warn-only DRY_RUN data
---    collection until a real source-verification check is wired.
+--    NOTE (PM adjudication, Wave-F6 final gate): the engine-level verifier
+--    is an always-unverified stub and RiskScore.verified_contract is only
+--    populated when the chain collector's contract analysis succeeds — a
+--    mode-blind hard gate would therefore block ALL new DEX entries and end
+--    DRY_RUN data collection. The gate in core/engine.py is DRY_RUN-AWARE:
+--    with this knob 'true' (default) it WARNS-only in DRY_RUN (entries
+--    proceed, misses logged) and fails CLOSED in LIVE; 'false' restores
+--    warn-only in BOTH modes (explicit operator opt-out).
 --
 -- 2) DEX-idle diagnosis (Wave-F6 03_trading_sweep HIGH, NO seed changed):
 --    the "0 entries since 07-09" state is NOT a chain_weights misconfig —
@@ -37,11 +38,12 @@ BEGIN;
 INSERT INTO config_settings (config_type, key, value, value_type, description, created_at, updated_at)
 VALUES
     ('trading', 'block_unverified_contracts', 'true', 'bool',
-     'Fail-closed contract-verification gate in DEX final safety checks '
-     '(Wave-F6, adjudication #15). true = REJECT new entries whose contract '
-     'verification signal is absent or negative (an unverifiable safety '
-     'signal must not pass). false = legacy warn-only behavior. Entry-only; '
-     'exits are never gated by this knob.',
+     'DRY_RUN-aware contract-verification gate in DEX final safety checks '
+     '(Wave-F6, adjudication #15). true = in LIVE, REJECT new entries whose '
+     'contract verification signal is absent or negative (an unverifiable '
+     'safety signal must not pass); in DRY_RUN, warn-only so paper data '
+     'collection continues. false = warn-only in BOTH modes (explicit '
+     'opt-out). Entry-only; exits are never gated by this knob.',
      NOW(), NOW())
 ON CONFLICT (config_type, key) DO NOTHING;
 
