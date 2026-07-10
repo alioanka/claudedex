@@ -1233,9 +1233,18 @@ class CopyTradingEngine(BaseModule):
         # This feeds a shared pool_engine TokenBucket (provider HELIUS_API) so
         # consecutive wallet calls are SPACED to ~copy_helius_rps req/s. The
         # whole 33-wallet watchlist is still polled every cycle — just spread
-        # over time instead of stampeding. Default 8 req/s (< Helius free ~10).
-        self.copy_helius_rps = 8.0
-        self._rate_limiter_configured = False
+        # over time instead of stampeding.
+        # Wave-F6: default cut 8 -> 2 req/s. The Helius account is SHARED with
+        # sniper + solana_trading, and 8 rps from copy alone nearly consumed
+        # the entire ~10 rps free-tier ceiling (90k pool-side rate-limit
+        # events in ~2 days). 2 rps leaves headroom for the sibling modules.
+        # Raise only with DISTINCT extra Helius accounts or a paid plan.
+        self.copy_helius_rps = 2.0
+        # rps the shared HELIUS_API token bucket was last configured with;
+        # None until first configuration. Reconfigured whenever the DB knob
+        # changes (previously configure-once via a bool, so a runtime knob
+        # edit silently never applied).
+        self._rate_limiter_rps: Optional[float] = None
 
         # Wave-16: throttle for fallback-poll rate-limit WARNING log.
         # With 33 wallets the "Solana RPC rate limited in fallback poll"
@@ -1270,7 +1279,11 @@ class CopyTradingEngine(BaseModule):
         # outbound Solana RPC calls (enforced globally across the wallet
         # fan-out) so 33 wallets don't fire in one synchronized burst.
         # Both tunable via config_settings.copytrading_config (migration 068).
-        self.copy_poll_interval_s: float = 15.0
+        # Wave-F6: default 15 -> 30 s. Halves per-day Helius consumption; a
+        # small DRY watchlist does not need 15 s cadence, and the staleness
+        # gate (_effective_signal_age_s) self-adjusts to the poll interval so
+        # nothing is spuriously rejected. Mig 149 seeds the DB knob to 30.
+        self.copy_poll_interval_s: float = 30.0
         self.copy_request_spacing_s: float = 0.0
         # Monotonic timestamp of the last outbound Solana RPC call (for spacing).
         self._last_sol_rpc_ts: float = 0.0
@@ -1506,10 +1519,10 @@ class CopyTradingEngine(BaseModule):
                 await self._log_stats_if_needed()
 
                 # Wave-19: config-driven cadence (copy_poll_interval_s).
-                await asyncio.sleep(float(getattr(self, 'copy_poll_interval_s', 15.0)))
+                await asyncio.sleep(float(getattr(self, 'copy_poll_interval_s', 30.0)))
             except Exception as e:
                 logger.error(f"Copy loop error: {e}")
-                await asyncio.sleep(float(getattr(self, 'copy_poll_interval_s', 15.0)))
+                await asyncio.sleep(float(getattr(self, 'copy_poll_interval_s', 30.0)))
         return True
 
     async def process_opportunity(self, opportunity: Dict) -> Optional[Dict]:
@@ -2089,10 +2102,11 @@ class CopyTradingEngine(BaseModule):
                         # STAMPEDE: 33 wallet calls fired at once. This sets
                         # the token-bucket refill rate (req/s) for HELIUS_API
                         # so the fan-out is SPREAD instead of bursting.
-                        # Default 8 req/s sits just under the Helius free
-                        # tier (~10 req/s). Clamp 1..50.
+                        # Wave-F6 default 2 req/s (was 8): the account is
+                        # shared with sniper + solana and 8 rps alone nearly
+                        # saturated the ~10 rps free tier. Clamp 1..50.
                         try:
-                            v = float(val) if val else 8.0
+                            v = float(val) if val else 2.0
                             self.copy_helius_rps = max(1.0, min(50.0, v))
                         except (TypeError, ValueError):
                             pass
@@ -2135,9 +2149,10 @@ class CopyTradingEngine(BaseModule):
                         # (below that the burst rate alone can 429 even on
                         # Helius free tier), ceiling 300 s (5 min, beyond
                         # which the 5 s signal-staleness guard drops every
-                        # signal anyway).
+                        # signal anyway). Wave-F6 default 30 (was 15) to
+                        # halve Helius consumption; mig 149 seeds it.
                         try:
-                            v = float(val) if val else 15.0
+                            v = float(val) if val else 30.0
                             self.copy_poll_interval_s = max(5.0, min(300.0, v))
                         except (TypeError, ValueError):
                             pass
@@ -2618,7 +2633,7 @@ class CopyTradingEngine(BaseModule):
         value diverges from the configured copy_max_signal_age_s.
         """
         configured = float(getattr(self, 'copy_max_signal_age_s', 5.0))
-        poll = float(getattr(self, 'copy_poll_interval_s', 15.0))
+        poll = float(getattr(self, 'copy_poll_interval_s', 30.0))
         buffer_s = float(getattr(self, 'copy_signal_age_buffer_s', 10.0))
         effective = max(configured, poll + buffer_s)
         if effective != self._last_logged_effective_age:
@@ -2891,17 +2906,21 @@ class CopyTradingEngine(BaseModule):
 
         use_helius = bool(helius_key)
 
-        # BUG 2 — configure the shared pool_engine token bucket once per
-        # process so the wallet fan-out is rate-LIMITED, not just
-        # concurrency-capped. acquire_rate_limit() below spaces every outbound
-        # Helius call to copy_helius_rps req/s, eliminating the synchronized
-        # 33-wallet burst that tripped the free-tier 429 instantly.
-        if pool is not None and not getattr(self, '_rate_limiter_configured', False):
+        # BUG 2 — configure the shared pool_engine token bucket so the wallet
+        # fan-out is rate-LIMITED, not just concurrency-capped.
+        # acquire_rate_limit() below spaces every outbound Helius call to
+        # copy_helius_rps req/s, eliminating the synchronized 33-wallet burst
+        # that tripped the free-tier 429 instantly.
+        # Wave-F6: RE-configure whenever the DB knob changes (was a one-shot
+        # bool, so the mig 149 rps cut — or any operator edit — silently
+        # never applied to an already-running process).
+        if pool is not None:
             try:
-                rps = float(getattr(self, 'copy_helius_rps', 8.0))
-                pool.configure_rate_limiter('HELIUS_API', rps, burst=max(1.0, rps))
-                self._rate_limiter_configured = True
-                logger.info(f"Copy: Helius outbound pacing set to {rps:.0f} req/s")
+                rps = float(getattr(self, 'copy_helius_rps', 2.0))
+                if rps != getattr(self, '_rate_limiter_rps', None):
+                    pool.configure_rate_limiter('HELIUS_API', rps, burst=max(1.0, rps))
+                    self._rate_limiter_rps = rps
+                    logger.info(f"Copy: Helius outbound pacing set to {rps:.1f} req/s")
             except Exception as e:
                 logger.debug(f"configure_rate_limiter(HELIUS_API) skipped: {e}")
 

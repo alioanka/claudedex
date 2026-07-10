@@ -301,3 +301,23 @@ The Helius key is shared with the copy monitor's per-wallet poll, so discovery i
 - **`ETHERSCAN_API_KEY` unlocks EVM discovery.** Without it the copy engine's EVM monitor is disabled, so `smart_money` / `smart_money_scores` EVM candidates would be leaders the engine cannot mirror — set the key, or drop those two sources from `copy_v3_sources`.
 - **`BIRDEYE_API_KEY` unlocks the Birdeye source.** Absent → `source_status` reports `birdeye: no_birdeye_key` and the source is skipped (never a hard failure).
 - **Helius free tier**: at 33 wallets/15s the copy monitor alone can exceed 100k credits/day; discovery's daily budget is deliberately small (500) so it does not compound the monitor's burn. Raise `copy_poll_interval_s` or upgrade the plan if 429s persist.
+
+## Wave-F6 (2026-07-10) — discovery actually ON + Helius honesty & cadence (migration 149)
+
+**Root cause closed (docs/agents/wave-f6/01_rate_limiting.md + 04_advisory_sweep.md):** the Wave-F5 discovery revival NEVER ran — mig 141's conditional `UPDATE … WHERE value='false'` did not match the stored value, so `copy_auto_discovery_enabled` / `copy_shadow_sim_enabled` stayed off and `_maybe_run_discovery_v3` / `_maybe_tick_shadow_sim` returned immediately for weeks (operator symptom: "discovery finds only my wallet", 0 copies, zero `[discovery-v3]` log lines).
+
+### Discovery + shadow sim are now ON BY DEFAULT (non-trading)
+Mig 149 sets both flags to `'true'` **unconditionally** (`INSERT … ON CONFLICT DO UPDATE`). This is deliberate — the conditional flip already failed once. Safety unchanged: discovery only writes candidates to `copy_leader_candidates` for **operator approval**; the shadow simulator only writes `is_simulated=true` paper rows. Neither is a live-execution flag; auto-promote stays double-gated OFF (`copy_v3_auto_promote_enabled=false`, `max_leaders=0`); every live gate (`should_skip_live`, RiskManager, DRY_RUN) is untouched. Operators can still turn either flag off in DB; the engine re-reads them every cycle. Verify liveness by watching for `[discovery-v3] sweep:` lines.
+
+### Cadence defaults (mig 149 seeds; conditional UPDATE preserves operator overrides)
+| key | old | new | why |
+|---|---|---|---|
+| `copy_helius_rps` | 8 | **2** | the Helius account is SHARED with sniper+solana; 8 rps from copy alone nearly consumed the ~10 rps free ceiling (90k pool-side 429 events in ~2 days) |
+| `copy_poll_interval_s` | 15 | **30** | halves daily Helius calls; the staleness gate (`_effective_signal_age_s`) self-adjusts to the poll cadence so no signal is spuriously rejected |
+
+The shared `HELIUS_API` token bucket is now **re-configured whenever the knob changes** (was configure-once per process, so runtime edits silently never applied). Note: the ~40 s Solana **price**-poll called out in the rate-limit report lives in `modules/solana_trading` (its position monitor), not in this module — flagged to the solana owner, not changed here.
+
+### Helius multi-key honesty (pool_engine + budget)
+- `config/pool_engine.py` now DEDUPS `HELIUS_API` endpoints by the embedded account key at load and logs the distinct count at startup (e.g. `HELIUS_API: 1 distinct key across 5 endpoint name(s)` — WARN when names > keys). Five names over one key was rotation theater: one quota bucket hit five ways.
+- `discovery_v3` interprets `helius_daily_call_budget` (500) **per DISTINCT account key**, no longer per endpoint name — the old counting multiplied the budget 5x against one free-tier account.
+- **Operator action for real headroom (the actual fix):** create DISTINCT Helius accounts and store their keys as `HELIUS_API_KEY_2..4` in `secure_credentials` (see `docs/RPC_API_KEYS_GUIDE.md`). Until the startup line reports more than 1 distinct key, rotation adds zero capacity — the dedup/cadence work makes the pool honest and cuts demand ~3-4x, it does not raise quota.
