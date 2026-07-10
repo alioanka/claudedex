@@ -426,3 +426,31 @@ silent zombie since 2026-06-15 (`RPC verification failed` → 0 pools across
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/SNIPER_*.md` (smartcontract / quant / analyst).
 - Canonical engine API: `docs/engines.md`.
+
+## Wave-F6 BSR gate unblock (2026-07-10)
+Per `docs/agents/wave-f6/03_trading_sweep.md` / `05_ops_sweep.md` finding
+S-1: with the Birdeye BSR source silent (no key / non-200 → `None`) and
+`sniper_fail_closed_missing_bsr=true`, the BSR gate rejected 99.5% of
+candidates (85,122 of 85,561 over 3 days, **0 entries**) while every OTHER
+safety gate was bypassed-by-never-reaching — the Wave-13 100%-block class.
+- **NEW `sniper_bsr_fallback_mode`** (DB `sniper_config`, seeded
+  `'skip_gate'` by migration 148, insert-if-absent) is AUTHORITATIVE for
+  the missing-BSR branch and supersedes `sniper_fail_closed_missing_bsr`:
+  - `skip_gate` (default): missing BSR skips ONLY the BSR gate; honeypot
+    quorum, liquidity ($25k), taxes (5%), safety score (70), holder count
+    and dev-holding gates below all still run. Nothing is loosened.
+  - `reject`: legacy fail-closed posture (100% rejection while the BSR
+    source is down — operator opt-in only).
+  A genuinely LOW BSR (`< sniper_min_buy_sell_ratio`) still rejects in
+  both modes.
+- **Rotated Birdeye key.** `_get_buy_sell_ratio` now pulls the key via
+  `RPCProvider.get_api_key('BIRDEYE_API')` (numbered `BIRDEYE_API_KEY[_N]`
+  slots, migs 144/146) with secrets/env fallback; HTTP 429 cools the key
+  (`report_key_rate_limit`) so the next fetch rotates to a sibling, 200
+  reports success. Requires the operator to populate at least one
+  `BIRDEYE_API_KEY` for real BSR data — without it the gate operates in
+  fallback mode.
+- **Honest diagnostics.** `bsr_missing_skipped` / `bsr_missing_rejected`
+  split counters (stats line `NoBSR(skip/rej)`) stop conflating "no data"
+  with "genuinely low BSR"; a non-200 Birdeye response WARNs once/hour
+  with the HTTP status via `_bsr_source_warn` (previously fully silent).
