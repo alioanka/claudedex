@@ -532,6 +532,11 @@ class PoolEngine:
                     self._add_endpoint(endpoint)
                     self._endpoint_cache[row['url']] = endpoint
 
+                # Wave-F6 RC-1: collapse same-account duplicate names (the
+                # DB-seeded Helius rows embed the key in the URL and bypass
+                # the api_mappings/_has_api_key dedup paths).
+                self._dedup_endpoints_by_key()
+
                 self._last_db_sync = datetime.utcnow()
                 return True
 
@@ -673,6 +678,10 @@ class PoolEngine:
                 if url:
                     self._endpoint_cache[url] = endpoint
 
+        # Wave-F6 RC-1: same-account dedup + distinct-key visibility for the
+        # .env bootstrap path (numbered vars can repeat one key too).
+        self._dedup_endpoints_by_key()
+
         logger.info(f"Loaded {self._count_endpoints()} endpoints from .env")
 
     async def _seed_database(self) -> None:
@@ -720,11 +729,89 @@ class PoolEngine:
         self.providers[endpoint.provider_type].endpoints.append(endpoint)
 
     def _has_api_key(self, provider_type: str, api_key: str) -> bool:
-        """True if this exact key is already registered for provider_type."""
+        """True if this key is already registered for provider_type — either
+        in the api_key column OR embedded in the endpoint URL (?api-key=...).
+
+        Wave-F6 RC-1: the URL check matters for DB-seeded rows (e.g. Helius
+        'SOL #1..#3' Solana-RPC rows registered under HELIUS_API) whose key
+        lives only in the URL with api_key=NULL. Without it the SAME account
+        registered again under a new name and masqueraded as extra quota —
+        five endpoint names round-robining one free-tier bucket."""
         provider = self.providers.get(provider_type)
         if not provider:
             return False
-        return any(e.api_key == api_key for e in provider.endpoints)
+        return any(
+            e.api_key == api_key or self._extract_api_key(e) == api_key
+            for e in provider.endpoints
+        )
+
+    # Providers whose endpoints embed a per-ACCOUNT api key (api_key column
+    # or key-in-URL). N endpoint names over 1 key share ONE upstream quota
+    # bucket, so duplicates are collapsed to a single logical endpoint.
+    _KEY_DEDUP_PROVIDERS = ('HELIUS_API',)
+
+    def _dedup_endpoints_by_key(self) -> None:
+        """Collapse same-account duplicate endpoints and log the DISTINCT
+        account count per provider (Wave-F6 RC-1, docs/agents/wave-f6/
+        01_rate_limiting.md).
+
+        Root cause this closes: five 'HELIUS_API' endpoint names (env key,
+        secrets key, DB-seeded 'SOL #1..#3' / 'Helius API #5' rows) all
+        embedded the SAME account key, so round-robin 'rotation' spread one
+        free-tier quota across five names — no extra capacity, and the
+        starved-fallback path fired on every name in turn. This pass keeps
+        the FIRST endpoint per distinct key (list order = DB priority order),
+        drops the rest from rotation (in-memory only — DB rows are never
+        deleted or disabled), and re-points the dropped URLs in the endpoint
+        cache at the kept sibling so report_success / report_rate_limit
+        consolidate onto one logical endpoint.
+
+        The startup log line makes the account count impossible to miss:
+        'HELIUS_API: 1 distinct key across 5 endpoint name(s)' — until the
+        operator adds real HELIUS_API_KEY_2..N accounts, that number staying
+        at 1 is the whole story. Honesty fix only: it does NOT reduce load
+        by itself.
+        """
+        for provider_type in self._KEY_DEDUP_PROVIDERS:
+            provider = self.providers.get(provider_type)
+            if not provider or not provider.endpoints:
+                continue
+            seen: Dict[str, Endpoint] = {}
+            kept: List[Endpoint] = []
+            dropped: List[Endpoint] = []
+            keyed_names = 0
+            for ep in provider.endpoints:
+                fp = self._extract_api_key(ep)
+                if not fp:
+                    # Keyless endpoint — nothing to dedup on; keep as-is.
+                    kept.append(ep)
+                    continue
+                keyed_names += 1
+                if fp in seen:
+                    dropped.append(ep)
+                    if ep.url:
+                        self._endpoint_cache[ep.url] = seen[fp]
+                else:
+                    seen[fp] = ep
+                    kept.append(ep)
+            n_keys = len(seen)
+            if dropped:
+                provider.endpoints = kept
+                provider.last_selected_index = 0
+                dropped_names = ', '.join(e.name for e in dropped)
+                logger.warning(
+                    f"{provider_type}: {n_keys} distinct key(s) across "
+                    f"{keyed_names} endpoint name(s) — collapsed "
+                    f"{len(dropped)} duplicate name(s) sharing the same "
+                    f"account ({dropped_names}). Rotation across one key is "
+                    f"a no-op; add DISTINCT accounts (HELIUS_API_KEY_2..) "
+                    f"for real quota headroom."
+                )
+            elif keyed_names:
+                logger.info(
+                    f"{provider_type}: {n_keys} distinct key(s) across "
+                    f"{keyed_names} endpoint name(s)"
+                )
 
     @staticmethod
     def _api_url_for_key(provider_type: str, api_key: str, slot: int,
@@ -815,6 +902,12 @@ class PoolEngine:
                 added += 1
         if added:
             logger.info(f"Registered {added} API-key endpoint(s) from secrets manager")
+            # Wave-F6 RC-1: re-run same-account dedup — a secrets key equal
+            # to one already embedded in a DB-row URL must not register as a
+            # second name over the same quota bucket. (The improved
+            # _has_api_key already skips these; this is belt-and-braces and
+            # refreshes the distinct-key startup log.)
+            self._dedup_endpoints_by_key()
         return added
 
     async def _insert_endpoint_row(
