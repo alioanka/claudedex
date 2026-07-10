@@ -227,6 +227,14 @@ deps/weights/tokenizer or any runtime error → `predict()` returns `None` and t
 advice cycle continues. Never raises into the loop. Runtime deps (image Stage 7b):
 `torch`, `einops`, `huggingface_hub`, `safetensors`, `numpy`, `pandas`, `tqdm`.
 
+**Close-only klines (Wave-F6):** some analyzer sources (NAV feeds, degraded
+BIST paths) hand Kronos a close-only DataFrame, which used to raise
+`klines missing OHLC columns; have ['close']` ~550×/day into
+`advisor_errors.log`. `_prepare_ohlcv` now synthesises the missing columns
+(open = previous close; high/low = open↔close envelope) with a single DEBUG
+line — degenerate but shape-valid bars; a frame without even `close` still
+raises (fail-soft to a None signal as before).
+
 **TWO downloads required** (model repo AND a separate tokenizer repo). Verified
 Model Zoo pairing: mini→`Kronos-Tokenizer-2k` (ctx 2048); small/base→
 `Kronos-Tokenizer-base` (ctx 512). One command fetches both:

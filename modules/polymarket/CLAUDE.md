@@ -28,7 +28,12 @@ the top-N watched markets and LATE-marks `polymarket_signal_outcomes` at
 1h/6h/24h horizons (smart_money pattern: a horizon is written only after it
 fully elapses, from the price observed at mark time). `fwd_return_*` is
 probability points ×100 signed by direction — positive means the signal
-pointed the right way.
+pointed the right way. **Wave-F6 heartbeat:** the pipeline used to log only
+on error (unverifiable from logs); it now emits one INFO line per cycle —
+`polymarket outcomes: N marked, M snapshots written, K signals
+pending-horizon (cumulative marked=...)` — so the operator can confirm the
+scorecard is accumulating without DB access. Verify with
+`grep 'polymarket outcomes:' logs/polymarket/polymarket.log`.
 
 ## Entry point
 `modules/polymarket/main_polymarket.py` — launched as a subprocess by `main.py`

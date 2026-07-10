@@ -295,6 +295,19 @@ attribution stays clean). Do NOT flip live: the checklist's profitability
 precondition is unmet. Funding is still not applied to DRY_RUN net_pnl (only
 logged) — any GREEN conversation needs the full live cost stack.
 
+## Wave-F6 geometry lever (2026-07-10) — `max_hold_minutes` 240 → 480 (mig 150)
+Source: `docs/agents/wave-f6/03_trading_sweep.md`. After 3 days fresh DRY_RUN
+on the F5 batch, rr=1.0 alone did **NOT** produce TP exits: 37 closes with
+exit mix time_limit 17 / SL 10 / TSL 7 / signal 3 / **take_profit 0**; PF
+still 0.55. Nearly half the closes died on the 240-min hold before TP1 could
+be reached, so the NEXT single lever (per the A/B discipline above) is
+`futures_risk.max_hold_minutes` **240 → 480** — give TP1 time to hit.
+Conditional seed in mig 150 (`WHERE value='240'`; operator overrides
+preserved). Trailing arm (+0.75%) unchanged; no other geometry knob touched.
+**Validation: needs another 2+ weeks fresh DRY_RUN before judging** — do not
+stack further geometry changes inside that window. No live flag flipped.
+Note: `carry_max_hold_minutes` (960) is independent and untouched.
+
 ## See also
 - Phase 1 audit reports: `docs/agents/reports/FUTURES_*.md` (quant / analyst / backend).
 - Wave-F5 diagnosis: `docs/agents/wave-f5/02_futures_ai.md`.
