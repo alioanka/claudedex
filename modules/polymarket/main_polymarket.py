@@ -245,7 +245,17 @@ class PolymarketEngine:
         # (c) Per-cycle price snapshots (dashboard charts + LATE outcome marks).
         await self._save_snapshots(markets)
         # (d) Forward-outcome marking for past signals (edge proof).
-        await self._mark_outcomes({m['market_id']: m for m in markets})
+        marked, pending = await self._mark_outcomes(
+            {m['market_id']: m for m in markets})
+        # Wave-F6 heartbeat: the edge-proof pipeline used to log only on
+        # error, making the outcome scorecard unverifiable from logs
+        # (04_advisory_sweep.md). One INFO line per cycle, logging only.
+        logger.info(
+            f"polymarket outcomes: {marked} marked, "
+            f"{self.stats['snapshots_last_cycle']} snapshots written, "
+            f"{pending} signals pending-horizon "
+            f"(cumulative marked={self.stats['outcomes_marked']})"
+        )
 
         self._prev_yes_prices = {m['market_id']: m['yes_price'] for m in markets}
         self._prev_seen_at = time.time()
@@ -253,6 +263,7 @@ class PolymarketEngine:
     async def _save_snapshots(self, markets: list) -> None:
         """Write one polymarket_price_snapshots row per top-N watched market
         each cycle; prune old rows hourly. Fail-soft."""
+        self.stats['snapshots_last_cycle'] = 0  # honest even when nothing writes
         if not self.db_pool:
             return
         top_n = int(self.config.get('snapshot_top_n_markets', 50))
@@ -285,8 +296,9 @@ class PolymarketEngine:
         except Exception as e:
             logger.error(f"polymarket_price_snapshots insert failed: {e}")
 
-    async def _mark_outcomes(self, markets_by_id: dict) -> None:
+    async def _mark_outcomes(self, markets_by_id: dict) -> tuple:
         """LATE forward-outcome marks for polymarket_signals (edge proof).
+        Returns (marked_this_cycle, pending_horizon_count) for the heartbeat.
 
         Mirrors smart_money: each horizon (1h/6h/24h) is marked only after it
         has FULLY elapsed, using the yes_price observed NOW — from the current
@@ -296,7 +308,7 @@ class PolymarketEngine:
         price source left are closed out honestly with NULL returns.
         """
         if not self.db_pool:
-            return
+            return 0, 0
         try:
             async with self.db_pool.acquire() as conn:
                 rows = await conn.fetch(
@@ -315,7 +327,7 @@ class PolymarketEngine:
                     """
                 )
                 if not rows:
-                    return
+                    return 0, 0
                 missing = list({r['market_id'] for r in rows
                                 if r['market_id'] not in markets_by_id})
                 snap_prices: dict = {}
@@ -330,6 +342,7 @@ class PolymarketEngine:
                     snap_prices = {s['market_id']: s['yes_price'] for s in snaps}
                 now = time.time()
                 marked = 0
+                pending = 0
                 for r in rows:
                     market = markets_by_id.get(r['market_id'])
                     price_now = market['yes_price'] if market \
@@ -337,6 +350,7 @@ class PolymarketEngine:
                     sig_ts = r['created_at'].timestamp()
                     abandoned = price_now is None and (now - sig_ts) > 48 * 3600
                     if (price_now is None and not abandoned) or r['yes_price'] is None:
+                        pending += 1
                         continue
                     sign = -1.0 if r['direction'] == 'NO' else 1.0
                     prices, returns = {}, {}
@@ -356,6 +370,7 @@ class PolymarketEngine:
                     if not fully and all(
                             prices[label] == (r[f'yes_price_{label}'] if r['has_row'] else None)
                             for label, _ in OUTCOME_HORIZONS):
+                        pending += 1
                         continue  # nothing new to write this tick
                     await conn.execute(
                         """
@@ -381,10 +396,14 @@ class PolymarketEngine:
                         returns['24h'], fully,
                     )
                     marked += 1
+                    if not fully:
+                        pending += 1  # partially marked; later horizons still due
                 if marked:
                     self.stats['outcomes_marked'] += marked
+                return marked, pending
         except Exception as e:
             logger.error(f"outcome marking failed (continuing): {e}")
+            return 0, 0
 
     async def run(self) -> None:
         self.running = True
