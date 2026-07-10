@@ -295,6 +295,20 @@ attribution stays clean). Do NOT flip live: the checklist's profitability
 precondition is unmet. Funding is still not applied to DRY_RUN net_pnl (only
 logged) — any GREEN conversation needs the full live cost stack.
 
+## Wave-F7 funding honesty (2026-07-10) — estimated funding now APPLIED to DRY_RUN net_pnl
+External-audit futures row: "Estimated funding is explicitly not applied to
+net PnL." Wave-F5 recorded the per-close funding estimate in `Trade.metadata`
+as a visible drift line but left paper PnL funding-free. From Wave-F7,
+`_close_position` **debits the estimate from `net_pnl` for SIMULATED closes**
+(LONG pays positive funding, SHORT pays negative; intervals = hold/8h ×
+last-known rate × notional). LIVE closes are untouched — the exchange settles
+real funding on the account and debiting an estimate would double-count.
+`metadata` carries `est_funding_usd`, `funding_applied`,
+`net_pnl_before_funding` for attribution. **Measurement note:** DRY_RUN
+PF/PnL after this change is NOT directly comparable to pre-F7 windows (paper
+now carries the funding cost stack) — factor this into the mig-150 2-week
+A/B read; the change is accounting honesty, not a geometry lever.
+
 ## Wave-F6 geometry lever (2026-07-10) — `max_hold_minutes` 240 → 480 (mig 150)
 Source: `docs/agents/wave-f6/03_trading_sweep.md`. After 3 days fresh DRY_RUN
 on the F5 batch, rr=1.0 alone did **NOT** produce TP exits: 37 closes with
