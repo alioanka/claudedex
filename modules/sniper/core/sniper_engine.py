@@ -1120,14 +1120,12 @@ class SniperEngine:
             # Gate 5 (early): buy/sell pressure ratio.
             # Solana only — calls Birdeye trade-stats asynchronously.
             #
-            # Wave-17 fail-open -> fail-closed flip:
-            #   OLD: bsr is None -> pass through (fail-open). This meant
-            #        every t=0 token passed because Birdeye had no data.
-            #   NEW: when the age floor is active (min_entry_age_seconds>0)
-            #        AND sniper_fail_closed_missing_bsr=true, a None BSR
-            #        at entry age means the pool is illiquid/dead -> REJECT.
-            #        When age floor is disabled (0), keep legacy fail-open
-            #        behavior so t=0 sniping is unaffected.
+            # History: Wave-17 flipped None-BSR to fail-closed (via
+            # sniper_fail_closed_missing_bsr + age floor); Wave-F6 found
+            # that with the Birdeye source down this rejected 99.5% of ALL
+            # candidates for 3 days. sniper_bsr_fallback_mode is now the
+            # single authority for the missing-data branch (see the knob
+            # comment in __init__); a genuinely LOW BSR always rejects.
             min_bsr = self.sniper_min_buy_sell_ratio
             if min_bsr > 0 and chain_type == 'solana':
                 bsr = await self._get_buy_sell_ratio(token_address)
