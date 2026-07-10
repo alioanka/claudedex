@@ -209,3 +209,66 @@ page in July 2026. Our only consumer (the COPY EVM monitor) requests
 `ETHERSCAN_TXLIST_PAGE_SIZE` clamp (≤1000) was added in
 `modules/copy_trading/copy_engine.py` so future edits cannot silently
 break free-tier accounts.
+
+## 8. The RPC governor (Wave-F7) — per-module smart rate management
+
+Even with all keys configured you saw ALL Helius endpoints RATE_LIMITED:
+the old design had ONE shared token bucket per provider, so one spamming
+module (sniper tx-enrich ~10/s, copy polling) drained the bucket for
+everyone. Wave-F7 replaces that with a self-regulating governor
+(`config/rpc_governor.py`, routed through every existing pool_engine
+seam — `acquire_rate_limit`, `get_endpoint`, `get_api_key`,
+`report_rate_limit`, `report_success` — so no module code changed).
+
+### How it self-regulates
+
+- **Attribution**: every call is attributed to its module automatically
+  (each module is its own subprocess; the process name is the module).
+  No call-site edits needed; `governed_call(module=..., priority=...)`
+  from `config.rpc_provider` allows explicit overrides.
+- **AIMD per (module, provider)**: each pair has its OWN rate. A 429
+  attributed to the pair HALVES that module's rate (floor
+  `governor_min_rps` 0.2); a sustained clean window (20s, no 429)
+  recovers it additively (+0.25 rps/s) back up to the provider ceiling.
+  The module causing the 429s decays fastest; quiet modules keep their
+  rate.
+- **Spam clamp**: a module exceeding `governor_module_max_rps` (10/s over
+  10s) or `governor_module_credit_budget_per_min` (3000 method-weighted
+  credits; Helius enhanced-tx=100, getHealth=1) is hard-clamped to the
+  floor with a named WARN once/min:
+  `governor: throttling sniper on HELIUS_API 41.0→0.2 rps (...)`.
+- **Execution priority**: calls tagged `priority='execution'`/`'quote'`
+  (or send/quote-class methods) draw from a reserved 30% share of each
+  provider ceiling with a 2s max delay — a scan can never rate-limit a
+  live send. Background waits are capped at 15s (fail-soft: after the
+  cap the call proceeds; the governor paces, it never starves).
+- **Coalescing**: `RPCProvider.coalesce(key, factory)` shares one
+  in-flight result among identical concurrent idempotent reads
+  (getTransaction/getLogs hammering). Opt-in per call site.
+
+### Reading it on the dashboard
+
+`/settings/rpc-api` → **Statistics** tab → **Per-Module Consumption &
+Governor Throttle State**: one row per module × provider with req/min,
+credits/min, 429-rate, current rps vs ceiling, and a state badge —
+green `OK`, yellow `THROTTLED` (AIMD has reduced the rate; recovering),
+red `CLAMPED` (spam clamp at the floor; check that module's logs).
+Each module process flushes its rows to `rpc_governor_status` every
+~30s; rows older than 15 minutes drop off.
+
+### Knobs (DB `config_settings`, `config_type='rpc_governor'`, mig 151)
+
+`governor_enabled` (true; false = legacy shared bucket),
+`governor_min_rps`, `governor_decrease_factor`, `governor_recover_step`,
+`governor_clean_window_s`, `governor_module_max_rps`,
+`governor_module_credit_budget_per_min`, `governor_exec_reserve_pct`,
+`governor_max_wait_s`, `governor_exec_max_wait_s`,
+`governor_default_ceiling_rps`, `governor_coalesce_ttl_s`,
+`governor_method_costs` (JSON), `governor_exec_methods` (JSON).
+The governor only ever DELAYS requests — it never changes trade logic
+and is DRY_RUN-safe. Offline self-test: `python -m config.rpc_governor`.
+
+**Honesty note**: the governor removes self-inflicted saturation and
+makes the culprit visible; it cannot create quota. If every module is
+slow at floor rates, you still need more distinct provider accounts
+(section 1).
