@@ -934,9 +934,19 @@ class RiskManager:
             ml_confidence = opportunity.ml_confidence
             expected_return = opportunity.expected_return
             
-            # Get available balance
-            available_balance = await self.wallet_manager.get_available_balance()
-            
+            # Get available balance via the F5 fail-soft resolver
+            # (wallet_manager -> portfolio_manager -> 0.0). The old direct
+            # self.wallet_manager.get_available_balance() call raised
+            # AttributeError (WalletSecurityManager has no such method) and
+            # the outer except zeroed EVERY position size.
+            available_balance = await self.get_available_balance()
+            if available_balance <= 0:
+                log.critical(
+                    "calculate_position_size: available balance "
+                    "unresolvable/zero — sizing 0 (fail-closed)"
+                )
+                return Decimal("0")
+
             # Base position size (percentage of portfolio)
             base_position_percent = self.max_position_size_percent
             
@@ -1149,8 +1159,22 @@ class RiskManager:
             if risk_score.dev_rug_history:
                 return False, "Developer has rug pull history"
                 
-            # Check position size limits
-            available_balance = await self.wallet_manager.get_available_balance()
+            # Check position size limits via the F5 fail-soft resolver
+            # (wallet_manager -> portfolio_manager -> 0.0). The old direct
+            # self.wallet_manager.get_available_balance() call raised
+            # AttributeError (WalletSecurityManager has no such method), so
+            # the outer except returned (False, "Validation error: ...") on
+            # EVERY call — validate_trade could never return True.
+            available_balance = await self.get_available_balance()
+            if available_balance <= 0:
+                # Fail CLOSED, loudly: an unresolvable balance must block a
+                # gated LIVE entry, but as an explicit decision — never as a
+                # swallowed AttributeError.
+                log.critical(
+                    "validate_trade: available balance unresolvable/zero — "
+                    "failing CLOSED for %s (amount=%s)", token_address, amount
+                )
+                return False, "Available balance unavailable - failing closed"
             max_position = available_balance * self.max_position_size_percent / 100
 
             if amount > max_position:
