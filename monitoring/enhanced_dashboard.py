@@ -477,12 +477,15 @@ class DashboardEndpoints:
 
         # Web application
         self.app = web.Application()
-        # MB-26: tighten Socket.IO CORS — was '*' (any origin); now env-gated allowlist
+        # MB-26: tighten Socket.IO CORS — was '*' (any origin); now env-gated allowlist.
+        # Wave-F6: the SAME allowlist now also drives the aiohttp-cors layer
+        # in _setup_routes (which still had wildcard+credentials — finding #5).
         _ws_allowed = [
             o.strip()
             for o in os.getenv('DASHBOARD_CORS_ORIGINS', 'http://localhost:8080').split(',')
             if o.strip()
         ]
+        self._cors_allowed_origins = _ws_allowed
         self.sio = socketio.AsyncServer(
             async_mode='aiohttp',
             cors_allowed_origins=_ws_allowed,
@@ -1477,14 +1480,21 @@ class DashboardEndpoints:
         self.app.router.add_post('/api/ml/train', require_auth(require_admin(self.api_ml_train)))
         self.app.router.add_get('/api/ml/status', self.api_ml_status)
 
-        # Setup CORS - EXCLUDE socket.io routes
+        # Setup CORS - EXCLUDE socket.io routes.
+        # Wave-F6 P0 (adjudication finding #5): was `"*"` with
+        # allow_credentials=True — any website could read authenticated API
+        # responses with the victim's session cookie. Now a per-origin
+        # allowlist from DASHBOARD_CORS_ORIGINS (the same env the Socket.IO
+        # layer uses, MB-26). Wildcard + credentials must NEVER be combined.
         cors = aiohttp_cors.setup(self.app, defaults={
-            "*": aiohttp_cors.ResourceOptions(
+            origin: aiohttp_cors.ResourceOptions(
                 allow_credentials=True,
                 expose_headers="*",
                 allow_headers="*",
                 allow_methods="*"
             )
+            for origin in self._cors_allowed_origins
+            if origin != '*'  # belt-and-braces: never wildcard with credentials
         })
         
         # Add CORS to routes, but skip socket.io routes
