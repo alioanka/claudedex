@@ -11,6 +11,8 @@ import aiohttp
 from aiohttp import web
 from typing import Dict, Optional
 
+from auth.middleware import require_auth, require_admin, require_operator
+
 logger = logging.getLogger(__name__)
 
 
@@ -48,16 +50,22 @@ class RPCPoolRoutes:
         # HTML page
         app.router.add_get('/settings/rpc-api', self.rpc_api_settings_page)
 
-        # API endpoints
-        app.router.add_get('/api/rpc-pool/endpoints', self.get_endpoints)
-        app.router.add_post('/api/rpc-pool/endpoints', self.add_endpoint)
-        app.router.add_put('/api/rpc-pool/endpoints/{endpoint_id}', self.update_endpoint)
-        app.router.add_delete('/api/rpc-pool/endpoints/{endpoint_id}', self.delete_endpoint)
-        app.router.add_post('/api/rpc-pool/endpoints/{endpoint_id}/test', self.test_endpoint)
-        app.router.add_post('/api/rpc-pool/test-all', self.test_all_endpoints)
+        # API endpoints. Wave-F6 RBAC (adjudication finding #4): endpoint
+        # CRUD carries API-key-bearing URLs and changes what every on-chain
+        # module broadcasts through - admin only. Test/health-check are
+        # bounded ops (can burn provider quota) - operator or admin.
+        # GET /endpoints is admin too: get_all_endpoints_data returns the
+        # full URLs, which embed provider API keys (same precedent as
+        # /api/settings/sensitive/*). Stats/provider-types stay viewer.
+        app.router.add_get('/api/rpc-pool/endpoints', require_auth(require_admin(self.get_endpoints)))
+        app.router.add_post('/api/rpc-pool/endpoints', require_auth(require_admin(self.add_endpoint)))
+        app.router.add_put('/api/rpc-pool/endpoints/{endpoint_id}', require_auth(require_admin(self.update_endpoint)))
+        app.router.add_delete('/api/rpc-pool/endpoints/{endpoint_id}', require_auth(require_admin(self.delete_endpoint)))
+        app.router.add_post('/api/rpc-pool/endpoints/{endpoint_id}/test', require_auth(require_operator(self.test_endpoint)))
+        app.router.add_post('/api/rpc-pool/test-all', require_auth(require_operator(self.test_all_endpoints)))
         app.router.add_get('/api/rpc-pool/provider-types', self.get_provider_types)
         app.router.add_get('/api/rpc-pool/stats', self.get_usage_stats)
-        app.router.add_post('/api/rpc-pool/health-check', self.run_health_check)
+        app.router.add_post('/api/rpc-pool/health-check', require_auth(require_operator(self.run_health_check)))
 
         self.logger.info("RPC Pool routes registered")
 
