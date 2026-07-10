@@ -1,5 +1,39 @@
 // DexScreener Trading Bot - Main JavaScript - FIXED VERSION
 //dashboard/static/js/main.js
+
+// Wave-F6 (ops-sweep 401 storm): when a session expired, open tabs kept
+// polling authenticated /api/ endpoints and silently spun on 401 for hours
+// (1,247 logged 401s from one control-center tab). Patch window.fetch ONCE
+// so any same-origin /api/ 401 redirects the tab to /login. Covers every
+// caller — apiRequest, raw fetch() polls, and base.html's inline csrfFetch —
+// without touching each call site. Auth endpoints are exempt (login itself
+// returns 401 on bad credentials) and a one-shot guard prevents loops.
+(function () {
+    if (window.__fetch401Patched) return;
+    window.__fetch401Patched = true;
+    const origFetch = window.fetch.bind(window);
+    let redirecting = false;
+    window.fetch = async function (input, init) {
+        const response = await origFetch(input, init);
+        try {
+            const rawUrl = typeof input === 'string'
+                ? input
+                : (input && input.url) || '';
+            const url = new URL(rawUrl, window.location.origin);
+            const isSameOriginApi = url.origin === window.location.origin
+                && url.pathname.startsWith('/api/');
+            const isAuthEndpoint = url.pathname.startsWith('/api/auth/');
+            const onLoginPage = window.location.pathname === '/login';
+            if (response.status === 401 && isSameOriginApi
+                    && !isAuthEndpoint && !onLoginPage && !redirecting) {
+                redirecting = true;
+                window.location.href = '/login';
+            }
+        } catch (e) { /* fail-soft: never break the original response */ }
+        return response;
+    };
+})();
+
 // Global state
 const state = {
     ws: null,
