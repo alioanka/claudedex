@@ -1,1 +1,0 @@
-2026-07-07 16:32:51,468 - sentinel - ERROR - ANOMALY [CRITICAL] full_rejection/sniper: sniper rejected 100% of 113 candidates since process start (0 accepted) — a gate is likely mis-set
