@@ -165,6 +165,14 @@ Per `docs/agents/wave-f6/03_trading_sweep.md` (SOLANA CRIT + Drift P1).
   `mainnet`/`devnet` → `KeyError` at init, Drift never connected. Now maps
   cluster-style names to the driftpy key (`DRIFT_ENV` env override,
   default `mainnet`).
+- **Wave-F7 addendum — synthetic Drift funding is TAGGED.** The DRY_RUN
+  wiring-check branch (`_scan_drift_opportunities`: chain funding unavailable
+  → synthesize `signal+2%`/yr) now tags every resulting trade-log record
+  `simulated_funding: true` and says so in the log line. These wiring-check
+  entries never reach `solana_trades` or any promotion scorecard (they exist
+  only in the trade log), so the audit's "fake +12% funding inflates paper
+  PnL" cannot occur through the DB path — the tag closes the log-evidence
+  half. LIVE behavior unchanged (branch unreachable in LIVE).
 - **RiskManager Drift-block WARN rate-limited.** `⛔ Drift <mkt> blocked by
   RiskManager: Insufficient liquidity` fired every scan per market (10k+
   lines — token-style liquidity validation against a perp market name).

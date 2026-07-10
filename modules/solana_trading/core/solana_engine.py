@@ -3767,11 +3767,20 @@ class SolanaTradingEngine:
             # no collateral / RPC miss → 0.0), synthesize a deterministic signal
             # so the operator can VERIFY the Drift wiring end-to-end without
             # funding a live account. Never used in LIVE.
+            # Wave-F7 (external-audit Solana row: "Drift injects a fake +12%
+            # funding rate in DRY_RUN"): every trade record produced off this
+            # branch is tagged simulated_funding=True below, so the synthetic
+            # signal can NEVER be mistaken for observed carry evidence. These
+            # wiring-check entries also never reach solana_trades / the
+            # promotion scorecards — they exist only in the trade log.
+            simulated_funding = False
             if self.dry_run and funding_pct == 0.0:
                 funding_pct = self._drift_funding_signal_pct + 2.0
+                simulated_funding = True
                 logger.info(
                     f"🔶 [DRY_RUN] Drift {market_name}: no chain funding available — "
-                    f"using simulated {funding_pct:+.2f}%/yr to exercise wiring"
+                    f"using simulated {funding_pct:+.2f}%/yr to exercise wiring "
+                    f"(NOT evidence of real carry; trade log tagged simulated_funding)"
                 )
 
             if abs(funding_pct) < self._drift_funding_signal_pct:
@@ -3866,6 +3875,11 @@ class SolanaTradingEngine:
                     'side': direction,
                     'amount_sol': base_amount,
                     'funding_pct_annual': funding_pct,
+                    # Wave-F7: True when funding_pct is the synthetic
+                    # wiring-check value, not an observed chain read —
+                    # downstream consumers must exclude these rows from
+                    # any carry-evidence aggregate.
+                    'simulated_funding': simulated_funding,
                     'tx': tx_sig,
                 })
             else:
