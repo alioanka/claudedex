@@ -46,7 +46,9 @@ logger = logging.getLogger(__name__)
 # ImportError into a NameError that crashed the whole dashboard import.
 try:
     from auth.auth_service import AuthService
-    from auth.middleware import auth_middleware_factory, require_auth, require_admin
+    from auth.middleware import (
+        auth_middleware_factory, require_auth, require_admin, require_operator,
+    )
     from auth.csrf import csrf_middleware_factory
     from monitoring.auth_routes import AuthRoutes
     AUTH_AVAILABLE = True
@@ -1015,6 +1017,17 @@ class DashboardEndpoints:
             self._setup_credentials_routes(db_pool=db_pool)
             logger.info("✅ Credentials Management routes initialized with database connection")
 
+            # Wave-F6 RBAC: route-authorization self-test. Runs after ALL
+            # route registration (credentials routes land just above) and
+            # loudly lists any mutating route that lacks an explicit
+            # admin/operator gate — those rely solely on session auth +
+            # the VIEWER write-floor in auth.middleware.
+            try:
+                from auth.route_authz import log_route_authz_report
+                log_route_authz_report(self.app, logger)
+            except Exception as authz_err:
+                logger.error(f"Route-authz self-test unavailable: {authz_err}")
+
         except Exception as e:
             logger.error(f"❌ CRITICAL: Startup handler failed: {e}", exc_info=True)
 
@@ -1254,11 +1267,16 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/sniper/trades', self.api_get_sniper_trades)
         self.app.router.add_get('/api/sniper/timing', self.api_get_sniper_timing)
         self.app.router.add_get('/api/sniper/settings', self.api_get_sniper_settings)
-        self.app.router.add_post('/api/sniper/settings', self.api_save_sniper_settings)
+        # Wave-F6 RBAC: every state-changing route below is wrapped in
+        # require_auth(require_operator(...)) (trading ops + non-sensitive
+        # settings, ADMIN|OPERATOR) or require_auth(require_admin(...))
+        # (module lifecycle / ML / infra). Read-only GETs stay
+        # viewer-accessible. Matrix: modules/dashboard/CLAUDE.md.
+        self.app.router.add_post('/api/sniper/settings', require_auth(require_operator(self.api_save_sniper_settings)))
         self.app.router.add_get('/api/sniper/trading/status', self.api_sniper_trading_status)
-        self.app.router.add_post('/api/sniper/trading/unblock', self.api_sniper_trading_unblock)
-        self.app.router.add_post('/api/sniper/position/close', self.api_sniper_close_position)
-        self.app.router.add_post('/api/sniper/positions/close-all', self.api_sniper_close_all_positions)
+        self.app.router.add_post('/api/sniper/trading/unblock', require_auth(require_operator(self.api_sniper_trading_unblock)))
+        self.app.router.add_post('/api/sniper/position/close', require_auth(require_operator(self.api_sniper_close_position)))
+        self.app.router.add_post('/api/sniper/positions/close-all', require_auth(require_operator(self.api_sniper_close_all_positions)))
         self.app.router.add_get('/api/sniper/activity', self.api_get_sniper_activity)
 
         # API - Arbitrage Module
@@ -1266,10 +1284,10 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/arbitrage/positions', self.api_get_arbitrage_positions)
         self.app.router.add_get('/api/arbitrage/trades', self.api_get_arbitrage_trades)
         self.app.router.add_get('/api/arbitrage/settings', self.api_get_arbitrage_settings)
-        self.app.router.add_post('/api/arbitrage/settings', self.api_save_arbitrage_settings)
+        self.app.router.add_post('/api/arbitrage/settings', require_auth(require_operator(self.api_save_arbitrage_settings)))
         self.app.router.add_get('/api/arbitrage/trading/status', self.api_arbitrage_trading_status)
-        self.app.router.add_post('/api/arbitrage/trading/unblock', self.api_arbitrage_trading_unblock)
-        self.app.router.add_post('/api/arbitrage/reconcile', self.api_reconcile_arbitrage_trades)
+        self.app.router.add_post('/api/arbitrage/trading/unblock', require_auth(require_operator(self.api_arbitrage_trading_unblock)))
+        self.app.router.add_post('/api/arbitrage/reconcile', require_auth(require_operator(self.api_reconcile_arbitrage_trades)))
         # Wave-3: per-chain hourly gas-spend tile (reads
         # arbitrage_runtime_stats persisted by EVMArbitrageEngine).
         self.app.router.add_get('/api/arbitrage/gas-spend', self.api_get_arbitrage_gas_spend)
@@ -1290,10 +1308,10 @@ class DashboardEndpoints:
         )
         self.app.router.add_get('/api/copytrading/trades', self.api_get_copytrading_trades)
         self.app.router.add_get('/api/copytrading/settings', self.api_get_copytrading_settings)
-        self.app.router.add_post('/api/copytrading/settings', self.api_save_copytrading_settings)
+        self.app.router.add_post('/api/copytrading/settings', require_auth(require_operator(self.api_save_copytrading_settings)))
         self.app.router.add_get('/api/copytrading/v3-surface',
                                 self.api_copytrading_v3_surface)
-        self.app.router.add_post('/api/copytrading/validate', self.api_validate_wallet)
+        self.app.router.add_post('/api/copytrading/validate', require_auth(require_operator(self.api_validate_wallet)))
         self.app.router.add_get('/api/copytrading/discover', self.api_copytrading_discover)
 
         # API - AI Analysis Module
@@ -1302,7 +1320,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/ai/performance', self.api_get_ai_performance)
         self.app.router.add_get('/api/ai/trades', self.api_get_ai_trades)
         self.app.router.add_get('/api/ai/settings', self.api_get_ai_settings)
-        self.app.router.add_post('/api/ai/settings', self.api_save_ai_settings)
+        self.app.router.add_post('/api/ai/settings', require_auth(require_operator(self.api_save_ai_settings)))
         self.app.router.add_get('/api/ai/logs', self.api_get_ai_logs)
         self.app.router.add_get('/api/ai/model-health', self.api_get_ai_model_health)
         # A6 E2: confidence-calibration reliability diagram + Brier score.
@@ -1321,7 +1339,7 @@ class DashboardEndpoints:
         # API - Telegram Notifications Settings (wave-19)
         self.app.router.add_get('/telegram/settings', self._telegram_settings)
         self.app.router.add_get('/api/telegram/settings', self.api_get_telegram_settings)
-        self.app.router.add_post('/api/telegram/settings', self.api_save_telegram_settings)
+        self.app.router.add_post('/api/telegram/settings', require_auth(require_operator(self.api_save_telegram_settings)))
 
         # API - Full Dashboard Charts
         self.app.router.add_get('/api/dashboard/charts/full', self.api_get_full_dashboard_charts)
@@ -1347,19 +1365,19 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/bot/status', require_auth(self.api_bot_status))
 
         # API - DEX Trading cleanup/reconciliation
-        self.app.router.add_post('/api/dex/reconcile', self.api_reconcile_dex_positions)
+        self.app.router.add_post('/api/dex/reconcile', require_auth(require_operator(self.api_reconcile_dex_positions)))
 
         # API - Settings
         self.app.router.add_get('/api/auth/csrf', self.api_get_csrf_token)
         self.app.router.add_get('/api/settings/all', self.api_get_settings)
-        self.app.router.add_post('/api/settings/update', self.api_update_settings)
+        self.app.router.add_post('/api/settings/update', require_auth(require_operator(self.api_update_settings)))
         # Generic self-documenting settings surface (any config_type)
         self.app.router.add_get('/api/config/types', self.api_config_types)
         self.app.router.add_get('/api/config/{config_type}', self.api_config_get)
-        self.app.router.add_post('/api/config/{config_type}', self.api_config_post)
+        self.app.router.add_post('/api/config/{config_type}', require_auth(require_operator(self.api_config_post)))
         self.app.router.add_get('/config', self.generic_settings_page)
         self.app.router.add_get('/config/{config_type}', self.generic_settings_page)
-        self.app.router.add_post('/api/settings/revert', self.api_revert_settings)
+        self.app.router.add_post('/api/settings/revert', require_auth(require_operator(self.api_revert_settings)))
         self.app.router.add_get('/api/settings/history', self.api_settings_history)
         self.app.router.add_get('/api/settings/networks', self.api_get_networks)
 
@@ -1369,25 +1387,25 @@ class DashboardEndpoints:
 
         # API - Module-specific Settings (database-backed)
         self.app.router.add_get('/api/settings/futures', self.api_get_futures_settings)
-        self.app.router.add_post('/api/settings/futures', self.api_save_futures_settings)
+        self.app.router.add_post('/api/settings/futures', require_auth(require_operator(self.api_save_futures_settings)))
         self.app.router.add_get('/api/settings/solana', self.api_get_solana_settings)
-        self.app.router.add_post('/api/settings/solana', self.api_save_solana_settings)
+        self.app.router.add_post('/api/settings/solana', require_auth(require_operator(self.api_save_solana_settings)))
 
         # API - Solana Module Stats (proxy to health server)
         self.app.router.add_get('/api/solana/stats', self.api_get_solana_stats)
         self.app.router.add_get('/api/solana/positions', self.api_get_solana_positions)
         self.app.router.add_get('/api/solana/trades', self.api_get_solana_trades)
-        self.app.router.add_post('/api/solana/close-position', self.api_solana_close_position)
-        self.app.router.add_post('/api/solana/close-all-positions', self.api_solana_close_all_positions)
+        self.app.router.add_post('/api/solana/close-position', require_auth(require_operator(self.api_solana_close_position)))
+        self.app.router.add_post('/api/solana/close-all-positions', require_auth(require_operator(self.api_solana_close_all_positions)))
         self.app.router.add_get('/api/solana/trading/status', self.api_solana_trading_status)
-        self.app.router.add_post('/api/solana/trading/unblock', self.api_solana_trading_unblock)
+        self.app.router.add_post('/api/solana/trading/unblock', require_auth(require_operator(self.api_solana_trading_unblock)))
 
         # API - DEX Module (proxy to DEX health server when standalone dashboard)
         self.app.router.add_get('/api/dex/stats', self.api_dex_stats)
         self.app.router.add_get('/api/dex/positions', self.api_dex_positions)
         self.app.router.add_get('/api/dex/block-status', self.api_dex_block_status)
         self.app.router.add_get('/api/dex/trading/status', self.api_dex_trading_status)
-        self.app.router.add_post('/api/dex/trading/unblock', self.api_dex_trading_unblock)
+        self.app.router.add_post('/api/dex/trading/unblock', require_auth(require_operator(self.api_dex_trading_unblock)))
 
         # API - Sensitive Configuration (Admin only)
         self.app.router.add_get('/api/settings/sensitive/list', require_auth(require_admin(self.api_list_sensitive_configs)))
@@ -1398,10 +1416,10 @@ class DashboardEndpoints:
         # API - Futures Position Management (proxy to Futures module)
         self.app.router.add_get('/api/futures/positions', self.api_futures_positions)
         self.app.router.add_get('/api/futures/trades', self.api_futures_trades)
-        self.app.router.add_post('/api/futures/position/close', self.api_futures_close_position)
-        self.app.router.add_post('/api/futures/positions/close-all', self.api_futures_close_all_positions)
+        self.app.router.add_post('/api/futures/position/close', require_auth(require_operator(self.api_futures_close_position)))
+        self.app.router.add_post('/api/futures/positions/close-all', require_auth(require_operator(self.api_futures_close_all_positions)))
         self.app.router.add_get('/api/futures/trading/status', self.api_futures_trading_status)
-        self.app.router.add_post('/api/futures/trading/unblock', self.api_futures_trading_unblock)
+        self.app.router.add_post('/api/futures/trading/unblock', require_auth(require_operator(self.api_futures_trading_unblock)))
         # FUT-RM-09b (Wave 4): per-symbol 24h forward funding-cost forecast.
         # Derives from futures_funding_payments.predicted_usd × intervals/24h.
         self.app.router.add_get('/api/futures/funding-forecast', self.api_futures_funding_forecast)
@@ -1427,35 +1445,36 @@ class DashboardEndpoints:
         self.app.router.add_get('/polymarket/positions', self._polymarket_positions_page)
         self.app.router.add_get('/polymarket/performance', self._polymarket_performance_page)
 
-        # API - Trading controls
-        self.app.router.add_post('/api/trade/execute', self.api_execute_trade)
-        self.app.router.add_post('/api/position/close', self.api_close_position)
-        self.app.router.add_post('/api/position/modify', self.api_modify_position)
-        self.app.router.add_post('/api/order/cancel', self.api_cancel_order)
-        
+        # API - Trading controls (Wave-F6: capital-impacting — operator gate)
+        self.app.router.add_post('/api/trade/execute', require_auth(require_operator(self.api_execute_trade)))
+        self.app.router.add_post('/api/position/close', require_auth(require_operator(self.api_close_position)))
+        self.app.router.add_post('/api/position/modify', require_auth(require_operator(self.api_modify_position)))
+        self.app.router.add_post('/api/order/cancel', require_auth(require_operator(self.api_cancel_order)))
+
         # API - Reports
-        self.app.router.add_post('/api/reports/generate', self.api_generate_report)
+        self.app.router.add_post('/api/reports/generate', require_auth(require_operator(self.api_generate_report)))
         self.app.router.add_get('/api/reports/export/{format}', self.api_export_report)
         self.app.router.add_get('/api/reports/custom', self.api_custom_report)
         
         # API - Backtesting
-        self.app.router.add_post('/api/backtest/run', self.api_run_backtest)
+        self.app.router.add_post('/api/backtest/run', require_auth(require_operator(self.api_run_backtest)))
         self.app.router.add_get('/api/backtest/results/{test_id}', self.api_backtest_results)
         self.app.router.add_get('/api/backtest/results/{test_id}/export', self.api_backtest_export)
         
         # API - Strategy
         self.app.router.add_get('/api/strategy/parameters', self.api_get_strategy_params)
-        self.app.router.add_post('/api/strategy/parameters', self.api_update_strategy_params)
+        self.app.router.add_post('/api/strategy/parameters', require_auth(require_operator(self.api_update_strategy_params)))
         
         # API - Portfolio Trading Block Management
         self.app.router.add_get('/api/portfolio/block-status', self.api_get_block_status)
-        self.app.router.add_post('/api/portfolio/reset-block', self.api_reset_block)
+        self.app.router.add_post('/api/portfolio/reset-block', require_auth(require_operator(self.api_reset_block)))
 
         # SSE for real-time updates
         self.app.router.add_get('/api/stream', self.sse_handler)
 
-        # ML Training API endpoints
-        self.app.router.add_post('/api/ml/train', self.api_ml_train)
+        # ML Training API endpoints (Wave-F6: admin — retraining swaps the
+        # live model artifacts every strategy scores with)
+        self.app.router.add_post('/api/ml/train', require_auth(require_admin(self.api_ml_train)))
         self.app.router.add_get('/api/ml/status', self.api_ml_status)
 
         # Setup CORS - EXCLUDE socket.io routes
@@ -1718,7 +1737,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/copytrading/discovery', self._copytrading_discovery)
         self.app.router.add_get('/copytrading/wallets', self._copytrading_wallets)
         self.app.router.add_get('/api/copytrading/wallets', self.api_get_copytrading_wallets)
-        self.app.router.add_post('/api/copytrading/reconcile', self.api_reconcile_copytrading_trades)
+        self.app.router.add_post('/api/copytrading/reconcile', require_auth(require_operator(self.api_reconcile_copytrading_trades)))
         # Wave-2 quant rebuild: scored-leader ranking page.
         # /copytrading/leaders renders the top-N rows from
         # copy_leader_scores (migration 023). /api/copytrading/leaders
@@ -1759,32 +1778,34 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/advisor/kap/disclosures', self.api_get_advisor_kap_disclosures)
         self.app.router.add_get('/api/advisor/discovery', self.api_get_advisor_discovery)
         self.app.router.add_get('/api/advisor/simulations', self.api_get_advisor_simulations)
-        self.app.router.add_post('/api/advisor/simulations/{sim_id}/close', self.api_close_advisor_sim)
-        self.app.router.add_post('/api/advisor/simulations/channel/{channel}/close-all', self.api_close_advisor_channel_sims)
+        self.app.router.add_post('/api/advisor/simulations/{sim_id}/close', require_auth(require_operator(self.api_close_advisor_sim)))
+        self.app.router.add_post('/api/advisor/simulations/channel/{channel}/close-all', require_auth(require_operator(self.api_close_advisor_channel_sims)))
         self.app.router.add_get('/api/advisor/performance', self.api_get_advisor_performance)
         self.app.router.add_get('/api/advisor/portfolio', self.api_get_advisor_portfolio)
-        self.app.router.add_post('/api/advisor/portfolio', self.api_save_advisor_portfolio)
-        self.app.router.add_post('/api/advisor/portfolio/{holding_id}/delete', self.api_delete_advisor_holding)
+        self.app.router.add_post('/api/advisor/portfolio', require_auth(require_operator(self.api_save_advisor_portfolio)))
+        self.app.router.add_post('/api/advisor/portfolio/{holding_id}/delete', require_auth(require_operator(self.api_delete_advisor_holding)))
         self.app.router.add_get('/api/advisor/settings', self.api_get_advisor_settings)
-        self.app.router.add_post('/api/advisor/settings', self.api_save_advisor_settings)
+        self.app.router.add_post('/api/advisor/settings', require_auth(require_operator(self.api_save_advisor_settings)))
         self.app.router.add_get('/api/advisor/market-status', self.api_get_advisor_market_status)
         self.app.router.add_get('/api/advisor/fonoloji-image', self.api_get_advisor_fonoloji_image)
 
         # API endpoints that return empty data when module_manager is unavailable
         self.app.router.add_get('/api/modules', self._fallback_api_modules)
 
-        # Module control API endpoints (enable/disable/pause/start)
-        self.app.router.add_post('/api/modules/{module}/enable', self._api_module_enable)
-        self.app.router.add_post('/api/modules/{module}/disable', self._api_module_disable)
-        self.app.router.add_post('/api/modules/{module}/pause', self._api_module_pause)
-        self.app.router.add_post('/api/modules/{module}/start', self._api_module_start)
+        # Module control API endpoints (enable/disable/pause/start).
+        # Wave-F6 RBAC: module lifecycle changes what trades at all — admin.
+        self.app.router.add_post('/api/modules/{module}/enable', require_auth(require_admin(self._api_module_enable)))
+        self.app.router.add_post('/api/modules/{module}/disable', require_auth(require_admin(self._api_module_disable)))
+        self.app.router.add_post('/api/modules/{module}/pause', require_auth(require_admin(self._api_module_pause)))
+        self.app.router.add_post('/api/modules/{module}/start', require_auth(require_admin(self._api_module_start)))
         # Phase 3 B1: per-module DRY_RUN toggle. Writes
         # config_settings.<module>_config.dry_run; the module's main
         # entry point reads this via resolve_module_dry_run() on next
         # restart. (We don't auto-restart the subprocess here — that's
         # an operator decision.)
         self.app.router.add_post(
-            '/api/modules/{module}/dry-run', self._api_module_set_dry_run
+            '/api/modules/{module}/dry-run',
+            require_auth(require_admin(self._api_module_set_dry_run)),
         )
         self.app.router.add_get(
             '/api/modules/{module}/dry-run', self._api_module_get_dry_run
@@ -1808,7 +1829,7 @@ class DashboardEndpoints:
         self.app.router.add_get('/api/proposals/pending',
                                 self.api_proposals_pending)
         self.app.router.add_post('/api/proposals/{kind}/{id}/{action}',
-                                 self.api_proposal_action)
+                                 require_auth(require_admin(self.api_proposal_action)))
         self.app.router.add_get('/proposals', self.proposals_page)
         self.app.router.add_get('/help', self.help_page)
         # Phase 3 follow-up: explicit per-module restart via the
@@ -1816,7 +1837,8 @@ class DashboardEndpoints:
         # main.py polls every 5s). Replaces the operator's manual
         # "disable + enable" 2-step.
         self.app.router.add_post(
-            '/api/modules/{module}/restart', self._api_module_restart
+            '/api/modules/{module}/restart',
+            require_auth(require_admin(self._api_module_restart)),
         )
         # Control Center v4: batched overview (runtime badge + PnL +
         # win rate + open positions for every module in ONE request),
@@ -1842,7 +1864,8 @@ class DashboardEndpoints:
             '/api/circuit-breaker/active', self._api_breaker_active
         )
         self.app.router.add_post(
-            '/api/circuit-breaker/{event_id}/clear', self._api_breaker_clear
+            '/api/circuit-breaker/{event_id}/clear',
+            require_auth(require_admin(self._api_breaker_clear)),
         )
 
         # Phase 4B: portfolio allocation surface.
@@ -1857,11 +1880,11 @@ class DashboardEndpoints:
         )
         self.app.router.add_post(
             '/api/portfolio/allocations/{alloc_id}/approve',
-            self._api_alloc_approve,
+            require_auth(require_admin(self._api_alloc_approve)),
         )
         self.app.router.add_post(
             '/api/portfolio/allocations/propose',
-            self._api_alloc_propose,
+            require_auth(require_admin(self._api_alloc_propose)),
         )
 
         # Phase 4A: backtest replay. POST runs the counterfactual
@@ -1870,7 +1893,8 @@ class DashboardEndpoints:
             '/backtest-replay', require_auth(self._backtest_replay_page)
         )
         self.app.router.add_post(
-            '/api/backtest/replay', self._api_backtest_replay
+            '/api/backtest/replay',
+            require_auth(require_operator(self._api_backtest_replay)),
         )
         self.app.router.add_get(
             '/api/backtest/strategies', self._api_backtest_strategies
@@ -1893,11 +1917,11 @@ class DashboardEndpoints:
         )
         self.app.router.add_post(
             '/api/orchestrator/recommendations/{rec_id}/approve',
-            self._api_orch_approve_rec,
+            require_auth(require_admin(self._api_orch_approve_rec)),
         )
         self.app.router.add_post(
             '/api/orchestrator/recommendations/{rec_id}/reject',
-            self._api_orch_reject_rec,
+            require_auth(require_admin(self._api_orch_reject_rec)),
         )
 
         logger.info("✅ Fallback module routes registered")
