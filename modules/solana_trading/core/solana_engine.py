@@ -3802,9 +3802,25 @@ class SolanaTradingEngine:
                         market_name, base_amount
                     )
                     if not allowed:
-                        logger.warning(
-                            f"⛔ Drift {market_name} blocked by RiskManager: {rm_reason}"
-                        )
+                        # Wave-F6 item 3: this fires EVERY scan for EVERY
+                        # market (token-style liquidity validation against a
+                        # perp market name always fails) -> 10k+ WARN lines.
+                        # Keep the block (fail-closed) but WARN at most once
+                        # per hour per market; the rest go to DEBUG.
+                        if not hasattr(self, '_drift_rm_warn_ts'):
+                            self._drift_rm_warn_ts: Dict[str, float] = {}
+                        now_ts = time.time()
+                        last_warn = self._drift_rm_warn_ts.get(market_name, 0.0)
+                        if (now_ts - last_warn) >= 3600:
+                            self._drift_rm_warn_ts[market_name] = now_ts
+                            logger.warning(
+                                f"⛔ Drift {market_name} blocked by RiskManager: {rm_reason} "
+                                f"(rate-limited — repeats logged at DEBUG for the next hour)"
+                            )
+                        else:
+                            logger.debug(
+                                f"⛔ Drift {market_name} blocked by RiskManager: {rm_reason}"
+                            )
                         continue
                 except Exception as e:
                     logger.warning(f"⚠️ Drift RiskManager check failed: {e} — skipping entry")
