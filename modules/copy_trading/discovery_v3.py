@@ -332,12 +332,21 @@ def parse_helius_swaps(wallet: str, txs: Sequence[Dict],
 # --- Helius daily call budget (persistent, shared across sweeps) ----------
 
 def _helius_key_count() -> int:
-    """Distinct healthy Helius keys registered in pool_engine (>=1).
+    """Distinct healthy Helius ACCOUNT keys registered in pool_engine (>=1).
 
     Wave-F5 multi-key: helius_daily_call_budget (mig 141) is interpreted as
     a PER-KEY allowance. With round-robin rotation spreading discovery's
     calls evenly across sibling accounts, the aggregate ceiling scales as
     budget x key_count — no schema change to copy_helius_budget needed.
+
+    Wave-F6 fix: count by the ACCOUNT key (api_key column OR the api-key
+    embedded in the endpoint URL), never by endpoint name/URL. The old
+    `api_key or url` fallback counted the five same-key endpoint names
+    (SOL #1..#3 etc., api_key=NULL, key in URL) as five accounts and
+    multiplied the daily budget 5x against ONE free-tier quota. Endpoints
+    with no extractable key represent no distinct paid account and are not
+    counted. pool_engine now also dedups these names at load; this keeps
+    the budget honest even against a stale/undeduped pool.
     Fail-soft: any lookup problem returns 1 (exact mig-141 behaviour).
     """
     try:
@@ -348,8 +357,13 @@ def _helius_key_count() -> int:
         provider = pool.providers.get('HELIUS_API')
         if not provider:
             return 1
-        keys = {e.api_key or e.url for e in provider.endpoints
-                if e.is_enabled and e.status.value != 'disabled'}
+        keys = set()
+        for e in provider.endpoints:
+            if not e.is_enabled or e.status.value == 'disabled':
+                continue
+            fp = e.api_key or _current_helius_url_key(e.url or '')
+            if fp:
+                keys.add(fp)
         return max(1, len(keys))
     except Exception:
         return 1
