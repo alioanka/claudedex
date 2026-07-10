@@ -71,13 +71,70 @@ def require_admin(handler: Callable) -> Callable:
         user = request.get('user')
 
         if not user:
+            logger.warning(
+                "RBAC deny (no session) gate=admin route=%s %s",
+                request.method, request.path,
+            )
             return web.json_response({'error': 'Authentication required'}, status=401)
 
         if user.role != UserRole.ADMIN:
+            logger.warning(
+                "RBAC deny actor=%s role=%s gate=admin route=%s %s",
+                user.username, user.role.value, request.method, request.path,
+            )
             return web.json_response({'error': 'Admin access required'}, status=403)
 
+        logger.info(
+            "RBAC allow actor=%s role=%s gate=admin route=%s %s",
+            user.username, user.role.value, request.method, request.path,
+        )
         return await handler(request)
 
+    # Marker consumed by auth.route_authz.audit_mutating_routes — lets the
+    # startup self-test verify every mutating route carries an RBAC gate.
+    # functools.wraps propagates __dict__, so require_auth(require_admin(h))
+    # keeps the marker on the outermost wrapper.
+    middleware.__rbac_gate__ = 'admin'
+    return middleware
+
+
+def require_operator(handler: Callable) -> Callable:
+    """
+    Wave-F6 RBAC: decorator to require OPERATOR or ADMIN role.
+
+    The gate for state-changing trading/settings routes: VIEWER — and any
+    unknown/future role, default-deny — gets 403. Use together with
+    @require_auth, same registration style as require_admin:
+        require_auth(require_operator(handler))
+    Every decision emits an audit log line (actor, role, route, outcome).
+    """
+    @wraps(handler)
+    async def middleware(request: web.Request):
+        user = request.get('user')
+
+        if not user:
+            logger.warning(
+                "RBAC deny (no session) gate=operator route=%s %s",
+                request.method, request.path,
+            )
+            return web.json_response({'error': 'Authentication required'}, status=401)
+
+        if user.role not in (UserRole.ADMIN, UserRole.OPERATOR):
+            logger.warning(
+                "RBAC deny actor=%s role=%s gate=operator route=%s %s",
+                user.username, user.role.value, request.method, request.path,
+            )
+            return web.json_response(
+                {'error': 'Operator or admin access required'}, status=403
+            )
+
+        logger.info(
+            "RBAC allow actor=%s role=%s gate=operator route=%s %s",
+            user.username, user.role.value, request.method, request.path,
+        )
+        return await handler(request)
+
+    middleware.__rbac_gate__ = 'operator'
     return middleware
 
 
@@ -101,6 +158,11 @@ def require_role(required_role: UserRole) -> Callable:
                 return await handler(request)
 
             if user.role != required_role:
+                logger.warning(
+                    "RBAC deny actor=%s role=%s gate=%s route=%s %s",
+                    user.username, user.role.value, required_role.value,
+                    request.method, request.path,
+                )
                 return web.json_response(
                     {'error': f'Role {required_role.value} required'},
                     status=403
@@ -108,9 +170,21 @@ def require_role(required_role: UserRole) -> Callable:
 
             return await handler(request)
 
+        middleware.__rbac_gate__ = f'role:{required_role.value}'
         return middleware
 
     return decorator
+
+
+# Mutating endpoints every authenticated role may call — self-service auth
+# only. Everything else that mutates state is denied to VIEWER by the
+# default-deny floor in auth_middleware_factory below.
+MUTATION_ALLOWED_ANY_ROLE = frozenset((
+    '/api/auth/change-password',
+    '/api/auth/logout',
+))
+
+_MUTATING_METHODS = frozenset(('POST', 'PUT', 'DELETE', 'PATCH'))
 
 
 async def auth_middleware_factory(app: web.Application, handler: Callable) -> Callable:
@@ -185,8 +259,28 @@ async def auth_middleware_factory(app: web.Application, handler: Callable) -> Ca
                 response.del_cookie('session_id')
                 return response
 
-        # Session valid - attach user to request and proceed
+        # Session valid - attach user to request
         request['user'] = user
+
+        # Wave-F6 RBAC floor (default-deny): a VIEWER session may never
+        # issue state-changing requests, regardless of whether the route
+        # carries its own require_admin/require_operator wrapper. This
+        # centrally covers mutating routes registered by modules the
+        # per-route sweep didn't reach (module_routes, test_runner, ...).
+        # Self-service auth endpoints stay open to every role.
+        if (
+            request.method.upper() in _MUTATING_METHODS
+            and request.path not in MUTATION_ALLOWED_ANY_ROLE
+            and user.role == UserRole.VIEWER
+        ):
+            logger.warning(
+                "RBAC deny actor=%s role=viewer gate=write-floor route=%s %s",
+                user.username, request.method, request.path,
+            )
+            return web.json_response(
+                {'error': 'Read-only role: write access denied'}, status=403
+            )
+
         return await handler(request)
 
     return middleware
