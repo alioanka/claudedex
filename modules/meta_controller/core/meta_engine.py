@@ -39,8 +39,13 @@ from modules.meta_controller.core.health_scorer import (
 )
 
 # Single-source the per-module trade-table schema from orchestrator_ai so the
-# two meta layers never drift on column names.
-from modules.orchestrator_ai.core.orchestrator_engine import _MODULE_QUERIES
+# two meta layers never drift on column names. EXCLUDED_ROW_FILTER drops
+# metadata.excluded=true rows (poisoned/phantom history back-tagged by migs
+# 140A/150A) so meta decisions never score fabricated PnL (Wave-F7).
+from modules.orchestrator_ai.core.orchestrator_engine import (
+    EXCLUDED_ROW_FILTER,
+    _MODULE_QUERIES,
+)
 
 logger = logging.getLogger("meta_controller")
 
@@ -71,7 +76,7 @@ async def _collect_track(conn, schema: dict, lookback_hours: int,
         sim_filter = "is_simulated AND "
     elif simulated is False:
         sim_filter = "NOT is_simulated AND "
-    where = f"WHERE {sim_filter}{closed_filter}{window}"
+    where = f"WHERE {EXCLUDED_ROW_FILTER}{sim_filter}{closed_filter}{window}"
     row = await conn.fetchrow(
         f"SELECT COUNT(*) AS closed, "
         f"COUNT(*) FILTER (WHERE {pnl} > 0) AS wins, "

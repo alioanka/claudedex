@@ -122,6 +122,13 @@ async def load_trades(
             has_is_sim = module != "sniper"
             status_clause = "AND status='closed'" if has_status else ""
             is_sim_col = "is_simulated" if has_is_sim else "NULL::boolean"
+            # Wave-F7: drop metadata.excluded=true rows (poisoned Solana
+            # history mig 140A, arbitrage triangular phantom fills mig 150A)
+            # — a counterfactual built on fabricated PnL is worthless. Every
+            # table in _TRADE_TABLES has a metadata JSONB column.
+            excluded_clause = (
+                "AND NOT COALESCE((metadata->>'excluded')::boolean, false)"
+            )
             sql = (
                 f"SELECT COALESCE({time_col}, {fallback_time}) AS ts, "
                 f"  COALESCE({pnl_col}, 0) AS pnl, "
@@ -129,7 +136,7 @@ async def load_trades(
                 f"FROM {table} "
                 f"WHERE COALESCE({time_col}, {fallback_time}) >= $1 "
                 f"  AND COALESCE({time_col}, {fallback_time}) <= $2 "
-                f"  {status_clause} "
+                f"  {status_clause} {excluded_clause} "
                 f"ORDER BY 1 ASC"
             )
             try:

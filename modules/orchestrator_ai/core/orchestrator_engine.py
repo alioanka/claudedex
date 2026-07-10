@@ -116,6 +116,20 @@ def _ml_calibrated_confidence(
 #   futures / solana                   → closed-only tables; NO 'status'
 #                                          column, and use entry_time
 #                                          / pnl_col differently.
+
+# Wave-F7 (GPT-5.6 audit per-module closure): rows tagged
+# metadata.excluded=true are poisoned/fabricated history — Solana
+# wrong-denomination fake PnL (mig 140A) and arbitrage triangular
+# phantom fills (mig 150 Part A). The dashboards already exclude them,
+# but this scorer (and meta_controller, which single-sources this
+# schema map) kept counting them — exactly how the audit's "suggested
+# Solana to_live while PF/Sharpe were strongly negative" happened.
+# Every *_trades table in _MODULE_QUERIES has a metadata JSONB column
+# (migs 006/008/009/010 + the legacy dex `trades` schema), so the
+# filter is applied uniformly.
+EXCLUDED_ROW_FILTER = (
+    "NOT COALESCE((metadata->>'excluded')::boolean, false) AND "
+)
 _MODULE_QUERIES = {
     "sniper": {
         "table": "sniper_trades",
@@ -178,7 +192,10 @@ async def _collect_module_inputs(
     try:
         # has_status decides whether to filter rows by status='closed'.
         # has_is_simulated decides whether to count 'live' separately.
+        # EXCLUDED_ROW_FILTER drops metadata.excluded=true rows (poisoned /
+        # phantom history back-tagged by migs 140A/150A) from every score.
         closed_filter = "status='closed' AND " if schema.get("has_status") else ""
+        closed_filter = EXCLUDED_ROW_FILTER + closed_filter
         if schema["has_is_simulated"]:
             row = await conn.fetchrow(
                 f"SELECT "

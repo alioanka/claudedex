@@ -166,9 +166,11 @@ class Trade:
     closed_at: datetime
     close_reason: str  # stop_loss, take_profit, manual, signal
     is_simulated: bool = False
-    # Wave-F5 (F10): funding-cost honesty. DRY_RUN PnL never simulates funding
-    # accrual (0 funding lines in 20 days of logs), so paper looks better than
-    # live will. Stash an estimate here at close so the ledger is honest.
+    # Wave-F5 (F10) stashed an estimated funding cost here at close; Wave-F7
+    # goes further: for SIMULATED trades the estimate is APPLIED to net pnl
+    # (paper must carry the live cost stack). metadata keys: est_funding_usd,
+    # funding_applied, net_pnl_before_funding. LIVE pnl untouched (exchange
+    # settles real funding).
     metadata: Optional[dict] = None
 
 
@@ -3192,15 +3194,23 @@ class FuturesTradingEngine:
                     logger.error(f"❌ Close order failed: {e}")
                     return
 
-            # Wave-F5 (F10): estimate funding cost accrued over the hold and
-            # stash it in trade metadata for DRY_RUN honesty. Funding is
-            # 8h-periodic; a directional book pays (or earns) funding once per
-            # interval held. We estimate intervals from the hold duration and
-            # multiply by the last-known per-interval rate × notional. Sign:
-            # LONG pays positive funding, SHORT pays negative — a positive
-            # est_funding_usd here means COST to the book. Best-effort; never
-            # blocks the close and is NOT applied to net_pnl (kept as a visible
-            # honesty line so paper vs live drift is measurable, not hidden).
+            # Wave-F5 (F10): estimate funding cost accrued over the hold.
+            # Funding is 8h-periodic; a directional book pays (or earns)
+            # funding once per interval held. We estimate intervals from the
+            # hold duration and multiply by the last-known per-interval rate ×
+            # notional. Sign: LONG pays positive funding, SHORT pays negative
+            # — a positive est_funding_usd here means COST to the book.
+            # Best-effort; never blocks the close.
+            #
+            # Wave-F7 (external-audit futures row: "Estimated funding is
+            # explicitly not applied to net PnL"): for SIMULATED closes the
+            # estimate is now APPLIED to net_pnl — DRY_RUN paper must carry
+            # the cost stack live will pay, otherwise paper systematically
+            # overstates the edge. LIVE closes are untouched (the exchange
+            # settles real funding on the account; debiting an estimate would
+            # double-count). metadata keeps est_funding_usd,
+            # funding_applied, and net_pnl_before_funding for attribution —
+            # note this shifts DRY_RUN PF/PnL measurably vs pre-F7 windows.
             est_funding_usd = None
             try:
                 hold_hours = max(
@@ -3211,14 +3221,24 @@ class FuturesTradingEngine:
                 if frate is not None and intervals > 0:
                     signed = float(frate) if position.side == TradeSide.LONG else -float(frate)
                     est_funding_usd = signed * position.notional_value * intervals
-                    logger.info(
-                        f"   💸 Est. funding cost (DRY_RUN honesty): "
-                        f"${est_funding_usd:+.4f} over {hold_hours:.1f}h "
-                        f"(~{intervals:.2f} intervals @ {float(frate)*100:.4f}%/int) "
-                        f"— NOT applied to net_pnl"
-                    )
             except Exception as _fe:
                 logger.debug(f"funding-cost estimate skipped for {symbol}: {_fe}")
+
+            net_pnl_before_funding = net_pnl
+            funding_applied = False
+            if est_funding_usd is not None and position.is_simulated:
+                net_pnl -= est_funding_usd
+                funding_applied = True
+                logger.info(
+                    f"   💸 Est. funding cost APPLIED to simulated net_pnl: "
+                    f"${est_funding_usd:+.4f} "
+                    f"(net ${net_pnl_before_funding:+.4f} → ${net_pnl:+.4f})"
+                )
+            elif est_funding_usd is not None:
+                logger.info(
+                    f"   💸 Est. funding cost (LIVE, informational only — "
+                    f"exchange settles real funding): ${est_funding_usd:+.4f}"
+                )
 
             # Record trade
             trade = Trade(
@@ -3237,7 +3257,11 @@ class FuturesTradingEngine:
                 closed_at=datetime.now(),
                 close_reason=reason,
                 is_simulated=position.is_simulated,
-                metadata={'est_funding_usd': est_funding_usd},
+                metadata={
+                    'est_funding_usd': est_funding_usd,
+                    'funding_applied': funding_applied,
+                    'net_pnl_before_funding': net_pnl_before_funding,
+                },
             )
             self.trade_history.append(trade)
 

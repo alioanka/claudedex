@@ -180,7 +180,9 @@ def score_module(inputs: ModuleScoreInputs) -> ModuleScore:
             recommended='to_live',
             reason=(
                 f"DRY_RUN stats: {inputs.closed_trades} trades, "
-                f"win_rate={win_rate*100:.1f}%, P&L=${inputs.total_pnl_usd:.2f}"
+                f"win_rate={win_rate*100:.1f}%, P&L=${inputs.total_pnl_usd:.2f} "
+                f"— PAPER evidence only (no real-fill validation); confirm "
+                f"execution quality (TCA) and net-of-cost edge before approving"
             ),
             components=components,
         )
