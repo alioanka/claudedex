@@ -190,11 +190,17 @@ class DriftHelper:
             # TODO: Handle encrypted private keys
             wallet = Keypair.from_base58_string(self.private_key)
 
-            # Initialize Drift client
+            # Initialize Drift client. driftpy keys its configs dict as
+            # 'mainnet' / 'devnet' — the Solana cluster name 'mainnet-beta'
+            # raises KeyError at DriftClient init (Wave-F6 item 3). Map any
+            # cluster-style env value to the driftpy key.
+            env = os.getenv('DRIFT_ENV', 'mainnet').strip().lower()
+            if env in ('mainnet-beta', 'mainnet_beta', ''):
+                env = 'mainnet'
             self.drift_client = DriftClient(
                 connection,
                 wallet,
-                "mainnet-beta"  # or "devnet" for testing
+                env,  # 'mainnet' or 'devnet'
             )
 
             # Subscribe to account data

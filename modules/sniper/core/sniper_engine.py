@@ -231,6 +231,17 @@ class SniperEngine:
         self.sniper_watchlist_max_size: int = 500        # slots; drop when full
         self.sniper_watchlist_recheck_secs: int = 15     # poll interval
         self.sniper_fail_closed_missing_bsr: bool = True # reject if no BSR data
+        # Wave-F6 item 2: sniper_fail_closed_missing_bsr=true + no working
+        # Birdeye data rejected 99.5% of candidates (85k in 3 days, 0
+        # entries) — the same 100%-block class as the Wave-13 DEX vol/liq
+        # gate. This mode knob is now AUTHORITATIVE for the missing-BSR
+        # branch:
+        #   'skip_gate' (default): skip ONLY the BSR gate when data is
+        #       unavailable; every other gate (honeypot quorum, liquidity,
+        #       taxes, safety score, holders, dev holding) still runs.
+        #   'reject': legacy fail-closed (restores the F5 posture).
+        # A genuinely LOW BSR still rejects in both modes.
+        self.sniper_bsr_fallback_mode: str = 'skip_gate'
         # Replaces the hardcoded 200.0 from wave-16. Configurable via DB.
         self.sniper_phantom_price_threshold: float = 300.0  # |pnl%| skip ceiling
 
@@ -257,6 +268,8 @@ class SniperEngine:
             'too_young_rejected': 0,
             'high_dev_holding_rejected': 0,
             'low_buy_sell_ratio_rejected': 0,
+            'bsr_missing_skipped': 0,
+            'bsr_missing_rejected': 0,
             'low_score_rejected': 0,
             'passed_safety': 0,
             'partial_takes_fired': 0,
@@ -495,6 +508,13 @@ class SniperEngine:
                             self.sniper_fail_closed_missing_bsr = (
                                 val.lower() in ('true', '1', 'yes') if val else True
                             )
+                        # Wave-F6: missing-BSR fallback mode (migration 148)
+                        elif key == 'sniper_bsr_fallback_mode':
+                            _mode = (val or '').strip().lower()
+                            self.sniper_bsr_fallback_mode = (
+                                _mode if _mode in ('skip_gate', 'reject')
+                                else 'skip_gate'
+                            )
                         elif key == 'sniper_phantom_price_threshold':
                             self.sniper_phantom_price_threshold = float(val) if val else 300.0
                         # Wave-F5 entry-only risk knobs (migration 140)
@@ -571,7 +591,8 @@ class SniperEngine:
                 f"   W17 delayed-entry: min_age={self.sniper_min_entry_age_seconds}s "
                 f"watchlist_max={self.sniper_watchlist_max_size} "
                 f"recheck={self.sniper_watchlist_recheck_secs}s "
-                f"fail_closed_bsr={self.sniper_fail_closed_missing_bsr} "
+                f"bsr_fallback_mode={self.sniper_bsr_fallback_mode} "
+                f"(fail_closed_bsr={self.sniper_fail_closed_missing_bsr} superseded by mode) "
                 f"phantom_threshold={self.sniper_phantom_price_threshold}%"
             )
 
@@ -1099,33 +1120,40 @@ class SniperEngine:
             # Gate 5 (early): buy/sell pressure ratio.
             # Solana only — calls Birdeye trade-stats asynchronously.
             #
-            # Wave-17 fail-open -> fail-closed flip:
-            #   OLD: bsr is None -> pass through (fail-open). This meant
-            #        every t=0 token passed because Birdeye had no data.
-            #   NEW: when the age floor is active (min_entry_age_seconds>0)
-            #        AND sniper_fail_closed_missing_bsr=true, a None BSR
-            #        at entry age means the pool is illiquid/dead -> REJECT.
-            #        When age floor is disabled (0), keep legacy fail-open
-            #        behavior so t=0 sniping is unaffected.
+            # History: Wave-17 flipped None-BSR to fail-closed (via
+            # sniper_fail_closed_missing_bsr + age floor); Wave-F6 found
+            # that with the Birdeye source down this rejected 99.5% of ALL
+            # candidates for 3 days. sniper_bsr_fallback_mode is now the
+            # single authority for the missing-data branch (see the knob
+            # comment in __init__); a genuinely LOW BSR always rejects.
             min_bsr = self.sniper_min_buy_sell_ratio
             if min_bsr > 0 and chain_type == 'solana':
                 bsr = await self._get_buy_sell_ratio(token_address)
                 if bsr is None:
-                    # No Birdeye data. Reject if age floor active + fail-closed.
-                    age_floor_active = self.sniper_min_entry_age_seconds > 0
-                    if age_floor_active and self.sniper_fail_closed_missing_bsr:
-                        self._stats['low_buy_sell_ratio_rejected'] = (
-                            self._stats.get('low_buy_sell_ratio_rejected', 0) + 1
+                    # No Birdeye data. Wave-F6 item 2: unconditional reject
+                    # here blocked 99.5% of candidates for 3 days (85k
+                    # rejects, 0 entries) while every OTHER safety gate was
+                    # bypassed-by-never-reaching. Mode knob decides; the
+                    # honest split counters (bsr_missing_*) stop conflating
+                    # "no data" with "genuinely low BSR".
+                    if self.sniper_bsr_fallback_mode == 'reject':
+                        self._stats['bsr_missing_rejected'] = (
+                            self._stats.get('bsr_missing_rejected', 0) + 1
                         )
                         self._rejected_cache[token_address] = datetime.now()
                         logger.debug(
-                            f"BSR missing at entry age (fail-closed): "
+                            f"BSR missing (fallback_mode=reject): "
                             f"{token_address[:16]}..."
                         )
                         if timing:
                             timing.outcome = 'rejected_quality'
                         return False
-                    # else: age floor disabled or fail-open mode -> pass through
+                    # skip_gate: skip ONLY the BSR check — honeypot quorum,
+                    # liquidity, tax, safety-score, holder and dev-holding
+                    # gates below all still run.
+                    self._stats['bsr_missing_skipped'] = (
+                        self._stats.get('bsr_missing_skipped', 0) + 1
+                    )
                 elif bsr < min_bsr:
                     self._stats['low_buy_sell_ratio_rejected'] = (
                         self._stats.get('low_buy_sell_ratio_rejected', 0) + 1
@@ -1355,18 +1383,50 @@ class SniperEngine:
                 f"?address={token_address}&tx_type=swap&offset=0&limit=50"
             )
             headers = {'X-Chain': 'solana', 'accept': 'application/json'}
+            # Wave-F6 item 2a: rotated Birdeye key from pool_engine
+            # (BIRDEYE_API provider, numbered BIRDEYE_API_KEY[_N] slots —
+            # mig 144/146); secrets/env fallback preserves single-key
+            # behaviour. Without any key Birdeye 401s and BSR stays None.
+            api_key = None
+            key_ref = None
             try:
-                from security.secrets_manager import secrets
-                api_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False)
+                from config.rpc_provider import RPCProvider
+                res = await RPCProvider.get_api_key('BIRDEYE_API')
+                if res:
+                    api_key, key_ref = res
             except Exception:
-                api_key = None
+                pass
+            if not api_key:
+                try:
+                    from security.secrets_manager import secrets
+                    api_key = secrets.get('BIRDEYE_API_KEY', default=None, log_access=False)
+                except Exception:
+                    api_key = None
+                if not api_key:
+                    api_key = os.getenv('BIRDEYE_API_KEY')
             if api_key:
                 headers['X-API-KEY'] = api_key
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, headers=headers, timeout=4) as resp:
-                    if resp.status != 200:
+                    if resp.status == 429 and key_ref is not None:
+                        # Cool THIS key so the next BSR fetch rotates to a
+                        # sibling account instead of hammering the limited one.
+                        try:
+                            from config.rpc_provider import RPCProvider
+                            await RPCProvider.report_key_rate_limit(key_ref, 60)
+                        except Exception:
+                            pass
                         return None
+                    if resp.status != 200:
+                        self._bsr_source_warn(resp.status)
+                        return None
+                    if key_ref is not None:
+                        try:
+                            from config.rpc_provider import RPCProvider
+                            await RPCProvider.report_key_success(key_ref)
+                        except Exception:
+                            pass
                     data = await resp.json()
                     items = (data.get('data') or {}).get('items') or []
                     if not items:
@@ -1382,6 +1442,23 @@ class SniperEngine:
         except Exception as e:
             logger.debug(f"buy_sell_ratio fetch error for {token_address}: {e}")
         return None
+
+    def _bsr_source_warn(self, status: int) -> None:
+        """Wave-F6: the Birdeye BSR source failing used to be SILENT (zero
+        birdeye mentions in 3 days of logs while 99.5% of candidates were
+        rejected for missing BSR). WARN at most once per hour with the HTTP
+        status so a dead key / 401 is visible; repeats at DEBUG."""
+        now_ts = time.time()
+        last = getattr(self, '_bsr_warn_ts', 0.0)
+        if (now_ts - last) >= 3600:
+            self._bsr_warn_ts = now_ts
+            logger.warning(
+                f"⚠️ Birdeye BSR source returned HTTP {status} — buy/sell-ratio "
+                f"data unavailable (fallback_mode={self.sniper_bsr_fallback_mode}). "
+                f"Check BIRDEYE_API_KEY[_N]. Rate-limited to 1 WARN/hour."
+            )
+        else:
+            logger.debug(f"Birdeye BSR source HTTP {status}")
 
     async def _log_stats_if_needed(self):
         """Log filter statistics every 1 minute (was 5; tightened for
@@ -1408,6 +1485,8 @@ class SniperEngine:
                 f"TooYoung: {self._stats.get('too_young_rejected', 0)} | "
                 f"HighDev: {self._stats.get('high_dev_holding_rejected', 0)} | "
                 f"LowBSR: {self._stats.get('low_buy_sell_ratio_rejected', 0)} | "
+                f"NoBSR(skip/rej): {self._stats.get('bsr_missing_skipped', 0)}"
+                f"/{self._stats.get('bsr_missing_rejected', 0)} | "
                 f"LowScore: {self._stats.get('low_score_rejected', 0)} | "
                 f"PartialTakes: {self._stats.get('partial_takes_fired', 0)}"
             )
@@ -1430,6 +1509,8 @@ class SniperEngine:
                 'too_young_rejected': 0,
                 'high_dev_holding_rejected': 0,
                 'low_buy_sell_ratio_rejected': 0,
+                'bsr_missing_skipped': 0,
+                'bsr_missing_rejected': 0,
                 'low_score_rejected': 0,
                 'passed_safety': 0,
                 'partial_takes_fired': 0,

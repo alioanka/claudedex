@@ -138,3 +138,36 @@ authority. **Contract:**
 - Config knobs: `solana_price_{soft,hard}_jump_ratio`, `solana_price_{jump,
   hard_jump}_confirmations`, `solana_price_lastgood_ttl_s`,
   `solana_price_pending_window_s`, `solana_price_quorum_required`.
+
+## Wave-F6 entry-side fake-PnL fix + Drift repair (2026-07-10)
+Per `docs/agents/wave-f6/03_trading_sweep.md` (SOLANA CRIT + Drift P1).
+- **Entry-price corroboration (the ENTRY half of the F5 fix).** F5 secured
+  the exit path, but 38/194 jupiter opens still booked wrong-denomination
+  entries (RAY $3310 vs $0.68 → 7 fake −99.98% stops + 16 $0 time-exits).
+  Two additive gates in `solana_engine.py`:
+  - **Cold start never self-seeds.** `_get_token_price` now requires a
+    SECOND independent provider (via `_fetch_alt_price`: CoinGecko →
+    Jupiter → DexScreener, always ≠ primary) within `hard_jump_ratio`
+    before the FIRST quote for a mint may be trusted/seeded as last-good;
+    otherwise the quote is discarded and the price cache evicted (retried
+    next poll). Covers the momentum-signal scan path too.
+  - **JUPITER entries corroborate before opening.** `_open_position`
+    re-checks the chosen entry price against a second source
+    (`_cold_start_corroborated`); second source missing or >hard_jump_ratio
+    divergence → the entry is SKIPPED (logged `failed cross-source
+    corroboration`), no position, no seed. Pump.fun mints are exempt
+    (no second source exists at t=0; their PnL was ≈flat).
+  No knob — the gate is strictly stricter and fail-safe. If DexScreener +
+  CoinGecko + Jupiter price APIs are all unreachable, jupiter entries pause
+  (by design) until one recovers.
+- **Drift KeyError fixed.** `drift_helper.py` passed the Solana cluster
+  name `mainnet-beta` to `DriftClient`; driftpy keys its configs as
+  `mainnet`/`devnet` → `KeyError` at init, Drift never connected. Now maps
+  cluster-style names to the driftpy key (`DRIFT_ENV` env override,
+  default `mainnet`).
+- **RiskManager Drift-block WARN rate-limited.** `⛔ Drift <mkt> blocked by
+  RiskManager: Insufficient liquidity` fired every scan per market (10k+
+  lines — token-style liquidity validation against a perp market name).
+  Block unchanged (fail-closed); WARN now ≤1/hour per market, repeats at
+  DEBUG. Follow-up (not this wave): a perp-appropriate risk gate so Drift
+  signals aren't structurally blocked by DEX-pool liquidity checks.

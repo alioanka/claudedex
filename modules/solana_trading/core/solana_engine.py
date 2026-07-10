@@ -3802,9 +3802,25 @@ class SolanaTradingEngine:
                         market_name, base_amount
                     )
                     if not allowed:
-                        logger.warning(
-                            f"⛔ Drift {market_name} blocked by RiskManager: {rm_reason}"
-                        )
+                        # Wave-F6 item 3: this fires EVERY scan for EVERY
+                        # market (token-style liquidity validation against a
+                        # perp market name always fails) -> 10k+ WARN lines.
+                        # Keep the block (fail-closed) but WARN at most once
+                        # per hour per market; the rest go to DEBUG.
+                        if not hasattr(self, '_drift_rm_warn_ts'):
+                            self._drift_rm_warn_ts: Dict[str, float] = {}
+                        now_ts = time.time()
+                        last_warn = self._drift_rm_warn_ts.get(market_name, 0.0)
+                        if (now_ts - last_warn) >= 3600:
+                            self._drift_rm_warn_ts[market_name] = now_ts
+                            logger.warning(
+                                f"⛔ Drift {market_name} blocked by RiskManager: {rm_reason} "
+                                f"(rate-limited — repeats logged at DEBUG for the next hour)"
+                            )
+                        else:
+                            logger.debug(
+                                f"⛔ Drift {market_name} blocked by RiskManager: {rm_reason}"
+                            )
                         continue
                 except Exception as e:
                     logger.warning(f"⚠️ Drift RiskManager check failed: {e} — skipping entry")
@@ -4005,6 +4021,19 @@ class SolanaTradingEngine:
         cache_entry = self.jupiter_client._price_cache.get(token_mint) or {}
         source = cache_entry.get('source', 'unknown')
         self._refresh_price_validator_params()
+        # Wave-F6 entry-side fix: COLD START must not self-seed. With no
+        # last-good anchor the validator accepts ANY first quote, so a
+        # wrong-denomination read (real USD × ~5000) seeded itself as
+        # last-good and every later cross-check compared against the
+        # poison (38/194 jupiter opens booked at absurd prices). Require a
+        # SECOND independent provider within hard_jump_ratio before the
+        # first quote for a mint may be trusted/seeded; otherwise return
+        # None (fail-safe — retried on the next poll).
+        if self.price_validator.last_good(token_mint) is None:
+            if not await self._cold_start_corroborated(token_mint, float(raw), source):
+                self.jupiter_client._price_cache.pop(token_mint, None)
+                self.jupiter_client._price_cache_time.pop(token_mint, None)
+                return None
         validated, accepted = self.price_validator.validate(
             token_mint, float(raw), source
         )
@@ -4039,12 +4068,26 @@ class SolanaTradingEngine:
         it only if it agrees with `candidate` within the validator's
         consistency band (so it is genuine corroboration, not a fresh guess).
         Fail-soft: any error / no alternate source -> None (stays rejected)."""
+        alt = await self._fetch_alt_price(token_mint, primary_source)
+        if alt is None:
+            return None
+        hi = max(alt, candidate)
+        lo = min(alt, candidate)
+        band = 1.0 + self.price_validator.CONSISTENCY_BAND
+        if lo > 0 and (hi / lo) <= band:
+            return float(alt)
+        return None
+
+    async def _fetch_alt_price(
+        self, token_mint: str, primary_source: str
+    ) -> Optional[float]:
+        """Fetch a price from a provider OTHER than primary_source.
+        Prefer CoinGecko (independent of DexScreener/Jupiter); fall back to
+        Jupiter's own price API, then DexScreener. Fail-soft: None."""
         try:
             jc = self.jupiter_client
             session = await jc._get_session()
             alt = None
-            # Prefer CoinGecko (independent of DexScreener/Jupiter); fall back
-            # to Jupiter's own price API when the mint has no CoinGecko id.
             if primary_source != 'coingecko' and token_mint in getattr(jc, 'COINGECKO_IDS', {}):
                 alt = await jc._get_price_coingecko(session, token_mint)
             if (alt is None or alt <= 0) and primary_source != 'jupiter':
@@ -4053,15 +4096,39 @@ class SolanaTradingEngine:
                 alt = await jc._get_price_dexscreener(session, token_mint)
             if alt is None or alt <= 0:
                 return None
-            hi = max(alt, candidate)
-            lo = min(alt, candidate)
-            band = 1.0 + self.price_validator.CONSISTENCY_BAND
-            if lo > 0 and (hi / lo) <= band:
-                return float(alt)
-            return None
+            return float(alt)
         except Exception as exc:
-            logger.debug(f"price corroboration failed for {token_mint[:8]}: {exc}")
+            logger.debug(f"alt price fetch failed for {token_mint[:8]}: {exc}")
             return None
+
+    async def _cold_start_corroborated(
+        self, token_mint: str, candidate: float, primary_source: str
+    ) -> bool:
+        """Wave-F6: first-ever read of a mint (no validator anchor).
+
+        True only when a SECOND independent provider agrees with `candidate`
+        within hard_jump_ratio. Missing second source or >hard_jump_ratio
+        divergence -> False: the quote must NOT be trusted or seeded as
+        last-good (a wrong-denomination first read would otherwise anchor
+        the poison and pass every later relative check)."""
+        alt = await self._fetch_alt_price(token_mint, primary_source)
+        if alt is None:
+            logger.warning(
+                f"🛑 cold-start: no second source for {token_mint[:8]} "
+                f"(primary={primary_source} ${candidate:.10g}) — quote NOT seeded"
+            )
+            return False
+        hi = max(alt, candidate)
+        lo = min(alt, candidate)
+        if lo <= 0 or (hi / lo) > self.price_validator.hard_jump_ratio:
+            logger.warning(
+                f"🛑 cold-start: {token_mint[:8]} primary={primary_source} "
+                f"${candidate:.10g} vs second source ${alt:.10g} "
+                f"({(hi / lo) if lo > 0 else float('inf'):.0f}x) — poisoned "
+                f"quote rejected, NOT seeded"
+            )
+            return False
+        return True
 
     async def _late_confirm_rescue(self, token_symbol: str) -> Optional[str]:
         """Recheck a broadcast-but-unconfirmed buy before declaring it failed.
@@ -4465,6 +4532,30 @@ class SolanaTradingEngine:
             if current_price is None or current_price <= 0:
                 logger.warning(f"Could not get price for {token_symbol} from any source")
                 return False
+
+            # 4. Wave-F6 entry-side corroboration (the entry half of the
+            # F5 fake-PnL fix). The step-3 cross-check compares two reads
+            # that can derive from the SAME poisoned source, so 38/194
+            # jupiter opens still booked wrong-denomination entries (RAY
+            # $3310 vs $0.68) -> fake -99.98% stops + $0 time-exits. For
+            # the fixed jupiter token universe a SECOND independent
+            # provider always exists: require it to agree within
+            # hard_jump_ratio BEFORE opening or seeding. Missing second
+            # source or >hard divergence -> REFUSE the entry (fail-safe,
+            # retried next scan). Pump.fun mints are exempt (no second
+            # source exists at t=0; their loss surface was ~flat).
+            if strategy == Strategy.JUPITER:
+                cache_entry = (self.jupiter_client._price_cache.get(token_mint)
+                               if self.jupiter_client else None) or {}
+                entry_source = cache_entry.get('source', 'unknown')
+                if not await self._cold_start_corroborated(
+                    token_mint, float(current_price), entry_source
+                ):
+                    logger.warning(
+                        f"⛔ {token_symbol}: entry price ${current_price:.10g} failed "
+                        f"cross-source corroboration — SKIPPING entry (no position opened)"
+                    )
+                    return False
 
             # Calculate values
             value_usd = amount_sol * self.sol_price_usd
