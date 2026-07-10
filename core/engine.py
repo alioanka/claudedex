@@ -1575,9 +1575,11 @@ class TradingBotEngine:
                 except Exception as e:
                     logger.error(f"❌ Failed to log trade to database: {e}")
                 
-                # Update stats
+                # Update stats. successful_trades means "closed at profit"
+                # and is incremented ONLY at close — counting it here too
+                # made successful > total (58 trades / 84 successful),
+                # corrupting win_rate-driven sizing.
                 self.stats['total_trades'] += 1
-                self.stats['successful_trades'] += 1
 
                 # Update circuit breaker metrics for successful real trade
                 # Update circuit breaker metrics for simulated trade
@@ -1809,8 +1811,10 @@ class TradingBotEngine:
                     name=f"immediate_check_{token_symbol}"
                 )
 
+                # successful_trades means "closed at profit" — incremented
+                # only at close (see _close_position). Entry counts only
+                # total_trades so win_rate stays wins/total.
                 self.stats['total_trades'] += 1
-                self.stats['successful_trades'] += 1
 
                 # Update circuit breaker metrics for successful real trade
                 actual_slippage = result.get('slippage_bps', 0)
@@ -2290,7 +2294,8 @@ class TradingBotEngine:
             # K% = W - (1-W)/R
             # W = Win Rate (default 0.6 if unknown)
             # R = Reward/Risk Ratio (default 2.0)
-            win_rate = self.stats['successful_trades'] / max(1, self.stats['total_trades']) if self.stats['total_trades'] > 10 else 0.6
+            # Bounded [0,1]: successful_trades = closed-at-profit only.
+            win_rate = min(1.0, self.stats['successful_trades'] / max(1, self.stats['total_trades'])) if self.stats['total_trades'] > 10 else 0.6
             profit_factor = 2.0 # Target 2:1
 
             kelly_pct = win_rate - (1 - win_rate) / profit_factor
@@ -3094,7 +3099,7 @@ class TradingBotEngine:
                 # Calculate metrics
                 metrics = {
                     'total_trades': self.stats['total_trades'],
-                    'win_rate': self.stats['successful_trades'] / max(self.stats['total_trades'], 1),
+                    'win_rate': min(1.0, self.stats['successful_trades'] / max(self.stats['total_trades'], 1)),
                     'total_pnl': self.stats['total_profit'],
                     'active_positions': num_active_positions,
                     'opportunities_found': self.stats['opportunities_found'],
