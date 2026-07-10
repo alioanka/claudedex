@@ -33,6 +33,12 @@ advisory KEEP. The per-module schema map is single-sourced from
 `orchestrator_ai.core.orchestrator_engine._MODULE_QUERIES` so the two meta
 layers never drift on table/column names.
 
+### Wave-F7 (2026-07-10): `_collect_track` applies the shared
+`EXCLUDED_ROW_FILTER` (imported from orchestrator_ai next to
+`_MODULE_QUERIES`) so `metadata.excluded=true` rows — poisoned Solana
+history (mig 140A) and arbitrage triangular phantom fills (mig 150A) —
+never feed ACTIVATE/KEEP/PAUSE decisions or the calibration loop.
+
 ## Self-improvement loop
 Each tick `meta_engine._record_calibration` scores how well PAST decisions
 matched the forward realized PnL that followed them (PAUSE was right if the next

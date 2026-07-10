@@ -57,6 +57,21 @@ modules emit a `not_ready` 'hold', and the per-tick supersede-then-insert
 guarantees one current row per module — the operator SEES a per-module
 recommendation (even "stay DRY_RUN / not ready") instead of silence.
 
+### Wave-F7 honesty fixes (2026-07-10, external-audit closure)
+- **Excluded-row filter.** `_collect_module_inputs` (aggregates + Sharpe
+  series) now drops `metadata.excluded=true` rows via the shared
+  `EXCLUDED_ROW_FILTER` constant — poisoned Solana history (mig 140A) and
+  arbitrage triangular phantom fills (mig 150A, self-tagged at insert) no
+  longer feed scores. This is how the audit's "suggested Solana `to_live`
+  while the module's own paper PF/Sharpe were strongly negative" happened.
+  `meta_controller` and `sentinel` import the same constant (single-sourced,
+  like `_MODULE_QUERIES`); `portfolio_allocator` inherits it downstream
+  (it reads `orchestrator_recommendations.metrics`).
+- **Paper-evidence caveat.** Every `to_live` reason string now states the
+  evidence is PAPER-only (no real-fill validation) and tells the operator to
+  confirm execution quality (TCA) + net-of-cost edge before approving. The
+  recommendation gate itself is unchanged — advisory-only, operator approves.
+
 ## Positions / execution wallet (issues 6 + 15)
 This is a **meta-module**. It holds NO positions of its own and places NO
 trades — it only writes advisory rows. There is therefore:
